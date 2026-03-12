@@ -11,6 +11,7 @@
 - ✅ **Changelog Initialized**: Tracking v1.5.0 milestones.
 - ✅ **AAA Documentation**: README.md upgraded with Prime roadmap and perfection loop.
 - ✅ **Dashboard Hardening**: Resolved "unique key" warning with ID de-duplication.
+- ✅ **Perfection Loop Iteration 01**: Strategic roadmap for Asynchronous Substrate and Core Parity integrated into `/docs/`.
 
 **Current acceptance**:
 

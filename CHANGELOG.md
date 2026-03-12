@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Perfection Loop Protocol**: Iterative refinement engine for AAA-quality code.
+- **Perfection Loop Iteration 01**: Strategic roadmap for Asynchronous Substrate and Core Parity.
 - **Swarm Sync (Hot Reloading)**: Live agent reloading using `notify` and `SwarmWatcher`.
 - **Stable Agent IDs**: Persistent UUID-based identification via `agent.json`.
 - **Dynamic SVG Avatars**: Fallback avatar generation in the gateway.

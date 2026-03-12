@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Dashboard Uniqueness**: Hardened agent list rendering against duplicate stable IDs.
 - Deterministic chat history ordering in `get_history`.
 - Registry IO optimizations via path caching.
 - Agent image cache-busting in dashboard.

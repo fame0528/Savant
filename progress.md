@@ -9,6 +9,8 @@
 - ✅ **Hot-Reload Swarm**: Live watcher and broadcast synchronization verified.
 - ✅ **Repo Created**: [fame0528/Savant](https://github.com/fame0528/Savant) initialized and pushed.
 - ✅ **Changelog Initialized**: Tracking v1.5.0 milestones.
+- ✅ **AAA Documentation**: README.md upgraded with Prime roadmap and perfection loop.
+- ✅ **Dashboard Hardening**: Resolved "unique key" warning with ID de-duplication.
 
 **Current acceptance**:
 

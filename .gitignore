@@ -1,0 +1,51 @@
+# Savant Git Ignore
+
+# Rust
+/target
+debug/
+release/
+*.rs.bk
+
+# Node / Frontend
+node_modules/
+.next/
+out/
+build/
+dist/
+.npm
+.eslintcache
+
+# Savant Specific
+savant.db
+savant.db-journal
+savant.db-shm
+savant.db-wal
+logs/
+*.log
+*.txt
+*.tmp
+
+# Exclude generated binaries and symbols
+*.exe
+*.pdb
+*.dll
+*.so
+*.dylib
+
+# Environment & Secrets
+.env
+*.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDEs
+.vscode/
+.idea/
+.windsurf/
+.DS_Store
+
+# Agents (Optional: keep or ignore? User usually wants manifests committed)
+# /workspaces/*/agent.json # We might want to keep IDs
+**/node_modules

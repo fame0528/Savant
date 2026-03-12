@@ -1,0 +1,111 @@
+use crate::budget::TokenBudget;
+use savant_core::types::{AgentIdentity, ChatMessage, ChatRole};
+
+/// Assembler struct used to construct LLM prompts with token limits in mind.
+pub struct ContextAssembler {
+    identity: AgentIdentity,
+    budget: TokenBudget,
+}
+
+impl ContextAssembler {
+    /// Creates a new ContextAssembler.
+    pub fn new(identity: AgentIdentity, budget: TokenBudget) -> Self {
+        Self { identity, budget }
+    }
+
+    /// Assembles the full system prompt from identity components (OpenClaw style).
+    pub fn assemble_system_prompt(&self) -> String {
+        let mut prompt = String::new();
+
+        // 1. Identity & Vibe (IDENTITY.md)
+        if let Some(metadata) = &self.identity.metadata {
+            prompt.push_str(&format!("IDENTITY INFO:\n{}\n\n", metadata));
+        }
+
+        // 2. Persona & Core (SOUL.md)
+        prompt.push_str(&format!("PERSONA (SOUL):\n{}\n\n", self.identity.soul));
+        
+        // 3. Operating Instructions (AGENTS.md)
+        if let Some(instructions) = &self.identity.instructions {
+            prompt.push_str(&format!("OPERATING INSTRUCTIONS:\n{}\n\n", instructions));
+        }
+
+        // 4. User context (USER.md)
+        if let Some(user) = &self.identity.user_context {
+            prompt.push_str(&format!("USER CONTEXT:\n{}\n\n", user));
+        }
+
+        if let Some(mission) = &self.identity.mission {
+            prompt.push_str(&format!("MISSION:\n{}\n\n", mission));
+        }
+        
+        if let Some(ethics) = &self.identity.ethics {
+            prompt.push_str(&format!("ETHICS & CONSTRAINTS:\n{}\n\n", ethics));
+        }
+
+        prompt.push_str(&format!("OPERATIONAL LIMITS:\n- Token Budget: {} / {}\n\n", self.budget.used, self.budget.limit));
+
+        if !self.identity.expertise.is_empty() {
+            prompt.push_str("EXPERTISE:\n");
+            for skill in &self.identity.expertise {
+                prompt.push_str(&format!("- {}\n", skill));
+            }
+            prompt.push_str("\n");
+        }
+
+        prompt
+    }
+
+    /// Converts the conversation history and memory into ChatMessages.
+    pub fn build_messages(&self, history: Vec<ChatMessage>) -> Vec<serde_json::Value> {
+        let mut messages = Vec::new();
+        
+        // System prompt is usually separate or the first message
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": self.assemble_system_prompt()
+        }));
+
+        for msg in history {
+            // Placeholder: additive assembly with token checking
+            messages.push(serde_json::json!({
+                "role": match msg.role {
+                    ChatRole::User => "user",
+                    ChatRole::Assistant => "assistant",
+                    ChatRole::System => "system",
+                },
+                "content": msg.content
+            }));
+        }
+
+        messages
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use savant_core::types::AgentIdentity;
+
+    #[test]
+    fn test_assemble_system_prompt() {
+        let identity = AgentIdentity {
+            name: "TestAgent".to_string(),
+            soul: "Vibe check.".to_string(),
+            instructions: Some("Do stuff.".to_string()),
+            user_context: None,
+            metadata: Some("Emoji: 🤖".to_string()),
+            mission: None,
+            expertise: vec!["Rust".to_string()],
+            ethics: None,
+        };
+        let budget = TokenBudget::new(100);
+        let assembler = ContextAssembler::new(identity, budget);
+        let prompt = assembler.assemble_system_prompt();
+        
+        assert!(prompt.contains("Vibe check."));
+        assert!(prompt.contains("Do stuff."));
+        assert!(prompt.contains("🤖"));
+        assert!(prompt.contains("Rust"));
+    }
+}

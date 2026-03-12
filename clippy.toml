@@ -1,0 +1,4 @@
+disallowed-macros = [
+    { path = "std::unwrap", reason = "use proper error handling" },
+    { path = "std::expect", reason = "use proper error handling" }
+]

@@ -1,0 +1,29 @@
+{
+  "name": "savant-system",
+  "version": "1.0.0",
+  "description": "Complete Savant Autonomous Agent System",
+  "scripts": {
+    "start": "node start.js",
+    "start:gateway": "cargo run --release --bin savant_cli",
+    "start:dashboard": "cd dashboard && npm run dev",
+    "build": "cargo build --release && cd dashboard && npm run build",
+    "dev": "node start.js --dev",
+    "stop": "node stop.js",
+    "logs": "tail -f logs/gateway.log logs/dashboard.log",
+    "test": "cargo test && cd dashboard && npm test",
+    "clean": "cargo clean && cd dashboard && rm -rf node_modules .next && rm -rf logs"
+  },
+  "keywords": [
+    "autonomous-agents",
+    "swarm-intelligence",
+    "rust",
+    "react"
+  ],
+  "author": "Savant Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "chalk": "^4.1.2",
+    "cross-spawn": "^7.0.3"
+  }
+}

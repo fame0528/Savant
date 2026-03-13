@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use rusqlite::{Connection, params};
 use crate::error::SavantError;
 use crate::types::{ChatMessage, ChatRole};
+use rusqlite::{params, Connection};
+use std::path::PathBuf;
 
 /// Persistent Storage Layer with WAL (Write-Ahead Logging) enabled by default.
 pub struct Storage {
@@ -17,15 +17,15 @@ impl Storage {
     pub fn connect(&self) -> Result<Connection, SavantError> {
         let conn = Connection::open(&self.db_path)
             .map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-        
+
         // WAL Mode: Multi-reader, single-writer concurrency
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| SavantError::Unknown(format!("WAL error: {}", e)))?;
-            
+
         // Optimization PRAGMAs
         conn.pragma_update(None, "synchronous", "NORMAL")
             .map_err(|e| SavantError::Unknown(format!("Sync error: {}", e)))?;
-            
+
         Ok(conn)
     }
 
@@ -44,7 +44,8 @@ impl Storage {
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )",
             [],
-        ).map_err(|e| SavantError::Unknown(format!("Schema error: {}", e)))?;
+        )
+        .map_err(|e| SavantError::Unknown(format!("Schema error: {}", e)))?;
 
         // Vector Knowledge Table (Feature 8)
         conn.execute(
@@ -56,7 +57,8 @@ impl Storage {
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )",
             [],
-        ).map_err(|e| SavantError::Unknown(format!("Schema error: {}", e)))?;
+        )
+        .map_err(|e| SavantError::Unknown(format!("Schema error: {}", e)))?;
 
         // Chat History Table (WAL ensured durability)
         conn.execute(
@@ -69,7 +71,8 @@ impl Storage {
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )",
             [],
-        ).map_err(|e| SavantError::Unknown(format!("Schema error: {}", e)))?;
+        )
+        .map_err(|e| SavantError::Unknown(format!("Schema error: {}", e)))?;
 
         Ok(())
     }
@@ -86,33 +89,40 @@ impl Storage {
         conn.execute(
             "INSERT INTO chat_history (agent_id, sender, role, content) VALUES (?, ?, ?, ?)",
             params![agent_id, msg.sender, role, msg.content],
-        ).map_err(|e| SavantError::Unknown(format!("Insert error: {}", e)))?;
+        )
+        .map_err(|e| SavantError::Unknown(format!("Insert error: {}", e)))?;
 
         Ok(())
     }
 
     /// Retrieves full chat history for an agent to prevent context loss.
-    pub fn get_history(&self, agent_id: &str, limit: usize) -> Result<Vec<ChatMessage>, SavantError> {
+    pub fn get_history(
+        &self,
+        agent_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ChatMessage>, SavantError> {
         let conn = self.connect()?;
         let mut stmt = conn.prepare(
             "SELECT role, content, sender, agent_id FROM chat_history WHERE agent_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?"
         ).map_err(|e| SavantError::Unknown(format!("Prepare error: {}", e)))?;
 
-        let rows = stmt.query_map(params![agent_id, limit as i64], |row| {
-            let role_str: String = row.get(0)?;
-            let role = match role_str.as_str() {
-                "system" => ChatRole::System,
-                "user" => ChatRole::User,
-                _ => ChatRole::Assistant,
-            };
-            Ok(ChatMessage {
-                role,
-                content: row.get(1)?,
-                sender: row.get(2)?,
-                recipient: None,
-                agent_id: row.get(3)?,
+        let rows = stmt
+            .query_map(params![agent_id, limit as i64], |row| {
+                let role_str: String = row.get(0)?;
+                let role = match role_str.as_str() {
+                    "system" => ChatRole::System,
+                    "user" => ChatRole::User,
+                    _ => ChatRole::Assistant,
+                };
+                Ok(ChatMessage {
+                    role,
+                    content: row.get(1)?,
+                    sender: row.get(2)?,
+                    recipient: None,
+                    agent_id: row.get(3)?,
+                })
             })
-        }).map_err(|e| SavantError::Unknown(format!("Query error: {}", e)))?;
+            .map_err(|e| SavantError::Unknown(format!("Query error: {}", e)))?;
 
         let mut history: Vec<ChatMessage> = rows.filter_map(|r| r.ok()).collect();
         history.reverse(); // Back to chronological order

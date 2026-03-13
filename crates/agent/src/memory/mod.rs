@@ -1,50 +1,59 @@
-use savant_core::types::AgentReflection;
+use async_trait::async_trait;
 use savant_core::error::SavantError;
+use savant_core::traits::MemoryBackend;
+use savant_core::types::{AgentReflection, ChatMessage};
 use std::path::PathBuf;
-use tokio::fs;
-use savant_core::db::Storage;
 use std::sync::Arc;
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
+use tracing::{info, instrument};
 
-/// Manages the elite long-term memory system with WAL-backed persistence.
-pub struct MemoryManager {
+/// A decorator for `MemoryBackend` that adds file-based logging for agent self-improvement.
+/// 
+/// This implements the "Perfection Loop" requirements by ensuring that every learning
+/// and reflection is also captured in human-readable Markdown files in the agent's workspace.
+pub struct FileLoggingMemoryBackend {
+    inner: Arc<dyn MemoryBackend>,
     workspace_path: PathBuf,
-    storage: Arc<Storage>,
 }
 
-impl MemoryManager {
-    pub fn new(workspace_path: PathBuf, storage: Arc<Storage>) -> Self {
-        Self { workspace_path, storage }
+impl FileLoggingMemoryBackend {
+    /// Creates a new `FileLoggingMemoryBackend`.
+    pub fn new(inner: Arc<dyn MemoryBackend>, workspace_path: PathBuf) -> Self {
+        Self {
+            inner,
+            workspace_path,
+        }
     }
 
-    /// Records a new learning or correction to LEARNINGS.md and SQLite.
+    /// Records a new learning or correction to LEARNINGS.md.
+    #[instrument(skip(self), fields(agent_id))]
     pub async fn record_learning(&self, agent_id: &str, learning: &str) -> Result<(), SavantError> {
-        // 1. File Persistence
         let path = self.workspace_path.join("LEARNINGS.md");
         let timestamp = chrono::Utc::now();
         let content = format!("\n### Learning ({})\n{}\n", timestamp, learning);
-        
+
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
             .await?;
-            
-        use tokio::io::AsyncWriteExt;
+
         file.write_all(content.as_bytes()).await?;
-
-        // 2. WAL Database Persistence
-        let conn = self.storage.connect()?;
-        conn.execute(
-            "INSERT INTO agents_memory (agent_id, category, content, importance) VALUES (?, ?, ?, ?)",
-            rusqlite::params![agent_id, "Learning", learning, 5],
-        ).map_err(|e| SavantError::Unknown(format!("DB memory error: {}", e)))?;
-
+        
+        // Also store in the inner backend as a special metadata message if needed
+        // For now, we trust the file and the inner backend's general storage
+        info!("Recorded learning for agent {}", agent_id);
         Ok(())
     }
 
-    /// Records a reflection on a completed task to REFLECT.md and SQLite.
-    pub async fn record_reflection(&self, agent_id: &str, reflection: AgentReflection) -> Result<(), SavantError> {
-        // 1. File Persistence
+    /// Records a reflection on a completed task to REFLECT.md.
+    #[instrument(skip(self), fields(agent_id))]
+    pub async fn record_reflection(
+        &self,
+        agent_id: &str,
+        reflection: AgentReflection,
+    ) -> Result<(), SavantError> {
         let path = self.workspace_path.join("REFLECT.md");
         let content = format!(
             "\n## Reflection: {}\n- Success: {}\n- Critique: {}\n- Learning: {}\n- Action Items: {:?}\n",
@@ -57,48 +66,59 @@ impl MemoryManager {
             .open(path)
             .await?;
 
-        use tokio::io::AsyncWriteExt;
         file.write_all(content.as_bytes()).await?;
-
-        // 2. WAL Database Persistence
-        let conn = self.storage.connect()?;
-        conn.execute(
-            "INSERT INTO agents_memory (agent_id, category, content, importance) VALUES (?, ?, ?, ?)",
-            rusqlite::params![agent_id, "Reflection", format!("{:?}", reflection), reflection.importance],
-        ).map_err(|e| SavantError::Unknown(format!("DB reflection error: {}", e)))?;
-
+        
+        info!("Recorded reflection for agent {}", agent_id);
         Ok(())
     }
+}
 
-    /// Performs memory consolidation: moving daily logs to structured HISTORY.md
-    pub async fn consolidate(&self, agent_id: &str) -> Result<(), SavantError> {
+#[async_trait]
+impl MemoryBackend for FileLoggingMemoryBackend {
+    async fn store(&self, agent_id: &str, message: &ChatMessage) -> Result<(), SavantError> {
+        self.inner.store(agent_id, message).await
+    }
+
+    async fn retrieve(
+        &self,
+        agent_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ChatMessage>, SavantError> {
+        self.inner.retrieve(agent_id, query, limit).await
+    }
+
+    async fn consolidate(&self, agent_id: &str) -> Result<(), SavantError> {
+        // 1. First delegate to inner backend for LSM compaction/optimization
+        self.inner.consolidate(agent_id).await?;
+
+        // 2. Perform file-based archive if LEARNINGS.md gets too large
         let learnings_path = self.workspace_path.join("LEARNINGS.md");
         let history_path = self.workspace_path.join("HISTORY.md");
 
         if let Ok(metadata) = fs::metadata(&learnings_path).await {
-            // If LEARNINGS.md is > 50KB, archive it
             if metadata.len() > 50_000 {
-                tracing::info!("[{}] Consolidating memory: LEARNINGS.md is too large ({} bytes).", agent_id, metadata.len());
-                
+                info!(
+                    "[{}] Consolidating memory: LEARNINGS.md is too large ({} bytes). Archiving...",
+                    agent_id,
+                    metadata.len()
+                );
                 let content = fs::read_to_string(&learnings_path).await?;
-                
                 let mut archive = fs::OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(&history_path)
                     .await?;
                 
-                use tokio::io::AsyncWriteExt;
-                archive.write_all(format!("\n--- ARCHIVE SESSION: {} ---\n", chrono::Utc::now()).as_bytes()).await?;
+                archive
+                    .write_all(
+                        format!("\n--- ARCHIVE SESSION: {} ---\n", chrono::Utc::now()).as_bytes(),
+                    )
+                    .await?;
                 archive.write_all(content.as_bytes()).await?;
-                
-                // Clear the current learnings file for fresh start
                 fs::write(&learnings_path, "# Active Learnings\n").await?;
-                
-                tracing::info!("[{}] Consolidation complete. Historical context preserved in HISTORY.md.", agent_id);
             }
         }
-
         Ok(())
     }
 }

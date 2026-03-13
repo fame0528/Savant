@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use savant_core::error::SavantError;
-use savant_core::types::AgentConfig;
 use savant_core::config::Config;
+use savant_core::error::SavantError;
 use savant_core::fs::registry::AgentRegistry;
+use savant_core::types::AgentConfig;
+use std::path::PathBuf;
 
 pub struct AgentManager {
     pub _config: Config,
@@ -12,7 +12,7 @@ pub struct AgentManager {
 impl AgentManager {
     pub fn new(config: Config) -> Self {
         let workspaces_path = PathBuf::from("."); // Project root for discovery
-        Self { 
+        Self {
             _config: config.clone(),
             registry: AgentRegistry::new(workspaces_path, config.agent_defaults),
         }

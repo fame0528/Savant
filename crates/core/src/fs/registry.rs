@@ -85,7 +85,7 @@ impl AgentRegistry {
     /// Loads a single agent from its workspace directory.
     pub fn load_agent(&self, workspace_path: &Path) -> Result<AgentConfig, SavantError> {
         let agent_id = self.ensure_stable_id(workspace_path)?;
-        
+
         // Perfection Loop Optimization: Cache directory entries once to prevent redundant IO
         let dir_entries: Vec<PathBuf> = fs::read_dir(workspace_path)?
             .filter_map(|e| e.ok().map(|entry| entry.path()))
@@ -129,10 +129,14 @@ impl AgentRegistry {
             workspace_path: workspace_path.to_path_buf(),
             identity: Some(identity),
             parent_id: None,
+            session_id: None,
         })
     }
 
-    fn load_env(&self, path: &Path) -> Result<std::collections::HashMap<String, String>, SavantError> {
+    fn load_env(
+        &self,
+        path: &Path,
+    ) -> Result<std::collections::HashMap<String, String>, SavantError> {
         let env_path = path.join(".env");
         let mut vars = std::collections::HashMap::new();
 
@@ -156,8 +160,12 @@ impl AgentRegistry {
         _path: &Path,
         cache: &[PathBuf],
     ) -> Result<std::collections::HashMap<String, String>, SavantError> {
-        let env_path = cache.iter()
-            .find(|p| p.file_name().and_then(|s| s.to_str()).map(|s| s.to_lowercase() == ".env").unwrap_or(false));
+        let env_path = cache.iter().find(|p| {
+            p.file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_lowercase() == ".env")
+                .unwrap_or(false)
+        });
 
         let mut vars = std::collections::HashMap::new();
 
@@ -176,8 +184,14 @@ impl AgentRegistry {
         Ok(vars)
     }
 
-    fn load_identity(&self, _path: &Path, cache: &[PathBuf], soul: &str) -> Result<AgentIdentity, SavantError> {
-        let name = cache.first()
+    fn load_identity(
+        &self,
+        _path: &Path,
+        cache: &[PathBuf],
+        soul: &str,
+    ) -> Result<AgentIdentity, SavantError> {
+        let name = cache
+            .first()
             .and_then(|p| p.parent())
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
@@ -192,12 +206,22 @@ impl AgentRegistry {
 
         // Detect agent image (avatar.png/jpg or agentimg.png)
         let image_file = cache.iter().find(|p| {
-            let name = p.file_name().and_then(|s| s.to_str()).map(|s| s.to_lowercase()).unwrap_or_default();
-            matches!(name.as_str(), "avatar.png" | "avatar.jpg" | "avatar.jpeg" | "agentimg.png")
+            let name = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_lowercase())
+                .unwrap_or_default();
+            matches!(
+                name.as_str(),
+                "avatar.png" | "avatar.jpg" | "avatar.jpeg" | "agentimg.png"
+            )
         });
 
         let image = if let Some(_) = image_file {
-            Some(format!("http://127.0.0.1:8080/api/agents/{}/image", name.to_lowercase()))
+            Some(format!(
+                "http://127.0.0.1:8080/api/agents/{}/image",
+                name.to_lowercase()
+            ))
         } else {
             None
         };
@@ -238,7 +262,7 @@ impl AgentRegistry {
     /// Ensures a stable agent_id by reading/creating agent.json in the workspace.
     fn ensure_stable_id(&self, workspace_path: &Path) -> Result<String, SavantError> {
         let config_path = workspace_path.join("agent.json");
-        
+
         if config_path.exists() {
             let content = fs::read_to_string(&config_path)?;
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -255,8 +279,8 @@ impl AgentRegistry {
             "created_at": chrono::Utc::now().timestamp(),
             "note": "DO NOT DELETE: This file ensures your agent identity remains stable even if you rename the folder."
         });
-        
-        let _ = fs::write(&config_path, serde_json::to_string_pretty(&json).unwrap());
+
+        let _ = fs::write(&config_path, serde_json::to_string_pretty(&json)?);
         Ok(new_id)
     }
 }

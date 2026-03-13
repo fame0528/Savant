@@ -1,0 +1,34 @@
+[package]
+name = "savant_memory"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Storage substrate
+fjall = { workspace = true }
+ruvector-core = { workspace = true }
+
+# Zero-copy serialization
+rkyv = { workspace = true }
+bytecheck = { workspace = true }
+rend = { workspace = true }
+
+# Async & Utilities
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+thiserror = "1.0"
+uuid = { version = "1.8", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+
+# Core types and traits
+savant_core = { path = "../core" }
+
+[dev-dependencies]
+tracing-subscriber = "0.3"
+
+[features]
+default = []
+persist_sync = []
+kani = []

@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
-use std::fs;
 use crate::error::SavantError;
 use crate::types::MemoryEntry;
-use rusqlite::{Connection, params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
+use std::fs;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 pub mod registry;
@@ -25,11 +25,11 @@ impl FileIndexer {
     /// Initializes the database tables and enables WAL mode.
     pub fn init_db(&self) -> Result<(), SavantError> {
         let conn = self.open_connection()?;
-        
+
         // Enable WAL mode for high-concurrency and zero-loss durability
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| SavantError::Unknown(format!("Failed to enable WAL: {}", e)))?;
-        
+
         // Table for semantic memory chunks
         conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_chunks (
@@ -41,7 +41,8 @@ impl FileIndexer {
                 timestamp INTEGER
             )",
             [],
-        ).map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
+        )
+        .map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
 
         // Table for tracking indexed files to avoid redundant processing
         conn.execute(
@@ -51,15 +52,24 @@ impl FileIndexer {
                 last_indexed INTEGER
             )",
             [],
-        ).map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
+        )
+        .map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
 
         Ok(())
     }
 
     /// Indexes a directory recursively.
-    pub async fn index_directory(&self, agent_id: &str, base_path: &Path) -> Result<(), SavantError> {
-        tracing::info!("Indexing directory for agent {}: {}", agent_id, base_path.display());
-        
+    pub async fn index_directory(
+        &self,
+        agent_id: &str,
+        base_path: &Path,
+    ) -> Result<(), SavantError> {
+        tracing::info!(
+            "Indexing directory for agent {}: {}",
+            agent_id,
+            base_path.display()
+        );
+
         for entry in WalkDir::new(base_path).into_iter().filter_map(|e| e.ok()) {
             if entry.file_type().is_file() {
                 let path = entry.path();
@@ -68,7 +78,7 @@ impl FileIndexer {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -82,10 +92,18 @@ impl FileIndexer {
         let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
 
         let conn = self.open_connection()?;
-        
+
         // Check if file has changed
-        let mut stmt = conn.prepare("SELECT hash FROM indexed_files WHERE path = ?").unwrap();
-        let existing_hash: Option<String> = stmt.query_row(params![path.to_str().unwrap()], |row| row.get(0)).optional().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT hash FROM indexed_files WHERE path = ?")
+            .map_err(|e| SavantError::Unknown(format!("DB prepare error: {}", e)))?;
+        
+        let path_str = path.to_str().ok_or_else(|| SavantError::Unknown("Invalid path encoding".to_string()))?;
+        
+        let existing_hash: Option<String> = stmt
+            .query_row(params![path_str], |row| row.get(0))
+            .optional()
+            .map_err(|e| SavantError::Unknown(format!("DB query error: {}", e)))?;
 
         if Some(hash.clone()) == existing_hash {
             return Ok(());
@@ -96,20 +114,25 @@ impl FileIndexer {
         // Update indexed_files
         conn.execute(
             "INSERT OR REPLACE INTO indexed_files (path, hash, last_indexed) VALUES (?, ?, ?)",
-            params![path.to_str().unwrap(), hash, 0], // timestamp 0 for now
-        ).map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
+            params![path_str, hash, 0], // timestamp 0 for now
+        )
+        .map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
 
         // In a real implementation, we would chunk the content and generate embeddings here.
         // For now, we store the whole file as one chunk.
         conn.execute(
             "INSERT INTO memory_chunks (content, file_path, agent_id, timestamp) VALUES (?, ?, ?, ?)",
-            params![content, path.to_str().unwrap(), agent_id, 0],
+            params![content, path_str, agent_id, 0],
         ).map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
 
         Ok(())
     }
 
-    pub async fn watch_and_index(&self, _agent_id: &str, base_path: &Path) -> Result<(), SavantError> {
+    pub async fn watch_and_index(
+        &self,
+        _agent_id: &str,
+        base_path: &Path,
+    ) -> Result<(), SavantError> {
         tracing::info!("Starting filesystem watcher for {}", base_path.display());
         // In a full implementation, we'd use notify here to trigger index_file on modification.
         // For now, we perform a one-time scan.
@@ -126,18 +149,24 @@ impl FileIndexer {
             Ok(c) => c,
             Err(_) => return Vec::new(),
         };
-        let mut stmt = conn.prepare("SELECT id, content, timestamp FROM memory_chunks WHERE content LIKE ?").unwrap();
-        let rows = stmt.query_map(params![format!("%{}%", query)], |row| {
-            Ok(MemoryEntry {
-                id: row.get(0)?,
-                content: row.get(1)?,
-                timestamp: row.get(2)?,
-                category: crate::types::MemoryCategory::Observation,
-                importance: 5,
-                associations: Vec::new(),
-                embedding: None,
-            })
-        }).unwrap();
+        let mut stmt = match conn.prepare("SELECT id, content, timestamp FROM memory_chunks WHERE content LIKE ?") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = match stmt.query_map(params![format!("%{}%", query)], |row| {
+                Ok(MemoryEntry {
+                    id: row.get(0)?,
+                    content: row.get(1)?,
+                    timestamp: row.get(2)?,
+                    category: crate::types::MemoryCategory::Observation,
+                    importance: 5,
+                    associations: Vec::new(),
+                    embedding: None,
+                })
+            }) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
 
         rows.filter_map(|r| r.ok()).collect()
     }

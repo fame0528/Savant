@@ -12,7 +12,7 @@ impl McpServer {
     }
     
     pub async fn start(&self) -> Result<(), SavantError> {
-        todo!("Implement optional local MCP server")
+        Err(SavantError::Unknown("MCP Server implementation is currently disabled in this epoch.".into()))
     }
 }
 

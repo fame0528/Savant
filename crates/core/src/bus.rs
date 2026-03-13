@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use tokio::sync::{Mutex, broadcast};
 use crate::types::EventFrame;
+use std::collections::HashMap;
+use tokio::sync::{broadcast, Mutex};
 
 /// The Nexus Bridge: A shared data bus for the Savant Swarm.
 /// Provides global state synchronization and inter-agent awareness.
@@ -31,16 +31,20 @@ impl NexusBridge {
             .join("\n")
     }
 
-    pub async fn publish(&self, channel: &str, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn publish(
+        &self,
+        channel: &str,
+        message: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let event = EventFrame {
             event_type: channel.to_string(),
             payload: message.to_string(),
         };
-        
+
         if let Err(_) = self.event_bus.send(event) {
             return Err("Failed to publish to event bus".into());
         }
-        
+
         Ok(())
     }
 

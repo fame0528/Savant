@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use clap::Parser;
 use savant_core::config::Config;
 use savant_core::crypto::AgentKeyPair;
@@ -41,7 +42,7 @@ fn print_phase(num: u8, desc: &str) {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     print_splash();
     
     print_phase(0, "SYSTEM INITIALIZATION");
@@ -129,7 +130,9 @@ async fn main() -> anyhow::Result<()> {
     }
     
     print_phase(6, "GATEWAY & ORCHESTRATION");
-    let swarm = Arc::new(SwarmController::new(discovered_agents, storage.clone(), manager.clone(), nexus.clone()));
+    let root_authority = _master_key.get_verifying_key().context("Failed to derive root authority")?;
+    let signing_key = _master_key.get_signing_key().context("Failed to derive signing key")?;
+    let swarm = Arc::new(SwarmController::new(discovered_agents, storage.clone(), manager.clone(), nexus.clone(), root_authority, signing_key)?);
     
     let gateway_nexus = nexus.clone();
     let gateway_config = config.gateway.clone();

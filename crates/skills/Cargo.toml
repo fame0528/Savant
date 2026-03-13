@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 savant_core = { path = "../core" }
-wasmtime = "19.0"
-wasmtime-wasi = { version = "19.0", features = ["preview1"] }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
 bollard = "0.16"
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -18,3 +18,9 @@ thiserror = { workspace = true }
 futures = { workspace = true }
 walkdir = "2.4"
 uuid = { version = "1.22.0", features = ["v4"] }
+async-trait = "0.1"
+wassette = { git = "https://github.com/microsoft/wassette", branch = "main" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.3.0"
+caps = "0.5.5"

@@ -1,0 +1,23 @@
+[package]
+name = "savant_cognitive"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ndarray = { workspace = true, optional = true }
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+thiserror = "1.0"
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+rkyv = { version = "0.8.15", features = ["bytecheck"] }
+bytecheck = "0.8.0"
+
+[features]
+default = []
+dsp = []
+ml-inference = ["candle-core", "candle-nn"]
+
+[dev-dependencies]
+tracing-subscriber = "0.3"

@@ -31,7 +31,7 @@ impl SessionLane {
     ) {
         tokio::spawn(async move {
             while let Some(frame) = rx.recv().await {
-                let _permit = concurrency_limit.acquire().await.unwrap();
+                let _permit = concurrency_limit.acquire().await.expect("Concurrency semaphore closed");
                 tracing::debug!("Processing frame for session: {}", frame.session_id.0);
                 
                 // 1. Process Global Directives

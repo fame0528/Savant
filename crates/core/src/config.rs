@@ -1,10 +1,13 @@
-use figment::{Figment, providers::{Format, Toml, Env}};
+use crate::error::SavantError;
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
+use notify::{Event, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use notify::{Watcher, RecursiveMode, Event};
-use crate::error::SavantError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -108,7 +111,9 @@ impl Default for Config {
 impl Config {
     /// Loads the configuration from files and environment.
     pub fn load() -> Result<Self, SavantError> {
-        let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".to_string());
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string());
         let config_path = PathBuf::from(home).join(".savant").join("savant.toml");
 
         Figment::new()
@@ -129,18 +134,24 @@ impl Config {
                     let _ = tx.blocking_send(());
                 }
             }
-        }).map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        })
+        .map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
-        watcher.watch(&path, RecursiveMode::NonRecursive).map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        watcher
+            .watch(&path, RecursiveMode::NonRecursive)
+            .map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
         tokio::spawn(async move {
             let _watcher = watcher; // Keep watcher alive
             while let Some(()) = rx.recv().await {
                 tracing::info!("Config changed, reloading...");
                 if let Ok(new_config) = Self::load() {
-                    let mut lock = config_lock.write().unwrap();
-                    *lock = new_config;
-                    tracing::info!("Config reloaded successfully.");
+                    if let Ok(mut lock) = config_lock.write() {
+                        *lock = new_config;
+                        tracing::info!("Config reloaded successfully.");
+                    } else {
+                        tracing::error!("Config lock poisoned, reload failed.");
+                    }
                 } else {
                     tracing::error!("Failed to reload config.");
                 }

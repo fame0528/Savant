@@ -29,7 +29,10 @@ pub async fn authenticate(frame: &RequestFrame) -> Result<AuthenticatedSession, 
     let timestamp = frame.timestamp.ok_or_else(|| SavantError::AuthError("Missing timestamp".to_string()))?;
     
     // Simple replay protection
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
     if (now - timestamp).abs() > 300 {
         return Err(SavantError::AuthError("Timestamp expired".to_string()));
     }

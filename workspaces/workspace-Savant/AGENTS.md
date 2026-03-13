@@ -1,4 +1,4 @@
-# Prometheus Operating Instructions
+# Savant Operating Instructions
 
 ## Core Priority
 

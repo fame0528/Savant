@@ -44,6 +44,26 @@ impl AgentKeyPair {
         })
     }
 
+    pub fn get_verifying_key(&self) -> Result<VerifyingKey, CryptoError> {
+        let public_bytes = hex::decode(&self.public_key).map_err(|_| CryptoError::InvalidKeyFormat)?;
+        if public_bytes.len() != 32 {
+            return Err(CryptoError::InvalidKeyFormat);
+        }
+        let mut public_key_array = [0u8; 32];
+        public_key_array.copy_from_slice(&public_bytes);
+        VerifyingKey::from_bytes(&public_key_array).map_err(|_| CryptoError::InvalidKeyFormat)
+    }
+
+    pub fn get_signing_key(&self) -> Result<SigningKey, CryptoError> {
+        let secret_bytes = hex::decode(&self.secret_key).map_err(|_| CryptoError::InvalidKeyFormat)?;
+        if secret_bytes.len() != 32 {
+            return Err(CryptoError::InvalidKeyFormat);
+        }
+        let mut secret_key_array = [0u8; 32];
+        secret_key_array.copy_from_slice(&secret_bytes);
+        Ok(SigningKey::from_bytes(&secret_key_array))
+    }
+
     pub fn save_to_file(&self, path: &PathBuf) -> Result<(), CryptoError> {
         let json = serde_json::to_string_pretty(self)?;
         fs::write(path, json)?;

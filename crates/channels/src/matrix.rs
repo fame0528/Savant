@@ -1,11 +1,10 @@
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
 use savant_core::types::EventFrame;
-use std::pin::Pin;
-use futures::future::Future;
 use matrix_sdk::{Client, config::SyncSettings};
 use std::sync::Arc;
 use tracing::{info, error};
+use async_trait::async_trait;
 
 use crate::pool::InboxPool;
 
@@ -73,24 +72,21 @@ impl MatrixAdapter {
     }
 }
 
+#[async_trait]
 impl ChannelAdapter for MatrixAdapter {
     fn name(&self) -> &str {
         "matrix"
     }
 
-    fn send_event(&self, event: EventFrame) -> Pin<Box<dyn Future<Output = Result<(), SavantError>> + Send>> {
-        let client = self.client.clone();
-        Box::pin(async move {
-            // Placeholder: Routing logic for room-specific events
-            info!("Matrix sending event: {:?}", event.event_type);
-            Ok(())
-        })
+    async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        let _client = self.client.clone();
+        // Placeholder: Routing logic for room-specific events
+        info!("Matrix sending event: {:?}", event.event_type);
+        Ok(())
     }
 
-    fn handle_event(&self, event: EventFrame) -> Pin<Box<dyn Future<Output = Result<(), SavantError>> + Send>> {
-        Box::pin(async move {
-            info!("Matrix incoming event: {:?}", event.event_type);
-            Ok(())
-        })
+    async fn handle_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        info!("Matrix incoming event: {:?}", event.event_type);
+        Ok(())
     }
 }

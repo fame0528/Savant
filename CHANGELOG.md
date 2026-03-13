@@ -7,7 +7,10 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Perfection Loop Protocol**: Iterative refinement engine for AAA-quality code.
-- **Perfection Loop Iteration 01**: Strategic roadmap for Asynchronous Substrate and Core Parity.
+- **Perfection Loop Iteration 01**: Core Traits Refactor (`LlmProvider`, `MemoryBackend`, `Tool`).
+- **Perfection Loop Iteration 02**: Dual-Engine Skill Sandbox (Wasm/Native) & Two-Stage Discovery.
+- **Capability-Gated Tools**: Strict declaration of `fs` and `network` permissions for all skills.
+- **Asynchronous Substrate**: Migration to standardized `async-trait` for all core components.
 - **Swarm Sync (Hot Reloading)**: Live agent reloading using `notify` and `SwarmWatcher`.
 - **Stable Agent IDs**: Persistent UUID-based identification via `agent.json`.
 - **Dynamic SVG Avatars**: Fallback avatar generation in the gateway.

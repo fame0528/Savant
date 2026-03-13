@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub mod memory;
+pub use memory::AgentMessage;
+
 /// Session ID type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct SessionId(pub String);
@@ -52,6 +55,28 @@ pub enum ChatRole {
     Assistant,
 }
 
+impl std::fmt::Display for ChatRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChatRole::User => write!(f, "user"),
+            ChatRole::Assistant => write!(f, "assistant"),
+            ChatRole::System => write!(f, "system"),
+        }
+    }
+}
+
+impl std::str::FromStr for ChatRole {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "user" => Ok(ChatRole::User),
+            "assistant" => Ok(ChatRole::Assistant),
+            "system" => Ok(ChatRole::System),
+            _ => Err(format!("Invalid ChatRole: {}", s)),
+        }
+    }
+}
+
 /// A standardized chat message for LLM context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -88,7 +113,7 @@ pub enum ModelProvider {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentIdentity {
     pub name: String,
-    pub soul: String,              // SOUL.md: Persona & Tone
+    pub soul: String,                 // SOUL.md: Persona & Tone
     pub instructions: Option<String>, // AGENTS.md: Rules & Operating instructions
     pub user_context: Option<String>, // USER.md: Who the user is
     pub metadata: Option<String>,     // IDENTITY.md: Name, vibe, emoji
@@ -113,8 +138,8 @@ pub struct AgentConfig {
     pub workspace_path: std::path::PathBuf,
     pub identity: Option<AgentIdentity>,
     pub parent_id: Option<String>,
+    pub session_id: Option<String>,
 }
-
 
 /// Memory Category for specialized retrieval
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -134,7 +159,7 @@ pub struct MemoryEntry {
     pub timestamp: i64,
     pub content: String,
     pub category: MemoryCategory,
-    pub importance: u8,          // 1-10 ranking for consolidation
+    pub importance: u8,            // 1-10 ranking for consolidation
     pub associations: Vec<String>, // Tags or linked concept IDs
     pub embedding: Option<Vec<f32>>,
 }
@@ -160,3 +185,39 @@ pub struct HeartbeatTask {
     pub next_run: Option<i64>,
 }
 
+/// Represents the execution mode defined in the skill's manifest
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "target")]
+pub enum ExecutionMode {
+    /// Modern, high-performance OCI WebAssembly Component
+    WasmComponent(String),
+    /// Legacy OpenClaw bash/python script requiring Landlock fallback
+    LegacyNative(String),
+}
+
+/// Explicit permission declarations to prevent silent data exfiltration
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct CapabilityGrants {
+    #[serde(default)]
+    pub fs_read: std::collections::HashSet<std::path::PathBuf>,
+    #[serde(default)]
+    pub fs_write: std::collections::HashSet<std::path::PathBuf>,
+    #[serde(default)]
+    pub network_allow: std::collections::HashSet<String>,
+    #[serde(default)]
+    pub requires_env: Vec<String>,
+}
+
+/// The parsed representation of an OpenClaw SKILL.md file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillManifest {
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub execution_mode: ExecutionMode,
+    #[serde(default)]
+    pub capabilities: CapabilityGrants,
+    /// The raw markdown instructions to be injected into the LLM context
+    #[serde(skip_deserializing, default)]
+    pub instructions: String,
+}

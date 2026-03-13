@@ -104,7 +104,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
             event_type: "agents.discovered".to_string(),
             payload: agents_json,
         };
-        let msg = serde_json::to_string(&event).unwrap();
+        let msg = serde_json::to_string(&event).expect("Event serializable");
         let _ = sender.send(Message::Text(format!("EVENT:{}", msg))).await;
     }
 
@@ -126,7 +126,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     let out_tx = outgoing_tx.clone();
     let mut lane_fwd_task = tokio::spawn(async move {
         while let Some(response) = res_rx.recv().await {
-            let msg = serde_json::to_string(&response).unwrap();
+            let msg = serde_json::to_string(&response).expect("Response serializable");
             let _ = out_tx.send(Message::Text(msg)).await;
         }
     });
@@ -152,7 +152,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                 }
                 _ => {
                     // Forward all other significant swarm events
-                    let msg = serde_json::to_string(&event).unwrap();
+                    let msg = serde_json::to_string(&event).expect("Event serializable");
                     let _ = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await;
                 }
             }
@@ -181,8 +181,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                 // Handle special HISTORY_REQUEST
                 if text == "HISTORY_REQUEST" {
                     if let Ok(history) = storage.get_history("global", 50) {
-                        let history_json = serde_json::to_string(&history).unwrap();
+                    if let Ok(history_json) = serde_json::to_string(&history) {
                         let _ = out_tx.send(Message::Text(format!("HISTORY:{}", history_json))).await;
+                    }
                     }
                     continue;
                 }
@@ -248,7 +249,7 @@ async fn agent_image_handler(
                     .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                     .header(header::CACHE_CONTROL, "no-cache, no-store")
                     .body(axum::body::Body::from(content))
-                    .unwrap();
+                    .expect("Failed to build image response");
             }
         }
     }
@@ -270,7 +271,7 @@ async fn agent_image_handler(
         .header(header::CONTENT_TYPE, "image/svg+xml")
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(axum::body::Body::from(svg))
-        .unwrap()
+        .expect("Failed to build static SVG response")
 }
 
 #[cfg(test)]

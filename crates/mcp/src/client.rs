@@ -12,7 +12,7 @@ impl McpClientPool {
     }
 
     pub async fn execute_tool(&self, _tool_name: &str, _args: &str) -> Result<String, SavantError> {
-        todo!("Execute a tool via the MCP SDK rmcp::client::Client")
+        Err(SavantError::Unknown("MCP Client implementation is currently disabled in this epoch.".into()))
     }
 }
 

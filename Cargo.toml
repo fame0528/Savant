@@ -8,6 +8,11 @@ members = [
     "crates/channels",
     "crates/canvas",
     "crates/cli",
+    "crates/ipc",
+    "crates/cognitive",
+    "crates/memory", "crates/panopticon",
+    "crates/security",
+    "crates/echo",
 ]
 resolver = "2"
 
@@ -16,10 +21,39 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1.0", features = ["full"] }
+rusqlite = { version = "0.38.0", features = ["chrono"] }
 futures = "0.3"
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws", "macros"] }
+fjall = "3.1.0"
+rkyv = { version = "0.8.15", features = ["bytecheck", "little_endian", "unaligned"] }
+ruvector-core = "2.0.5"
+bytecheck = "0.8.0"
+rend = "0.5"
+half = { version = "2.7", features = ["rand_distr"] }
+savant_memory = { path = "crates/memory" }
+
+# Zero-Copy IPC (Atlas Step 4)
+iceoryx2 = "0.8"
+iceoryx2-bb = "0.8"
+wasmtime = "36.0.6"
+wasmtime-wasi = { version = "36.0.6", features = ["preview1"] }
+
+# Cognitive Acceleration (Atlas Step 4)
+ndarray = "0.15"
+candle-core = "0.8.0"
+candle-nn = "0.8.0"
+
+# Utility
+ctrlc = "3.4"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+opentelemetry = "0.21"
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.22"
+hex = "0.4"
+rand = "0.8"
 
 [profile.release]
 lto = true

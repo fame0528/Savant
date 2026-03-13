@@ -1,5 +1,5 @@
-use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
 use crate::error::SavantError;
+use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -13,11 +13,11 @@ impl EmbeddingService {
     /// Initializes the embedding service with the default AllMiniLML6V2 model.
     pub fn new() -> Result<Self, SavantError> {
         let model = TextEmbedding::try_new(
-            InitOptions::new(EmbeddingModel::AllMiniLML6V2)
-                .with_show_download_progress(true)
-        ).map_err(|e| SavantError::Unknown(format!("Embedding init error: {}", e)))?;
+            InitOptions::new(EmbeddingModel::AllMiniLML6V2).with_show_download_progress(true),
+        )
+        .map_err(|e| SavantError::Unknown(format!("Embedding init error: {}", e)))?;
 
-        Ok(Self { 
+        Ok(Self {
             model: Mutex::new(model),
             cache: Mutex::new(HashMap::new()),
         })
@@ -26,22 +26,23 @@ impl EmbeddingService {
     /// Generates an embedding for the given text, using cache if available.
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = self.cache.lock().expect("Cache lock poisoned");
             if let Some(embedding) = cache.get(text) {
                 return Ok(embedding.clone());
             }
         }
 
         let embeddings = {
-            let mut model = self.model.lock().unwrap();
-            model.embed(vec![text], None)
+            let mut model = self.model.lock().expect("Model lock poisoned");
+            model
+                .embed(vec![text], None)
                 .map_err(|e| SavantError::Unknown(format!("Embedding error: {}", e)))?
         };
-        
+
         let result = embeddings[0].clone();
-        
+
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.lock().expect("Cache lock poisoned");
             cache.insert(text.to_string(), result.clone());
         }
 

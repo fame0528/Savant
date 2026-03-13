@@ -1,4 +1,4 @@
 // A2UI server axum routes
 pub async fn a2ui_handler() {
-    todo!("Implement A2UI WebSocket handler")
+    tracing::debug!("A2UI WebSocket handler invoked (not implemented in this epoch).");
 }

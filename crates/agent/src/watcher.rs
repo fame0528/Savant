@@ -1,10 +1,10 @@
+use crate::manager::AgentManager;
+use crate::swarm::SwarmController;
+use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
+use savant_core::bus::NexusBridge;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
-use crate::swarm::SwarmController;
-use crate::manager::AgentManager;
-use savant_core::bus::NexusBridge;
 
 pub struct SwarmWatcher {
     swarm: Arc<SwarmController>,
@@ -13,29 +13,45 @@ pub struct SwarmWatcher {
 }
 
 impl SwarmWatcher {
-    pub fn new(swarm: Arc<SwarmController>, manager: Arc<AgentManager>, nexus: Arc<NexusBridge>) -> Self {
-        Self { swarm, manager, nexus }
+    pub fn new(
+        swarm: Arc<SwarmController>,
+        manager: Arc<AgentManager>,
+        nexus: Arc<NexusBridge>,
+    ) -> Self {
+        Self {
+            swarm,
+            manager,
+            nexus,
+        }
     }
 
     pub async fn start(self: Arc<Self>) -> anyhow::Result<()> {
         let (tx, mut rx) = mpsc::channel(32);
-        
-        let mut debouncer = new_debouncer(std::time::Duration::from_millis(1000), move |res: DebounceEventResult| {
-            if let Ok(events) = res {
-                for event in events {
-                    let _ = tx.blocking_send(event.path);
+
+        let mut debouncer = new_debouncer(
+            std::time::Duration::from_millis(1000),
+            move |res: DebounceEventResult| {
+                if let Ok(events) = res {
+                    for event in events {
+                        let _ = tx.blocking_send(event.path);
+                    }
                 }
-            }
-        })?;
+            },
+        )?;
 
         let workspaces = PathBuf::from("./workspaces");
         if !workspaces.exists() {
             let _ = std::fs::create_dir_all(&workspaces);
         }
-        
-        debouncer.watcher().watch(&workspaces, RecursiveMode::Recursive)?;
 
-        tracing::info!("🔭 SwarmWatcher activated: Monitoring {}...", workspaces.display());
+        debouncer
+            .watcher()
+            .watch(&workspaces, RecursiveMode::Recursive)?;
+
+        tracing::info!(
+            "🔭 SwarmWatcher activated: Monitoring {}...",
+            workspaces.display()
+        );
 
         // Keep debouncer alive
         let _debouncer = debouncer;
@@ -49,13 +65,13 @@ impl SwarmWatcher {
                 }
 
                 tracing::info!("🔄 Hot-reload detected: {}", agent_workspace.display());
-                
+
                 // Re-discover and re-spawn
                 if agent_workspace.exists() {
                     match self.manager.registry.load_agent(&agent_workspace) {
                         Ok(agent_cfg) => {
                             self.swarm.spawn_agent(agent_cfg).await;
-                            
+
                             // Re-broadcast discovery
                             if let Ok(agents) = self.manager.discover_agents().await {
                                 let discovery_event = serde_json::json!({
@@ -68,12 +84,24 @@ impl SwarmWatcher {
                                         "image": a.identity.as_ref().and_then(|i| i.image.clone())
                                     })).collect::<Vec<_>>()
                                 });
-                                let _ = self.nexus.publish("agents.discovered", &discovery_event.to_string()).await;
-                                self.nexus.update_state("system.agents".to_string(), discovery_event.to_string()).await;
+                                let _ = self
+                                    .nexus
+                                    .publish("agents.discovered", &discovery_event.to_string())
+                                    .await;
+                                self.nexus
+                                    .update_state(
+                                        "system.agents".to_string(),
+                                        discovery_event.to_string(),
+                                    )
+                                    .await;
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("⚠️ Failed to reload agent from {}: {}", agent_workspace.display(), e);
+                            tracing::warn!(
+                                "⚠️ Failed to reload agent from {}: {}",
+                                agent_workspace.display(),
+                                e
+                            );
                         }
                     }
                 } else {
@@ -85,7 +113,7 @@ impl SwarmWatcher {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -93,7 +121,11 @@ impl SwarmWatcher {
         let mut current = path;
         // Search upwards until we find a directory inside 'workspaces'
         while let Some(parent) = current.parent() {
-            if parent.file_name().map(|n| n.to_string_lossy() == "workspaces").unwrap_or(false) {
+            if parent
+                .file_name()
+                .map(|n| n.to_string_lossy() == "workspaces")
+                .unwrap_or(false)
+            {
                 return Some(current.to_path_buf());
             }
             current = parent;

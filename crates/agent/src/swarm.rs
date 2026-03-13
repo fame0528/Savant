@@ -10,9 +10,9 @@ use savant_core::bus::NexusBridge;
 use savant_core::db::Storage;
 use savant_core::traits::{LlmProvider, MemoryBackend, Tool};
 use savant_ipc::{SwarmBlackboard, CollectiveBlackboard};
-// #[cfg(kani)]
-// pub mod proofs;
-// use savant_security::{SecurityEnclave, SecurityError};
+#[cfg(kani)]
+// pub mod proofs; // Placeholder for future agent-specific proofs
+use savant_security::{SecurityEnclave, SecurityError};
 use savant_core::error::SavantError;
 use savant_core::types::{AgentConfig, ModelProvider};
 use savant_core::utils::parsing;

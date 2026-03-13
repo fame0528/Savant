@@ -21,9 +21,9 @@ walkdir = "2.5"
 blake3 = "1.5"
 bytes = "1.10"
 regex = "1.11"
-tokio.workspace = true
+tokio = { workspace = true }
 uuid = { version = "1.0", features = ["v4"] }
-rand.workspace = true
+rand = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 hex = "0.4"
 toml = "0.8"
@@ -31,7 +31,7 @@ sha2 = "0.10"
 dotenv = "0.15"
 ed25519-dalek = { version = "2.0", features = ["rand_core"] }
 signature = "2.0"
-fjall.workspace = true
-rkyv.workspace = true
-ruvector-core.workspace = true
-bytecheck.workspace = true
+fjall = { workspace = true }
+rkyv = { workspace = true }
+ruvector-core = { workspace = true }
+bytecheck = { workspace = true }

@@ -8,7 +8,7 @@
 //! - Tool pair integrity check is sound (no false negatives)
 //! - Memory bounds are never violated
 
-#[cfg(feature = "kani")]
+#[cfg(kani)]
 mod verification {
     use super::super::models::AgentMessage;
 

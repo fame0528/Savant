@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use savant_core::types::{AgentConfig, ChatMessage, ChatChunk, ModelProvider, AgentIdentity};
 use savant_core::traits::LlmProvider;
 use savant_core::error::SavantError;
@@ -8,7 +7,7 @@ use savant_core::bus::NexusBridge;
 use savant_core::db::Storage;
 use savant_agent::manager::AgentManager;
 use savant_core::config::Config;
-use std::path::PathBuf;
+use savant_core::config::Config;
 use futures::stream::{self, Stream};
 use std::pin::Pin;
 use async_trait::async_trait;
@@ -58,7 +57,6 @@ async fn test_production_swarm_initialization_50_agents() {
     storage.init_schema().expect("Failed to init schema");
     
     let mut config = Config::default();
-    config.agent_defaults.workspace_root = workspace_path.clone();
     let manager = Arc::new(AgentManager::new(config));
 
     // 4. Create 50 agents
@@ -146,4 +144,60 @@ async fn test_agent_panic_recovery_logic() {
     
     let dead = controller.check_swarm_health().await;
     assert!(dead.contains(&"unstable_agent".to_string()));
+}
+
+#[tokio::test]
+async fn test_500_agent_initialization_scaling() {
+    // Audit-grade scaling verification
+    let base_temp = std::env::temp_dir().join(format!("savant_scale_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&base_temp).unwrap();
+    
+    let storage_path = base_temp.join("scale.db");
+    
+    let mut rng = rand::thread_rng();
+    let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+    let root_authority = signing_key.verifying_key();
+
+    let storage = Arc::new(Storage::new(storage_path));
+    storage.init_schema().unwrap();
+    
+    let nexus = Arc::new(NexusBridge::new());
+    let manager = Arc::new(AgentManager::new(Config::default()));
+
+    let mut agents = Vec::new();
+    for i in 0..500 {
+        let agent_id = format!("scale_agent_{}", i);
+        agents.push(AgentConfig {
+            agent_id: agent_id.clone(),
+            agent_name: agent_id,
+            model_provider: ModelProvider::OpenRouter,
+            api_key: Some("mock".to_string()),
+            env_vars: HashMap::new(),
+            system_prompt: "Scale Test".to_string(),
+            model: None,
+            heartbeat_interval: 10,
+            allowed_skills: Vec::new(),
+            workspace_path: base_temp.join(format!("agent_{}", i)),
+            identity: None,
+            parent_id: None,
+            session_id: Some("scale-session".to_string()),
+        });
+    }
+
+    let controller = SwarmController::new(
+        agents,
+        storage,
+        manager,
+        nexus,
+        root_authority,
+        signing_key,
+    ).expect("Failed to create Scale Controller");
+
+    controller.ignite().await;
+    
+    // Scaling target: <5s for 500 agents on standard SSD
+    tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
+    
+    let dead = controller.check_swarm_health().await;
+    assert!(dead.is_empty(), "Scaling failure: agents failed to ignite at 500 count: {:?}", dead);
 }

@@ -16,15 +16,19 @@ Welcome to Savant v1.5.0. This guide outlines the steps to migrate your legacy 1
 ## 2. Migration Steps
 
 ### Step 1: Identity Conversion
+
 Savant's `IDENTITY.md` and `SOUL.md` files follow a stricter format for AAA quality.
+
 - Legacy `persona.txt` → Rename to `SOUL.md`
 - Ensure `SOUL.md` is between 150-200 lines (AAA requirement).
 - Use the adapter in `savant_core::migration` for automated parsing.
 
 ### Step 2: Config Mapping
+
 Your `agent.json` must be mapped to the new `savant.json` structure.
 
 **Legacy Shape:**
+
 ```json
 {
   "id": "agent-001",
@@ -34,6 +38,7 @@ Your `agent.json` must be mapped to the new `savant.json` structure.
 ```
 
 **Savant Shape:**
+
 ```json
 {
   "agent_id": "agent-001",
@@ -44,10 +49,13 @@ Your `agent.json` must be mapped to the new `savant.json` structure.
 ```
 
 ### Step 3: Injection Points
+
 If you have legacy Python tools, wrap them using the `LegacyNative` adapter in Savant's `AgentLoop`. This allows them to run within the new IPC substrate while maintaining backward compatibility.
 
 ## 3. Automated Bridge
+
 Use the following command to auto-convert a legacy workspace:
+
 ```bash
 savant --migrate --from ./legacy_project --to ./savant_workspace
 ```

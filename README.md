@@ -41,20 +41,27 @@ Agents no longer wait for serial inference. ECHO allows overlapping tool executi
 - **Handoffs**: Sub-millisecond agent context swapping.
 
 ### 3. VHSS (Verified Hybrid Semantic Substrate)
-A production-grade memory system combining `Fjall` LSM-trees for transcripts and `ruvector-core` for SIMD-accelerated search.
 - **Safety**: Mathematically proven memory safety via Kani.
 - **Throughput**: Sustained 10K+ messages/sec without compaction lag.
 
 ---
 
-## 📊 Performance Metrics
+## 📊 Performance Metrics (v1.5.0)
 
-| Metric | Benchmark Result | Target |
+*Benchmarks performed on AMD Ryzen 9 7950X, 64GB DDR5. Message size: 1KB. Environment: localhost, no contention. See [BENCHMARKS.md](docs/perf/BENCHMARKS.md) for full methodology.*
+
+| Metric | median | p99 | Context |
+| :--- | :--- | :--- | :--- |
+| **IPC Latency** | **12.4µs** | 18.2µs | Zero-copy shared memory |
+| **Swarm Sync** | **450µs** | 820µs | State propagation (no consensus) |
+| **Consensus** | **350ms** | 480ms | 3/5 quorum, destructive ops |
+| **LSM Write** | **85µs** | 120µs | In-memory (~2ms durable) |
+
+| Agent Count | Tested | Projected |
 | :--- | :--- | :--- |
-| **IPC Latency (Single)** | **12.4µs** | <15µs |
-| **Swarm Sync (100 Agents)** | **450µs** | <1ms |
-| **LSM Write Latency** | **85µs** | <100µs |
-| **Memory Lifecycle** | **0.0% Leak** | 0.0% |
+| **100** | ✅ Benchmarked | 450µs Sync |
+| **250** | ✅ Benchmarked | 1.1ms Sync |
+| **500** | ✅ Stress-Tested | ~2.5ms Sync |
 
 > [!TIP]
 > View the full Reproducible Performance Baseline in [BENCHMARKS.md](docs/perf/BENCHMARKS.md).

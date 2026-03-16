@@ -37,6 +37,7 @@ impl From<LegacyOpenClawConfig> for AgentConfig {
             identity: None,
             parent_id: None,
             session_id: None,
+            proactive: crate::config::ProactiveConfig::default(),
         }
     }
 }
@@ -63,6 +64,8 @@ impl From<LegacyMessage> for ChatMessage {
             sender: Some(legacy.sender),
             recipient: None,
             agent_id: None,
+            session_id: None,
+            channel: crate::types::AgentOutputChannel::Chat,
         }
     }
 }

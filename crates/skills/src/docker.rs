@@ -11,11 +11,11 @@ pub struct DockerSkillExecutor {
 
 impl DockerSkillExecutor {
     /// Prepares Docker integration via `bollard`.
-    pub fn new(image_name: String) -> Self {
+    pub fn new(image_name: String) -> Result<Self, SavantError> {
         let docker = Docker::connect_with_local_defaults()
-            .expect("Docker is required for DockerSkillExecutor; ensure it is running and accessible");
+            .map_err(|e| SavantError::Unknown(format!("Docker connection failed: {}", e)))?;
         tracing::info!("Docker executor initialized for image: {}", image_name);
-        Self { docker, image_name }
+        Ok(Self { docker, image_name })
     }
 }
 

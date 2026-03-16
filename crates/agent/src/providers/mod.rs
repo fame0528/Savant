@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 pub mod mgmt;
 use async_stream::stream;
 use async_trait::async_trait;
@@ -27,8 +28,7 @@ where
                     for line in text.lines() {
                         let line = line.trim();
                         if line.is_empty() { continue; }
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
+                        if let Some(data) = line.strip_prefix("data: ") {
                             if data == "[DONE]" { break; }
 
                             if let Ok(json) = serde_json::from_str::<Value>(data) {
@@ -40,6 +40,8 @@ where
                                             agent_id: agent_id.clone(),
                                             content: content.to_string(),
                                             is_final: false,
+                                            session_id: None,
+                                            channel: savant_core::types::AgentOutputChannel::Chat,
                                         });
                                     }
                                 }
@@ -54,7 +56,9 @@ where
             agent_name: agent_name.clone(),
             agent_id: agent_id.clone(),
             content: String::new(),
-            is_final: true
+            is_final: true,
+            session_id: None,
+            channel: savant_core::types::AgentOutputChannel::Chat,
         });
     })
 }
@@ -88,7 +92,7 @@ impl LlmProvider for OpenAiProvider {
             .map_err(|e| SavantError::AuthError(format!("OpenAI request failed: {}", e)))?;
 
         let stream = response.bytes_stream().map(|res| {
-            res.map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            res.map_err(|e| SavantError::IoError(std::io::Error::other(e)))
         });
 
         Ok(openai_stream_to_chunks(
@@ -130,7 +134,7 @@ impl LlmProvider for OpenRouterProvider {
             .map_err(|e| SavantError::AuthError(format!("OpenRouter request failed: {}", e)))?;
 
         let stream = response.bytes_stream().map(|res| {
-            res.map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            res.map_err(|e| SavantError::IoError(std::io::Error::other(e)))
         });
 
         Ok(openai_stream_to_chunks(
@@ -172,7 +176,7 @@ impl LlmProvider for AnthropicProvider {
             .map_err(|e| SavantError::AuthError(format!("Anthropic request failed: {}", e)))?;
 
         let stream = response.bytes_stream().map(|res| {
-            res.map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            res.map_err(|e| SavantError::IoError(std::io::Error::other(e)))
         });
 
         // Anthropic has a different format, but for brevity I will use a simple mapper here.
@@ -213,7 +217,7 @@ impl LlmProvider for OllamaProvider {
             .map_err(|e| SavantError::AuthError(format!("Ollama request failed: {}", e)))?;
 
         let stream = response.bytes_stream().map(|res| {
-            res.map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            res.map_err(|e| SavantError::IoError(std::io::Error::other(e)))
         });
 
         let agent_name = self.agent_name.clone();
@@ -232,6 +236,8 @@ impl LlmProvider for OllamaProvider {
                                     agent_id: agent_id.clone(),
                                     content: content.to_string(),
                                     is_final: false,
+                                    session_id: None,
+                                    channel: savant_core::types::AgentOutputChannel::Chat,
                                 });
                             }
                         }
@@ -240,10 +246,12 @@ impl LlmProvider for OllamaProvider {
                 }
             }
             yield Ok(ChatChunk {
-                agent_name: agent_name,
-                agent_id: agent_id,
+                agent_name,
+                agent_id,
                 content: String::new(),
-                is_final: true
+                is_final: true,
+                session_id: None,
+                channel: savant_core::types::AgentOutputChannel::Chat,
             });
         }))
     }
@@ -278,7 +286,7 @@ impl LlmProvider for GroqProvider {
             .map_err(|e| SavantError::AuthError(format!("Groq request failed: {}", e)))?;
 
         let stream = response.bytes_stream().map(|res| {
-            res.map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            res.map_err(|e| SavantError::IoError(std::io::Error::other(e)))
         });
 
         Ok(openai_stream_to_chunks(

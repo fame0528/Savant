@@ -12,6 +12,7 @@ use tracing::{info, instrument};
 /// 
 /// This implements the "Perfection Loop" requirements by ensuring that every learning
 /// and reflection is also captured in human-readable Markdown files in the agent's workspace.
+#[derive(Clone)]
 pub struct FileLoggingMemoryBackend {
     inner: Arc<dyn MemoryBackend>,
     workspace_path: PathBuf,
@@ -26,12 +27,25 @@ impl FileLoggingMemoryBackend {
         }
     }
 
-    /// Records a new learning or correction to LEARNINGS.md.
+    /// Records a new learning or correction to LEARNINGS.jsonl.
     #[instrument(skip(self), fields(agent_id))]
-    pub async fn record_learning(&self, agent_id: &str, learning: &str) -> Result<(), SavantError> {
-        let path = self.workspace_path.join("LEARNINGS.md");
-        let timestamp = chrono::Utc::now();
-        let content = format!("\n### Learning ({})\n{}\n", timestamp, learning);
+    pub async fn record_learning(&self, agent_id: &str, learning_text: &str) -> Result<(), SavantError> {
+        let path = self.workspace_path.join("LEARNINGS.jsonl");
+        
+        // Try to parse as structured EmergentLearning, fallback to unstructured wrapper
+        let entry_json = if let Ok(mut entry) = serde_json::from_str::<savant_core::learning::EmergentLearning>(learning_text) {
+            // Ensure agent_id is consistent
+            entry.agent_id = agent_id.to_string();
+            serde_json::to_string(&entry).unwrap_or_else(|_| learning_text.to_string())
+        } else {
+            let entry = savant_core::learning::EmergentLearning::new(
+                agent_id.to_string(),
+                savant_core::learning::LearningCategory::Insight,
+                learning_text.to_string(),
+                5, // Default significance for legacy calls
+            );
+            serde_json::to_string(&entry).unwrap_or_else(|_| learning_text.to_string())
+        };
 
         let mut file = fs::OpenOptions::new()
             .create(true)
@@ -39,11 +53,9 @@ impl FileLoggingMemoryBackend {
             .open(path)
             .await?;
 
-        file.write_all(content.as_bytes()).await?;
+        file.write_all(format!("{}\n", entry_json).as_bytes()).await?;
         
-        // Also store in the inner backend as a special metadata message if needed
-        // For now, we trust the file and the inner backend's general storage
-        info!("Recorded learning for agent {}", agent_id);
+        info!("Recorded structured learning for agent {}", agent_id);
         Ok(())
     }
 
@@ -76,6 +88,11 @@ impl FileLoggingMemoryBackend {
 #[async_trait]
 impl MemoryBackend for FileLoggingMemoryBackend {
     async fn store(&self, agent_id: &str, message: &ChatMessage) -> Result<(), SavantError> {
+        // 🛡️ Sovereign Routing: Use the channel type, not string heuristics
+        if message.channel == savant_core::types::AgentOutputChannel::Memory {
+            let _ = self.record_learning(agent_id, &message.content).await;
+        }
+
         self.inner.store(agent_id, message).await
     }
 
@@ -92,14 +109,14 @@ impl MemoryBackend for FileLoggingMemoryBackend {
         // 1. First delegate to inner backend for LSM compaction/optimization
         self.inner.consolidate(agent_id).await?;
 
-        // 2. Perform file-based archive if LEARNINGS.md gets too large
-        let learnings_path = self.workspace_path.join("LEARNINGS.md");
-        let history_path = self.workspace_path.join("HISTORY.md");
+        // 2. Perform file-based archive if LEARNINGS.jsonl gets too large
+        let learnings_path = self.workspace_path.join("LEARNINGS.jsonl");
+        let history_path = self.workspace_path.join("HISTORY.jsonl");
 
         if let Ok(metadata) = fs::metadata(&learnings_path).await {
-            if metadata.len() > 50_000 {
+            if metadata.len() > 100_000 { // Increased limit for JSONL
                 info!(
-                    "[{}] Consolidating memory: LEARNINGS.md is too large ({} bytes). Archiving...",
+                    "[{}] Consolidating memory: LEARNINGS.jsonl is too large ({} bytes). Archiving...",
                     agent_id,
                     metadata.len()
                 );
@@ -110,13 +127,8 @@ impl MemoryBackend for FileLoggingMemoryBackend {
                     .open(&history_path)
                     .await?;
                 
-                archive
-                    .write_all(
-                        format!("\n--- ARCHIVE SESSION: {} ---\n", chrono::Utc::now()).as_bytes(),
-                    )
-                    .await?;
                 archive.write_all(content.as_bytes()).await?;
-                fs::write(&learnings_path, "# Active Learnings\n").await?;
+                fs::write(&learnings_path, "").await?; // Reset JSONL
             }
         }
         Ok(())

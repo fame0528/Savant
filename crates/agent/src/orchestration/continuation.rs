@@ -146,7 +146,7 @@ impl ContinuationEngine {
 
         let actual_delay = if self.config.use_exponential_backoff {
             // Exponential backoff: delay = min(base * 2^(n-1), max)
-            let backoff = self.config.default_delay_ms * 2u64.pow((*count - 1) as u32);
+            let backoff = self.config.default_delay_ms * 2u64.pow(*count - 1);
             backoff.min(self.config.max_delay_ms).min(delay_ms * 2)
         } else {
             delay_ms

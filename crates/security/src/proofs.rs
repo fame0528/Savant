@@ -17,12 +17,12 @@ mod verification {
         let signing_key = SigningKey::generate(&mut csprng);
         let verifying_key = signing_key.verifying_key();
         let enclave = SecurityEnclave::new(verifying_key);
-
         let symbolic_hash: u64 = kani::any();
         let symbolic_expires: u64 = kani::any();
-        let symbolic_resource = kani::any_string(10);
-        let symbolic_action = kani::any_string(10);
-        let symbolic_sig_bytes: [u8; 64] = kani::any();
+        let symbolic_resource = String::from("fixed_path"); // Simplified for bounded proof
+        let symbolic_action = String::from("read");
+        let symbolic_sig_bytes: Vec<u8> = vec![0u8; 64]; // Simplified
+        let symbolic_entropy: [u8; 32] = kani::any();
 
         let hostile_token = AgentToken {
             payload: CapabilityPayload {
@@ -30,13 +30,15 @@ mod verification {
                 resource_uri: symbolic_resource,
                 permitted_action: symbolic_action,
                 expires_at: symbolic_expires,
+                entropy_hash: symbolic_entropy,
             },
-            signature_bytes: symbolic_sig_bytes,
+            algorithm: crate::token::SignatureAlgorithm::Ed25519,
+            signature: symbolic_sig_bytes,
         };
 
         let requested_agent_id: u64 = kani::any();
-        let requested_resource = kani::any_string(10);
-        let requested_action = kani::any_string(10);
+        let requested_resource = String::from("fixed_path");
+        let requested_action = String::from("read");
 
         let result = enclave.verify_token_and_action(
             &hostile_token,

@@ -39,10 +39,11 @@ impl SwarmWatcher {
             },
         )?;
 
-        let workspaces = PathBuf::from("./workspaces");
+        let workspaces = std::env::current_dir()?.join("workspaces");
         if !workspaces.exists() {
             let _ = std::fs::create_dir_all(&workspaces);
         }
+        let workspaces = workspaces.canonicalize().unwrap_or(workspaces);
 
         debouncer
             .watcher()

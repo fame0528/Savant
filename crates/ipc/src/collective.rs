@@ -118,6 +118,13 @@ impl CollectiveBlackboard {
         }
     }
 
+    /// Setting the quorum threshold dynamically.
+    pub fn set_quorum_threshold(&self, threshold: u8) -> Result<(), SwarmIpcError> {
+        let mut state = self.read_state()?;
+        state.quorum_threshold = threshold;
+        self.publish_state(state)
+    }
+
     /// Participating in a vote.
     pub fn cast_vote(&self, agent_index: u8, approve: bool) -> Result<(), SwarmIpcError> {
         if agent_index >= 128 {
@@ -168,19 +175,21 @@ mod tests {
 
     #[test]
     fn test_collective_state_voting_logic() {
-        let mut state = CollectiveState::default();
-        state.quorum_threshold = 2;
+        let mut state = CollectiveState {
+            quorum_threshold: 2,
+            ..Default::default()
+        };
 
         // Agent 1 approves
-        let mask_idx = (1 / 64) as usize;
-        let bit_idx = 1 % 64;
+        let mask_idx = 0;
+        let bit_idx = 1;
         state.approve_mask[mask_idx] |= 1 << bit_idx;
 
         // Check consensus (Pending as 1 < 2)
         assert_eq!(state.approve_mask[0].count_ones(), 1);
         
         // Agent 2 approves
-        let bit_idx2 = 2 % 64;
+        let bit_idx2 = 2;
         state.approve_mask[0] |= 1 << bit_idx2;
         
         assert_eq!(state.approve_mask[0].count_ones(), 2);
@@ -188,8 +197,10 @@ mod tests {
 
     #[test]
     fn test_collective_veto_overrides_approval() {
-        let mut state = CollectiveState::default();
-        state.quorum_threshold = 1;
+        let mut state = CollectiveState {
+            quorum_threshold: 1,
+            ..Default::default()
+        };
         
         // Approve
         state.approve_mask[0] |= 1 << 5;

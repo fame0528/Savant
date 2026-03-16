@@ -100,11 +100,7 @@ impl SemanticVectorEngine {
         };
         let db = Arc::new(VectorDB::new(db_options).map_err(|e| MemoryError::VectorInitFailed(e.to_string()))?);
 
-        let quantizer = if config.use_quantization {
-            None // Quantization handled by ruvector internally
-        } else {
-            None
-        };
+        let quantizer = None;
 
         Ok(Arc::new(Self {
             db,
@@ -378,7 +374,7 @@ mod tests {
         let supported = SemanticVectorEngine::simd_supported();
         // We don't assert true/false because it depends on host CPU
         // Just verify it returns a boolean
-        assert!(supported == true || supported == false);
+        let _ = supported;
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "savant_gateway"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -17,5 +17,6 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["trace"] }
 tracing = { workspace = true }
 futures = "0.3"
-dashmap = "6.0"
+dashmap = { workspace = true }
+lru = { workspace = true }
 hex = "0.4"

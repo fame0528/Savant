@@ -1,6 +1,8 @@
 use savant_core::error::SavantError;
 use savant_core::types::{SessionId, RequestFrame};
-use savant_core::config::GatewayConfig;
+use savant_core::config::Config;
+use savant_core::db::Storage;
+use savant_core::bus::NexusBridge;
 use axum::{
     Router, 
     routing::get,
@@ -10,33 +12,37 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use savant_core::db::Storage;
-use dashmap::DashMap;
 use futures::{StreamExt, SinkExt};
+use dashmap::DashMap;
 use crate::auth;
 use crate::lanes::SessionLane;
+use lru::LruCache;
+use std::num::NonZeroUsize;
+use tokio::sync::Mutex as TokioMutex;
 
-use savant_core::bus::NexusBridge;
 
 /// Shared state for the gateway server.
 pub struct GatewayState {
-    pub config: GatewayConfig,
+    pub config: Config,
     pub sessions: DashMap<SessionId, Arc<SessionLane>>,
     pub nexus: Arc<NexusBridge>,
     pub storage: Arc<Storage>,
+    pub avatar_cache: TokioMutex<LruCache<String, (Vec<u8>, String)>>,
 }
 
 /// Starts the axum gateway server.
-pub async fn start_gateway(config: GatewayConfig, nexus: Arc<NexusBridge>) -> Result<(), SavantError> {
-    let addr = format!("{}:{}", config.host, config.port)
+pub async fn start_gateway(config: Config, nexus: Arc<NexusBridge>) -> Result<(), SavantError> {
+    let addr = format!("{}:{}", config.gateway.host, config.gateway.port)
         .parse::<SocketAddr>()
         .map_err(|e| SavantError::Unknown(format!("Invalid address: {}", e)))?;
 
+    let storage = Storage::new(std::path::PathBuf::from(&config.system.db_path))?;
     let state = Arc::new(GatewayState {
         config: config.clone(),
         sessions: DashMap::new(),
         nexus,
-        storage: Arc::new(Storage::new(std::path::PathBuf::from("./savant.db"))),
+        storage: Arc::new(storage),
+        avatar_cache: TokioMutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())),
     });
 
     let app = Router::new()
@@ -50,7 +56,7 @@ pub async fn start_gateway(config: GatewayConfig, nexus: Arc<NexusBridge>) -> Re
     
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await
-        .map_err(|e| SavantError::IoError(e))?;
+        .map_err(SavantError::IoError)?;
 
     Ok(())
 }
@@ -92,21 +98,25 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     let session_id = session_context.session_id.clone();
     tracing::info!("Session authenticated: {}", session_id.0);
 
-    // 2. Initial State Synchronization: Send current agents if discovered
-    let initial_agents = {
-        let memory = state.nexus.shared_memory.lock().await;
-        memory.get("system.agents").cloned()
+    // 2. Sovereign Handshake Ignition: Send current agents immediately upon auth
+    // This ensures zero-latency sidebar population for the Dashboard.
+    let initial_agents = state.nexus.shared_memory.get("system.agents")
+        .map(|r| r.value().clone());
+
+    let agents_payload = if let Some(json) = initial_agents {
+        json
+    } else {
+        // Perfection Enhancement: Send empty discovery to acknowledge sync
+        serde_json::json!({ "status": "SWARM_PENDING", "agents": [] }).to_string()
     };
-    
-    if let Some(agents_json) = initial_agents {
-        // Send as an EVENT:agents.discovered to match the real-time structure
-        let event = savant_core::types::EventFrame {
-            event_type: "agents.discovered".to_string(),
-            payload: agents_json,
-        };
-        let msg = serde_json::to_string(&event).expect("Event serializable");
-        let _ = sender.send(Message::Text(format!("EVENT:{}", msg))).await;
-    }
+
+    let event = savant_core::types::EventFrame {
+        event_type: "agents.discovered".to_string(),
+        payload: agents_payload,
+    };
+    let msg = serde_json::to_string(&event).expect("Event serializable");
+    let _ = sender.send(Message::Text(format!("EVENT:{}", msg))).await;
+    tracing::info!("🚀 Sovereign Ignition: Hydrated sidebar for session {}", session_id.0);
 
     // 3. Outgoing Message Hub
     // We use a central MPSC to funnel both Lane responses and Swarm telemetry
@@ -114,8 +124,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
 
     // 3. Session Setup
     let (lane, lane_rx, mut res_rx, limit) = SessionLane::new(
-        state.config.lane_capacity,
-        state.config.max_lane_concurrency
+        state.config.gateway.lane_capacity,
+        state.config.gateway.max_lane_concurrency
     );
     let lane = Arc::new(lane);
     
@@ -135,27 +145,51 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     let out_tx = outgoing_tx.clone();
     let storage_clone = state.storage.clone();
     let mut event_rx = state.nexus.event_bus.subscribe();
+    let session_id_telemetry = session_id.clone();
     
     let mut telemetry_task = tokio::spawn(async move {
         while let Ok(event) = event_rx.recv().await {
+            // 🌀 Perfection Loop: Unified Protocol
+            let mut outbound_event = event.clone();
+            
             match event.event_type.as_str() {
-                "chat.response" => {
-                    if let Ok(msg) = serde_json::from_str::<savant_core::types::ChatMessage>(&event.payload) {
-                        // Persist agent response
-                        let _ = storage_clone.append_chat("global", &msg);
-                        // Send raw JSON for consistency with dashboard expectation
-                        let _ = out_tx.send(Message::Text(event.payload.clone())).await;
+                "chat.message" | "chat.chunk" => {
+                    // Protocol is already standardized at the Agent layer
+                }
+                t if t.starts_with("session.") => {
+                    let parts: Vec<&str> = t.split('.').collect();
+                    outbound_event.event_type = parts.get(2).unwrap_or(&"response").to_string();
+                    if !t.starts_with(&format!("session.{}.", session_id_telemetry.0)) {
+                        continue;
                     }
                 }
-                "chat.chunk" => {
-                    let _ = out_tx.send(Message::Text(format!("CHUNK:{}", event.payload))).await;
+                _ => {}
+            }
+
+            // Persistence for dialog ONLY
+            if outbound_event.event_type == "chat.message" {
+                if let Ok(msg) = serde_json::from_str::<savant_core::types::ChatMessage>(&outbound_event.payload) {
+                    if msg.channel == savant_core::types::AgentOutputChannel::Chat {
+                        let _ = crate::persistence::GatewayPersistence::persist_chat(&storage_clone, &msg).await;
+                    }
                 }
-                _ => {
-                    // Forward all other significant swarm events
-                    let msg = serde_json::to_string(&event).expect("Event serializable");
-                    let _ = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await;
+            } else if outbound_event.event_type == "learning.insight" {
+                if let Ok(learning) = serde_json::from_str::<savant_core::learning::EmergentLearning>(&outbound_event.payload) {
+                    let msg = savant_core::types::ChatMessage {
+                        role: savant_core::types::ChatRole::System,
+                        content: format!("Insight: {}", learning.content),
+                        sender: Some("ALD".to_string()),
+                        recipient: None,
+                        agent_id: None,
+                        session_id: Some(savant_core::types::SessionId("learnings".to_string())),
+                        channel: savant_core::types::AgentOutputChannel::Telemetry,
+                    };
+                    let _ = crate::persistence::GatewayPersistence::persist_chat(&storage_clone, &msg).await;
                 }
             }
+
+            let msg = serde_json::to_string(&outbound_event).expect("Event serializable");
+            let _ = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await;
         }
     });
 
@@ -170,24 +204,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     });
 
     // 7. Task 4: WebSocket Receiver
-    let out_tx = outgoing_tx.clone();
     let storage = state.storage.clone();
     let nexus_inner = state.nexus.clone();
+    let config_inner = state.config.clone();
     let mut recv_task = tokio::spawn({
         let session_id = session_id.clone();
         let session_context_clone = session_context.clone();
         async move {
             while let Some(Ok(Message::Text(text))) = receiver.next().await {
-                // Handle special HISTORY_REQUEST
-                if text == "HISTORY_REQUEST" {
-                    if let Ok(history) = storage.get_history("global", 50) {
-                    if let Ok(history_json) = serde_json::to_string(&history) {
-                        let _ = out_tx.send(Message::Text(format!("HISTORY:{}", history_json))).await;
-                    }
-                    }
-                    continue;
-                }
-
                 if let Ok(frame) = serde_json::from_str::<RequestFrame>(&text) {
                     if frame.session_id == session_id {
                         // Route message through proper handler
@@ -197,6 +221,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                             axum::extract::State(crate::handlers::AppState { 
                                 nexus: nexus_inner.clone(),
                                 storage: storage.clone(),
+                                config: config_inner.clone(),
                             })
                         ).await;
                     }
@@ -223,15 +248,26 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
 }
 
 async fn agent_image_handler(
+    State(state): State<Arc<GatewayState>>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     let name_lower = name.to_lowercase();
-    let workspaces_dir = std::path::PathBuf::from("./workspaces");
     
-    // Look for workspace-{name}
+    // 1. Check Cache
+    {
+        let mut cache = state.avatar_cache.lock().await;
+        if let Some((content, content_type)) = cache.get(&name_lower) {
+            return Response::builder()
+                .header(header::CONTENT_TYPE, content_type)
+                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                .header(header::CACHE_CONTROL, "public, max-age=3600")
+                .body(axum::body::Body::from(content.clone()))
+                .expect("Failed to build cached image response");
+        }
+    }
+
+    let workspaces_dir = std::path::PathBuf::from(&state.config.system.workspaces_path);
     let workspace_path = workspaces_dir.join(format!("workspace-{}", name_lower));
-    
-    // Potential image filenames
     let candidates = ["avatar.png", "avatar.jpg", "avatar.jpeg", "agentimg.png"];
     
     for filename in candidates {
@@ -242,12 +278,18 @@ async fn agent_image_handler(
                     "image/png"
                 } else {
                     "image/jpeg"
-                };
+                }.to_string();
                 
+                // Update Cache
+                {
+                    let mut cache = state.avatar_cache.lock().await;
+                    cache.put(name_lower.clone(), (content.clone(), content_type.clone()));
+                }
+
                 return Response::builder()
                     .header(header::CONTENT_TYPE, content_type)
                     .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                    .header(header::CACHE_CONTROL, "no-cache, no-store")
+                    .header(header::CACHE_CONTROL, "public, max-age=3600")
                     .body(axum::body::Body::from(content))
                     .expect("Failed to build image response");
             }

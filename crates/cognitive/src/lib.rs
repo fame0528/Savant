@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Dynamic Speculative Planning (DSP) Engine.
 //!
 //! This module implements the mathematical framework for predicting the optimal
@@ -8,6 +9,8 @@
 //! speculation depth to achieve up to 1.65x latency reduction while preventing
 //! runaway token consumption.
 
-mod predictor;
+pub mod predictor;
+pub mod synthesis;
+pub mod forge;
 
 pub use predictor::{DspConfig, DspPredictor};

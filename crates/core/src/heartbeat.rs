@@ -16,6 +16,7 @@ impl HeartbeatScheduler {
             .await
             .map_err(|e| SavantError::Unknown(format!("Scheduler init error: {}", e)))?;
         let (event_tx, _) = broadcast::channel(100);
+        let _watchdog = crate::pulse::watchdog::SovereignWatchdog::new();
 
         Ok(Self {
             scheduler,

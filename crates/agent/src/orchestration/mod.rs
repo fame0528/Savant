@@ -11,7 +11,10 @@
 
 pub mod continuation;
 pub mod handoff;
+pub mod tasks;
 pub mod dag;
+pub mod synthesis;
+pub mod branching;
 #[cfg(test)]
 mod handoff_tests;
 
@@ -226,7 +229,7 @@ impl Orchestrator {
                 let mut _ctx = self
                     .read_blackboard_context()
                     .await
-                    .ok_or_else(|| OrchestratorError::BlackboardAccessFailed)?;
+                    .ok_or(OrchestratorError::BlackboardAccessFailed)?;
                 _ctx.continue_work_delay_ms = delay_ms as u32;
                 // Note: context will be re-published on next loop iteration
                 continue;
@@ -240,7 +243,7 @@ impl Orchestrator {
         // In a full implementation, this would be determined by validation metrics
         // For now, we use a heuristic based on actual steps taken
         self.dsp_predictor
-            .update_accuracy(optimal_k, execution_chain_length.max(1) as u32);
+            .update_accuracy(optimal_k, execution_chain_length.max(1));
 
         // Adapt DSP parameters if needed
         self.dsp_predictor.adapt_parameters();

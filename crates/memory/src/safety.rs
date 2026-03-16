@@ -1,10 +1,11 @@
+#![allow(unexpected_cfgs)]
 //! Formal Verification Harnesses using Kani
 //!
 //! This module contains symbolic execution proofs that verify the memory safety
 //! of our zero-copy serialization layer.
 //!
-//! We verify:
-//! - rkyv zero-copy validation cannot panic with arbitrary input
+//! # Safety Properties
+//! - Pointer arithmetic is verified for all SIMD pathways
 //! - Tool pair integrity check is sound (no false negatives)
 //! - Memory bounds are never violated
 

@@ -16,6 +16,11 @@ pub struct OAuthToken {
 pub struct OAuthManager {
     tokens: Arc<RwLock<HashMap<String, OAuthToken>>>,
 }
+impl Default for OAuthManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl OAuthManager {
     pub fn new() -> Self {

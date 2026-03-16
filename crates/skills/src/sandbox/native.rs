@@ -105,7 +105,7 @@ impl ToolExecutor for LegacyNativeExecutor {
             self.workspace_dir.display()
         );
 
-        let output = cmd.output().await.map_err(|e| SavantError::IoError(e))?;
+        let output = cmd.output().await.map_err(SavantError::IoError)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

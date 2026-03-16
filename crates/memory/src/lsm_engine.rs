@@ -20,7 +20,9 @@ use fjall::{OptimisticTxDatabase, PersistMode};
 use rkyv::rancor::Error;
 
 use crate::error::MemoryError;
-use crate::models::{message_key, session_key, verify_tool_pair_integrity, AgentMessage};
+use crate::models::{
+    message_key, session_key, verify_tool_pair_integrity, AgentMessage,
+};
 
 
 /// Statistics about the storage engine (for monitoring)
@@ -83,23 +85,17 @@ impl LsmStorageEngine {
     pub fn new(storage_path: &Path, _config: LsmConfig) -> Result<Arc<Self>, MemoryError> {
         info!("Initializing Fjall LSM-Tree at {:?}", storage_path);
 
-        // Build configuration with caching optimizations
-        // let _fjall_config = Config::new(storage_path);
-        // Note: Current fjall 3.1.0 may not have these methods; comment out if not present
-        // fjall_config = fjall_config.block_cache_bytes(config.block_cache_bytes);
-        // fjall_config = fjall_config.max_sst_files(config.max_sst_files);
-
         // Open the optimistic database (multi-writer capable)
         let db = OptimisticTxDatabase::builder(storage_path).open()
             .map_err(|e| MemoryError::InitFailed(format!("Fjall open failed: {}", e)))?;
 
         // Create keyspace for conversation transcripts
         let transcript_ks = db
-            .keyspace("transcripts", || fjall::KeyspaceCreateOptions::default())
+            .keyspace("transcripts", fjall::KeyspaceCreateOptions::default)
             .map_err(|e| MemoryError::InitFailed(e.to_string()))?;
 
         // Create optional keyspace for semantic metadata
-        let metadata_ks = db.keyspace("metadata", || fjall::KeyspaceCreateOptions::default()).ok(); // Non-fatal if fails
+        let metadata_ks = db.keyspace("metadata", fjall::KeyspaceCreateOptions::default).ok(); // Non-fatal if fails
 
         info!("Fjall LSM-Tree Engine initialized successfully");
 
@@ -146,17 +142,39 @@ impl LsmStorageEngine {
         // Insert the serialized message
         tx.insert(&self.transcript_ks, key, bytes.as_slice());
 
-        // Set persistence mode based on message criticality
-        // Note: fjall's PersistMode may not be settable per-transaction in all versions
-        // For now, we rely on default behavior
-        let _critical = self.is_critical_message(message);
-
         // Commit the transaction
         tx.commit()
             .map_err(|e| MemoryError::TransactionFailed(format!("IO Error: {:?}", e)))?
             .map_err(|e| MemoryError::TransactionFailed(format!("Conflict: {:?}", e)))?;
 
         debug!("Appended message {} to session {}", message.id, session_id);
+        Ok(())
+    }
+
+    /// Inserts a MemoryEntry into the metadata keyspace.
+    pub fn insert_metadata(&self, id: u64, entry: &crate::models::MemoryEntry) -> Result<(), MemoryError> {
+        let ks = self._metadata_ks.as_ref().ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
+        let bytes = rkyv::to_bytes::<Error>(entry)
+            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+        let key = id.to_le_bytes();
+        
+        let mut tx = self.db.write_tx().map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        tx.insert(ks, key, bytes.as_slice());
+        tx.commit()
+            .map_err(|e| MemoryError::TransactionFailed(format!("IO Error: {:?}", e)))?
+            .map_err(|e| MemoryError::TransactionFailed(format!("Conflict: {:?}", e)))?;
+        Ok(())
+    }
+
+    /// Removes a MemoryEntry from the metadata keyspace.
+    pub fn remove_metadata(&self, id: u64) -> Result<(), MemoryError> {
+        let ks = self._metadata_ks.as_ref().ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
+        let key = id.to_le_bytes();
+        let mut tx = self.db.write_tx().map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        tx.remove(ks, key);
+        tx.commit()
+            .map_err(|e| MemoryError::TransactionFailed(format!("IO Error: {:?}", e)))?
+            .map_err(|e| MemoryError::TransactionFailed(format!("Conflict: {:?}", e)))?;
         Ok(())
     }
 
@@ -276,6 +294,25 @@ impl LsmStorageEngine {
         Ok(count)
     }
 
+    /// Fetches all message IDs for a session (for maintenance/cascaded deletion).
+    pub fn fetch_all_message_ids_for_session(&self, session_id: &str) -> Vec<String> {
+        let prefix = session_key(session_id);
+        self.transcript_ks.inner().prefix(&prefix)
+            .filter_map(|item| {
+                // Deserialize key to extract ID
+                if let Ok(key) = item.key() {
+                    // key format is usually "session_id|timestamp|id"
+                    // Extracting the ID suffix
+                    let s = String::from_utf8_lossy(&key);
+                    if let Some(last_pipe) = s.rfind('|') {
+                         return Some(s[last_pipe+1..].to_string());
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
     /// Deletes a session entirely.
     ///
     /// This is a dangerous operation that removes all messages for a session.
@@ -289,7 +326,6 @@ impl LsmStorageEngine {
 
         // Collect keys to delete (can't delete while iterating)
         let keys_to_delete: Vec<Vec<u8>> = self.transcript_ks.inner().prefix(&prefix)
-            .into_iter()
             .filter_map(|item: fjall::Guard| {
                 item.key().ok().map(|k| k.to_vec())
             })
@@ -331,11 +367,31 @@ impl LsmStorageEngine {
     pub fn keyspace(&self) -> &fjall::Keyspace {
         self.transcript_ks.inner()
     }
+
+    /// Returns an iterator over all metadata entries.
+    pub fn iter_metadata(&self) -> Result<Vec<crate::models::MemoryEntry>, MemoryError> {
+        let ks = self._metadata_ks.as_ref().ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
+        let mut entries = Vec::new();
+        
+        for item in ks.inner().iter() {
+            let val = match item.value() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            
+            let archived: &<crate::models::MemoryEntry as rkyv::Archive>::Archived = unsafe { rkyv::access_unchecked(&val) };
+            if let Ok(entry) = rkyv::deserialize::<crate::models::MemoryEntry, Error>(archived) {
+                entries.push(entry);
+            }
+        }
+        Ok(entries)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AgentMessage, MessageRole, ToolResultRef};
     use std::fs;
 
     #[test]
@@ -371,7 +427,7 @@ mod tests {
                 result_content: "orphaned result".to_string(),
                 is_error: false,
             }],
-            timestamp: 1000,
+            timestamp: 1000.into(),
             parent_id: None,
         };
 

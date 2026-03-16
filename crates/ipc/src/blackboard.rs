@@ -10,7 +10,7 @@ use xxhash_rust::xxh3::xxh3_64;
 /// A fixed-size, lock-free Bloom Filter designed for cache-efficient loop detection.
 /// Used to prevent Issue #37842: Infinite Multi-Agent Delegation Loops.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, ZeroCopySend)]
+#[derive(Clone, Copy, Debug, PartialEq, ZeroCopySend, Default)]
 pub struct DelegationBloomFilter {
     /// 256 bits of storage for the bloom filter
     pub bitfield: [u64; 4],
@@ -21,11 +21,7 @@ pub struct DelegationBloomFilter {
 
 impl DelegationBloomFilter {
     pub fn new() -> Self {
-        Self {
-            bitfield: [0; 4],
-            depth_count: 0,
-            padding: [0; 7],
-        }
+        Self::default()
     }
 
     /// Adds an agent's UUID hash to the trace path.

@@ -1,6 +1,6 @@
 [package]
 name = "savant_memory"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -21,9 +21,13 @@ thiserror = "1.0"
 uuid = { version = "1.8", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
+serde_json = { workspace = true }
 
 # Core types and traits
 savant_core = { path = "../core" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

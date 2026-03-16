@@ -26,14 +26,14 @@ impl EmbeddingService {
     /// Generates an embedding for the given text, using cache if available.
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
         {
-            let cache = self.cache.lock().expect("Cache lock poisoned");
+            let cache = self.cache.lock().map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
             if let Some(embedding) = cache.get(text) {
                 return Ok(embedding.clone());
             }
         }
 
         let embeddings = {
-            let mut model = self.model.lock().expect("Model lock poisoned");
+            let mut model = self.model.lock().map_err(|_| SavantError::Unknown("Model lock poisoned".to_string()))?;
             model
                 .embed(vec![text], None)
                 .map_err(|e| SavantError::Unknown(format!("Embedding error: {}", e)))?
@@ -42,7 +42,7 @@ impl EmbeddingService {
         let result = embeddings[0].clone();
 
         {
-            let mut cache = self.cache.lock().expect("Cache lock poisoned");
+            let mut cache = self.cache.lock().map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
             cache.insert(text.to_string(), result.clone());
         }
 

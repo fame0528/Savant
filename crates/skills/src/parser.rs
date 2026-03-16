@@ -83,7 +83,7 @@ impl SkillRegistry {
     pub async fn load_skill_from_file(&mut self, path: impl AsRef<Path>) -> Result<(), SavantError> {
         let path_ref = path.as_ref();
         let content = fs::read_to_string(path_ref).await
-           .map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read {}: {}", path_ref.display(), e))))?;
+           .map_err(|e| SavantError::IoError(std::io::Error::other(format!("Failed to read {}: {}", path_ref.display(), e))))?;
 
         // Extract YAML frontmatter (between --- markers)
         let parts: Vec<&str> = content.splitn(3, "---").collect();

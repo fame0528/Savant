@@ -73,9 +73,11 @@ impl<M: MemoryBackend> AgentLoop<M> {
         let history = vec![ChatMessage {
             role: ChatRole::User,
             content: input.to_string(),
-            sender: Some("USER".to_string()),
+            sender: None,
             recipient: None,
-            agent_id: Some(self.agent_id.clone()),
+            agent_id: None,
+            session_id: None, // Will be set by AgentLoop if needed
+            channel: savant_core::types::AgentOutputChannel::Chat,
         }];
 
         // Horizon instruction prefix
@@ -161,10 +163,12 @@ impl<M: MemoryBackend> AgentLoop<M> {
                 // Store final answer in memory
                 let final_msg = ChatMessage {
                     role: ChatRole::Assistant,
-                    content: format!("Speculative execution completed with {} steps. Reflection: {}", speculative_steps.len(), final_reflection),
+                    content: final_reflection.clone(),
                     sender: Some(self.agent_id.clone()),
                     recipient: None,
-                    agent_id: Some(self.agent_id.clone())
+                    agent_id: None,
+                    session_id: None, // Speculative reflection
+                    channel: savant_core::types::AgentOutputChannel::Chat,
                 };
                 self.memory.store(&self.agent_id, &final_msg).await?;
 

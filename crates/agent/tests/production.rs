@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use std::sync::Arc;
 use savant_core::types::{AgentConfig, ChatMessage, ChatChunk, ModelProvider, AgentIdentity};
 use savant_core::traits::LlmProvider;
@@ -6,13 +7,12 @@ use savant_agent::swarm::SwarmController;
 use savant_core::bus::NexusBridge;
 use savant_core::db::Storage;
 use savant_agent::manager::AgentManager;
-use savant_core::config::Config;
-use savant_core::config::Config;
 use futures::stream::{self, Stream};
 use std::pin::Pin;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 struct MockLlmProvider;
 
 #[async_trait]
@@ -53,10 +53,10 @@ async fn test_production_swarm_initialization_50_agents() {
 
     // 3. Create dependencies
     let nexus = Arc::new(NexusBridge::new());
-    let storage = Arc::new(Storage::new(storage_path));
+    let storage = Arc::new(Storage::new(storage_path).expect("Failed to open test storage"));
     storage.init_schema().expect("Failed to init schema");
     
-    let mut config = Config::default();
+    let config = Config::default();
     let manager = Arc::new(AgentManager::new(config));
 
     // 4. Create 50 agents
@@ -130,7 +130,7 @@ async fn test_agent_panic_recovery_logic() {
             parent_id: None,
             session_id: None,
         }],
-        Arc::new(Storage::new(base_temp.join("panic.db"))),
+        Arc::new(Storage::new(base_temp.join("panic.db")).expect("Failed to open panic storage")),
         Arc::new(AgentManager::new(Config::default())),
         Arc::new(NexusBridge::new()),
         root_authority,
@@ -158,8 +158,8 @@ async fn test_500_agent_initialization_scaling() {
     let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
     let root_authority = signing_key.verifying_key();
 
-    let storage = Arc::new(Storage::new(storage_path));
-    storage.init_schema().unwrap();
+    let storage = Arc::new(Storage::new(storage_path).expect("Failed to open scale storage"));
+    storage.init_schema().expect("Failed to init schema");
     
     let nexus = Arc::new(NexusBridge::new());
     let manager = Arc::new(AgentManager::new(Config::default()));

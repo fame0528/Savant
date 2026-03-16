@@ -1,6 +1,6 @@
 [package]
 name = "savant_security"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -12,6 +12,11 @@ blake3 = "1.5"
 tokio = { version = "1.36", features = ["full"] }
 thiserror = "1.0"
 tracing = "0.1"
+rand = { workspace = true }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 # [target.'cfg(kani)'.dependencies]
 # kani = "0.45.0"

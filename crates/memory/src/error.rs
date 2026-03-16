@@ -74,7 +74,6 @@ pub enum MemoryError {
 
 /// Result type alias for memory operations.
 // pub type MemoryResult<T> = Result<T, MemoryError>;
-
 impl From<rkyv::rancor::Error> for MemoryError {
     fn from(err: rkyv::rancor::Error) -> Self {
         MemoryError::SerializationFailed(err.to_string())

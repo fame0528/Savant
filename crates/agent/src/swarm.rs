@@ -24,6 +24,11 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use savant_echo::{HotSwappableRegistry, EchoCompiler, ComponentMetrics};
 use crate::plugins::WasmToolHost;
+use tokio_util::sync::CancellationToken;
+
+const WORKSPACE_ROOT: &str = "./workspaces";
+const MEMORY_DB_PATH: &str = "./data/memory";
+const SKILLS_PATH: &str = "./skills";
 
 
 
@@ -34,7 +39,7 @@ pub struct SwarmController {
     manager: Arc<AgentManager>,
     agents: Vec<AgentConfig>,
     client: Client,
-    handles: Mutex<HashMap<String, JoinHandle<()>>>,
+    handles: Mutex<HashMap<String, (JoinHandle<()>, CancellationToken)>>,
     tools: Arc<HashMap<String, Arc<dyn Tool>>>,
     engine: Arc<MemoryEngine>,
     #[allow(dead_code)]
@@ -59,7 +64,7 @@ impl SwarmController {
         signing_key: ed25519_dalek::SigningKey, 
     ) -> Result<Self, savant_core::error::SavantError> {
         // 1. Discover all available tools (skills) once for the swarm
-        let skill_path = std::path::PathBuf::from("./skills");
+        let skill_path = std::path::PathBuf::from(SKILLS_PATH);
         let mut registry = savant_skills::parser::SkillRegistry::new();
 
         // We use the current handle to block on async discovery during initialization
@@ -71,7 +76,7 @@ impl SwarmController {
         let tools = Arc::new(registry.tools);
 
         // 2. Initialize Memory Engine (Fjall LSM + ruvector)
-        let engine = MemoryEngine::with_defaults("./data/memory")
+        let engine = MemoryEngine::with_defaults(MEMORY_DB_PATH)
             .map_err(|e| savant_core::error::SavantError::Unknown(format!("Failed to init memory engine: {}", e)))?;
 
         // 3. Initialize Shared Blackboard (Zero-Copy IPC)
@@ -91,6 +96,15 @@ impl SwarmController {
             .map_err(|e| savant_core::error::SavantError::Unknown(format!("Failed to init WASM tool host: {}", e)))?);
         let collective_blackboard = Arc::new(CollectiveBlackboard::new("savant_collective")
             .map_err(|e| savant_core::error::SavantError::Unknown(format!("Failed to init collective blackboard: {}", e)))?);
+
+        // --- Solo Authority Fallback ---
+        // If only one agent is present, set quorum to 1 to prevent deadlock.
+        if agents.len() == 1 {
+            tracing::info!("Solo agent detected. Setting collective quorum threshold to 1.");
+            if let Err(e) = collective_blackboard.set_quorum_threshold(1) {
+                tracing::warn!("Failed to set solo quorum threshold: {}", e);
+            }
+        }
 
         Ok(Self {
             nexus,
@@ -118,7 +132,7 @@ impl SwarmController {
         
         // Spawn ECHO Watcher
         if let Err(e) = savant_echo::watcher::spawn_echo_watcher(
-            std::path::PathBuf::from("./workspace"),
+            std::path::PathBuf::from(WORKSPACE_ROOT),
             self.echo_registry.clone(),
             self.echo_compiler.clone(),
         ).await {
@@ -154,6 +168,10 @@ impl SwarmController {
         
         // Assign a unique index for consensus voting (simplified to agent_id hash for now)
         let agent_index = (xxhash_rust::xxh3::xxh3_64(agent_id.as_bytes()) % 128) as u8;
+
+        let shutdown_token = CancellationToken::new();
+        let shutdown_task_token = shutdown_token.clone();
+        let signing_key = self.signing_key.clone();
 
         let handle = tokio::spawn(async move {
             // Automated .env sync logic
@@ -236,9 +254,18 @@ impl SwarmController {
                 agent_cfg.agent_id.clone(),
             )));
 
+            // 🌌 Universal Autonomy Protocol: All agents are granted Foundation Sovereignty
+            agent_tools.push(Arc::new(crate::tools::FoundationTool::new()));
+            agent_tools.push(Arc::new(crate::tools::FileMoveTool));
+            agent_tools.push(Arc::new(crate::tools::FileDeleteTool));
+            agent_tools.push(Arc::new(crate::tools::FileAtomicEditTool));
+            agent_tools.push(Arc::new(crate::tools::TaskMatrixTool::new(
+                agent_cfg.workspace_path.clone(),
+                agent_cfg.proactive.clone(),
+            )));
+
             // 5. Build Agent Loop with the async backend and secure WASM host
-            // Note: In a production swarm, the token would be issued per-session/per-task
-            // For the primary agent, we issue a broad workspace-scoped token
+            // OMEGA-VIII: Issue a workspace-scoped CCT (Cognitive Capability Token)
             let plugin_host = match crate::plugins::WasmPluginHost::new(root_authority) {
                 Ok(h) => Arc::new(h),
                 Err(e) => {
@@ -246,6 +273,23 @@ impl SwarmController {
                     return;
                 }
             };
+
+            // Mint CCT token: 24h duration, scoped to workspace
+            // We use a derivation of the agent name as cadence entropy for this bootstrap session
+            let token = savant_security::SecurityEnclave::mint_quantum_token(
+                &signing_key,
+                agent_index as u64,
+                &agent_cfg.workspace_path.to_string_lossy(),
+                "execute",
+                86400, // 24 hours
+                agent_name.as_bytes(),
+            ).ok();
+
+            if token.is_some() {
+                tracing::info!("CCT Token issued for agent: {} (ECHO-Absolute boundary active)", agent_name);
+            } else {
+                tracing::warn!("Failed to mint CCT token for agent: {}. Running in restricted mode.", agent_name);
+            }
             
             let agent_loop = AgentLoop::new(
                 agent_cfg.agent_id.clone(),
@@ -256,31 +300,41 @@ impl SwarmController {
             )
             .with_echo(echo_registry, echo_metrics, echo_host)
             .with_collective(collective, agent_index)
-            .with_plugins(plugin_host, Vec::new(), None); // Initial agent starts without a restrictive token, or with a master token
+            .with_plugins(plugin_host, Vec::new(), token); 
 
             tracing::info!("Agent {} background pulse ignited.", agent_cfg.agent_name);
 
             // 6. Start the Heartbeat Pulse
-            let pulse = HeartbeatPulse::new(agent_cfg, nexus, storage);
+            let pulse = HeartbeatPulse::new(agent_cfg, nexus, storage, shutdown_task_token);
             pulse.start(agent_loop).await;
         });
 
         let mut lock = self.handles.lock().await;
-        lock.insert(agent_id, handle);
+        lock.insert(agent_id, (handle, shutdown_token));
     }
 
     pub async fn evacuate_agent(&self, agent_id: &str) {
         let mut lock = self.handles.lock().await;
-        if let Some(handle) = lock.remove(agent_id) {
-            tracing::info!("Evacuating agent: {}", agent_id);
-            handle.abort();
+        if let Some((handle, token)) = lock.remove(agent_id) {
+            tracing::info!("Evacuating agent: {} (triggering graceful shutdown)", agent_id);
+            token.cancel();
+            
+            // Give it 5s to shut down gracefully before aborting
+            tokio::select! {
+                _ = handle => {
+                    tracing::info!("Agent {} shut down gracefully.", agent_id);
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                    tracing::warn!("Agent {} timed out during shutdown. Aborting.", agent_id);
+                }
+            }
         }
     }
 
     pub async fn check_swarm_health(&self) -> Vec<String> {
         let mut dead_agents = Vec::new();
         let lock = self.handles.lock().await;
-        for (id, handle) in lock.iter() {
+        for (id, (handle, _)) in lock.iter() {
             if handle.is_finished() {
                 dead_agents.push(id.clone());
             }

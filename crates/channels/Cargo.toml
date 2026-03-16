@@ -1,6 +1,6 @@
 [package]
 name = "savant_channels"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -13,5 +13,6 @@ async-trait = { workspace = true }
 tracing = { workspace = true }
 bb8 = "0.8"
 futures = { workspace = true }
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
 dashmap = "6.0"
 matrix-sdk = { version = "0.7", default-features = false, features = ["rustls-tls"] }

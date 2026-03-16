@@ -19,7 +19,7 @@ impl FileIndexer {
 
     fn open_connection(&self) -> Result<Connection, SavantError> {
         Connection::open(&self.db_path)
-            .map_err(|e| SavantError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            .map_err(|e| SavantError::IoError(std::io::Error::other(e)))
     }
 
     /// Initializes the database tables and enables WAL mode.

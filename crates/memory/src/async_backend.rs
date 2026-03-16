@@ -46,12 +46,15 @@ impl MemoryBackend for AsyncMemoryBackend {
 
         // Offload blocking I/O to a spawn_blocking task
         spawn_blocking(move || {
-            // Convert ChatMessage -> AgentMessage
+            // Convert ChatMessage -> AgentMessage (internal prioritization logic)
             let agent_msg = AgentMessage::from_chat(&message_clone, &agent_id_owned);
+            
+            // AAA: Unified Context Harmony - Use the effective session ID for substrate partitioning
+            let sid = agent_msg.session_id.clone();
 
             // Append to transcript
             engine
-                .append_message(&agent_id_owned, &agent_msg)
+                .append_message(&sid, &agent_msg)
                 .map_err(|e| SavantError::Unknown(e.to_string()))?;
 
             // If message has embedding, index it for semantic search
@@ -68,18 +71,18 @@ impl MemoryBackend for AsyncMemoryBackend {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ChatMessage>, SavantError> {
-        let engine = Arc::clone(&self.engine);
-        let agent_id_owned = agent_id.to_string();
+        // AAA: Unified Context Harmony - Ensure retrieval uses sanitized ID
+        let sid = savant_core::session::sanitize_session_id(agent_id);
         let _query_owned = query.to_string(); // move into blocking task
 
+        let engine = self.engine.clone();
         spawn_blocking(move || {
-            // For now, retrieve recent messages by session_id (using agent_id as session_id)
-            // In a full implementation, semantic search would be used when query is meaningful
-            let tail = engine.fetch_session_tail(&agent_id_owned, limit);
+            // Retrieve recent messages by session_id
+            let tail = engine.fetch_session_tail(&sid, limit);
 
             // Convert AgentMessage -> ChatMessage
             let chat_messages: Vec<ChatMessage> =
-                tail.into_iter().map(|msg| msg.to_chat()).collect();
+                tail.into_iter().map(|msg: AgentMessage| msg.to_chat()).collect();
 
             Ok(chat_messages)
         })
@@ -109,7 +112,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let engine =
-            Arc::new(MemoryEngine::with_defaults(&temp_dir).expect("Failed to init engine"));
+            MemoryEngine::with_defaults(&temp_dir).expect("Failed to init engine");
         let backend = AsyncMemoryBackend::new(engine);
 
         let chat_msg = ChatMessage {
@@ -117,7 +120,9 @@ mod tests {
             content: "Test message".to_string(),
             sender: None,
             recipient: None,
-            agent_id: Some("test_session".to_string()),
+            agent_id: None,
+            session_id: Some(savant_core::types::SessionId("test_session".to_string())),
+            channel: savant_core::types::AgentOutputChannel::Chat,
         };
 
         // Store

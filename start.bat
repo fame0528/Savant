@@ -30,7 +30,26 @@ if %errorlevel% neq 0 (
 
 echo ✅ Prerequisites met
 
-REM Build the Rust project
+REM Clean up old processes to prevent target locks
+echo 🛑 Cleaning up previous manifestation enclaves...
+taskkill /f /im savant_cli.exe >nul 2>nul
+taskkill /f /im cargo.exe >nul 2>nul
+
+REM Parse command line arguments
+set SKIP_BUILD=0
+set FORCE_BUILD=1
+if "%1"=="--fast" set SKIP_BUILD=1
+
+if %SKIP_BUILD% equ 1 (
+    echo ⚡ Fast startup enabled: Skipping build check...
+    goto :start_services
+)
+
+REM Forced Build: Ensure latest diagnostics are Manifest
+echo 🔨 Initializing core manifestation (Forced Build)...
+goto :do_build
+
+:do_build
 echo 🔨 Building Savant core...
 cargo build --release
 if %errorlevel% neq 0 (
@@ -38,7 +57,10 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
+set RUN_CMD=cargo run --release --bin savant_cli
 echo ✅ Core build complete
+
+:start_services
 
 REM Install dashboard dependencies if needed
 if not exist "dashboard\node_modules" (
@@ -54,7 +76,7 @@ if not exist "logs" mkdir logs
 
 REM Start the Gateway and Swarm
 echo 🌐 Starting Gateway and Swarm...
-start "Savant Swarm Engine" cmd /k "cargo run --bin savant_cli"
+start "Savant Swarm Engine" cmd /k "%RUN_CMD%"
 echo ✅ Gateway started
 
 REM Wait a moment for gateway to initialize

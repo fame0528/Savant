@@ -5,6 +5,7 @@
 
 pub mod cli;
 // pub mod matrix;  // Temporarily disabled due to API compatibility issues
+pub mod discord;
 pub mod pool;
 pub mod telegram;
 pub mod whatsapp;

@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use anyhow::{Context, Result};
 use clap::Parser;
 use savant_core::config::Config;
@@ -30,6 +31,9 @@ fn print_splash() {
     println!("{}", logo.cyan().bold());
     println!("{}", "      >> AUTONOMOUS AGENT SWARM ORCHESTRATOR <<".bright_black().italic());
     println!("{}", "====================================================".bright_blue());
+    println!("{}", "   ⚠️  DIAGNOSTIC MODE ACTIVE: PHASE IV (INFRA)  ⚠️".red().bold());
+    println!("{}", "   Build Signature: [2026-03-16-DIAG-01]".bright_black());
+    println!("{}", "====================================================".bright_blue());
     println!();
 }
 
@@ -45,46 +49,44 @@ fn print_phase(num: u8, desc: &str) {
 async fn main() -> Result<()> {
     print_splash();
     
-    print_phase(0, "SYSTEM INITIALIZATION");
-    
-    // Initialize tracing with custom format for AAA feel
+    // 0. Initialize tracing IMMEDIATELY for diagnostic visibility
     let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
     tracing_subscriber::fmt()
         .with_env_filter(filter)
+        .with_ansi(true) // Force ANSI for diagnostic period
         .with_target(false)
         .with_thread_ids(false)
         .with_file(false)
         .with_line_number(false)
         .init();
+
+    print_phase(0, "SYSTEM INITIALIZATION");
     
-    print_phase(1, "LOADER & CRYPTO");
+    print_phase(1, "CONFIGURATION");
     
-    // 1. Initialize Master Key System with recovery
-    tracing::info!("🔐 {}", "Initializing cryptographic systems...".white());
-    let _master_key = match AgentKeyPair::ensure_master_key() {
-        Ok(key) => {
-            tracing::info!("✅ {}", format!("Master key ready: {}...", &key.key_id[0..8]).green());
-            key
-        }
+    // 1. Load Config with validation and fallbacks
+    let config = match Config::load() {
+        Ok(c) => c,
         Err(e) => {
-            tracing::error!("❌ {}", format!("Critical: Master key failure: {}", e).red());
+            eprintln!("{} {}", "Critical Error:".red().bold(), format!("Failed to load configuration: {}", e).yellow());
+            eprintln!("{} Verify that your configuration file (usually ~/.savant/savant.toml) exists and is valid TOML.", "Tip:".cyan());
+            std::process::exit(1);
+        }
+    };
+
+    print_phase(2, "LOADER & CRYPTO");
+    
+    // 2. Initialize Master Key System with recovery
+    let _master_key = match AgentKeyPair::ensure_master_key() {
+        Ok(key) => key,
+        Err(e) => {
+            eprintln!("Critical: Master key failure: {}", e);
             std::process::exit(1);
         }
     };
     
-    print_phase(2, "CONFIGURATION");
-    
-    // 2. Load Config with validation and fallbacks
-    let config = match Config::load() {
-        Ok(config) => {
-            tracing::info!("✅ {}", "Configuration loaded successfully".green());
-            config
-        }
-        Err(e) => {
-            tracing::warn!("⚠️ {}", format!("No config found: {}. Using defaults.", e).yellow());
-            Config::default()
-        }
-    };
+    tracing::info!("🔐 Cryptographic systems initialized");
+    tracing::info!("✅ Configuration loaded successfully");
     
     // 3. Initialize Nexus Bridge
     print_phase(3, "NEXUS BROADCAST MESH");
@@ -93,14 +95,10 @@ async fn main() -> Result<()> {
     
     // 4. Initialize Persistent Storage
     print_phase(4, "STORAGE ENGINE");
-    let db_path = PathBuf::from("savant.db");
-    let storage = Arc::new(Storage::new(db_path));
+    let db_path = PathBuf::from(&config.system.db_path);
+    let storage = Arc::new(Storage::new(db_path)?);
     
-    if let Err(e) = storage.init_schema() {
-        tracing::error!("❌ {}", format!("Database error: {}", e).red());
-    } else {
-        tracing::info!("💾 {}", "Storage systems synchronized (WAL Mode)".green());
-    }
+    tracing::info!("💾 {}", "Storage systems synchronized (WAL Mode)".green());
     
     print_phase(5, "AGENT DISCOVERY");
     let manager = Arc::new(savant_agent::manager::AgentManager::new(config.clone()));
@@ -132,15 +130,57 @@ async fn main() -> Result<()> {
     print_phase(6, "GATEWAY & ORCHESTRATION");
     let root_authority = _master_key.get_verifying_key().context("Failed to derive root authority")?;
     let signing_key = _master_key.get_signing_key().context("Failed to derive signing key")?;
-    let swarm = Arc::new(SwarmController::new(discovered_agents, storage.clone(), manager.clone(), nexus.clone(), root_authority, signing_key)?);
+    
+    let swarm_storage = storage.clone();
+    let swarm_manager = manager.clone();
+    let swarm_nexus = nexus.clone();
+    let swarm = tokio::task::spawn_blocking(move || {
+        SwarmController::new(discovered_agents, swarm_storage, swarm_manager, swarm_nexus, root_authority, signing_key)
+    }).await??;
+    let swarm = Arc::new(swarm);
     
     let gateway_nexus = nexus.clone();
-    let gateway_config = config.gateway.clone();
+
+    let gateway_config = config.clone();
     tokio::spawn(async move {
         if let Err(e) = start_gateway(gateway_config, gateway_nexus).await {
             tracing::error!("❌ {}", format!("Gateway crash: {}", e).red());
         }
     });
+
+    // 6.5 Initialize External Channels
+    println!("DEBUG: 🔍 Entering Discord configuration check...");
+    tracing::info!("🔍 Checking for Discord configuration...");
+    let channels: Vec<String> = config.channels.keys().cloned().collect();
+    println!("DEBUG: 📡 Detected channels in TOML: {:?}", channels);
+    tracing::info!("📡 Available channels in config: {:?}", channels);
+
+    if let Some(discord_cfg) = config.channels.get("discord") {
+        println!("DEBUG: ✅ Discord block FOUND. Enabled: {}", discord_cfg.enabled);
+        tracing::info!("📡 Discord config found: enabled={}", discord_cfg.enabled);
+        if discord_cfg.enabled {
+            if let Some(token) = &discord_cfg.token {
+                println!("DEBUG: 🔑 Discord Token present.");
+                tracing::info!("🔑 Token present (masked: {}...{})", &token[..4], &token[token.len()-4..]);
+                let discord_adapter = savant_channels::discord::DiscordAdapter::new(
+                    token.clone(), 
+                    discord_cfg.channel_id.clone(),
+                    nexus.clone()
+                );
+                discord_adapter.spawn().await;
+                println!("DEBUG: 🚀 Discord bridge spawn() called.");
+                tracing::info!("🔗 {}", "Discord bridge spawned (autonomous task started)".magenta());
+            } else {
+                println!("DEBUG: ⚠️ Discord enabled but token is MISSING.");
+                tracing::warn!("⚠️ Discord enabled but no token provided in config");
+            }
+        } else {
+            println!("DEBUG: ℹ️ Discord is disabled in config.");
+        }
+    } else {
+        println!("DEBUG: ℹ️ Discord block NOT FOUND in config object.");
+        tracing::info!("ℹ️ No Discord configuration block found in savant.toml");
+    }
 
     print_phase(7, "SWARM IGNITION");
     let swarm_clone = swarm.clone();

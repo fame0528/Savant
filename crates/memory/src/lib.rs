@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Verified Hybrid Semantic Substrate (VHSS)
 //!
 //! This crate implements a production-grade memory subsystem that combines:

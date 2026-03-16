@@ -1,22 +1,56 @@
 use serde::{Deserialize, Serialize};
+use crate::config::ProactiveConfig;
 
 pub mod memory;
 pub use memory::AgentMessage;
 
-/// Session ID type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
 pub struct SessionId(pub String);
 
 /// Device ID type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
 pub struct DeviceId(pub String);
 
+
+/// Control Frame for system operations
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "data")]
+pub enum ControlFrame {
+    HistoryRequest { lane_id: String, limit: usize },
+    InitialSync,
+    SoulManifest { prompt: String, name: Option<String> },
+    SoulUpdate { agent_id: String, content: String },
+    BulkManifest { agents: Vec<AgentManifestPlan> },
+    SwarmInsightHistoryRequest { limit: usize },
+}
+
+/// A plan for manifestations of a single agent
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentManifestPlan {
+    pub name: String,
+    pub soul: String,
+    pub identity: Option<String>,
+}
+
+/// Request Payload
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum RequestPayload {
+    ChatMessage(ChatMessage),
+    ControlFrame(ControlFrame),
+    Auth(String), // For DASHBOARD_LOGIN and legacy auth
+}
+
 /// Request Frame
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestFrame {
     pub session_id: SessionId,
-    pub payload: String,
+    pub payload: RequestPayload,
+    #[serde(default)]
     pub signature: Option<String>,
+    #[serde(default)]
     pub timestamp: Option<i64>,
 }
 
@@ -78,13 +112,20 @@ impl std::str::FromStr for ChatRole {
 }
 
 /// A standardized chat message for LLM context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: String,
+    #[serde(default)]
     pub sender: Option<String>,
+    #[serde(default)]
     pub recipient: Option<String>, // None = Broadcast
+    #[serde(default)]
     pub agent_id: Option<String>,  // Stable ID for tracking
+    #[serde(default)]
+    pub session_id: Option<SessionId>, // AAA: Unified Context Harmony Anchor
+    #[serde(default)]
+    pub channel: AgentOutputChannel, // AAA: Consolidated Lane Isolation
 }
 
 /// A streaming chunk of a chat message
@@ -94,6 +135,21 @@ pub struct ChatChunk {
     pub agent_id: String,
     pub content: String,
     pub is_final: bool,
+    #[serde(default)]
+    pub session_id: Option<SessionId>,
+    #[serde(default)]
+    pub channel: AgentOutputChannel,
+}
+
+
+/// Strict Output Channels for Sovereign Lane Isolation
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentOutputChannel {
+    #[default]
+    Chat,       // User-facing dialogue
+    Telemetry,  // Internal health/status (heartbeats, logs)
+    Memory,     // Distilled insights for long-term recall
 }
 
 /// Model Provider Enum
@@ -139,6 +195,7 @@ pub struct AgentConfig {
     pub identity: Option<AgentIdentity>,
     pub parent_id: Option<String>,
     pub session_id: Option<String>,
+    pub proactive: ProactiveConfig,
 }
 
 /// Memory Category for specialized retrieval

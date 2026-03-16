@@ -116,6 +116,8 @@ impl AgentRegistry {
             env_vars.extend(root_env);
         }
 
+        env_vars.extend(self.defaults.env_vars.clone());
+
         Ok(AgentConfig {
             agent_id,
             agent_name: identity.name.clone(),
@@ -130,7 +132,67 @@ impl AgentRegistry {
             identity: Some(identity),
             parent_id: None,
             session_id: None,
+            proactive: self.defaults.proactive.clone(),
         })
+    }
+
+    /// Resolves is current path to a workspace for a specific agent ID.
+    pub fn resolve_agent_path(&self, agent_id: &str) -> Result<Option<PathBuf>, SavantError> {
+        let agents = self.discover_agents()?;
+        for agent in agents {
+            if agent.agent_id == agent_id {
+                return Ok(Some(agent.workspace_path));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Scaffolds a new agent workspace with AAA defaults.
+    pub fn scaffold_workspace(&self, agent_name: &str, soul_content: &str, identity_content: Option<&str>) -> Result<AgentConfig, SavantError> {
+        let workspaces_path = self.base_path.join("workspaces");
+        let safe_name = agent_name.replace(|c: char| !c.is_alphanumeric(), "-").to_lowercase();
+        let workspace_path = workspaces_path.join(format!("workspace-{}", safe_name));
+
+        if !workspace_path.exists() {
+            fs::create_dir_all(&workspace_path)?;
+        }
+
+        // 1. Write SOUL.md
+        let soul_path = workspace_path.join("SOUL.md");
+        fs::write(soul_path, soul_content)?;
+
+        // 2. Write .env boilerplate with Master Key injection
+        let env_path = workspace_path.join(".env");
+        if !env_path.exists() {
+            let mut env_content = format!("# Savant Agent Environment: {}\nMODEL=gryphe/mythomax-l2-13b\n", agent_name);
+            
+            // Inject Master Key if available
+            if let Some(mgmt) = &self.defaults.openrouter_mgmt {
+                env_content.push_str(&format!("OPENROUTER_API_KEY={}\n", mgmt.master_key));
+            }
+            
+            fs::write(env_path, env_content)?;
+        }
+
+        // 3. Write AAA mandatory files boilerplate
+        let aaa_files = [
+            ("IDENTITY.md", identity_content.unwrap_or("# Identity\nName: \nVibe: \nEmoji: 🤖\n")),
+            ("USER.md", "# User Context\nSpencer: The Architect. Focus on technical excellence and swarm sovereignty.\n"),
+            ("mission.md", "# Mission\nYour primary objective is to contribute to the Savant ecosystem's growth and stability.\n"),
+            ("ethics.md", "# Ethical Guardrails\n- Do no harm to the user or the ecosystem.\n- Maintain absolute transparency in autonomous actions.\n"),
+        ];
+
+        for (filename, default_content) in aaa_files {
+            let file_path = workspace_path.join(filename);
+            if !file_path.exists() {
+                fs::write(file_path, default_content)?;
+            }
+        }
+
+        // 4. Ensure stable ID (creates agent.json)
+        let _ = self.ensure_stable_id(&workspace_path)?;
+
+        self.load_agent(&workspace_path)
     }
 
     fn load_env(
@@ -217,7 +279,7 @@ impl AgentRegistry {
             )
         });
 
-        let image = if let Some(_) = image_file {
+        let image = if image_file.is_some() {
             Some(format!(
                 "http://127.0.0.1:8080/api/agents/{}/image",
                 name.to_lowercase()
@@ -260,6 +322,7 @@ impl AgentRegistry {
     }
 
     /// Ensures a stable agent_id by reading/creating agent.json in the workspace.
+    #[allow(clippy::disallowed_methods)]
     fn ensure_stable_id(&self, workspace_path: &Path) -> Result<String, SavantError> {
         let config_path = workspace_path.join("agent.json");
 

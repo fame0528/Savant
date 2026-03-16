@@ -1,6 +1,7 @@
 use savant_core::types::{RequestFrame, ResponseFrame};
 use tokio::sync::{mpsc, Semaphore};
 use std::sync::Arc;
+use tokio::time::{timeout, Duration};
 
 /// A session lane for queuing tasks and messages per session.
 pub struct SessionLane {
@@ -31,26 +32,38 @@ impl SessionLane {
     ) {
         tokio::spawn(async move {
             while let Some(frame) = rx.recv().await {
-                let _permit = concurrency_limit.acquire().await.expect("Concurrency semaphore closed");
-                tracing::debug!("Processing frame for session: {}", frame.session_id.0);
+                // 🏰 Lane Backpressure: 30s timeout on concurrency acquisition
+                let _permit = match timeout(Duration::from_secs(30), concurrency_limit.acquire()).await {
+                    Ok(Ok(p)) => p,
+                    _ => {
+                        tracing::error!("Lane timeout: Failed to acquire concurrency permit for session {}", frame.session_id.0);
+                        continue;
+                    }
+                };
                 
-                // 1. Process Global Directives
-                if frame.payload.starts_with("DIRECTIVE:") {
-                    let directive = frame.payload.trim_start_matches("DIRECTIVE:").to_string();
-                    nexus.update_state("GLOBAL_DIRECTIVE".to_string(), directive).await;
-                    
-                    let response = ResponseFrame {
-                        request_id: "ack".to_string(),
-                        payload: "Global directive broadcasted to swarm.".to_string(),
-                    };
-                    let _ = response_tx.send(response).await;
-                    continue;
-                }
+                tracing::debug!("[LANE:ACTUATOR] Processing frame for session: {}", frame.session_id.0);
+                
+                // 1. Process Payloads
+                let response_payload = match frame.payload {
+                    savant_core::types::RequestPayload::Auth(ref s) if s.starts_with("DIRECTIVE:") => {
+                        let directive = s.trim_start_matches("DIRECTIVE:").to_string();
+                        nexus.update_state("GLOBAL_DIRECTIVE".to_string(), directive).await;
+                        "Global directive broadcasted to swarm.".to_string()
+                    }
+                    savant_core::types::RequestPayload::ChatMessage(ref m) => {
+                        format!("Accepted message from {}", m.sender.as_deref().unwrap_or("User"))
+                    }
+                    savant_core::types::RequestPayload::ControlFrame(_) => {
+                        "Control frame acknowledged.".to_string()
+                    }
+                    savant_core::types::RequestPayload::Auth(ref s) => {
+                        format!("Auth string acknowledged: {}", s)
+                    }
+                };
 
-                // Placeholder: standard echo logic
                 let response = ResponseFrame {
                     request_id: "ack".to_string(),
-                    payload: format!("Accepted: {}", frame.payload),
+                    payload: response_payload,
                 };
                 let _ = response_tx.send(response).await;
             }

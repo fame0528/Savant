@@ -13,6 +13,7 @@ pub struct AgentMessage {
     pub recipient: Option<String>,
     pub tool_use_id: Option<String>,
     pub timestamp: i64,
+    pub channel: String,
 }
 
 impl AgentMessage {
@@ -26,6 +27,7 @@ impl AgentMessage {
             recipient: msg.recipient.clone(),
             tool_use_id: None, // Will be populated by compaction/logic if needed
             timestamp: chrono::Utc::now().timestamp(),
+            channel: serde_json::to_string(&msg.channel).unwrap_or_default().replace('"', ""),
         }
     }
 
@@ -37,7 +39,9 @@ impl AgentMessage {
             content: self.content.clone(),
             sender: self.sender.clone(),
             recipient: self.recipient.clone(),
-            agent_id: Some(self.session_id.clone()), // session_id is typically the agent_id in current Savant
+            agent_id: None,
+            session_id: Some(crate::types::SessionId(self.session_id.clone())),
+            channel: serde_json::from_str(&format!("\"{}\"", self.channel)).unwrap_or_default(),
         }
     }
 }

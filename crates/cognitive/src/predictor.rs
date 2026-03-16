@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use std::cmp;
 
 use tracing::{debug, info, warn};
@@ -71,18 +72,8 @@ impl DspConfig {
     }
 }
 
-/// The DSP Predictor computes the optimal number of speculative tool-call steps.
-///
-/// This is a production implementation that uses a hybrid approach:
-/// 1. Heuristic complexity scoring (current)
-/// 2. In the future, can be extended with a real ML model (candle-core DistilBERT)
-///
-/// The predictor implements the mathematical formulation from the DSP paper:
-/// - State space S: token sequence
-/// - Action space A: integer k (speculation depth)
-/// - Reward: latency reduction minus token waste penalty
+///   penalty.
 /// - Policy: expectile regression with parameter τ
-/// The DSP Predictor computes the optimal number of speculative tool-call steps.
 #[derive(Archive, Deserialize, Serialize, CheckBytes, Debug, Clone)]
 #[bytecheck(crate = bytecheck)]
 pub struct DspPredictor {
@@ -191,7 +182,7 @@ impl DspPredictor {
     /// ```
     pub fn predict_optimal_k(&mut self, trajectory_complexity: f32) -> u32 {
         // Clamp complexity to reasonable range to prevent overflow/underflow
-        let complexity = trajectory_complexity.max(0.1).min(100.0);
+        let complexity = trajectory_complexity.clamp(0.1, 100.0);
 
         // Heuristic: base prediction inversely proportional to complexity
         // Simple tasks (low complexity) can safely speculate deeper.
@@ -357,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_predict_optimal_k_bounds() {
-        let mut predictor = DspPredictor::new(DspConfig::default());
+        let mut predictor = DspPredictor::new(DspConfig::default()).expect("Failed to create predictor");
 
         // Test various complexity levels
         for complexity in [0.1, 1.0, 5.0, 10.0, 50.0, 100.0] {
@@ -373,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_predict_optimal_k_simple_tasks() {
-        let mut predictor = DspPredictor::new(DspConfig::default());
+        let mut predictor = DspPredictor::new(DspConfig::default()).expect("Failed to create predictor");
         // Simple tasks (low complexity) should yield higher k
         let k_simple = predictor.predict_optimal_k(0.5);
         let k_complex = predictor.predict_optimal_k(20.0);
@@ -389,7 +380,7 @@ mod tests {
             tau: 0.5,
             beta: 0,
             max_speculative_steps: 10,
-        });
+        }).expect("Failed to create predictor");
 
         // With τ=0.5 (symmetric), loss should be symmetric
         let loss1 = predictor.expectile_loss(5.0, 3.0); // actual < predicted
@@ -406,7 +397,7 @@ mod tests {
             tau: 0.8,
             beta: 0,
             max_speculative_steps: 10,
-        });
+        }).expect("Failed to create predictor");
 
         // With τ=0.8 (favor low k), under-prediction (y < ŷ) should be penalized less
         let loss_under = predictor.expectile_loss(3.0, 5.0); // under-predicted (actual=3 < pred=5)
@@ -423,12 +414,12 @@ mod tests {
             tau: 0.7,
             beta: 0,
             max_speculative_steps: 10,
-        });
+        }).unwrap();
         let mut predictor_biased = DspPredictor::new(DspConfig {
             tau: 0.7,
             beta: 3,
             max_speculative_steps: 10,
-        });
+        }).unwrap();
 
         let k_base = predictor_base.predict_optimal_k(5.0);
         let k_biased = predictor_biased.predict_optimal_k(5.0);
@@ -441,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_update_accuracy() {
-        let mut predictor = DspPredictor::new(DspConfig::default());
+        let mut predictor = DspPredictor::new(DspConfig::default()).unwrap();
         let loss = predictor.update_accuracy(5, 3);
         assert!(predictor.prediction_count() == 1);
         assert!(predictor.accuracy_ema() > 0.0);
@@ -454,7 +445,7 @@ mod tests {
             tau: 0.7,
             beta: 0,
             max_speculative_steps: 10,
-        });
+        }).unwrap();
 
         // Simulate a history where we consistently over-predict
         for _i in 0..10 {

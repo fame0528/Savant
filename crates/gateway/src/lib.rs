@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)]
 
 //! Savant Gateway Crate
 //! WebSocket control plane (axum + tokio-tungstenite).
@@ -6,4 +7,5 @@
 pub mod auth;
 pub mod handlers;
 pub mod lanes;
+pub mod persistence;
 pub mod server;

@@ -1,6 +1,6 @@
 [package]
 name = "savant_core"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -35,3 +35,6 @@ fjall = { workspace = true }
 rkyv = { workspace = true }
 ruvector-core = { workspace = true }
 bytecheck = { workspace = true }
+dashmap = { workspace = true }
+libc = { workspace = true }
+num_cpus = { workspace = true }

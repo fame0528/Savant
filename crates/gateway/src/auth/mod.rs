@@ -16,11 +16,20 @@ pub struct AuthenticatedSession {
 /// The session_id is expected to be the hex-encoded Ed25519 public key.
 pub async fn authenticate(frame: &RequestFrame) -> Result<AuthenticatedSession, SavantError> {
     // Simple bypass for dashboard connections
-    if frame.payload == "DASHBOARD_LOGIN" {
-        return Ok(AuthenticatedSession {
-            session_id: SessionId("dashboard-session".to_string()),
-            public_key: [0u8; 32], // Dummy key for dashboard
-        });
+    match &frame.payload {
+        savant_core::types::RequestPayload::Auth(auth_str) if auth_str == "DASHBOARD_LOGIN" => {
+            return Ok(AuthenticatedSession {
+                session_id: SessionId("dashboard-session".to_string()),
+                public_key: [0u8; 32],
+            });
+        }
+        savant_core::types::RequestPayload::ControlFrame(savant_core::types::ControlFrame::InitialSync) => {
+            return Ok(AuthenticatedSession {
+                session_id: SessionId("dashboard-session".to_string()),
+                public_key: [0u8; 32],
+            });
+        }
+        _ => {}
     }
     
     let signature_hex = frame.signature.as_ref()
@@ -56,7 +65,9 @@ pub async fn authenticate(frame: &RequestFrame) -> Result<AuthenticatedSession, 
     let signature = Signature::from_slice(&signature_bytes)
         .map_err(|e| SavantError::AuthError(format!("Invalid signature format: {}", e)))?;
 
-    let message = format!("{}:{}", timestamp, frame.payload);
+    let payload_str = serde_json::to_string(&frame.payload)
+        .map_err(|e| SavantError::AuthError(format!("Failed to serialize payload for verification: {}", e)))?;
+    let message = format!("{}:{}", timestamp, payload_str);
     
     verifying_key.verify(message.as_bytes(), &signature)
         .map_err(|e| SavantError::AuthError(format!("Signature verification failed: {}", e)))?;

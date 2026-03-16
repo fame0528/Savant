@@ -39,7 +39,9 @@ impl Tool for MemoryAppendTool {
             content: content.to_string(),
             sender: Some(self.agent_id.clone()),
             recipient: None,
-            agent_id: Some(self.agent_id.clone()),
+            agent_id: None,
+            session_id: None, // Will be prioritized by Backend if None
+            channel: savant_core::types::AgentOutputChannel::Memory,
         };
 
         self.memory.store(&self.agent_id, &msg).await?;

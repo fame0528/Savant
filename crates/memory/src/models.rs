@@ -25,7 +25,7 @@ use tracing::error;
 /// preventing maliciously crafted data from causing undefined behavior.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes, Debug, Clone, PartialEq, Eq)]
 #[bytecheck(crate = bytecheck)]
-#[repr(C)]
+#[repr(C, align(64))]
 pub struct AgentMessage {
     /// Unique message identifier (UUID v4)
     pub id: String,
@@ -43,6 +43,8 @@ pub struct AgentMessage {
     pub timestamp: rend::i64_le,
     /// Optional parent message ID (for conversation threading)
     pub parent_id: Option<String>,
+    /// Strict Output Channel
+    pub channel: String,
 }
 
 impl AgentMessage {
@@ -57,6 +59,7 @@ impl AgentMessage {
             tool_results: Vec::new(),
             timestamp: chrono::Utc::now().timestamp_millis().into(),
             parent_id: None,
+            channel: "Chat".to_string(),
         }
     }
 
@@ -71,6 +74,7 @@ impl AgentMessage {
             tool_results: Vec::new(),
             timestamp: chrono::Utc::now().timestamp_millis().into(),
             parent_id: None,
+            channel: "Chat".to_string(),
         }
     }
 
@@ -85,6 +89,7 @@ impl AgentMessage {
             tool_results: Vec::new(),
             timestamp: chrono::Utc::now().timestamp_millis().into(),
             parent_id: None,
+            channel: "Telemetry".to_string(),
         }
     }
 
@@ -108,6 +113,7 @@ impl AgentMessage {
             }],
             timestamp: chrono::Utc::now().timestamp_millis().into(),
             parent_id: None,
+            channel: "Telemetry".to_string(),
         }
     }
 
@@ -120,15 +126,25 @@ impl AgentMessage {
             ChatRole::Assistant => MessageRole::Assistant,
             ChatRole::System => MessageRole::System,
         };
+
+        // AAA: Unified Context Harmony - Prioritize session_id over agent_id or implicit session
+        let sid = msg.session_id.as_ref()
+            .map(|s| s.0.clone())
+            .unwrap_or_else(|| session_id.to_string());
+
+        // Sanitize to prevent path traversal in LSM partitions
+        let sid = savant_core::session::sanitize_session_id(&sid);
+
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            session_id: session_id.to_string(),
+            session_id: sid,
             role,
             content: msg.content.clone(),
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             timestamp: Utc::now().timestamp_millis().into(),
             parent_id: None,
+            channel: serde_json::to_string(&msg.channel).unwrap_or_default().replace('"', ""),
         }
     }
 
@@ -146,7 +162,9 @@ impl AgentMessage {
             content: self.content.clone(),
             sender: None,
             recipient: None,
-            agent_id: Some(self.session_id.clone()),
+            agent_id: None, // AAA: Deprecated in favor of session_id
+            session_id: Some(savant_core::types::SessionId(self.session_id.clone())),
+            channel: serde_json::from_str(&format!("\"{}\"", self.channel)).unwrap_or_default(),
         }
     }
 }
@@ -203,7 +221,7 @@ pub struct ToolResultRef {
 /// transcript to allow for summarization and distillation.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes, Debug, Clone, PartialEq)]
 #[bytecheck(crate = bytecheck)]
-#[repr(C)]
+#[repr(C, align(64))]
 pub struct MemoryEntry {
     /// Unique ID for this memory
     pub id: rend::u64_le,
@@ -224,6 +242,15 @@ pub struct MemoryEntry {
     pub created_at: rend::i64_le,
     /// Last updated timestamp
     pub updated_at: rend::i64_le,
+    // --- OMEGA SINGULARITY EXTENSIONS ---
+    /// Shannon Entropy value (Informational Gain)
+    pub shannon_entropy: rend::f32_le,
+    /// Last accessed timestamp for temporal heuristics
+    pub last_accessed_at: rend::i64_le,
+    /// Total access count for frequency-based importance
+    pub hit_count: rend::u32_le,
+    /// Relational edges (IDs of related MemoryEntry objects)
+    pub related_to: Vec<rend::u64_le>,
 }
 
 /// Generates a storage key for a session's transcript.
@@ -307,8 +334,9 @@ mod tests {
                 arguments: "{}".to_string(),
             }],
             tool_results: Vec::new(),
-            timestamp: 1000,
+            timestamp: 1000.into(),
             parent_id: None,
+            channel: "Chat".to_string(),
         };
 
         let msg2 = AgentMessage {
@@ -322,8 +350,9 @@ mod tests {
                 result_content: "ok".to_string(),
                 is_error: false,
             }],
-            timestamp: 2000,
+            timestamp: 2000.into(),
             parent_id: None,
+            channel: "Telemetry".to_string(),
         };
 
         assert!(verify_tool_pair_integrity(&[msg1.clone(), msg2]).is_ok());
@@ -342,8 +371,9 @@ mod tests {
                 result_content: "orphan".to_string(),
                 is_error: false,
             }],
-            timestamp: 2000,
+            timestamp: 2000.into(),
             parent_id: None,
+            channel: "Telemetry".to_string(),
         };
 
         assert!(verify_tool_pair_integrity(&[msg]).is_err());

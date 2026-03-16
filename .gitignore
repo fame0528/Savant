@@ -21,6 +21,7 @@ savant.db-journal
 savant.db-shm
 savant.db-wal
 logs/
+data/
 *.log
 *.txt
 *.tmp

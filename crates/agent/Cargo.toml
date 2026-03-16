@@ -1,6 +1,6 @@
 [package]
 name = "savant_agent"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -13,6 +13,7 @@ savant_memory = { path = "../memory" }
 savant_security = { path = "../security" }
 savant_echo = { path = "../echo" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tiktoken-rs = "0.5"
@@ -35,3 +36,9 @@ thiserror = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[dev-dependencies]
+tempfile = "3.10"

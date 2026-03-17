@@ -1,5 +1,5 @@
 @echo off
-REM Savant Complete System Launcher for Windows
+REM Savant Smart Launcher - builds only when source changes
 REM Starts Gateway, Dashboard, and all Swarm components
 
 echo Starting Savant Complete System...
@@ -35,13 +35,49 @@ echo Cleaning up previous processes...
 taskkill /f /im savant_cli.exe >nul 2>nul
 taskkill /f /im cargo.exe >nul 2>nul
 
-REM Set the run command (always needed)
+REM Set the run command
 set RUN_CMD=cargo run --release --bin savant_cli
 
 REM Parse command line arguments
-if "%1"=="--fast" goto :check_binary
+if "%1"=="--force" goto :do_build
+if "%1"=="--skip" goto :start_services
 
-REM Build: Ensure latest code is compiled
+REM Smart build: only rebuild if source files changed since last build
+:smart_build
+set NEED_BUILD=0
+
+REM If no binary exists, must build
+if not exist "target\release\savant_cli.exe" (
+    echo No binary found. Building...
+    set NEED_BUILD=1
+    goto :do_build
+)
+
+REM Check if Cargo.toml is newer than binary
+for %%F in ("target\release\savant_cli.exe") do set BIN_TIME=%%~tF
+for %%F in ("Cargo.toml") do set CARGO_TIME=%%~tF
+
+if "%CARGO_TIME%" gtr "%BIN_TIME%" (
+    echo Cargo.toml changed since last build. Rebuilding...
+    set NEED_BUILD=1
+    goto :do_build
+)
+
+REM Check all .rs files in crates for changes
+for /r crates %%F in (*.rs) do (
+    if "%%~tF" gtr "%BIN_TIME%" (
+        echo Source changed: %%~nxF
+        set NEED_BUILD=1
+        goto :do_build
+    )
+)
+
+if %NEED_BUILD% equ 0 (
+    echo Binary is up to date. Skipping build.
+    goto :start_services
+)
+
+:do_build
 echo Building Savant core...
 cargo build --release
 if %errorlevel% neq 0 (
@@ -50,21 +86,6 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 echo Core build complete
-goto :start_services
-
-:check_binary
-REM Check if binary exists before skipping build
-if not exist "target\release\savant_cli.exe" (
-    echo No binary found. Building first...
-    cargo build --release
-    if %errorlevel% neq 0 (
-        echo Build failed
-        pause
-        exit /b 1
-    )
-    echo Build complete
-)
-echo Fast startup: binary ready
 
 :start_services
 
@@ -85,7 +106,7 @@ echo Starting Gateway and Swarm...
 start "Savant Swarm Engine" cmd /k "%RUN_CMD%"
 echo Gateway started
 
-REM Wait for gateway to initialize
+REM Wait for gateway to fully initialize
 timeout /t 5 /nobreak >nul
 
 REM Start the Dashboard
@@ -96,7 +117,7 @@ cd ..
 echo Dashboard started
 
 REM Wait for dashboard to initialize
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 
 echo.
 echo Savant System is now running!

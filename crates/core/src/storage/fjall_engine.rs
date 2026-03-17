@@ -44,10 +44,7 @@ impl FjallEngine {
     }
 
     /// Gets or creates a keyspace (namespace) within the database.
-    pub fn get_or_create_keyspace(
-        &self,
-        name: &str,
-    ) -> Result<OptimisticTxKeyspace, SavantError> {
+    pub fn get_or_create_keyspace(&self, name: &str) -> Result<OptimisticTxKeyspace, SavantError> {
         self.db
             .keyspace(name, fjall::KeyspaceCreateOptions::default)
             .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))
@@ -55,31 +52,34 @@ impl FjallEngine {
 
     /// Inserts a key-value pair into the specified keyspace.
     /// Transaction is committed immediately.
-    pub fn insert(
-        &self,
-        keyspace: &str,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<(), SavantError> {
+    pub fn insert(&self, keyspace: &str, key: &[u8], value: &[u8]) -> Result<(), SavantError> {
         let ks = self.get_or_create_keyspace(keyspace)?;
-        let mut tx = self.db.write_tx()
+        let mut tx = self
+            .db
+            .write_tx()
             .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))?;
         tx.insert(&ks, key, value);
         tx.commit()
             .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))?
-            .map_err(|e| SavantError::IoError(std::io::Error::other(format!("Conflict: {:?}", e))))?;
+            .map_err(|e| {
+                SavantError::IoError(std::io::Error::other(format!("Conflict: {:?}", e)))
+            })?;
         Ok(())
     }
 
     /// Removes a key from the specified keyspace.
     pub fn remove(&self, keyspace: &str, key: &[u8]) -> Result<(), SavantError> {
         let ks = self.get_or_create_keyspace(keyspace)?;
-        let mut tx = self.db.write_tx()
+        let mut tx = self
+            .db
+            .write_tx()
             .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))?;
         tx.remove(&ks, key);
         tx.commit()
             .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))?
-            .map_err(|e| SavantError::IoError(std::io::Error::other(format!("Conflict: {:?}", e))))?;
+            .map_err(|e| {
+                SavantError::IoError(std::io::Error::other(format!("Conflict: {:?}", e)))
+            })?;
         Ok(())
     }
 
@@ -92,7 +92,11 @@ impl FjallEngine {
             .map(|opt| opt.map(|v| v.to_vec()))
     }
 
-    /// Flushes all pending writes to disk.
+    /// Flushes pending writes.
+    ///
+    /// Note: Fjall auto-persists data on drop and uses background
+    /// fsync. This method is a no-op for compatibility but data
+    /// durability is ensured by Fjall's WAL.
     pub fn flush(&self) -> Result<(), SavantError> {
         debug!("[FjallEngine] Flush requested (no-op, Fjall auto-persists)");
         Ok(())

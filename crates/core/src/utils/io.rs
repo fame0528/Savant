@@ -4,22 +4,15 @@ use tokio::fs;
 
 /// Reads a mandatory file or returns a default string.
 pub async fn read_or_default(path: &Path, default: &str) -> String {
-    if path.exists() {
-        fs::read_to_string(path)
-            .await
-            .unwrap_or_else(|_| default.to_string())
-    } else {
-        default.to_string()
+    match fs::read_to_string(path).await {
+        Ok(content) => content,
+        Err(_) => default.to_string(),
     }
 }
 
 /// Reads an optional file returning None if missing.
 pub async fn read_optional(path: &Path) -> Option<String> {
-    if path.exists() {
-        fs::read_to_string(path).await.ok()
-    } else {
-        None
-    }
+    fs::read_to_string(path).await.ok()
 }
 
 /// Appends a line to a .env file in the specified directory.
@@ -44,8 +37,6 @@ pub async fn append_to_env(
 
 /// Ensures a directory exists.
 pub async fn ensure_dir(path: &Path) -> Result<(), SavantError> {
-    if !path.exists() {
-        fs::create_dir_all(path).await?;
-    }
+    fs::create_dir_all(path).await?;
     Ok(())
 }

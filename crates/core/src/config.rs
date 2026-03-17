@@ -225,14 +225,24 @@ impl Config {
 
     /// Loads config from files, then environment overrides
     pub fn load() -> Result<Self, SavantError> {
+        Self::load_from(None)
+    }
+
+    /// Loads config from a specific path, or discovers config files if None
+    pub fn load_from(path: Option<&str>) -> Result<Self, SavantError> {
         let mut figment =
             Figment::new().merge(figment::providers::Serialized::defaults(Self::default()));
 
-        for path in Self::config_paths() {
-            if path.exists() {
-                tracing::info!("config: Loading from {:?}", path);
-                figment = figment.merge(Toml::file(&path));
-                break;
+        if let Some(p) = path {
+            tracing::info!("config: Loading from specified path: {}", p);
+            figment = figment.merge(Toml::file(p));
+        } else {
+            for path in Self::config_paths() {
+                if path.exists() {
+                    tracing::info!("config: Loading from {:?}", path);
+                    figment = figment.merge(Toml::file(&path));
+                    break;
+                }
             }
         }
 

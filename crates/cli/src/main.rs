@@ -27,7 +27,7 @@ struct Args {
 fn print_splash() {
     let logo = r#"
     ███████╗ █████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗
-    ██╔════╝██╔══██╗██║   ██║██╔══██╗████╗  ██║╚══██╔══╝
+    ██╔════╝██╔══██║██║   ██║██╔══██╗████╗  ██║╚══██╔══╝
     ███████╗███████║██║   ██║███████║██╔██╗ ██║   ██║   
     ╚════██║██╔══██║╚██╗ ██╔╝██╔══██║██║╚██╗██║   ██║   
     ███████║██║  ██║ ╚████╔╝ ██║  ██║██║ ╚████║   ██║   
@@ -49,10 +49,22 @@ fn print_splash() {
         "====================================================".bright_blue()
     );
     println!("{}", "   v2.0.0 PRODUCTION".green().bold());
+
+    // Dynamic build timestamp using std::time (no extra dependency)
+    let build_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| {
+            let secs = d.as_secs();
+            let days = secs / 86400;
+            let years = 1970 + days / 365;
+            years.to_string()
+        })
+        .unwrap_or_else(|_| "unknown".to_string());
     println!(
         "{}",
-        "   Build Signature: [2026-03-17-PRODUCTION]".bright_black()
+        format!("   Build: {} (runtime)", build_time).bright_black()
     );
+
     println!(
         "{}",
         "====================================================".bright_blue()
@@ -71,6 +83,17 @@ fn print_phase(num: u8, desc: &str) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Handle --keygen flag
+    let args = Args::parse();
+    if args.keygen {
+        let keypair = AgentKeyPair::generate()?;
+        println!("Generated new master key pair:");
+        println!("  SAVANT_MASTER_SECRET_KEY={}", keypair.secret_key);
+        println!("  SAVANT_MASTER_PUBLIC_KEY={}", keypair.public_key);
+        println!("  SAVANT_MASTER_KEY_ID={}", keypair.key_id);
+        return Ok(());
+    }
+
     print_splash();
 
     // 0. Initialize tracing IMMEDIATELY for diagnostic visibility
@@ -89,7 +112,7 @@ async fn main() -> Result<()> {
     print_phase(1, "CONFIGURATION");
 
     // 1. Load Config with validation and fallbacks
-    let config = match Config::load() {
+    let config = match Config::load_from(args.config.as_deref()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!(

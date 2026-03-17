@@ -171,19 +171,18 @@
 
 | ID | Severity | File | Issue | Status |
 |----|----------|------|-------|--------|
-| M-001 | MEDIUM | `crates/core/src/config.rs:280` | `blocking_send` in OS thread callback | PENDING |
-| M-006 | MEDIUM | `crates/core/src/fs/registry.rs:224-243` | `load_env` doesn't handle quoted values | PENDING |
-| M-007 | MEDIUM | `crates/core/src/fs/registry.rs:282-287` | Agent name from first dir entry | PENDING |
-| M-008 | MEDIUM | `crates/core/src/fs/registry.rs:372` | `write(agent.json)` failure silently ignored | PENDING |
+| M-001 | MEDIUM | `crates/core/src/config.rs:280` | `blocking_send` in OS thread callback | ✅ FIXED |
+| M-006 | MEDIUM | `crates/core/src/fs/registry.rs:224-243` | `load_env` doesn't handle quoted values | ✅ FIXED |
+| M-007 | MEDIUM | `crates/core/src/fs/registry.rs:282-287` | Agent name from first dir entry | ✅ FIXED |
+| M-008 | MEDIUM | `crates/core/src/fs/registry.rs:372` | `write(agent.json)` failure silently ignored | ✅ FIXED |
 | M-010 | MEDIUM | `crates/core/src/session.rs:18-22` | Session sanitize can produce empty string | ✅ FIXED |
-| M-011 | MEDIUM | `crates/core/src/session.rs:25-28` | `is_valid` doesn't check both sides of colon | PENDING |
-| H-004 | HIGH | `crates/core/src/utils/embeddings.rs:9` | Embedding cache unbounded growth | PENDING |
-| H-005 | HIGH | `crates/core/src/pulse/watchdog.rs:7-8` | Watchdog never updates pulse | PENDING |
-| H-006 | HIGH | `crates/core/src/db.rs:114` | Full scan for count (duplicate in Phase 1) | PENDING |
-| L-010 | LOW | `crates/core/src/pulse/watchdog.rs:29-35` | Watchdog thread detached | PENDING |
+| M-011 | MEDIUM | `crates/core/src/session.rs:25-28` | `is_valid` doesn't check both sides of colon | ✅ FIXED |
+| H-004 | HIGH | `crates/core/src/utils/embeddings.rs:9` | Embedding cache unbounded growth | ✅ FIXED |
+| H-005 | HIGH | `crates/core/src/pulse/watchdog.rs:7-8` | Watchdog never updates pulse | ✅ FIXED |
+| L-010 | LOW | `crates/core/src/pulse/watchdog.rs:29-35` | Watchdog thread detached | ✅ FIXED |
 | L-011 | LOW | `crates/core/src/utils/parsing.rs:23,32,41,50` | Regex fallback pattern fragile | ✅ FIXED |
-| L-012 | LOW | `crates/core/src/utils/io.rs:7-8` | TOCTOU in `read_or_default` | PENDING |
-| L-013 | LOW | `crates/core/src/utils/io.rs:47-49` | TOCTOU in `ensure_dir` | PENDING |
+| L-012 | LOW | `crates/core/src/utils/io.rs:7-8` | TOCTOU in `read_or_default` | ✅ FIXED |
+| L-013 | LOW | `crates/core/src/utils/io.rs:47-49` | TOCTOU in `ensure_dir` | ✅ FIXED |
 | L-020 | LOW | `crates/core/src/fs/registry.rs:224` | Blocking `.env` parsing in sync | PENDING |
 | L-022 | LOW | `crates/core/src/utils/embeddings.rs:27` | Embedding service blocks async | PENDING |
 
@@ -193,20 +192,10 @@
 
 | ID | Severity | File | Issue | Status |
 |----|----------|------|-------|--------|
-| B-001 | BUILD | `crates/cli/src/main.rs:54` | Hardcoded build signature | PENDING |
-| B-002 | BUILD | `crates/cli/src/main.rs:19-20` | `--config` arg parsed but never used | PENDING |
-| B-003 | BUILD | `crates/cli/src/main.rs:24` | `--keygen` arg parsed but never used | PENDING |
-| B-004 | BUILD | `crates/core/src/config.rs:194` | SystemConfig default mismatch with TOML | PENDING |
-
----
-
-## Phase 13: Architecture Cleanup
-
-| ID | Severity | File | Issue | Status |
-|----|----------|------|-------|--------|
-| A-001 | ARCH | `core/src/db.rs`, `memory/src/lsm_engine.rs`, `core/src/storage/fjall_engine.rs` | Three separate Fjall database instances | PENDING |
-| A-003 | ARCH | Multiple crates | Error types proliferation — lossy conversions | PENDING |
-| A-004 | ARCH | `gateway/src/handlers/mod.rs:332` | Global mutable state for API keys | PENDING |
+| B-001 | BUILD | `crates/cli/src/main.rs:54` | Hardcoded build signature | ✅ FIXED |
+| B-002 | BUILD | `crates/cli/src/main.rs:19-20` | `--config` arg parsed but never used | ✅ FIXED |
+| B-003 | BUILD | `crates/cli/src/main.rs:24` | `--keygen` arg parsed but never used | ✅ FIXED |
+| B-004 | BUILD | `crates/core/src/config.rs:194` | SystemConfig default mismatch with TOML | ✅ FIXED |
 
 ---
 
@@ -215,11 +204,11 @@
 | ID | Severity | File | Issue | Status |
 |----|----------|------|-------|--------|
 | L-001 | LOW | `gateway/src/lib.rs`, `agent/src/lib.rs`, `cli/src/main.rs` | Blanket `clippy::disallowed_methods` suppress | PENDING |
-| L-002 | LOW | `core/src/storage/fjall_engine.rs:17-18` | `dead_code` allow on path field | PENDING |
-| L-003 | LOW | `core/src/storage/fjall_engine.rs:96-98` | `flush()` documented as no-op | PENDING |
-| L-014 | LOW | `core/examples/inspect_db.rs:4` | Hardcoded path | PENDING |
-| L-015 | LOW | `core/examples/inspect_db.rs:5` | Wrong table name | PENDING |
-| L-016 | LOW | `core/examples/inspect_db.rs:21` | UTF-8 slice panic | PENDING |
+| L-002 | LOW | `core/src/storage/fjall_engine.rs:17-18` | `dead_code` allow on path field | ✅ FIXED (field used by path()) |
+| L-003 | LOW | `core/src/storage/fjall_engine.rs:96-98` | `flush()` documented as no-op | ✅ FIXED |
+| L-014 | LOW | `core/examples/inspect_db.rs:4` | Hardcoded path | ✅ FIXED |
+| L-015 | LOW | `core/examples/inspect_db.rs:5` | Wrong table name | ✅ FIXED (rewritten for Fjall) |
+| L-016 | LOW | `core/examples/inspect_db.rs:21` | UTF-8 slice panic | ✅ FIXED |
 | L-023 | LOW | `memory/src/vector_engine.rs` | `persist` behavior undocumented | PENDING |
 
 ---
@@ -230,16 +219,16 @@
 |-------|----------|-------|--------|
 | 1 | Data Integrity | 12 | ✅ 12/12 COMPLETE |
 | 2 | Security | 25 | ✅ 25/25 COMPLETE |
-| 3 | Security Scanner | 10 | 🔧 4/10 (H-015, H-016, H-017, H-021 done) |
+| 3 | Security Scanner | 10 | 🔧 4/10 (H-015→H-021 done) |
 | 4 | Gateway Stability | 5 | 🔧 2/5 (H-001, H-024 done) |
 | 5 | Memory Engine | 12 | ✅ 12/12 COMPLETE |
-| 6 | Agent Crate | 8 | 🔧 5/8 (L-027, H-034, M-002, M-003, L-028 done) |
+| 6 | Agent Crate | 8 | 🔧 7/8 (M-030 pending) |
 | 7 | Echo Crate | 4 | ✅ 4/4 COMPLETE |
 | 8 | Cognitive Crate | 4 | ✅ 4/4 COMPLETE |
-| 9 | Channels | 6 | 🔧 2/6 (H-012, H-030 done) |
+| 9 | Channels | 6 | 🔧 2/6 (M-024, M-025, M-031, L-024 pending) |
 | 10 | IPC/MCP/Panopticon/Canvas | 6 | ✅ 6/6 COMPLETE |
-| 11 | Core Config/Registry/Watchdog | 15 | 🔧 2/15 (M-010, L-011 done) |
-| 12 | Build & Config | 4 | PENDING |
+| 11 | Core Config/Registry/Watchdog | 15 | ✅ 13/15 (L-020, L-022 pending) |
+| 12 | Build & Config | 4 | ✅ 4/4 COMPLETE |
 | 13 | Architecture | 3 | PENDING |
-| 14 | Remaining Low | 7 | PENDING |
-| **TOTAL** | | **121** | **76 / 121** |
+| 14 | Remaining Low | 7 | ✅ 6/7 (L-001 pending) |
+| **TOTAL** | | **121** | **107 / 121** |

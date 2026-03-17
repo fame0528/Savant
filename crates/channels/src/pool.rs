@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use dashmap::DashMap;
+use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
 use savant_core::types::EventFrame;
-use savant_core::error::SavantError;
+use std::sync::Arc;
 
 use savant_core::bus::NexusBridge;
 
@@ -44,16 +44,21 @@ impl InboxPool {
         if let Some(adapter) = self.adapters.get(channel) {
             adapter.send_event(event).await
         } else {
-            Err(SavantError::Unknown(format!("Channel not found: {}", channel)))
+            Err(SavantError::Unknown(format!(
+                "Channel not found: {}",
+                channel
+            )))
         }
     }
 
     /// Submits an inbound event from an adapter to the NexusBridge.
     pub async fn submit_inbound(&self, event: EventFrame) {
-        info!("Inbound event from adapter: {:?}", event.event_type);
-        self.nexus.event_bus.send(event).ok();
+        let event_type = event.event_type.clone();
+        info!("Inbound event from adapter: {:?}", event_type);
+        if let Err(e) = self.nexus.event_bus.send(event) {
+            tracing::warn!("Failed to submit inbound event {:?}: {}", event_type, e);
+        }
     }
 }
 
 use tracing::info;
-

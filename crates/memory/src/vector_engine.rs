@@ -425,6 +425,10 @@ impl SemanticVectorEngine {
     /// This is a convenience method that uses the path stored when the engine
     /// was created or loaded. Returns an error if no persist path is available.
     ///
+    /// The persist operation is also called automatically on `Drop` to prevent
+    /// data loss on normal shutdown. The write is atomic (temp file + rename)
+    /// to prevent corruption on crash.
+    ///
     /// # Returns
     /// `Ok(())` on success, or an error if no persist path is set.
     pub fn persist(&self) -> Result<(), MemoryError> {

@@ -145,69 +145,112 @@ impl MemoryEngine {
         // Index in vector engine
         self.vector
             .index_memory(&entry.id.to_string(), &entry.embedding)?;
-        
+
         // --- OMEGA: Persist the updated MemoryEntry with entropy in LSM ---
         if let Err(e) = self.lsm.insert_metadata(entry.id.to_native(), &entry) {
-            warn!("Memory Engine: LSM metadata write failed for entry {}. Rolling back vector index.", entry.id);
+            warn!(
+                "Memory Engine: LSM metadata write failed for entry {}. Rolling back vector index.",
+                entry.id
+            );
             // 🛡️ AAA Atomicity Rollback
-            let _ = self.vector.remove(&entry.id.to_string());
+            if let Err(rollback_err) = self.vector.remove(&entry.id.to_string()) {
+                tracing::error!(
+                    "CRITICAL: Rollback failed for entry {}. Vector index may be inconsistent: {}",
+                    entry.id,
+                    rollback_err
+                );
+            }
             return Err(e);
         }
 
-        debug!("Indexed memory entry: id={}, entropy={:.2}", entry.id, entry.shannon_entropy.to_native());
+        debug!(
+            "Indexed memory entry: id={}, entropy={:.2}",
+            entry.id,
+            entry.shannon_entropy.to_native()
+        );
         Ok(())
     }
 
     /// Calculates Shannon Entropy of a string to determine informational density.
     fn calculate_entropy(content: &str) -> f32 {
-        if content.is_empty() { return 0.0; }
+        if content.is_empty() {
+            return 0.0;
+        }
         let mut char_counts = std::collections::HashMap::new();
         let chars: Vec<char> = content.chars().collect();
         for c in &chars {
             *char_counts.entry(*c).or_insert(0) += 1;
         }
         let total = chars.len() as f32;
-        char_counts.values().map(|&count| {
-            let p = count as f32 / total;
-            -p * p.log2()
-        }).sum()
+        char_counts
+            .values()
+            .map(|&count| {
+                let p = count as f32 / total;
+                -p * p.log2()
+            })
+            .sum()
     }
 
     /// OMEGA: Prunes memories based on Information-Entropy Gain (IEG).
     /// Memories with near-zero categorical utility or those that have become redundant
     /// (Cross-Entropy with neighbors) are culled.
     pub fn cull_low_entropy_memories(&self, threshold: f32) -> Result<usize, MemoryError> {
-        info!("OMEGA: Executing Entropy-Gated Pruning (threshold={})", threshold);
-        
+        info!(
+            "OMEGA: Executing Entropy-Gated Pruning (threshold={})",
+            threshold
+        );
+
         let all_metadata = self.lsm.iter_metadata()?;
         let mut culled_count = 0;
 
         for entry in all_metadata {
             if entry.shannon_entropy.to_native() < threshold {
                 // 1. Remove from vector index
-                let _ = self.vector.remove(&entry.id.to_string());
+                if let Err(e) = self.vector.remove(&entry.id.to_string()) {
+                    warn!(
+                        "Failed to remove vector entry {} during culling: {}",
+                        entry.id, e
+                    );
+                }
                 // 2. Remove from LSM metadata
-                let _ = self.lsm.remove_metadata(u64::from(entry.id));
-                
+                if let Err(e) = self.lsm.remove_metadata(u64::from(entry.id)) {
+                    warn!(
+                        "Failed to remove LSM metadata for entry {} during culling: {}",
+                        entry.id, e
+                    );
+                }
+
                 culled_count += 1;
             }
         }
 
-        info!("IEG Pruning complete: Culled {} low-entropy entries", culled_count);
+        info!(
+            "IEG Pruning complete: Culled {} low-entropy entries",
+            culled_count
+        );
         Ok(culled_count)
     }
 
     /// Hydrates an agent session by combining local transcripts with relevant semantic memories.
     ///
     /// This is a critical ECHO-Absolute tier standard for context restoration.
-    pub fn hydrate_session(&self, session_id: &str, limit: usize) -> Result<Vec<AgentMessage>, MemoryError> {
+    pub fn hydrate_session(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<AgentMessage>, MemoryError> {
         let mut messages = self.fetch_session_tail(session_id, limit);
         messages.reverse(); // Standard chronological order for LLM context
 
         // 🌀 OMEGA: Perform semantic hydration if context is sparse
         if messages.len() < 5 {
-            info!("L0 {:?} active; L1 {:?} context sparse for {}; triggering L2 {:?} hydration", 
-                MemoryLayer::Episodic, MemoryLayer::Contextual, session_id, MemoryLayer::Semantic);
+            info!(
+                "L0 {:?} active; L1 {:?} context sparse for {}; triggering L2 {:?} hydration",
+                MemoryLayer::Episodic,
+                MemoryLayer::Contextual,
+                session_id,
+                MemoryLayer::Semantic
+            );
             // In a real implementation, we'd pull from L2 here...
         }
 
@@ -238,15 +281,32 @@ impl MemoryEngine {
         // 1. Fetch all message IDs before purging LSM
         let message_ids = self.lsm.fetch_all_message_ids_for_session(session_id);
 
-        // 2. Cascade deletion to vector engine
-        for id in message_ids {
-            let _ = self.vector.remove(&id);
-        }
-
-        // 3. Purge transcript messages from LSM
+        // 2. Purge transcript messages from LSM first (source of truth)
         self.lsm.delete_session(session_id)?;
 
-        info!("Deleted session: {} (Cascaded cleanup complete)", session_id);
+        // 3. Cascade deletion to vector engine (best-effort with error logging)
+        let mut cascade_errors = 0;
+        for id in &message_ids {
+            if let Err(e) = self.vector.remove(id) {
+                warn!(
+                    "Failed to remove vector entry {} during session cleanup: {}",
+                    id, e
+                );
+                cascade_errors += 1;
+            }
+        }
+
+        if cascade_errors > 0 {
+            warn!(
+                "Session {} deleted from LSM but {} vector entries failed to clean up",
+                session_id, cascade_errors
+            );
+        }
+
+        info!(
+            "Deleted session: {} (Cascaded cleanup complete)",
+            session_id
+        );
         Ok(())
     }
 
@@ -334,15 +394,16 @@ mod tests {
 
     #[test]
     fn test_semantic_search_flow() {
-        let temp_dir = std::env::temp_dir().join(format!("savant_memory_search_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("savant_memory_search_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let engine = MemoryEngine::with_defaults(&temp_dir).unwrap();
-        
+
         // Mock entry with 384 dimensions
         let mut embedding = vec![0.0; 384];
         embedding[0] = 1.0;
-        
+
         let entry = MemoryEntry {
             id: 1.into(),
             session_id: "test-session".to_string(),
@@ -358,31 +419,34 @@ mod tests {
             hit_count: 0.into(),
             related_to: vec![],
         };
-        
+
         engine.index_memory(entry).unwrap();
-        
+
         let results = engine.semantic_search(&embedding, 1).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].document_id, "1");
-        
+
         // Cleanup
         std::fs::remove_dir_all(temp_dir).unwrap();
     }
 
     #[test]
     fn test_session_deletion() {
-        let temp_dir = std::env::temp_dir().join(format!("savant_memory_del_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("savant_memory_del_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let engine = MemoryEngine::with_defaults(&temp_dir).unwrap();
         let session_id = "purge_me";
-        
-        engine.append_message(session_id, &AgentMessage::user(session_id, "test")).unwrap();
+
+        engine
+            .append_message(session_id, &AgentMessage::user(session_id, "test"))
+            .unwrap();
         assert_eq!(engine.fetch_session_tail(session_id, 1).len(), 1);
-        
+
         engine.delete_session(session_id).unwrap();
         assert_eq!(engine.fetch_session_tail(session_id, 1).len(), 0);
-        
+
         // Cleanup
         std::fs::remove_dir_all(temp_dir).unwrap();
     }

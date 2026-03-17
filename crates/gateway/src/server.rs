@@ -30,6 +30,8 @@ pub struct GatewayState {
     pub nexus: Arc<NexusBridge>,
     pub storage: Arc<Storage>,
     pub avatar_cache: TokioMutex<LruCache<String, (Vec<u8>, String)>>,
+    /// Persistent gateway Ed25519 signing key (generated once at startup)
+    pub gateway_signing_key: ed25519_dalek::SigningKey,
 }
 
 /// Starts the axum gateway server.
@@ -48,6 +50,7 @@ pub async fn start_gateway(
         nexus,
         storage,
         avatar_cache: TokioMutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())),
+        gateway_signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
     });
 
     let app = Router::new()
@@ -96,7 +99,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         Err(e) => {
             tracing::error!("Authentication failed: {}", e);
             let _ = sender
-                .send(Message::Text(format!("Auth failed: {}", e)))
+                .send(Message::Text("Authentication failed".to_string()))
                 .await;
             return;
         }
@@ -120,7 +123,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         event_type: "agents.discovered".to_string(),
         payload: agents_payload,
     };
-    let msg = serde_json::to_string(&event).expect("Event serializable");
+    let msg = match serde_json::to_string(&event) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!("Failed to serialize agents.discovered event: {}", e);
+            return;
+        }
+    };
     let _ = sender.send(Message::Text(format!("EVENT:{}", msg))).await;
     tracing::info!(
         "🚀 Sovereign Ignition: Hydrated sidebar for session {}",
@@ -150,7 +159,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     let out_tx = outgoing_tx.clone();
     let mut lane_fwd_task = tokio::spawn(async move {
         while let Some(response) = res_rx.recv().await {
-            let msg = serde_json::to_string(&response).expect("Response serializable");
+            let msg = match serde_json::to_string(&response) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::error!("Failed to serialize lane response: {}", e);
+                    continue;
+                }
+            };
             let _ = out_tx.send(Message::Text(msg)).await;
         }
     });
@@ -212,7 +227,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                 }
             }
 
-            let msg = serde_json::to_string(&outbound_event).expect("Event serializable");
+            let msg = match serde_json::to_string(&outbound_event) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::error!("Failed to serialize telemetry event: {}", e);
+                    continue;
+                }
+            };
             let _ = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await;
         }
     });
@@ -276,6 +297,24 @@ async fn agent_image_handler(
     State(state): State<Arc<GatewayState>>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Validate name to prevent path traversal - only allow alphanumeric + hyphens + underscores
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Response::builder()
+            .status(400)
+            .body(axum::body::Body::from("Invalid agent name"))
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+            });
+    }
+
     let name_lower = name.to_lowercase();
 
     // 1. Check Cache
@@ -287,7 +326,13 @@ async fn agent_image_handler(
                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .header(header::CACHE_CONTROL, "public, max-age=3600")
                 .body(axum::body::Body::from(content.clone()))
-                .expect("Failed to build cached image response");
+                .unwrap_or_else(|_| {
+                    tracing::error!("Failed to build cached image response for {}", name_lower);
+                    Response::builder()
+                        .status(500)
+                        .body(axum::body::Body::empty())
+                        .unwrap()
+                });
         }
     }
 
@@ -317,7 +362,13 @@ async fn agent_image_handler(
                     .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                     .header(header::CACHE_CONTROL, "public, max-age=3600")
                     .body(axum::body::Body::from(content))
-                    .expect("Failed to build image response");
+                    .unwrap_or_else(|_| {
+                        tracing::error!("Failed to build image response for {}", name_lower);
+                        Response::builder()
+                            .status(500)
+                            .body(axum::body::Body::empty())
+                            .unwrap()
+                    });
             }
         }
     }
@@ -339,7 +390,13 @@ async fn agent_image_handler(
         .header(header::CONTENT_TYPE, "image/svg+xml")
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(axum::body::Body::from(svg))
-        .expect("Failed to build static SVG response")
+        .unwrap_or_else(|_| {
+            tracing::error!("Failed to build SVG response for {}", name);
+            Response::builder()
+                .status(500)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        })
 }
 
 #[cfg(test)]

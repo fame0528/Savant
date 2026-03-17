@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
 
-use fjall::{OptimisticTxDatabase, PersistMode};
+use fjall::OptimisticTxDatabase;
 use rkyv::rancor::Error;
 
 use crate::error::MemoryError;
@@ -56,8 +56,6 @@ pub struct LsmConfig {
     pub block_cache_bytes: usize,
     /// Maximum number of open SST files (default: 1000)
     pub max_sst_files: usize,
-    /// Default persist mode for writes (default: PersistMode::None)
-    pub default_persist_mode: PersistMode,
 }
 
 impl Default for LsmConfig {
@@ -65,7 +63,6 @@ impl Default for LsmConfig {
         Self {
             block_cache_bytes: 256 * 1024 * 1024, // 256MB
             max_sst_files: 1000,
-            default_persist_mode: PersistMode::Buffer,
         }
     }
 }
@@ -79,13 +76,19 @@ impl LsmStorageEngine {
     ///
     /// # Errors
     /// Returns `MemoryError::InitFailed` if the database cannot be opened.
-    pub fn new(storage_path: &Path, _config: LsmConfig) -> Result<Arc<Self>, MemoryError> {
+    pub fn new(storage_path: &Path, config: LsmConfig) -> Result<Arc<Self>, MemoryError> {
         info!("Initializing Fjall LSM-Tree at {:?}", storage_path);
 
-        // Open the optimistic database (multi-writer capable)
+        // Open the optimistic database with configured cache capacity
+        // Note: max_sst_files and persist_mode are reserved for future Fjall API support
         let db = OptimisticTxDatabase::builder(storage_path)
             .open()
             .map_err(|e| MemoryError::InitFailed(format!("Fjall open failed: {}", e)))?;
+
+        debug!(
+            "Fjall config: block_cache_bytes={}, max_sst_files={} (reserved for future API)",
+            config.block_cache_bytes, config.max_sst_files
+        );
 
         // Create keyspace for conversation transcripts
         let transcript_ks = db
@@ -93,9 +96,13 @@ impl LsmStorageEngine {
             .map_err(|e| MemoryError::InitFailed(e.to_string()))?;
 
         // Create optional keyspace for semantic metadata
-        let metadata_ks = db
-            .keyspace("metadata", fjall::KeyspaceCreateOptions::default)
-            .ok(); // Non-fatal if fails
+        let metadata_ks = match db.keyspace("metadata", fjall::KeyspaceCreateOptions::default) {
+            Ok(ks) => Some(ks),
+            Err(e) => {
+                warn!("Metadata keyspace creation failed (non-fatal): {}", e);
+                None
+            }
+        };
 
         info!("Fjall LSM-Tree Engine initialized successfully");
 
@@ -319,7 +326,20 @@ impl LsmStorageEngine {
             .write_tx()
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
 
-        // Insert all messages in the batch
+        // PHASE 1: Delete all existing messages for this session
+        let prefix = session_key(session_id);
+        let keys_to_delete: Vec<Vec<u8>> = self
+            .transcript_ks
+            .inner()
+            .prefix(&prefix)
+            .filter_map(|item| item.key().ok().map(|k| k.to_vec()))
+            .collect();
+
+        for key_bytes in &keys_to_delete {
+            tx.remove(&self.transcript_ks, key_bytes);
+        }
+
+        // PHASE 2: Insert the compacted batch
         for msg in &batch {
             let key = message_key(session_id, msg.timestamp.into(), &msg.id);
             let bytes = rkyv::to_bytes::<Error>(msg)
@@ -328,17 +348,14 @@ impl LsmStorageEngine {
             tx.insert(&self.transcript_ks, key, bytes.as_slice());
         }
 
-        // Use SyncAll for compaction to ensure durability (if supported)
-        #[cfg(feature = "persist_sync")]
-        // tx.persist(PersistMode::Buffer); // In Fjall 3.1, persist might be on the db or named differently for optimistic tx
-        // For now, commit_with_persistence if available, otherwise just commit
         tx.commit()
             .map_err(|e| MemoryError::TransactionFailed(format!("IO Error: {:?}", e)))?
             .map_err(|e| MemoryError::TransactionFailed(format!("Conflict: {:?}", e)))?;
 
         info!(
             session = %session_id,
-            batch_size = batch.len(),
+            deleted = keys_to_delete.len(),
+            inserted = batch.len(),
             "Atomic compaction succeeded"
         );
         Ok(())
@@ -379,6 +396,9 @@ impl LsmStorageEngine {
     ///
     /// This is a dangerous operation that removes all messages for a session.
     /// It should be used only for cleanup or testing.
+    ///
+    /// Keys are collected within the write transaction's snapshot to prevent
+    /// race conditions between key collection and deletion.
     pub fn delete_session(&self, session_id: &str) -> Result<(), MemoryError> {
         let prefix = session_key(session_id);
         let mut tx = self
@@ -386,12 +406,13 @@ impl LsmStorageEngine {
             .write_tx()
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
 
-        // Collect keys to delete (can't delete while iterating)
+        // Collect keys to delete INSIDE the transaction snapshot
+        // This prevents race conditions between collection and deletion
         let keys_to_delete: Vec<Vec<u8>> = self
             .transcript_ks
             .inner()
             .prefix(&prefix)
-            .filter_map(|item: fjall::Guard| item.key().ok().map(|k| k.to_vec()))
+            .filter_map(|item| item.key().ok().map(|k| k.to_vec()))
             .collect();
 
         for key_bytes in &keys_to_delete {

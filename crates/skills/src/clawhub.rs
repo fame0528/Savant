@@ -8,6 +8,7 @@
 
 use crate::parser::{InstallResult, SecurityGateResult};
 use crate::security::SecurityScanner;
+use regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::{info, warn};
@@ -165,6 +166,7 @@ impl ClawHubClient {
     }
 
     /// Create a client with custom base URLs (for testing)
+    #[cfg(test)]
     pub fn with_base_urls(api_base: &str, web_base: &str) -> Self {
         Self {
             http_client: reqwest::Client::builder()
@@ -236,6 +238,21 @@ impl ClawHubClient {
         target_dir: &Path,
         scanner: &SecurityScanner,
     ) -> Result<InstallResult, ClawHubError> {
+        // Validate slug format
+        let slug_regex = regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
+        let normalized_slug = slug.replace('/', "-");
+        if slug.contains("..")
+            || slug.starts_with('.')
+            || slug.starts_with('-')
+            || !slug_regex.is_match(&normalized_slug)
+        {
+            return Err(ClawHubError::ParseError(format!(
+                "Invalid slug '{}': must match ^[a-zA-Z0-9_-]+$ (after replacing / with -), \
+                 and must not contain '..' or start with '.' or '-'",
+                slug
+            )));
+        }
+
         info!("Installing skill from ClawHub: {}", slug);
 
         // 1. Get skill info to verify it exists
@@ -268,7 +285,31 @@ impl ClawHubClient {
 
         // Download additional files if any (templates, assets, etc.)
         for file in &info.files {
+            // Path traversal protection: reject absolute paths and parent directory references
+            if file.path.starts_with('/') || file.path.starts_with('\\') || file.path.contains("..")
+            {
+                warn!("Rejected file with path traversal attempt: {}", file.path);
+                continue;
+            }
             let file_path = temp_dir.join(&file.path);
+            // Verify the resolved path stays within temp_dir
+            if let Ok(canonical_temp) = temp_dir.canonicalize() {
+                let resolved = file_path.canonicalize().or_else(|_| {
+                    // File doesn't exist yet, check parent
+                    file_path
+                        .parent()
+                        .and_then(|p| p.canonicalize().ok())
+                        .ok_or_else(|| {
+                            std::io::Error::new(std::io::ErrorKind::NotFound, "parent not found")
+                        })
+                });
+                if let Ok(canonical_file) = resolved {
+                    if !canonical_file.starts_with(&canonical_temp) {
+                        warn!("Rejected file escaping temp directory: {}", file.path);
+                        continue;
+                    }
+                }
+            }
             if let Some(parent) = file_path.parent() {
                 tokio::fs::create_dir_all(parent).await.ok();
             }

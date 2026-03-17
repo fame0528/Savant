@@ -1,5 +1,5 @@
-use savant_core::types::ChatMessage;
 use savant_core::db::Storage;
+use savant_core::types::ChatMessage;
 use std::sync::Arc;
 use tracing::{debug, error};
 
@@ -9,7 +9,10 @@ pub struct GatewayPersistence;
 impl GatewayPersistence {
     /// Determines the correct partition for a ChatMessage and persists it.
     /// AAA: Unified Context Harmony ensures that session_id always takes precedence.
-    pub async fn persist_chat(storage: &Arc<Storage>, msg: &ChatMessage) -> Result<(), savant_core::error::SavantError> {
+    pub async fn persist_chat(
+        storage: &Arc<Storage>,
+        msg: &ChatMessage,
+    ) -> Result<(), savant_core::error::SavantError> {
         // 🛡️ UCH Precedence: session_id > agent_id > sender > recipient
         let partition = if let Some(sid) = &msg.session_id {
             sid.0.clone()
@@ -24,14 +27,14 @@ impl GatewayPersistence {
         };
 
         // Sanitize partition key for filesystem safety
-        let partition = savant_core::session::sanitize_session_id(&partition);
+        let partition = savant_core::session::sanitize_session_id(&partition)
+            .unwrap_or_else(|| partition.clone());
 
         debug!(partition = %partition, "Persisting message to substrate");
-        
-        storage.append_chat(&partition, msg).await
-            .map_err(|e| {
-                error!(error = %e, "Substrate write failure");
-                savant_core::error::SavantError::Unknown(e.to_string())
-            })
+
+        storage.append_chat(&partition, msg).map_err(|e| {
+            error!(error = %e, "Substrate write failure");
+            savant_core::error::SavantError::Unknown(e.to_string())
+        })
     }
 }

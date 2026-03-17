@@ -10,7 +10,53 @@
 use savant_core::bus::NexusBridge;
 use savant_core::types::ControlFrame;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+/// Validates a skill name to prevent path traversal attacks.
+/// Only allows alphanumeric characters, hyphens, and underscores.
+fn validate_skill_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Skill name cannot be empty".to_string());
+    }
+    if name.len() > 128 {
+        return Err("Skill name too long (max 128 chars)".to_string());
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!(
+            "Invalid skill name '{}': only alphanumeric, hyphens, and underscores allowed",
+            name
+        ));
+    }
+    if name.contains("..") {
+        return Err("Skill name cannot contain '..'".to_string());
+    }
+    Ok(())
+}
+
+/// Validates and restricts a skill path to the allowed base directory.
+/// Returns the canonicalized path if valid, or an error if it escapes.
+fn validate_skill_path(
+    path: &std::path::Path,
+    base: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
+    let canonical_base = base
+        .canonicalize()
+        .map_err(|e| format!("Invalid base path: {}", e))?;
+
+    if !canonical.starts_with(&canonical_base) {
+        return Err(format!(
+            "Path traversal detected: '{}' escapes base directory",
+            path.display()
+        ));
+    }
+    Ok(canonical)
+}
 
 /// Result of a skill operation
 #[derive(Debug, serde::Serialize)]
@@ -170,10 +216,33 @@ async fn handle_skill_uninstall(
     session_id: &savant_core::types::SessionId,
     nexus: &Arc<NexusBridge>,
 ) {
+    // Validate skill name to prevent path traversal
+    if let Err(e) = validate_skill_name(&skill_name) {
+        warn!("Invalid skill name rejected: {}", e);
+        let result = serde_json::json!({
+            "success": false,
+            "message": format!("Invalid skill name: {}", e),
+        });
+        let _ = send_skill_response("SKILL_UNINSTALL_RESULT", result, session_id, nexus).await;
+        return;
+    }
+
     info!("🗑️ Skill uninstall requested: {}", skill_name);
 
     let workspace_dir = std::env::current_dir().unwrap_or_default();
-    let skill_dir = workspace_dir.join("skills").join(&skill_name);
+    let skills_base = workspace_dir.join("skills");
+    let skill_dir = skills_base.join(&skill_name);
+
+    // Verify the resolved path stays within the skills directory
+    if let Err(e) = validate_skill_path(&skill_dir, &skills_base) {
+        warn!("Path traversal blocked: {}", e);
+        let result = serde_json::json!({
+            "success": false,
+            "message": format!("Security violation: {}", e),
+        });
+        let _ = send_skill_response("SKILL_UNINSTALL_RESULT", result, session_id, nexus).await;
+        return;
+    }
 
     let result = if skill_dir.exists() {
         match tokio::fs::remove_dir_all(&skill_dir).await {
@@ -202,14 +271,33 @@ async fn handle_skill_enable(
     session_id: &savant_core::types::SessionId,
     nexus: &Arc<NexusBridge>,
 ) {
+    if let Err(e) = validate_skill_name(&skill_name) {
+        warn!("Invalid skill name rejected: {}", e);
+        let result = serde_json::json!({
+            "success": false,
+            "message": format!("Invalid skill name: {}", e),
+        });
+        let _ = send_skill_response("SKILL_ENABLE_RESULT", result, session_id, nexus).await;
+        return;
+    }
+
     info!("✅ Skill enable requested: {}", skill_name);
 
-    // Create a marker file to indicate enabled status
     let workspace_dir = std::env::current_dir().unwrap_or_default();
-    let enabled_file = workspace_dir
-        .join("skills")
-        .join(&skill_name)
-        .join(".enabled");
+    let skills_base = workspace_dir.join("skills");
+    let enabled_file = skills_base.join(&skill_name).join(".enabled");
+
+    // Validate path stays within skills directory
+    let skill_dir = skills_base.join(&skill_name);
+    if let Err(e) = validate_skill_path(&skill_dir, &skills_base) {
+        warn!("Path traversal blocked: {}", e);
+        let result = serde_json::json!({
+            "success": false,
+            "message": format!("Security violation: {}", e),
+        });
+        let _ = send_skill_response("SKILL_ENABLE_RESULT", result, session_id, nexus).await;
+        return;
+    }
 
     let result = match tokio::fs::write(&enabled_file, "").await {
         Ok(()) => serde_json::json!({
@@ -231,14 +319,33 @@ async fn handle_skill_disable(
     session_id: &savant_core::types::SessionId,
     nexus: &Arc<NexusBridge>,
 ) {
+    if let Err(e) = validate_skill_name(&skill_name) {
+        warn!("Invalid skill name rejected: {}", e);
+        let result = serde_json::json!({
+            "success": false,
+            "message": format!("Invalid skill name: {}", e),
+        });
+        let _ = send_skill_response("SKILL_DISABLE_RESULT", result, session_id, nexus).await;
+        return;
+    }
+
     info!("🚫 Skill disable requested: {}", skill_name);
 
-    // Remove the enabled marker file
     let workspace_dir = std::env::current_dir().unwrap_or_default();
-    let enabled_file = workspace_dir
-        .join("skills")
-        .join(&skill_name)
-        .join(".enabled");
+    let skills_base = workspace_dir.join("skills");
+    let enabled_file = skills_base.join(&skill_name).join(".enabled");
+
+    // Validate path stays within skills directory
+    let skill_dir = skills_base.join(&skill_name);
+    if let Err(e) = validate_skill_path(&skill_dir, &skills_base) {
+        warn!("Path traversal blocked: {}", e);
+        let result = serde_json::json!({
+            "success": false,
+            "message": format!("Security violation: {}", e),
+        });
+        let _ = send_skill_response("SKILL_DISABLE_RESULT", result, session_id, nexus).await;
+        return;
+    }
 
     let result = match tokio::fs::remove_file(&enabled_file).await {
         Ok(()) => serde_json::json!({
@@ -263,9 +370,46 @@ async fn handle_skill_scan(
     info!("🔍 Skill scan requested: {}", skill_path);
 
     let path = std::path::Path::new(&skill_path);
+
+    // Validate path is within allowed directories
+    let workspace_dir = std::env::current_dir().unwrap_or_default();
+    let skills_base = workspace_dir.join("skills");
+    let workspaces_base = workspace_dir.join("workspaces");
+
+    let canonical = match path.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            let result = serde_json::json!({
+                "success": false,
+                "message": format!("Invalid path: {}", e),
+            });
+            let _ = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await;
+            return;
+        }
+    };
+
+    // Must be within skills/ or workspaces/ directory
+    let skills_canonical = skills_base.canonicalize().unwrap_or(skills_base.clone());
+    let workspaces_canonical = workspaces_base
+        .canonicalize()
+        .unwrap_or(workspaces_base.clone());
+
+    if !canonical.starts_with(&skills_canonical) && !canonical.starts_with(&workspaces_canonical) {
+        warn!(
+            "Skill scan rejected: path '{}' outside allowed directories",
+            canonical.display()
+        );
+        let result = serde_json::json!({
+            "success": false,
+            "message": "Path must be within skills/ or workspaces/ directory",
+        });
+        let _ = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await;
+        return;
+    }
+
     let scanner = savant_skills::security::SecurityScanner::new();
 
-    let result = match scanner.scan_skill_mandatory(path).await {
+    let result = match scanner.scan_skill_mandatory(&canonical).await {
         Ok(scan_result) => serde_json::json!({
             "success": true,
             "skill_name": scan_result.skill_name,

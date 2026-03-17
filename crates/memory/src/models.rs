@@ -134,6 +134,7 @@ impl AgentMessage {
             ChatRole::User => MessageRole::User,
             ChatRole::Assistant => MessageRole::Assistant,
             ChatRole::System => MessageRole::System,
+            ChatRole::Tool => MessageRole::Tool,
         };
 
         // AAA: Unified Context Harmony - Prioritize session_id over agent_id or implicit session
@@ -144,7 +145,7 @@ impl AgentMessage {
             .unwrap_or_else(|| session_id.to_string());
 
         // Sanitize to prevent path traversal in LSM partitions
-        let sid = savant_core::session::sanitize_session_id(&sid);
+        let sid = savant_core::session::sanitize_session_id(&sid).unwrap_or_else(|| sid.clone());
 
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -168,7 +169,7 @@ impl AgentMessage {
             MessageRole::User => ChatRole::User,
             MessageRole::Assistant => ChatRole::Assistant,
             MessageRole::System => ChatRole::System,
-            MessageRole::Tool => ChatRole::User,
+            MessageRole::Tool => ChatRole::Assistant,
         };
         ChatMessage {
             role,
@@ -177,7 +178,11 @@ impl AgentMessage {
             recipient: None,
             agent_id: None, // AAA: Deprecated in favor of session_id
             session_id: Some(savant_core::types::SessionId(self.session_id.clone())),
-            channel: serde_json::from_str(&format!("\"{}\"", self.channel)).unwrap_or_default(),
+            channel: serde_json::to_value(&self.channel)
+                .unwrap_or_default()
+                .as_str()
+                .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
+                .unwrap_or_default(),
         }
     }
 }

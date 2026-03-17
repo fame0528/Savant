@@ -82,7 +82,15 @@ impl From<rkyv::rancor::Error> for MemoryError {
 
 impl From<RuvectorError> for MemoryError {
     fn from(err: RuvectorError) -> Self {
-        MemoryError::VectorInsertFailed(err.to_string())
+        let msg = err.to_string();
+        let msg_lower = msg.to_lowercase();
+        if msg_lower.contains("delete") || msg_lower.contains("remove") {
+            MemoryError::VectorDeleteFailed(msg)
+        } else if msg_lower.contains("search") || msg_lower.contains("query") {
+            MemoryError::VectorQueryFailed(msg)
+        } else {
+            MemoryError::VectorInsertFailed(msg)
+        }
     }
 }
 

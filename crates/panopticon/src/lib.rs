@@ -1,15 +1,15 @@
 use opentelemetry::global;
-use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{self, Sampler};
-use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Registry};
 use savant_ipc::SwarmSharedContext;
 use std::collections::HashMap;
+use tracing_opentelemetry::OpenTelemetryLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Registry};
 
 /// Initializes the Panopticon distributed telemetry engine.
-/// 
-/// Sets up an OpenTelemetry pipeline with non-blocking batch exporting 
+///
+/// Sets up an OpenTelemetry pipeline with non-blocking batch exporting
 /// and registers the global tracer provider.
 pub fn init_panopticon(service_name: &str, otlp_endpoint: &str) -> anyhow::Result<()> {
     // Set global propagator for W3C TraceContext
@@ -32,12 +32,18 @@ pub fn init_panopticon(service_name: &str, otlp_endpoint: &str) -> anyhow::Resul
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
     let telemetry = OpenTelemetryLayer::new(tracer);
-    
+
     Registry::default()
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer())
         .with(telemetry)
-        .init();
+        .try_init()
+        .map_err(|e| {
+            // Double-init is not fatal - log and continue
+            tracing::debug!("Tracing subscriber already initialized: {}", e);
+            e
+        })
+        .ok();
 
     Ok(())
 }
@@ -80,7 +86,5 @@ pub fn extract_trace_context(ctx: &SwarmSharedContext) -> opentelemetry::Context
     let mut carrier = HashMap::new();
     carrier.insert("traceparent".to_string(), traceparent);
 
-    global::get_text_map_propagator(|propagator| {
-        propagator.extract(&carrier)
-    })
+    global::get_text_map_propagator(|propagator| propagator.extract(&carrier))
 }

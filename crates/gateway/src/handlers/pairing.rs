@@ -156,18 +156,8 @@ pub async fn pairing_handler(
         ));
     }
 
-    // 6. Generate gateway keypair (in production, this would be loaded from secure storage)
-    // For now, generate a deterministic keypair based on device info for consistency
-    let mut seed = [0u8; 32];
-    let device_hash = blake3::hash(
-        format!(
-            "{}:{}:{}",
-            payload.device_name, payload.device_type, payload.public_key
-        )
-        .as_bytes(),
-    );
-    seed.copy_from_slice(device_hash.as_bytes());
-    let gateway_signing_key = SigningKey::from_bytes(&seed);
+    // 6. Use the gateway's persistent signing key (not deterministic)
+    let gateway_signing_key = &state.gateway_signing_key;
     let gateway_verifying_key = gateway_signing_key.verifying_key();
 
     // 7. Generate session token (signed by gateway)

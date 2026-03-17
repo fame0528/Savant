@@ -72,8 +72,9 @@ impl MemoryBackend for AsyncMemoryBackend {
         limit: usize,
     ) -> Result<Vec<ChatMessage>, SavantError> {
         // AAA: Unified Context Harmony - Ensure retrieval uses sanitized ID
-        let sid = savant_core::session::sanitize_session_id(agent_id);
-        let _query_owned = query.to_string(); // move into blocking task
+        let sid = savant_core::session::sanitize_session_id(agent_id)
+            .unwrap_or_else(|| agent_id.to_string());
+        let query_owned = query.to_string();
 
         let engine = self.engine.clone();
         spawn_blocking(move || {
@@ -86,7 +87,16 @@ impl MemoryBackend for AsyncMemoryBackend {
                 .map(|msg: AgentMessage| msg.to_chat())
                 .collect();
 
-            Ok(chat_messages)
+            // Filter by query if non-empty (case-insensitive substring match)
+            if query_owned.is_empty() {
+                Ok(chat_messages)
+            } else {
+                let query_lower = query_owned.to_lowercase();
+                Ok(chat_messages
+                    .into_iter()
+                    .filter(|msg| msg.content.to_lowercase().contains(&query_lower))
+                    .collect())
+            }
         })
         .await
         .map_err(|e| SavantError::Unknown(format!("Task join error: {}", e)))?
@@ -99,7 +109,8 @@ impl MemoryBackend for AsyncMemoryBackend {
         // 2. Creates a lightweight summary of older messages
         // 3. Stores the compacted batch using atomic_compact
 
-        let sid = savant_core::session::sanitize_session_id(agent_id);
+        let sid = savant_core::session::sanitize_session_id(agent_id)
+            .unwrap_or_else(|| agent_id.to_string());
         let engine = self.engine.clone();
 
         spawn_blocking(move || {

@@ -40,10 +40,15 @@ impl GeneticForge {
     }
 
     /// Evolves the population to find the optimal DspConfig.
-    /// 
+    ///
     /// # Arguments
     /// * `training_data` - Pairs of (complexity, actual_optimal_k)
     pub fn evolve(&self, training_data: &[(f32, u32)]) -> DspConfig {
+        if self.population_size == 0 {
+            tracing::warn!("GeneticForge: population_size is 0, returning default config");
+            return DspConfig::default();
+        }
+
         let mut rng = thread_rng();
         let mut population: Vec<ConfigChromosome> = (0..self.population_size)
             .map(|_| ConfigChromosome {
@@ -71,7 +76,7 @@ impl GeneticForge {
             fitness_scores.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
 
             let current_best = fitness_scores[0].0;
-            
+
             // 🏰 AAA: Convergence Detection Logic
             if current_best > best_fitness + 1e-7 {
                 best_fitness = current_best;
@@ -82,8 +87,9 @@ impl GeneticForge {
 
             if generations_since_improvement >= CONVERGENCE_PLATEAU {
                 tracing::info!(
-                    "GeneticForge: Convergence target met at generation {}. Best Fitness: {:.8}", 
-                    gen, best_fitness
+                    "GeneticForge: Convergence target met at generation {}. Best Fitness: {:.8}",
+                    gen,
+                    best_fitness
                 );
                 break;
             }
@@ -99,11 +105,15 @@ impl GeneticForge {
             while next_gen.len() < self.population_size {
                 let parent1 = survivors.choose(&mut rng).unwrap();
                 let parent2 = survivors.choose(&mut rng).unwrap();
-                
+
                 // Crossover & Mutation
                 let mut child = ConfigChromosome {
                     tau: if rng.gen() { parent1.tau } else { parent2.tau },
-                    beta: if rng.gen() { parent1.beta } else { parent2.beta },
+                    beta: if rng.gen() {
+                        parent1.beta
+                    } else {
+                        parent2.beta
+                    },
                 };
 
                 if rng.gen::<f32>() < self.mutation_rate {

@@ -277,7 +277,9 @@ impl Config {
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
             if let Ok(event) = res {
                 if event.kind.is_modify() {
-                    let _ = tx.blocking_send(());
+                    if let Err(e) = tx.try_send(()) {
+                        tracing::warn!("config: Failed to send reload notification: {}", e);
+                    }
                 }
             }
         })

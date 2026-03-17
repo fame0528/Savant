@@ -20,8 +20,10 @@
 //! 9. Keylogger patterns (keystroke capture attempts)
 //! 10. Screenshot/screen capture without consent
 
+use hex;
 use regex::Regex;
 use savant_core::error::SavantError;
+use sha2;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -135,6 +137,7 @@ pub struct ThreatIntelSyncResult {
 pub async fn sync_threat_intelligence() -> ThreatIntelSyncResult {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none()) // SSRF protection: no redirects
         .build()
         .unwrap_or_default();
 
@@ -663,7 +666,18 @@ impl SecurityScanner {
         // ================================================================
         // LAYER 2: CONTENT HASH CHECK
         // ================================================================
-        let content_hash = calculate_content_hash(&content);
+        // Hash ALL files in the skill directory (concatenated), not just SKILL.md
+        let mut all_content = Vec::new();
+        for entry in walkdir::WalkDir::new(skill_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            if let Ok(bytes) = std::fs::read(entry.path()) {
+                all_content.extend_from_slice(&bytes);
+            }
+        }
+        let content_hash = calculate_content_hash(&all_content);
         if is_blocked_hash(&content_hash) {
             error!(
                 "BLOCKED: Skill '{}' content matches known malicious hash",
@@ -1109,7 +1123,7 @@ impl SecurityScanner {
         findings
     }
 
-    /// Scan skill directory for suspicious files
+    /// Scan skill directory for suspicious files (recursive)
     async fn scan_files(&self, skill_dir: &Path) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
         let suspicious_extensions = [
@@ -1117,12 +1131,10 @@ impl SecurityScanner {
         ];
         let hidden_dirs = [".git", ".svn", ".hg", ".hidden", ".secret"];
 
-        let mut entries = match tokio::fs::read_dir(skill_dir).await {
-            Ok(e) => e,
-            Err(_) => return findings,
-        };
-
-        while let Ok(Some(entry)) = entries.next_entry().await {
+        for entry in walkdir::WalkDir::new(skill_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             let path = entry.path();
             let name = path
                 .file_name()
@@ -1409,13 +1421,9 @@ fn extract_skill_name(content: &str) -> Option<String> {
     None
 }
 
-fn calculate_content_hash(content: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    content.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
+fn calculate_content_hash(content: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(content))
 }
 
 fn determine_risk_level(findings: &[SecurityFinding]) -> RiskLevel {

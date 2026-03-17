@@ -119,6 +119,7 @@ pub enum ChatRole {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 impl std::fmt::Display for ChatRole {
@@ -127,6 +128,7 @@ impl std::fmt::Display for ChatRole {
             ChatRole::User => write!(f, "user"),
             ChatRole::Assistant => write!(f, "assistant"),
             ChatRole::System => write!(f, "system"),
+            ChatRole::Tool => write!(f, "tool"),
         }
     }
 }
@@ -138,6 +140,7 @@ impl std::str::FromStr for ChatRole {
             "user" => Ok(ChatRole::User),
             "assistant" => Ok(ChatRole::Assistant),
             "system" => Ok(ChatRole::System),
+            "tool" => Ok(ChatRole::Tool),
             _ => Err(format!("Invalid ChatRole: {}", s)),
         }
     }
@@ -227,6 +230,9 @@ pub struct AgentConfig {
     pub agent_id: String,
     pub agent_name: String,
     pub model_provider: ModelProvider,
+    // TODO: Use a Secret wrapper (e.g., secrecy::SecretString) in production
+    // to prevent accidental logging/serialization of the API key.
+    #[serde(skip_serializing)]
     pub api_key: Option<String>,
     pub env_vars: std::collections::HashMap<String, String>,
     pub system_prompt: String,
@@ -511,7 +517,13 @@ impl AgentFileConfig {
                 "openai" => ModelProvider::OpenAi,
                 "anthropic" => ModelProvider::Anthropic,
                 "groq" => ModelProvider::Groq,
-                _ => ModelProvider::OpenRouter,
+                _ => {
+                    tracing::warn!(
+                        "Unknown model provider '{}', falling back to OpenRouter",
+                        provider
+                    );
+                    ModelProvider::OpenRouter
+                }
             };
         }
         if let Some(ref prompt) = self.system_prompt {

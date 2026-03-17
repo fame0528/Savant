@@ -44,9 +44,9 @@ pub async fn handle_message(
             // 🌀 Perfection Loop: Context Safeguard
             // Prune history for the specific lane to prevent OOM/Overflow before it happens.
             // Target: 1000 message safety net for 256k windows.
-            let _ = state.storage.prune_history(&partition, 1000).await;
+            let _ = state.storage.prune_history(&partition, 1000);
 
-            if let Err(e) = state.storage.append_chat(&partition, &message).await {
+            if let Err(e) = state.storage.append_chat(&partition, &message) {
                 tracing::error!("❌ Failed to persist chat message to {}: {}", partition, e);
             }
 
@@ -77,7 +77,7 @@ pub async fn handle_message(
                         normalized_lane,
                         limit
                     );
-                    match state.storage.get_history(&normalized_lane, limit).await {
+                    match state.storage.get_history(&normalized_lane, limit) {
                         Ok(history) => {
                             // Wrap history in the expected format for the dashboard
                             // We capitalize the key to match Dashboard's JSON.parse expectations
@@ -232,7 +232,7 @@ pub async fn handle_message(
                 }
                 savant_core::types::ControlFrame::SwarmInsightHistoryRequest { limit } => {
                     tracing::info!("🧠 Swarm insight history requested (limit: {})", limit);
-                    match state.storage.get_swarm_history(limit).await {
+                    match state.storage.get_swarm_history(limit) {
                         Ok(history) => {
                             let result = serde_json::json!({
                                 "history": history

@@ -1888,10 +1888,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.15.0"
+name = "dotenvy"
+version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dptree"
@@ -7114,7 +7114,7 @@ dependencies = [
  "bytes",
  "chrono",
  "dashmap",
- "dotenv",
+ "dotenvy",
  "ed25519-dalek",
  "fastembed",
  "figment",
@@ -7122,6 +7122,7 @@ dependencies = [
  "futures",
  "hex",
  "libc",
+ "lru",
  "moka",
  "notify 8.2.0",
  "num_cpus",
@@ -7296,6 +7297,7 @@ dependencies = [
  "caps",
  "chrono",
  "futures",
+ "hex",
  "landlock",
  "pulldown-cmark 0.10.3",
  "regex",
@@ -7304,6 +7306,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

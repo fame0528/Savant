@@ -36,8 +36,10 @@ impl AgentRegistry {
         // base_path/workspaces
         potential_paths.push(self.base_path.join("workspaces"));
 
-        // Absolute Windows path (per user request context)
-        potential_paths.push(PathBuf::from(r"C:\Users\spenc\dev\Savant\workspaces"));
+        // SAVANT_WORKSPACES env var for custom paths
+        if let Ok(env_path) = std::env::var("SAVANT_WORKSPACES") {
+            potential_paths.push(PathBuf::from(env_path));
+        }
 
         // 2. Select the first valid workspaces directory
         let mut workspaces_path = None;
@@ -235,8 +237,24 @@ impl AgentRegistry {
                 if line.is_empty() || line.starts_with('#') {
                     continue;
                 }
+                // Strip "export " prefix if present
+                let line = line.strip_prefix("export ").unwrap_or(line);
                 if let Some((key, value)) = line.split_once('=') {
-                    vars.insert(key.trim().to_string(), value.trim().to_string());
+                    let key = key.trim().to_string();
+                    let value = value.trim();
+                    // Strip inline comments (unquoted # only)
+                    let value = if value.starts_with('"') || value.starts_with('\'') {
+                        let quote_char = value.chars().next().unwrap();
+                        let inner = value.trim_matches(quote_char);
+                        inner.to_string()
+                    } else {
+                        value
+                            .split_once('#')
+                            .map(|(v, _)| v.trim())
+                            .unwrap_or(value)
+                            .to_string()
+                    };
+                    vars.insert(key, value);
                 }
             }
         }
@@ -264,8 +282,24 @@ impl AgentRegistry {
                 if line.is_empty() || line.starts_with('#') {
                     continue;
                 }
+                // Strip "export " prefix if present
+                let line = line.strip_prefix("export ").unwrap_or(line);
                 if let Some((key, value)) = line.split_once('=') {
-                    vars.insert(key.trim().to_string(), value.trim().to_string());
+                    let key = key.trim().to_string();
+                    let value = value.trim();
+                    // Strip inline comments (unquoted # only)
+                    let value = if value.starts_with('"') || value.starts_with('\'') {
+                        let quote_char = value.chars().next().unwrap();
+                        let inner = value.trim_matches(quote_char);
+                        inner.to_string()
+                    } else {
+                        value
+                            .split_once('#')
+                            .map(|(v, _)| v.trim())
+                            .unwrap_or(value)
+                            .to_string()
+                    };
+                    vars.insert(key, value);
                 }
             }
         }
@@ -274,17 +308,16 @@ impl AgentRegistry {
 
     fn load_identity(
         &self,
-        _path: &Path,
+        workspace_path: &Path,
         cache: &[PathBuf],
         soul: &str,
     ) -> Result<AgentIdentity, SavantError> {
-        let name = cache
-            .first()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str())
-            .map(|s| s.replacen("workspace-", "", 1))
-            .unwrap_or_else(|| "Unknown".to_string());
+        let name = workspace_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            .replacen("workspace-", "", 1);
 
         let instructions = self.read_file_from_cache(cache, "AGENTS.md")?;
         let user_context = self.read_file_from_cache(cache, "USER.md")?;
@@ -369,7 +402,13 @@ impl AgentRegistry {
             "note": "DO NOT DELETE: This file ensures your agent identity remains stable even if you rename the folder."
         });
 
-        let _ = fs::write(&config_path, serde_json::to_string_pretty(&json)?);
+        if let Err(e) = fs::write(&config_path, serde_json::to_string_pretty(&json)?) {
+            tracing::warn!(
+                "Failed to persist agent ID to {}: {}",
+                config_path.display(),
+                e
+            );
+        }
         Ok(new_id)
     }
 }

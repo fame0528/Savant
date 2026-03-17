@@ -1,6 +1,97 @@
 use serde_json::Value;
 use thiserror::Error;
 
+/// Computes the Longest Common Subsequence (LCS) of two slices.
+/// Returns the indices into `a` and `b` that form the LCS.
+fn lcs_indices<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
+    let m = a.len();
+    let n = b.len();
+    if m == 0 || n == 0 {
+        return Vec::new();
+    }
+
+    // Build LCS table
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for i in 1..=m {
+        for j in 1..=n {
+            if a[i - 1] == b[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+            }
+        }
+    }
+
+    // Backtrack to find indices
+    let mut result = Vec::new();
+    let mut i = m;
+    let mut j = n;
+    while i > 0 && j > 0 {
+        if a[i - 1] == b[j - 1] {
+            result.push((i - 1, j - 1));
+            i -= 1;
+            j -= 1;
+        } else if dp[i - 1][j] >= dp[i][j - 1] {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+    result.reverse();
+    result
+}
+
+/// Generates patch operations for two arrays using LCS-based diffing.
+fn diff_arrays_lcs(
+    old_arr: &[Value],
+    new_arr: &[Value],
+    base_version: u64,
+    target_version: u64,
+) -> DiffResult {
+    let lcs = lcs_indices(old_arr, new_arr);
+    let mut patches = Vec::new();
+    let mut old_idx = 0;
+    let mut new_idx = 0;
+    let mut lcs_pos = 0;
+
+    while old_idx < old_arr.len() || new_idx < new_arr.len() {
+        // If we're at an LCS element, advance both pointers
+        if lcs_pos < lcs.len() && old_idx == lcs[lcs_pos].0 && new_idx == lcs[lcs_pos].1 {
+            old_idx += 1;
+            new_idx += 1;
+            lcs_pos += 1;
+            continue;
+        }
+
+        // Elements removed from old
+        if old_idx < old_arr.len() && (lcs_pos >= lcs.len() || old_idx < lcs[lcs_pos].0) {
+            patches.push(PatchOp::Remove {
+                path: format!("/{}", old_idx),
+            });
+            old_idx += 1;
+            continue;
+        }
+
+        // Elements added in new
+        if new_idx < new_arr.len() && (lcs_pos >= lcs.len() || new_idx < lcs[lcs_pos].1) {
+            patches.push(PatchOp::Add {
+                path: format!("/{}", old_idx),
+                value: new_arr[new_idx].clone(),
+            });
+            new_idx += 1;
+            // After an add, old_idx stays the same (nothing was removed from old)
+            continue;
+        }
+    }
+
+    DiffResult {
+        patches,
+        base_version,
+        target_version,
+        is_full_replace: false,
+    }
+}
+
 /// Errors that can occur during diff operations.
 #[derive(Debug, Error)]
 pub enum DiffError {
@@ -154,41 +245,11 @@ pub fn compute_diff(
         };
     }
 
-    // For arrays, use text-based diff for efficiency
+    // For arrays, use LCS-based diff for correct insertion/deletion semantics
     if let (Some(old_arr), Some(new_arr)) = (old.as_array(), new.as_array()) {
-        // If arrays are small, use element-level diff
+        // If arrays are small enough, use element-level LCS diff
         if old_arr.len() <= 100 && new_arr.len() <= 100 {
-            let mut patches = Vec::new();
-            let max_len = old_arr.len().max(new_arr.len());
-
-            for i in 0..max_len {
-                let path = format!("/{}", i);
-                match (old_arr.get(i), new_arr.get(i)) {
-                    (Some(old_val), Some(new_val)) if old_val != new_val => {
-                        patches.push(PatchOp::Replace {
-                            path,
-                            value: new_val.clone(),
-                        });
-                    }
-                    (Some(_), None) => {
-                        patches.push(PatchOp::Remove { path });
-                    }
-                    (None, Some(new_val)) => {
-                        patches.push(PatchOp::Add {
-                            path,
-                            value: new_val.clone(),
-                        });
-                    }
-                    _ => {}
-                }
-            }
-
-            return DiffResult {
-                patches,
-                base_version,
-                target_version,
-                is_full_replace: false,
-            };
+            return diff_arrays_lcs(old_arr, new_arr, base_version, target_version);
         }
 
         // For large arrays, fall back to full replacement

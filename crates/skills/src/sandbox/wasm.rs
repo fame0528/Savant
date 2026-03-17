@@ -87,6 +87,46 @@ impl WassetteExecutor {
                 ))
             })?;
 
+        // SHA-256 hash verification: check for manifest.json with content_hash
+        let manifest_path = self
+            .component_dir
+            .join(&outcome.component_id)
+            .join("manifest.json");
+        if manifest_path.exists() {
+            let manifest_bytes = std::fs::read(&manifest_path).map_err(|e| {
+                SavantError::Unknown(format!("Failed to read component manifest: {}", e))
+            })?;
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&manifest_bytes).map_err(|e| {
+                    SavantError::Unknown(format!("Failed to parse component manifest: {}", e))
+                })?;
+
+            if let Some(expected_hash) = manifest.get("content_hash").and_then(|h| h.as_str()) {
+                // Find and hash the WASM file in the component directory
+                let component_dir = self.component_dir.join(&outcome.component_id);
+                let wasm_file = component_dir.join("component.wasm");
+                if wasm_file.exists() {
+                    let wasm_bytes = std::fs::read(&wasm_file).map_err(|e| {
+                        SavantError::Unknown(format!("Failed to read WASM file: {}", e))
+                    })?;
+                    use sha2::{Digest, Sha256};
+                    let actual_hash = hex::encode(Sha256::digest(&wasm_bytes));
+                    if actual_hash != expected_hash {
+                        return Err(SavantError::Unknown(format!(
+                            "Component hash mismatch for {}: expected {}, got {}",
+                            self.component_url, expected_hash, actual_hash
+                        )));
+                    }
+                    debug!("Wassette: Component hash verified: {}", actual_hash);
+                }
+            } else {
+                return Err(SavantError::Unknown(format!(
+                    "Component manifest missing required content_hash field for {}",
+                    self.component_url
+                )));
+            }
+        }
+
         let component_id = outcome.component_id;
         debug!("Wassette: Component loaded with ID: {}", component_id);
 

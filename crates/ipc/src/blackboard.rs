@@ -1,6 +1,6 @@
+use iceoryx2::prelude::ZeroCopySend;
 use iceoryx2::prelude::*;
 use iceoryx2::service::port_factory::blackboard::PortFactory;
-use iceoryx2::prelude::ZeroCopySend;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
@@ -183,8 +183,11 @@ impl SwarmBlackboard {
         // - max_readers: 1024 concurrent readers (subagents)
         // - max_nodes: 10 nodes for multi-process scaling
         // - CHUNK_SIZE: Default (usually 4KB) is fine for our 32-byte struct
-        let iox_name: iceoryx2::prelude::ServiceName = service_name.try_into()
-            .map_err(|e: iceoryx2::service::service_name::ServiceNameError| SwarmIpcError::ServiceCreation(e.to_string()))?;
+        let iox_name: iceoryx2::prelude::ServiceName = service_name.try_into().map_err(
+            |e: iceoryx2::service::service_name::ServiceNameError| {
+                SwarmIpcError::ServiceCreation(e.to_string())
+            },
+        )?;
 
         let service = node
             .service_builder(&iox_name)
@@ -235,13 +238,15 @@ impl SwarmBlackboard {
 
         // Create an entry handle for this session. This requires the session key
         // to have been added during blackboard creation.
-        let entry = writer.entry::<SwarmSharedContext>(&session_id).map_err(|e| {
-            SwarmIpcError::AccessViolation(format!(
-                "Session {} not found or type mismatch: {}",
-                session_id, e
-            ))
-        })?;
-        
+        let entry = writer
+            .entry::<SwarmSharedContext>(&session_id)
+            .map_err(|e| {
+                SwarmIpcError::AccessViolation(format!(
+                    "Session {} not found or type mismatch: {}",
+                    session_id, e
+                ))
+            })?;
+
         entry.update_with_copy(context);
 
         debug!(session_id = %session_id, "Published context to blackboard");
@@ -322,8 +327,11 @@ impl SwarmBlackboard {
     }
 
     /// Returns statistics about the blackboard (for monitoring/debugging).
+    ///
+    /// Note: `active_sessions` is a placeholder (returns 0) because iceoryx2
+    /// does not expose subscriber count without iterating all samples.
+    /// `max_capacity` reflects the configured subscriber limit.
     pub fn stats(&self) -> BlackboardStats {
-        // We cannot easily get counts from iceoryx2 without iterating
         BlackboardStats {
             active_sessions: 0,
             max_capacity: 1024,
@@ -404,7 +412,7 @@ mod tests {
         for i in 0..10 {
             filter.add_agent(i as u64);
         }
-        
+
         // Check for 11, which shouldn't be there (low probability of clash)
         assert!(!filter.contains_agent(11));
     }

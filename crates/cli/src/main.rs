@@ -236,8 +236,8 @@ async fn main() -> Result<()> {
         if let Some(token) = &discord_cfg.token {
             tracing::info!(
                 "🔑 Discord token present (masked: {}...{})",
-                &token[..4],
-                &token[token.len() - 4..]
+                &token[..token.len().min(4)],
+                &token[token.len().saturating_sub(4)..]
             );
             let discord_adapter =
                 savant_channels::discord::DiscordAdapter::new(token.clone(), None, nexus.clone());

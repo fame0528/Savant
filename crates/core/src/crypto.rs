@@ -11,8 +11,8 @@ pub enum CryptoError {
     Io(#[from] std::io::Error),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
-    #[error("Serialization error: {0}")]
-    TomlSerialization(#[from] toml::de::Error),
+    #[error("Deserialization error: {0}")]
+    TomlDeserialization(#[from] toml::de::Error),
     #[error("Invalid key format")]
     InvalidKeyFormat,
     #[error("Key generation failed")]
@@ -45,7 +45,8 @@ impl AgentKeyPair {
     }
 
     pub fn get_verifying_key(&self) -> Result<VerifyingKey, CryptoError> {
-        let public_bytes = hex::decode(&self.public_key).map_err(|_| CryptoError::InvalidKeyFormat)?;
+        let public_bytes =
+            hex::decode(&self.public_key).map_err(|_| CryptoError::InvalidKeyFormat)?;
         if public_bytes.len() != 32 {
             return Err(CryptoError::InvalidKeyFormat);
         }
@@ -55,7 +56,8 @@ impl AgentKeyPair {
     }
 
     pub fn get_signing_key(&self) -> Result<SigningKey, CryptoError> {
-        let secret_bytes = hex::decode(&self.secret_key).map_err(|_| CryptoError::InvalidKeyFormat)?;
+        let secret_bytes =
+            hex::decode(&self.secret_key).map_err(|_| CryptoError::InvalidKeyFormat)?;
         if secret_bytes.len() != 32 {
             return Err(CryptoError::InvalidKeyFormat);
         }
@@ -67,6 +69,15 @@ impl AgentKeyPair {
     pub fn save_to_file(&self, path: &PathBuf) -> Result<(), CryptoError> {
         let json = serde_json::to_string_pretty(self)?;
         fs::write(path, json)?;
+
+        // Set restrictive permissions on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+
         Ok(())
     }
 
@@ -78,7 +89,7 @@ impl AgentKeyPair {
 
     pub fn ensure_master_key() -> Result<Self, CryptoError> {
         // Load environment variables from .env file
-        let _ = dotenv::dotenv();
+        let _ = dotenvy::dotenv();
 
         // First check environment variable
         if let Ok(secret_key) = std::env::var("SAVANT_MASTER_SECRET_KEY") {
@@ -97,9 +108,8 @@ impl AgentKeyPair {
         }
 
         // In production (non-test, non-dev mode), fail loudly
-        let is_dev_mode = cfg!(test)
-            || std::env::var("SAVANT_DEV_MODE").is_ok()
-            || std::env::var("CI").is_ok();
+        let is_dev_mode =
+            cfg!(test) || std::env::var("SAVANT_DEV_MODE").is_ok() || std::env::var("CI").is_ok();
 
         if !is_dev_mode {
             return Err(CryptoError::InvalidKeyFormat);
@@ -183,6 +193,22 @@ pub fn get_openrouter_api_key() -> Result<String, CryptoError> {
     // Try config file
     let config_path = PathBuf::from("config/api_keys.toml");
     if config_path.exists() {
+        // Check file permissions on Unix - warn if world-readable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(&config_path) {
+                let mode = metadata.permissions().mode();
+                if mode & 0o004 != 0 {
+                    tracing::warn!(
+                        "config/api_keys.toml has world-readable permissions ({:o}). \
+                         Consider restricting to 0o600.",
+                        mode & 0o777
+                    );
+                }
+            }
+        }
+
         let content = fs::read_to_string(&config_path)?;
         let config: toml::Value = toml::from_str(&content)?;
         if let Some(key) = config

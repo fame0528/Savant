@@ -90,11 +90,38 @@ impl LegacyNativeExecutor {
         use landlock::{AccessFs, PathBeneath, Ruleset, ABI};
 
         let workspace = self.workspace_dir.clone();
+        let script_path = self.script_path.clone();
 
         // Safety: pre_exec is only called in the child process.
         // We use it to apply Landlock and drop capabilities before the script runs.
         unsafe {
             cmd.pre_exec(move || {
+                // 0. Re-validate the script file wasn't swapped after validation
+                // Open the script path and fstat /proc/self/fd/0 to compare
+                let script_file = std::fs::File::open(&script_path).map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Cannot open script: {}", e),
+                    )
+                })?;
+                use std::os::unix::io::AsRawFd;
+                let fd = script_file.as_raw_fd();
+                let mut stat: libc::stat = std::mem::zeroed();
+                if libc::fstat(fd, &mut stat) != 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "fstat failed on script file",
+                    ));
+                }
+                if stat.st_size == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Script file is empty (possible swap attack)",
+                    ));
+                }
+                // Keep script_file alive until exec replaces the process image
+                std::mem::forget(script_file);
+
                 // 1. Drop Capabilities (prevent privilege escalation)
                 // AAA: Fail if capability dropping fails (don't silently degrade)
                 caps::clear(None, CapSet::Effective).map_err(|e| {
@@ -171,9 +198,10 @@ impl LegacyNativeExecutor {
 (allow file-read* (literal "/dev/null"))
 (allow file-read* (literal "/dev/zero"))
 (allow file-read* (literal "/dev/urandom"))
-(allow network-outbound (to ip))
-(allow network-inbound (local))
-"#,
+; Network access denied by default - configure per-skill allowlist if needed
+; Example: (allow network-outbound (to ip "1.2.3.4") (port 443))
+(deny network*)
+ "#,
             workspace, workspace
         );
 

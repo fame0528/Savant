@@ -247,7 +247,7 @@ fn compute_max_dependency_depth(sub_tasks: &[SubTask]) -> usize {
             let max_parent_depth = task
                 .dependencies
                 .iter()
-                .filter(|&&d| d < i)
+                .filter(|&&d| d < sub_tasks.len() && d < i)
                 .map(|&d| depths[d])
                 .max()
                 .unwrap_or(0);
@@ -503,8 +503,15 @@ impl SynthesisEngine {
         let mut successes = 0usize;
 
         for res in results {
+            // Check for structured error indicators in the payload
+            let is_error = res.payload.contains("\"is_error\":true")
+                || res.payload.contains("\"is_error\": true");
             let lower = res.payload.to_lowercase();
-            if lower.contains("error") || lower.contains("failed") || lower.contains("exception") {
+            if is_error
+                || lower.contains("\"error\"")
+                || lower.contains("\"failed\"")
+                || lower.contains("exception")
+            {
                 failures += 1;
             } else {
                 successes += 1;

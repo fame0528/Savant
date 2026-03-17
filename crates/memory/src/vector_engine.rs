@@ -405,7 +405,10 @@ impl SemanticVectorEngine {
         file_data.extend_from_slice(PERSIST_MAGIC);
         file_data.extend_from_slice(&serialized_bytes);
 
-        std::fs::write(&persist_file, &file_data).map_err(|e| MemoryError::Io(e))?;
+        // Write to file atomically: write to temp file, then rename
+        let tmp_file = persist_dir.join("vectors.rkyv.tmp");
+        std::fs::write(&tmp_file, &file_data).map_err(|e| MemoryError::Io(e))?;
+        std::fs::rename(&tmp_file, &persist_file).map_err(|e| MemoryError::Io(e))?;
 
         info!(
             "Saved {} vectors to {:?} ({} bytes)",
@@ -465,18 +468,18 @@ impl SemanticVectorEngine {
             metadata: None,
         };
 
+        // Acquire lock once and perform both DB insert and cache push atomically
+        let mut entries = self.entries.lock().map_err(|_| {
+            MemoryError::VectorInsertFailed("Failed to lock entries mutex".to_string())
+        })?;
+
         // Insert into VectorDB
         self.db
             .insert(entry.clone())
             .map_err(|e| MemoryError::VectorInsertFailed(e.to_string()))?;
 
-        // Store in internal cache for persistence
-        {
-            let mut entries = self.entries.lock().map_err(|_| {
-                MemoryError::VectorInsertFailed("Failed to lock entries mutex".to_string())
-            })?;
-            entries.push(entry);
-        }
+        // Store in internal cache for persistence (under same lock)
+        entries.push(entry);
 
         debug!("Indexed memory with ID: {}", memory_id);
         Ok(())
@@ -589,7 +592,9 @@ impl SemanticVectorEngine {
     /// This is useful for memory compaction and deletion.
     /// The entry is also removed from the internal persistence cache.
     pub fn remove(&self, memory_id: &str) -> Result<(), MemoryError> {
-        let _ = self.db.delete(memory_id);
+        self.db
+            .delete(memory_id)
+            .map_err(|e| MemoryError::VectorDeleteFailed(e.to_string()))?;
 
         // Remove from internal cache
         if let Ok(mut entries) = self.entries.lock() {
@@ -630,6 +635,15 @@ impl SemanticVectorEngine {
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             false
+        }
+    }
+}
+
+impl Drop for SemanticVectorEngine {
+    fn drop(&mut self) {
+        // Attempt to persist vectors on drop to prevent data loss on exit
+        if let Err(e) = self.persist() {
+            tracing::warn!("Failed to persist vector index on drop: {}", e);
         }
     }
 }

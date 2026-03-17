@@ -1,5 +1,5 @@
-use super::traits::MemoryBackend;
 use crate::error::SavantError;
+use crate::traits::MemoryBackend;
 use crate::types::ChatMessage;
 use std::path::Path;
 use tracing::info;
@@ -23,8 +23,9 @@ impl FjallMemoryBackend {
 #[async_trait::async_trait]
 impl MemoryBackend for FjallMemoryBackend {
     async fn store(&self, agent_id: &str, message: &ChatMessage) -> Result<(), SavantError> {
-        let agent_msg = crate::types::AgentMessage::from_chat(message, agent_id);
-        self.engine.append_message(agent_id, &agent_msg)
+        let agent_msg = savant_memory::AgentMessage::from_chat(message, agent_id);
+        self.engine
+            .append_message(agent_id, &agent_msg)
             .map_err(|e| SavantError::Unknown(e.to_string()))?;
         Ok(())
     }

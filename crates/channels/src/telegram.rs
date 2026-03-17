@@ -131,19 +131,19 @@ impl TelegramAdapter {
     pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<(), SavantError> {
         self.enforce_rate_limit().await;
 
-        // Truncate message if too long
-        let truncated = if text.len() > MAX_MESSAGE_LENGTH {
+        // Truncate message if too long (UTF-8 safe)
+        let truncated: std::borrow::Cow<'_, str> = if text.len() > MAX_MESSAGE_LENGTH {
             warn!(
                 "Message truncated from {} to {} characters",
                 text.len(),
                 MAX_MESSAGE_LENGTH
             );
-            &text[..MAX_MESSAGE_LENGTH]
+            std::borrow::Cow::Owned(text.chars().take(MAX_MESSAGE_LENGTH).collect::<String>())
         } else {
-            text
+            std::borrow::Cow::Borrowed(text)
         };
 
-        let mut send = self.bot.send_message(ChatId(chat_id), truncated);
+        let mut send = self.bot.send_message(ChatId(chat_id), &*truncated);
 
         // Apply parse mode if configured
         if let Some(ref mode) = self.config.parse_mode {

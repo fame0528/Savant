@@ -1,9 +1,9 @@
-use ed25519_dalek::{Signer, Verifier, Signature, SigningKey, VerifyingKey};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::token::{AgentToken, CapabilityPayload, SignatureAlgorithm};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use pqcrypto_dilithium::dilithium2;
 use pqcrypto_traits::sign::DetachedSignature;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use crate::token::{AgentToken, CapabilityPayload, SignatureAlgorithm};
 
 #[derive(Debug, Error)]
 pub enum SecurityError {
@@ -28,7 +28,10 @@ pub struct SecurityAuthority {
 
 impl SecurityAuthority {
     pub fn new(root_authority: VerifyingKey, pqc_authority: Option<dilithium2::PublicKey>) -> Self {
-        Self { root_authority, pqc_authority }
+        Self {
+            root_authority,
+            pqc_authority,
+        }
     }
 
     /// Helper to get current UNIX time securely
@@ -49,18 +52,18 @@ impl SecurityAuthority {
         ttl_seconds: u64,
         cadence_entropy: &[u8],
     ) -> Result<AgentToken, SecurityError> {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-
         // OMEGA-VII: Hybrid-Entropic mixing (System Entropy + User Cadence)
+        use rand::RngCore;
+        let mut rng = rand::rngs::OsRng;
+
         let mut entropy_hash = [0u8; 32];
         let mut system_entropy = [0u8; 16];
-        rng.fill(&mut system_entropy);
-        
+        rng.fill_bytes(&mut system_entropy);
+
         let mut combined = Vec::with_capacity(cadence_entropy.len() + system_entropy.len());
         combined.extend_from_slice(cadence_entropy);
         combined.extend_from_slice(&system_entropy);
-        
+
         let h = xxhash_rust::xxh3::xxh3_128(&combined);
         let h_bytes = h.to_le_bytes();
         entropy_hash[0..16].copy_from_slice(&h_bytes);
@@ -82,7 +85,7 @@ impl SecurityAuthority {
         // OMEGA-VIII: Hybrid Signature (Ed25519 + Dilithium2)
         let ed_sig = signer.sign(&payload_bytes);
         let pqc_sig = dilithium2::detached_sign(&payload_bytes, pqc_signer);
-        
+
         let mut combined_sig = Vec::with_capacity(64 + pqc_sig.as_bytes().len());
         combined_sig.extend_from_slice(&ed_sig.to_bytes());
         combined_sig.extend_from_slice(pqc_sig.as_bytes());
@@ -147,8 +150,8 @@ impl SecurityAuthority {
         }
 
         // 3. Action / Resource Scope Check (Fixes OpenClaw Issue #11102)
-        if token.payload.permitted_action != requested_action 
-            || !requested_resource.starts_with(&token.payload.resource_uri) 
+        if token.payload.permitted_action != requested_action
+            || !requested_resource.starts_with(&token.payload.resource_uri)
         {
             return Err(SecurityError::UnauthorizedAction(
                 requested_action.to_string(),
@@ -162,9 +165,11 @@ impl SecurityAuthority {
 
         match token.algorithm {
             SignatureAlgorithm::Ed25519 => {
-                let sig_bytes: [u8; 64] = token.signature.as_slice().try_into()
-                    .map_err(|_| SecurityError::InvalidSignature(SignatureAlgorithm::Ed25519))?;
-                
+                let sig_bytes: [u8; 64] =
+                    token.signature.as_slice().try_into().map_err(|_| {
+                        SecurityError::InvalidSignature(SignatureAlgorithm::Ed25519)
+                    })?;
+
                 let signature = Signature::from_bytes(&sig_bytes);
 
                 self.root_authority
@@ -172,7 +177,9 @@ impl SecurityAuthority {
                     .map_err(|_| SecurityError::InvalidSignature(SignatureAlgorithm::Ed25519))
             }
             SignatureAlgorithm::QuantumCognitive => {
-                let pqc_key = self.pqc_authority.as_ref()
+                let pqc_key = self
+                    .pqc_authority
+                    .as_ref()
                     .ok_or_else(|| SecurityError::UnsupportedAlgorithm(token.algorithm))?;
 
                 if token.signature.len() < 64 {
@@ -180,9 +187,12 @@ impl SecurityAuthority {
                 }
 
                 // 1. Verify Ed25519 component
-                let ed_sig_bytes: [u8; 64] = token.signature[0..64].try_into().unwrap();
+                let ed_sig_bytes: [u8; 64] = token.signature[0..64]
+                    .try_into()
+                    .map_err(|_| SecurityError::InvalidSignature(token.algorithm))?;
                 let ed_sig = Signature::from_bytes(&ed_sig_bytes);
-                self.root_authority.verify(&payload_bytes, &ed_sig)
+                self.root_authority
+                    .verify(&payload_bytes, &ed_sig)
                     .map_err(|_| SecurityError::InvalidSignature(token.algorithm))?;
 
                 // 2. Verify Dilithium2 component
@@ -208,7 +218,10 @@ impl SecurityAuthority {
 
     /// Rotates the root authority key. (Administrative only)
     pub fn rotate_root_authority(&mut self, next_authority: VerifyingKey) {
-        tracing::info!("🔄 SecurityAuthority: Rotating root authority to {:?}", next_authority);
+        tracing::info!(
+            "🔄 SecurityAuthority: Rotating root authority to {:?}",
+            next_authority
+        );
         self.root_authority = next_authority;
     }
 
@@ -237,15 +250,13 @@ mod tests {
         let signing_key = SigningKey::generate(&mut rng);
         let enclave = SecurityAuthority::new(signing_key.verifying_key(), None);
 
-        let token = SecurityAuthority::mint_token(
-            &signing_key,
-            12345,
-            "/workspace/data/",
-            "read",
-            3600,
-        ).expect("Failed to mint token");
+        let token =
+            SecurityAuthority::mint_token(&signing_key, 12345, "/workspace/data/", "read", 3600)
+                .expect("Failed to mint token");
 
-        assert!(enclave.verify_token_and_action(&token, 12345, "/workspace/data/file.txt", "read").is_ok());
+        assert!(enclave
+            .verify_token_and_action(&token, 12345, "/workspace/data/file.txt", "read")
+            .is_ok());
     }
 
     #[test]
@@ -260,11 +271,12 @@ mod tests {
             "/",
             "read",
             100, // Not yet expired
-        ).unwrap();
+        )
+        .unwrap();
 
         // Force expiration by setting time to the past
         token.payload.expires_at = SecurityAuthority::current_time().saturating_sub(1);
-        
+
         assert!(matches!(
             enclave.verify_token_and_action(&token, 12345, "/file", "read"),
             Err(SecurityError::TokenExpired)
@@ -278,8 +290,10 @@ mod tests {
         let enclave = SecurityAuthority::new(signing_key.verifying_key(), None);
 
         let token = SecurityAuthority::mint_token(&signing_key, 111, "/", "read", 100).unwrap();
-        
-        assert!(enclave.verify_token_and_action(&token, 222, "/file", "read").is_err());
+
+        assert!(enclave
+            .verify_token_and_action(&token, 222, "/file", "read")
+            .is_err());
     }
 
     #[test]
@@ -289,10 +303,10 @@ mod tests {
         let enclave = SecurityAuthority::new(signing_key.verifying_key(), None);
 
         let mut token = SecurityAuthority::mint_token(&signing_key, 123, "/", "read", 100).unwrap();
-        
+
         // Tamper with payload action
         token.payload.permitted_action = "write".to_string();
-        
+
         assert!(matches!(
             enclave.verify_token_and_action(&token, 123, "/file", "write"),
             Err(SecurityError::InvalidSignature(SignatureAlgorithm::Ed25519))
@@ -315,11 +329,14 @@ mod tests {
             "execute",
             3600,
             cadence,
-        ).expect("Failed to mint quantum token");
+        )
+        .expect("Failed to mint quantum token");
 
         assert_eq!(token.algorithm, SignatureAlgorithm::QuantumCognitive);
         assert_ne!(token.payload.entropy_hash, [0u8; 32]);
-        
-        assert!(enclave.verify_token_and_action(&token, 555, "/secure/tool", "execute").is_ok());
+
+        assert!(enclave
+            .verify_token_and_action(&token, 555, "/secure/tool", "execute")
+            .is_ok());
     }
 }

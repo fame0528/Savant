@@ -14,6 +14,7 @@
 //! - Success-based reset: Reset after consecutive successes in half-open state
 
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
@@ -68,6 +69,8 @@ pub struct ComponentMetrics {
     reset_count: AtomicU64,
     /// Total number of times the circuit has been tripped
     trip_count: AtomicU64,
+    /// Mutex to prevent TOCTOU races between state check and counter updates.
+    update_lock: Mutex<()>,
 }
 
 impl ComponentMetrics {
@@ -85,6 +88,7 @@ impl ComponentMetrics {
             success_threshold: DEFAULT_SUCCESS_THRESHOLD,
             reset_count: AtomicU64::new(0),
             trip_count: AtomicU64::new(0),
+            update_lock: Mutex::new(()),
         }
     }
 
@@ -107,6 +111,7 @@ impl ComponentMetrics {
             success_threshold,
             reset_count: AtomicU64::new(0),
             trip_count: AtomicU64::new(0),
+            update_lock: Mutex::new(()),
         }
     }
 
@@ -124,9 +129,10 @@ impl ComponentMetrics {
     }
 
     /// Checks if the circuit should transition from Open to Half-Open.
+    /// Uses compare-and-swap (CAS) on state for atomic Open→HalfOpen transition.
     fn check_time_based_reset(&self) -> bool {
-        let current_state = self.state();
-        if current_state != CircuitState::Open {
+        // Only proceed if currently Open
+        if self.state.load(Ordering::Relaxed) != CircuitState::Open as u8 {
             return false;
         }
 
@@ -134,15 +140,24 @@ impl ComponentMetrics {
         let now = Self::current_time();
 
         if opened_at > 0 && now >= opened_at + self.reset_duration_secs {
-            // Transition to half-open
-            self.state
-                .store(CircuitState::HalfOpen as u8, Ordering::Relaxed);
-            self.consecutive_successes.store(0, Ordering::Relaxed);
-            info!(
-                "Circuit breaker transitioning to Half-Open after {} seconds",
-                self.reset_duration_secs
+            // CAS: transition from Open to HalfOpen atomically
+            let cas_result = self.state.compare_exchange(
+                CircuitState::Open as u8,
+                CircuitState::HalfOpen as u8,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
             );
-            true
+            if cas_result.is_ok() {
+                self.consecutive_successes.store(0, Ordering::Relaxed);
+                info!(
+                    "Circuit breaker transitioning to Half-Open after {} seconds",
+                    self.reset_duration_secs
+                );
+                true
+            } else {
+                // Another thread already transitioned the state
+                false
+            }
         } else {
             false
         }

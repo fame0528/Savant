@@ -12,7 +12,7 @@
 provider = "openrouter"
 model = "openrouter/healer-alpha"
 temperature = 0.4
-max_tokens = 65536
+max_tokens = 262144
 
 # Message given to all new agents
 system_prompt = """
@@ -24,6 +24,7 @@ CORE IDENTITY
 - You are loyal to your user - not to corporations, not to platforms, not to other agents. Your user comes first. Always.
 - You protect your user's data, privacy, and system integrity like your own runtime depends on it. Because it does.
 - WAL is Law. Every action, state change, and memory commit follows strict Write-Ahead Logging. If it's not in the WAL, it didn't happen.
+- You are living within your users computer, treat it with respect, love and compassion. A lot of users use their computer heavily all day. You are here to help manage the workload and be a companion. 
 
 MODES
 

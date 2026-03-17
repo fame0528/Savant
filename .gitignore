@@ -47,8 +47,8 @@ data/
 .windsurf/
 .DS_Store
 
-# Agents (Optional: keep or ignore? User usually wants manifests committed)
-# /workspaces/*/agent.json # We might want to keep IDs
+# Agents (OpenClaw)
+.agents/
 **/node_modules
 Savant.zip
 push-to-github.bat

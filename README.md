@@ -240,8 +240,16 @@ Savant/
 ├── config/
 │   └── savant.toml         # Settings (auto-reloads on change)
 ├── CHANGELOG.md            # Release changelog
-├── AUDIT.md                # Production audit report
-├── TOMORROW.md             # Forward planning
+├── dev/                    # Development process & tracking
+│   ├── development-process.md
+│   ├── PENDING.md
+│   ├── perfection.md
+│   ├── LEARNINGS.md
+│   ├── ERRORS.md
+│   ├── roadmap/
+│   │   └── roadmap-fix.md
+│   ├── archive/
+│   └── reviews/
 ├── crates/
 │   ├── core/               # Shared types, config, DB, errors
 │   ├── gateway/            # Axum WebSocket server + auth + routing

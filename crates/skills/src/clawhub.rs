@@ -13,6 +13,30 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::{info, warn};
 
+/// RAII guard that ensures temp directory cleanup on drop
+struct TempDirGuard {
+    path: Option<std::path::PathBuf>,
+}
+
+impl TempDirGuard {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self { path: Some(path) }
+    }
+
+    /// Consume the guard without cleanup (e.g., on successful move)
+    fn keep(mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        if let Some(ref path) = self.path {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
+
 /// ClawHub API base URL
 const CLAWHUB_API_BASE: &str = "https://api.clawhub.com/v1";
 /// ClawHub web base URL
@@ -278,6 +302,9 @@ impl ClawHubClient {
             .await
             .map_err(|e| ClawHubError::FileSystemError(e.to_string()))?;
 
+        // RAII guard ensures cleanup on any exit path
+        let _cleanup = TempDirGuard::new(temp_dir.clone());
+
         // Write SKILL.md to temp location
         tokio::fs::write(temp_dir.join("SKILL.md"), &info.content)
             .await
@@ -333,7 +360,7 @@ impl ClawHubClient {
 
             // Move files from temp to final location
             move_dir_contents(&temp_dir, &skill_dir).await?;
-            tokio::fs::remove_dir_all(&temp_dir).await.ok();
+            _cleanup.keep(); // Files moved, guard should not clean up
 
             info!("Successfully installed skill: {}", slug);
 

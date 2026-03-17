@@ -1,11 +1,11 @@
+use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
-use savant_core::types::{EventFrame, ChatMessage, ChatRole};
-use async_trait::async_trait;
+use savant_core::types::{ChatMessage, ChatRole, EventFrame};
 use serenity::all::{GatewayIntents, Message};
 use serenity::prelude::*;
 use std::sync::Arc;
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 
 /// OMEGA-VIII: Discord Adapter with WAL-Strict Ingestion and Identity Isolation.
 pub struct DiscordAdapter {
@@ -16,8 +16,17 @@ pub struct DiscordAdapter {
 }
 
 impl DiscordAdapter {
-    pub fn new(token: String, allowed_channel: Option<String>, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
-        Self { token, allowed_channel, allowed_bots: Vec::new(), nexus }
+    pub fn new(
+        token: String,
+        allowed_channel: Option<String>,
+        nexus: Arc<savant_core::bus::NexusBridge>,
+    ) -> Self {
+        Self {
+            token,
+            allowed_channel,
+            allowed_bots: Vec::new(),
+            nexus,
+        }
     }
 
     /// Sets the explicit allow-list of bot IDs that this adapter will process messages from.
@@ -28,15 +37,15 @@ impl DiscordAdapter {
 
     /// Spawns the Discord client event loop.
     pub async fn start(&self) -> Result<(), SavantError> {
-        let intents = GatewayIntents::GUILD_MESSAGES 
-            | GatewayIntents::DIRECT_MESSAGES 
+        let intents = GatewayIntents::GUILD_MESSAGES
+            | GatewayIntents::DIRECT_MESSAGES
             | GatewayIntents::MESSAGE_CONTENT;
 
         let nexus_clone = self.nexus.clone();
         let allowed_channel = self.allowed_channel.clone();
         let allowed_bots = self.allowed_bots.clone();
         let mut client = Client::builder(&self.token, intents)
-            .event_handler(Handler { 
+            .event_handler(Handler {
                 nexus: nexus_clone,
                 allowed_channel,
                 allowed_bots,
@@ -45,9 +54,12 @@ impl DiscordAdapter {
             .map_err(|e| SavantError::Unknown(format!("Discord client error: {}", e)))?;
 
         info!("[DISCORD_BRIDGE] Bridging to Nexus substrate...");
-        
+
         if let Err(why) = client.start().await {
-            error!("[DISCORD_BRIDGE] Fatal error during manual start: {:?}", why);
+            error!(
+                "[DISCORD_BRIDGE] Fatal error during manual start: {:?}",
+                why
+            );
             return Err(SavantError::Unknown(why.to_string()));
         }
 
@@ -64,8 +76,11 @@ struct Handler {
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
-        debug!("[Discord] Inbound signal from {}: {}", msg.author.name, msg.content);
-        
+        debug!(
+            "[Discord] Inbound signal from {}: {}",
+            msg.author.name, msg.content
+        );
+
         // Perfection: Show immediate intent via typing indicator
         let _ = msg.channel_id.broadcast_typing(&ctx.http).await;
 
@@ -74,7 +89,10 @@ impl EventHandler for Handler {
         if msg.author.bot {
             let bot_id = msg.author.id.to_string();
             if !self.allowed_bots.contains(&bot_id) {
-                debug!("[Discord] Ignoring message from non-allowed bot: {}", msg.author.name);
+                debug!(
+                    "[Discord] Ignoring message from non-allowed bot: {}",
+                    msg.author.name
+                );
                 return;
             }
         }
@@ -86,15 +104,19 @@ impl EventHandler for Handler {
             }
         }
 
-        info!("[Discord] Inbound message from {}: {}", msg.author.name, msg.content);
+        info!(
+            "[Discord] Inbound message from {}: {}",
+            msg.author.name, msg.content
+        );
 
         // 🛡️ Identity Isolation: Prefix with discord:
         let sender_id = format!("discord:{}", msg.author.id);
-        
+
         // AAA: Unified Context Harmony - Anchor to the channel session
-        let session_id = savant_core::session::SessionMapper::map("discord", &msg.channel_id.to_string());
-        
-        // 🛡️ WAL-Strict Ingestion: 
+        let session_id =
+            savant_core::session::SessionMapper::map("discord", &msg.channel_id.to_string());
+
+        // 🛡️ WAL-Strict Ingestion:
         // In a full implementation, we'd commit to a specific memory backend here.
         // For now, we package it as an EventFrame for the Nexus bridge.
         let chat_message = ChatMessage {
@@ -109,7 +131,13 @@ impl EventHandler for Handler {
 
         let event = EventFrame {
             event_type: "chat.message".to_string(),
-            payload: serde_json::to_string(&chat_message).expect("ChatMessage serializable"),
+            payload: match serde_json::to_string(&chat_message) {
+                Ok(p) => p,
+                Err(e) => {
+                    error!("Failed to serialize ChatMessage: {}", e);
+                    return;
+                }
+            },
         };
 
         if let Err(e) = self.nexus.event_bus.send(event) {
@@ -118,7 +146,10 @@ impl EventHandler for Handler {
     }
 
     async fn ready(&self, _: Context, ready: serenity::all::Ready) {
-        info!("[DISCORD_BRIDGE] Connected as {} (ID: {}). OMEGA-ready.", ready.user.name, ready.user.id);
+        info!(
+            "[DISCORD_BRIDGE] Connected as {} (ID: {}). OMEGA-ready.",
+            ready.user.name, ready.user.id
+        );
     }
 }
 
@@ -131,7 +162,10 @@ impl ChannelAdapter for DiscordAdapter {
     async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
         // This is called by the InboxPool/Nexus for manual injections.
         // But for Discord, we prefer the autonomous subscription model in start().
-        info!("DiscordAdapter received manual event: {:?}", event.event_type);
+        info!(
+            "DiscordAdapter received manual event: {:?}",
+            event.event_type
+        );
         Ok(())
     }
 
@@ -143,9 +177,10 @@ impl ChannelAdapter for DiscordAdapter {
 
 impl DiscordAdapter {
     /// Starts the autonomous Discord handler task.
-    pub async fn spawn(self) {
-        let intents = GatewayIntents::GUILD_MESSAGES 
-            | GatewayIntents::DIRECT_MESSAGES 
+    /// Returns a JoinHandle that can be used to cancel the task.
+    pub async fn spawn(self) -> tokio::task::JoinHandle<()> {
+        let intents = GatewayIntents::GUILD_MESSAGES
+            | GatewayIntents::DIRECT_MESSAGES
             | GatewayIntents::MESSAGE_CONTENT;
 
         let nexus_clone = self.nexus.clone();
@@ -155,21 +190,22 @@ impl DiscordAdapter {
         tokio::spawn(async move {
             info!("[DISCORD_BRIDGE] Spawned autonomous background task.");
             let mut client = match Client::builder(&token, intents)
-                .event_handler(Handler { 
+                .event_handler(Handler {
                     nexus: nexus_clone.clone(),
                     allowed_channel,
                     allowed_bots: self.allowed_bots.clone(),
                 })
-                .await {
-                    Ok(c) => {
-                        info!("[DISCORD_BRIDGE] Client successfully created.");
-                        c
-                    },
-                    Err(e) => {
-                        error!("[DISCORD_BRIDGE] CRITICAL - Failed to create client: {}", e);
-                        return;
-                    }
-                };
+                .await
+            {
+                Ok(c) => {
+                    info!("[DISCORD_BRIDGE] Client successfully created.");
+                    c
+                }
+                Err(e) => {
+                    error!("[DISCORD_BRIDGE] CRITICAL - Failed to create client: {}", e);
+                    return;
+                }
+            };
 
             let http = client.http.clone();
             let mut event_rx = nexus_clone.subscribe().await.0;
@@ -178,7 +214,9 @@ impl DiscordAdapter {
             tokio::spawn(async move {
                 while let Ok(event) = event_rx.recv().await {
                     if event.event_type == "chat.message" {
-                        if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) {
+                        if let Ok(payload) =
+                            serde_json::from_str::<serde_json::Value>(&event.payload)
+                        {
                             let is_assistant = payload["role"].as_str() == Some("Assistant");
                             if let Some(recipient) = payload["recipient"].as_str() {
                                 // Perfection: Deliver if it's an Assistant response OR tagging discord:
@@ -190,7 +228,7 @@ impl DiscordAdapter {
                                         let channel_id_str = &session_id[8..];
                                         if let Ok(channel_id) = channel_id_str.parse::<u64>() {
                                             let content = payload["content"].as_str().unwrap_or("");
-                                            
+
                                             // Perfection: Chunk message for Discord (2000 char limit, UTF-8 safe)
                                             let mut chunks = Vec::new();
                                             let mut current = content;
@@ -202,8 +240,10 @@ impl DiscordAdapter {
                                                     .take_while(|&i| i <= 1900)
                                                     .last()
                                                     .unwrap_or(0);
-                                                
-                                                if split_idx == 0 { break; } // Safety break
+
+                                                if split_idx == 0 {
+                                                    break;
+                                                } // Safety break
 
                                                 let (chunk, rest) = current.split_at(split_idx);
                                                 chunks.push(chunk);
@@ -212,15 +252,21 @@ impl DiscordAdapter {
                                             chunks.push(current);
 
                                             let total = chunks.len();
-                                            for (i, chunk_content) in chunks.into_iter().enumerate() {
+                                            for (i, chunk_content) in chunks.into_iter().enumerate()
+                                            {
                                                 let display_content = if total > 1 {
-                                                    format!("[Chunk {}/{}] {}", i + 1, total, chunk_content)
+                                                    format!(
+                                                        "[Chunk {}/{}] {}",
+                                                        i + 1,
+                                                        total,
+                                                        chunk_content
+                                                    )
                                                 } else {
                                                     chunk_content.to_string()
                                                 };
 
                                                 debug!("[Discord] Delivering chunk {}/{} to channel {}: {}...", i+1, total, channel_id, &display_content.chars().take(20).collect::<String>());
-                                                
+
                                                 match serenity::model::id::ChannelId::new(channel_id)
                                                     .say(&http, display_content)
                                                     .await {
@@ -268,6 +314,6 @@ impl DiscordAdapter {
             if let Err(why) = client.start().await {
                 error!("[DISCORD_BRIDGE] FATAL connection error: {:?}", why);
             }
-        });
+        })
     }
 }

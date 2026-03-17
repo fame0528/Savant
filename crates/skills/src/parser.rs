@@ -317,12 +317,16 @@ impl SkillRegistry {
 
         info!("Loaded skill: {} (v{})", manifest.name, manifest.version);
 
-        // Check for skill name collision
+        // Check for skill name collision - reject overwrite to prevent data loss
         if self.manifests.contains_key(&manifest.name) {
             warn!(
-                "Skill name collision detected: '{}' already exists. Overwriting.",
+                "Skill name collision: '{}' already loaded. Rejecting duplicate.",
                 manifest.name
             );
+            return Err(SavantError::InvalidInput(format!(
+                "Skill '{}' is already loaded. Use a unique skill name.",
+                manifest.name
+            )));
         }
 
         // Check maximum skill count

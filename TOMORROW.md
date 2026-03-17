@@ -44,12 +44,12 @@
 - [ ] Determine if Nix integration is viable on Windows (WSL2?)
 - [ ] Review flake reference validation logic
 - [ ] Test the allowlisted prefixes: `flake:`, `path:`, `github:`, `gitlab:`, `sourcehut:`
-- [ ] Verify path existence verification works
+- [ ] Verify path existence verification works (canonicalize added)
 - [ ] Check 10KB payload limit enforcement
 - [ ] Document Windows limitations if Nix can't run natively
 
 ### Files to review:
-- `crates/skills/src/nix.rs` - Nix executor and validation
+- `crates/skills/src/nix.rs` - Nix executor and validation (path canonicalization added)
 
 ### Decision needed:
 - Should we add a `#[cfg(windows)]` stub that returns a clear "not supported" error?
@@ -59,166 +59,69 @@
 
 ## 3. MCP Integration - Production Readiness
 
-**Status:** Code exists, minimal testing  
+**Status:** Auth implemented, circuit breaker implemented  
 **Risk:** Medium - external tool server integration
 
 ### What to investigate:
 
-- [ ] Review `crates/mcp/src/server.rs` - MCP server implementation
-- [ ] Review `crates/mcp/src/client.rs` - MCP client implementation
 - [ ] Test the stdio-based server communication
 - [ ] Verify tool discovery and registration works
 - [ ] Check error handling for malformed tool responses
 - [ ] Test the circuit breaker integration
-- [ ] Review authentication if MCP servers require it
+- [ ] Test auth token flow end-to-end
+- [ ] Verify rate limiting works correctly
 
 ### Files to review:
-- `crates/mcp/src/server.rs`
-- `crates/mcp/src/client.rs`
-- `crates/mcp/src/circuit.rs`
+- `crates/mcp/src/server.rs` - MCP server (auth + rate limit added)
+- `crates/mcp/src/client.rs` - MCP client
+- `crates/mcp/src/circuit.rs` - Full circuit breaker implemented
 
 ---
 
 ## 4. Memory System - Integration Testing
 
-**Status:** 13 tests pass, but integration between components untested  
+**Status:** 20+ tests pass, integration between components needs testing  
 **Risk:** Medium - data loss if persistence fails
 
 ### What to investigate:
 
-- [ ] Test hybrid storage (SQLite + Fjall + vectors) end-to-end
-- [ ] Verify context consolidation actually summarizes messages correctly
-- [ ] Test vector persistence with `persist()` method
+- [ ] Test hybrid storage (Fjall + vectors) end-to-end
+- [ ] Verify context consolidation correctly summarizes messages
+- [ ] Test vector persistence with atomic write (temp + rename)
 - [ ] Check that `load_from_path` properly restores from disk
-- [ ] Verify memory entry cleanup/compaction works
 - [ ] Test concurrent access patterns
-- [ ] Review the async backend wrapper for race conditions
+- [ ] Verify RAII cleanup on vector engine drop
 
 ### Files to review:
-- `crates/memory/src/engine.rs` - MemoryEngine orchestrator
-- `crates/memory/src/async_backend.rs` - Async wrapper with consolidation
-- `crates/memory/src/vector_engine.rs` - Vector persistence
-- `crates/memory/src/models.rs` - Data models
-
-### Specific tests to add:
-- Concurrent read/write to same session
-- Consolidation of 1000+ messages
-- Vector index rebuild after corruption
-- Fjall LSM-tree range query performance
-
----
-
-## 4a. WAL Stress Testing - "WAL is Law" (Core Law #3)
-
-**Status:** No concurrent write tests exist  
-**Risk:** CRITICAL - data corruption under load violates Core Law #3
-
-**"WAL is Law" means:** Write-Ahead Logging is the source of truth. If WAL fails, everything fails. This needs adversarial testing.
-
-### What to investigate:
-
-#### Basic Concurrency
-- [ ] 100 concurrent writers to the same session
-- [ ] 100 concurrent writers to 100 different sessions
-- [ ] Mixed read/write: 50 writers + 50 readers simultaneously
-- [ ] Write during WAL checkpoint/compaction
-- [ ] Write during database vacuum
-
-#### Edge Cases
-- [ ] Write interruption mid-transaction (kill process during write)
-- [ ] Write to WAL when disk is nearly full
-- [ ] Write after improper shutdown (no WAL checkpoint)
-- [ ] Write with extremely large message (>1MB payload)
-- [ ] Write with Unicode/emoji heavy content
-- [ ] Write with null bytes in content
-
-#### Recovery
-- [ ] Verify WAL replay after crash recovers ALL committed transactions
-- [ ] Verify WAL replay after crash does NOT replay uncommitted transactions
-- [ ] Verify WAL replay produces identical database state as正常 shutdown
-- [ ] Test WAL truncation doesn't lose data
-- [ ] Test WAL file rotation under sustained writes
-
-#### Performance
-- [ ] Measure write throughput at 100, 1000, 10000 messages/second
-- [ ] Measure latency percentile (p50, p95, p99, p99.9) under load
-- [ ] Verify no write starvation during heavy reads
-- [ ] Verify no reader starvation during heavy writes
-- [ ] Measure WAL file size growth rate
-- [ ] Measure checkpoint duration under load
-
-#### Multi-Process
-- [ ] Two processes writing to same database (if supported)
-- [ ] WAL sharing between reader and writer processes
-- [ ] Lock contention measurement
-
-### Test structure:
-
-```rust
-// Pseudocode for stress test
-#[tokio::test]
-async fn wal_stress_concurrent_writes() {
-    let engine = MemoryEngine::new(test_dir);
-    let session = "stress-test";
-    
-    // Spawn 100 concurrent writers
-    let mut handles = Vec::new();
-    for i in 0..100 {
-        let eng = engine.clone();
-        handles.push(tokio::spawn(async move {
-            for j in 0..100 {
-                eng.store_message(session, create_message(i, j)).await?;
-            }
-            Ok::<(), Error>(())
-        }));
-    }
-    
-    // Wait for all writers
-    for h in handles {
-        h.await.unwrap().unwrap();
-    }
-    
-    // Verify all 10,000 messages present and ordered
-    let messages = eng.fetch_session_tail(session, 20000);
-    assert_eq!(messages.len(), 10000);
-    // Verify ordering
-}
-```
-
-### Files to review:
-- `crates/core/src/db.rs` - WAL configuration and connection
-- `crates/memory/src/engine.rs` - Store/fetch operations
-
-### Pass criteria:
-- Zero data loss under all test conditions
-- Zero corruption after simulated crashes
-- Write throughput > 1000 msg/sec sustained
-- p99 latency < 10ms under normal load
-- WAL recovery produces bit-identical database state
+- `crates/memory/src/engine.rs` - MemoryEngine orchestrator (error handling fixed)
+- `crates/memory/src/async_backend.rs` - Query filtering implemented
+- `crates/memory/src/vector_engine.rs` - Atomic writes, Drop impl
+- `crates/memory/src/models.rs` - Tool role mapping fixed
 
 ---
 
 ## 5. ECHO Protocol - Speculative ReAct Verification
 
-**Status:** Implementation exists, needs stress testing  
+**Status:** Implementation exists, circuit breaker fixed  
 **Risk:** Medium - incorrect behavior could cause agent errors
 
 ### What to investigate:
 
-- [ ] Review the `DelegationBloomFilter` for cycle detection accuracy
+- [ ] Review the circuit breaker CAS transitions under load
 - [ ] Test overlapping tool execution with cognitive planning
 - [ ] Verify sub-millisecond context swapping works
 - [ ] Test the speculative execution rollback on failure
 - [ ] Check for race conditions in parallel tool dispatch
 
 ### Files to review:
-- `crates/echo/src/` - All ECHO protocol files
+- `crates/echo/src/circuit_breaker.rs` - Mutex + CAS transitions
+- `crates/echo/src/compiler.rs` - Env filtering (AWS key fix)
 
 ---
 
 ## 6. Gateway Security - Penetration Testing
 
-**Status:** Auth implemented, needs adversarial testing  
+**Status:** Path traversal fixed, auth error leak fixed, signing key fixed  
 **Risk:** High - entry point for all external connections
 
 ### What to investigate:
@@ -229,25 +132,24 @@ async fn wal_stress_concurrent_writes() {
 - [ ] Check WebSocket origin validation
 - [ ] Review CORS configuration for strictness
 - [ ] Test rate limiting if implemented
-- [ ] Verify no information leakage in error messages
+- [ ] Verify no information leakage in error messages (fixed)
 
 ### Files to review:
-- `crates/gateway/src/auth/mod.rs` - Authentication
-- `crates/gateway/src/handlers/mod.rs` - Request handling
-- `crates/gateway/src/handlers/skills.rs` - Skill management handlers
+- `crates/gateway/src/handlers/skills.rs` - Path validation added
+- `crates/gateway/src/handlers/pairing.rs` - Persistent signing key
+- `crates/gateway/src/lanes.rs` - Directive injection protection
 
 ### Attack scenarios to test:
 - Token replay with captured valid token
 - Cross-site WebSocket hijacking
-- SQL injection via skill name/path parameters
-- Path traversal in skill installation
+- Path traversal in skill installation (blocked by validation)
 - DoS via large skill packages
 
 ---
 
 ## 7. Dashboard - UI/UX Review
 
-**Status:** Basic functionality works  
+**Status:** WebSocket URL fixed (port 3000)  
 **Risk:** Low - frontend only, no security impact
 
 ### What to investigate:
@@ -260,14 +162,14 @@ async fn wal_stress_concurrent_writes() {
 - [ ] Check responsive design on different screen sizes
 
 ### Files to review:
-- `dashboard/src/app/page.tsx` - Main dashboard component
+- `dashboard/src/app/page.tsx` - WebSocket URL fixed to port 3000
 - `dashboard/src/app/globals.css` - Global styles
 
 ---
 
 ## 8. Threat Intelligence Feed
 
-**Status:** API client exists, no real endpoint  
+**Status:** SSRF protection added (redirects disabled)  
 **Risk:** Medium - security scanning effectiveness depends on fresh data
 
 ### What to investigate:
@@ -280,12 +182,7 @@ async fn wal_stress_concurrent_writes() {
 - [ ] Implement webhook push for real-time updates
 
 ### Files to review:
-- `crates/skills/src/security.rs` - Lines 87-200 (threat intel sync)
-
-### Decision needed:
-- Who hosts the threat intel feed?
-- What's the update frequency?
-- How do we handle private/threat intelligence sharing?
+- `crates/skills/src/security.rs` - Lines 87-200 (threat intel sync, SSRF fixed)
 
 ---
 
@@ -303,11 +200,6 @@ async fn wal_stress_concurrent_writes() {
 - [ ] Check file path handling across platforms
 - [ ] Verify signal handling (SIGKILL, SIGTERM) works correctly
 
-### Platforms to test:
-- Windows 10/11 (current dev environment)
-- Ubuntu 22.04 LTS
-- macOS 14+ (Apple Silicon)
-
 ---
 
 ## 10. Performance Profiling
@@ -324,16 +216,11 @@ async fn wal_stress_concurrent_writes() {
 - [ ] Profile CPU usage during cognitive synthesis
 - [ ] Check memory usage patterns under load
 
-### Tools to use:
-- `cargo flamegraph` for CPU profiling
-- `cargo bench` for microbenchmarks
-- Custom tracing spans for distributed profiling
-
 ---
 
 ## 11. Documentation Gaps
 
-**Status:** Core docs exist, examples missing  
+**Status:** Core docs updated, examples still needed  
 **Risk:** Low - but affects adoption
 
 ### What to create:
@@ -341,7 +228,6 @@ async fn wal_stress_concurrent_writes() {
 - [ ] Example skill package (complete working skill)
 - [ ] Tutorial: Creating and publishing a skill to ClawHub
 - [ ] Tutorial: Setting up Docker sandbox for skill execution
-- [ ] API reference for WebSocket protocol
 - [ ] Troubleshooting guide for common issues
 - [ ] Contributing guidelines
 
@@ -359,103 +245,54 @@ async fn wal_stress_concurrent_writes() {
   - `cargo test --workspace` on every PR
   - `cargo clippy` for lint warnings
   - `cargo fmt --check` for formatting
-  - `cargo kani --workspace` for formal proofs (if available in runner)
+  - `cargo kani --workspace` for formal proofs (if available)
 - [ ] Automated dependency updates (Dependabot)
-- [ ] Release automation (cargo publish or GitHub releases)
 - [ ] Security scanning of dependencies (cargo audit)
+
+---
+
+## 13. Remaining Code Quality (14 issues from audit)
+
+**Status:** 107/121 audit issues fixed  
+**Remaining items from audit:**
+
+1. [ ] Phase 4: `semantic_search` stub returns empty - needs implementation or error
+2. [ ] Phase 4: Blocking I/O in async `fs/mod.rs` - wrap in `spawn_blocking`
+3. [ ] Phase 4: SQLite connection per file - add connection pooling
+4. [ ] Phase 9: Channel cancellation handles (M-024 Discord, M-025 WhatsApp struct)
+5. [ ] Phase 11: L-022 - Embedding service blocks async
+6. [ ] Phase 13: Three Fjall instances architecture consolidation
+7. [ ] Phase 13: Error type proliferation (lossy conversions)
+8. [ ] Phase 13: Global mutable state for API keys
+9. [ ] Phase 14: L-001 - Clippy disallowed_methods blanket suppress
+10. [ ] Phase 14: L-026 - Docker dead code cleanup
+11. [ ] Phase 3: L-006 - `is_blocked` docs misleading
 
 ---
 
 ## Quick Wins (30 min each)
 
-These are high-value, low-effort items:
-
-1. **Add `cargo clippy` to dev workflow** - catches subtle bugs
+1. **Add `cargo clippy` to CI** - catches subtle bugs
 2. **Add `cargo audit` check** - catches vulnerable dependencies
-3. **Create a `.env.example`** - documents all required env vars
+3. **Write a `.env.example`** - documents all required env vars
 4. **Add `#[cfg(windows)]` stub to nix.rs** - clear error instead of confusing failure
-5. **Write a CLAUDE.md** - documents conventions for AI assistants
-6. **Add `tracing::instrument` to WAL write paths** - debugging concurrent issues
-7. **Add `cargo deny` for license compliance** - catches licensing issues early
-
----
-
-## 13. Kani Proofs - CI Integration
-
-**Status:** Proofs exist but only run locally with `--cfg kani`  
-**Risk:** Low-Medium - proofs may drift if not enforced
-
-### What exists:
-
-- `crates/security/src/proofs.rs` - Token verification boundary proof
-- `crates/memory/src/safety.rs` - Memory safety verification
-- `crates/agent/src/orchestration/synthesis.rs` - Synthesis properties
-
-### What to investigate:
-
-- [ ] Verify proofs still pass with current codebase
-- [ ] Add Kani to CI/CD pipeline
-- [ ] Check proof coverage - are all critical invariants covered?
-- [ ] Document which properties are formally verified
-
-### Files to review:
-- `crates/security/src/proofs.rs`
-- `crates/memory/src/safety.rs`
-- `crates/memory/src/lib.rs` (kani feature gate)
-
----
-
-## 14. CCT Token - Exhaustion & Edge Cases
-
-**Status:** Token minting and verification implemented  
-**Risk:** Medium - token handling under stress untested
-
-### What exists:
-
-- `crates/security/src/token.rs` - Token structure
-- `crates/security/src/enclave.rs` - SecurityAuthority verification
-- `crates/agent/src/swarm.rs:307-333` - Token minting during agent spawn
-- `crates/agent/src/react/reactor.rs` - Token verification during tool execution
-
-### What to investigate:
-
-- [ ] Test token expiry during long-running tool execution
-- [ ] Test token revocation mid-session
-- [ ] Verify no partial state commits when token becomes invalid
-- [ ] Test concurrent token verification (no race conditions)
-- [ ] Verify error propagation to agent on token failure
-
-### Files to review:
-- `crates/security/src/token.rs`
-- `crates/security/src/enclave.rs`
-- `crates/agent/src/react/reactor.rs`
-
----
-
-## Questions to Answer Tomorrow
-
-1. Is the threat intel feed endpoint ready, or do we need to build it?
-2. Should Nix support be Linux-only, or do we pursue WSL2 on Windows?
-3. Do we need a migration guide from the old wasmtime API?
-4. What's the deployment target? Docker, bare metal, or Kubernetes?
-5. Should we add OpenTelemetry traces for production debugging?
+5. **Add `tracing::instrument` to WAL write paths** - debugging concurrent issues
 
 ---
 
 ## End of Day State
 
 ```
+✅ 107/121 audit issues fixed
 ✅ All crates compile with zero warnings
-✅ 14 savant_skills tests pass
-✅ Documentation updated (README, AUDIT, CHANGELOG, security, architecture)
-✅ Wasmtime upgraded to 36.0 (matching wassette)
-✅ OpenClaw skill system fully wired
-✅ Security scanner with 10 proactive checks
-✅ Threat intelligence sync implemented
-✅ Context consolidation implemented
-✅ Vector persistence implemented
+✅ 57 tests pass across all crates
+✅ All 15 AI providers wired in swarm
+✅ MCP server with auth + circuit breaker
+✅ Security scanner: recursive, SHA-256, full directory hash
+✅ Path traversal protection on all skill handlers
+✅ Gateway: persistent signing key, auth error sanitization
+✅ Memory: atomic writes, auto-persist, error propagation
+✅ Channels: resource leak prevention, safe UTF-8 handling
+✅ CLI: --keygen, --config flags working
+✅ Documentation updated and archived
 ```
-
----
-
-*Sleep well. Tomorrow we go deeper.*

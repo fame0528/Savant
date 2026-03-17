@@ -9,6 +9,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v2.0.0 - Deep Audit & Security Hardening (2026-03-17)
+
+**121 issues audited, 107+ fixed. Full line-by-line review of all 133 source files.**
+
+### Added
+
+#### MCP Server Authentication
+- Token-based authentication for MCP WebSocket connections (`crates/mcp/src/server.rs`)
+- Rate limiting: 100 requests per minute per connection
+- Auth required before any method except `initialize`
+- Hash-based token verification
+
+#### MCP Circuit Breaker
+- Full circuit breaker implementation (`crates/mcp/src/circuit.rs`)
+- Three states: Closed → Open → HalfOpen with CAS transitions
+- Configurable thresholds: failure_threshold, recovery_timeout, success_threshold
+- 5 unit tests covering all state transitions
+
+#### Security Scanner Enhancements
+- **Recursive directory traversal** using `walkdir` (previously top-level only)
+- **SHA-256 content hashing** replacing weak `DefaultHasher`
+- **Directory-wide content hashing** (all files, not just SKILL.md)
+- Added `sha2` and `hex` dependencies
+
+#### CLI Features
+- `--keygen` flag: Generate master key pairs and print to stdout
+- `--config` flag: Load config from custom path (wired to `Config::load_from()`)
+- Dynamic build timestamp replacing hardcoded `[2026-03-17-PRODUCTION]`
+
+#### LCS-Based Array Diff
+- Proper Longest Common Subsequence algorithm (`crates/canvas/src/diff.rs`)
+- Correct insertion/deletion detection (replaced positional comparison)
+- Handles arrays up to 100 elements with element-level diff
+
+#### RAII Temp Directory Cleanup
+- `TempDirGuard` struct with automatic cleanup on drop (`crates/skills/src/clawhub.rs`)
+- Prevents temp directory leaks on scan failure or early return
+- Consume guard with `.keep()` on successful install
+
+### Fixed
+
+#### Data Integrity (Phase 1)
+- **`atomic_compact`** — Now deletes old messages before inserting compacted batch
+- **`delete_session`** — Collects keys inside transaction snapshot for atomicity
+- **Vector persistence** — Atomic write via temp file + rename (prevents crash corruption)
+- **Vector engine Drop** — Auto-persists on Drop to prevent data loss on exit
+- **LsmConfig** — Config values logged (Fjall 3.x API limitation documented)
+- **`db.rs`** — Rewrote Storage: proper ghost_restore, partition counters, timestamp_micros, error handling
+
+#### Security (Phase 2)
+- **Path traversal** — Input validation (`^[a-zA-Z0-9_-]+$`) on all skill handlers
+- **Gateway signing key** — Replaced deterministic key with `OsRng`-generated persistent keypair
+- **SSRF** — Disabled redirects in threat intelligence HTTP client
+- **Auth error leak** — Generic "Authentication failed" message (no internal errors)
+- **Directive injection** — Length limit, control character rejection, empty content check
+- **Token verification** — Replaced `.unwrap()` with proper error propagation
+- **File permissions** — 0o600 on Unix for key material
+- **ClawHub file installation** — Path traversal protection for downloaded files
+
+#### Agent Crate (Phase 6)
+- `ChatRole::Tool` variant added to core types
+- `MessageRole::Tool` → `ChatRole::Tool` mapping in `to_chat()`
+- API key serialization skip (`#[serde(skip_serializing)]`)
+- Provider fallback warning on unknown provider
+- `#[cfg(test)]` gate on `heuristic_tests.rs`
+
+#### Echo Crate (Phase 7)
+- **Circuit breaker** — Mutex for TOCTOU protection, CAS for state transitions
+- **AWS env leak** — Explicit allowlist for ALL platforms (PATH, HOME, USER, RUSTUP_HOME, CARGO_HOME)
+- **Watcher thread** — Replaced sleep loop with `std::mem::forget(debouncer)`
+
+#### Cognitive Crate (Phase 8)
+- **Forge panic** — Early return for empty population
+- **Goal decomposition** — Advance past conjunction before extracting next segment
+- **Refine trajectory** — Structured error indicators instead of string matching
+- **Dependency depth** — Bounds check `d < sub_tasks.len()`
+
+#### Channels (Phase 9)
+- **Discord token panic** — Safe slicing `token.len().min(4)`
+- **Telegram UTF-8 panic** — `chars().take()` instead of byte slicing
+- **Discord resource leak** — `spawn()` returns `JoinHandle<()>`
+- **WhatsApp zombie process** — Store child process + reader task handles, Drop cleanup
+- **Discord serialization** — Replaced `.expect()` with error logging
+
+#### Gateway Stability (Phase 4)
+- Replaced all 6 `.expect()` calls with error handling
+- Auth error sanitized to generic message
+- Agent image handler: name validation against `^[a-zA-Z0-9_-]+$`
+
+#### Memory Engine (Phase 5)
+- Non-atomic delete operations fixed (LMS, vector, cross-engine)
+- `retrieve()` now uses query parameter for content filtering
+- Error propagation in `vector.remove()` (no more `let _`)
+- Rollback failures logged at critical level
+- `to_chat()` uses `serde_json::to_value` for safe deserialization
+- Metadata keyspace init failure logged with warning
+
+#### Panopticon (Phase 10)
+- `Registry::default().try_init()` to handle double-init gracefully
+
+#### IPC (Phase 10)
+- Blackboard stats documented as placeholder
+
+### Changed
+
+#### Database Architecture
+- Storage (`./data/savant`) and Memory Engine (`./data/memory`) now use separate Fjall instances
+- Prevents Fjall `Locked` error when both systems start
+
+#### Session Handling
+- `SessionMapper::sanitize()` returns `Option<String>` (None if empty)
+- Hash-based fallback in `map()` for uncleanable session IDs
+- `is_valid()` properly checks both sides of `:` separator
+
+#### Build System
+- Build timestamp uses `std::time::SystemTime` (no chrono dependency needed)
+
+### Documentation
+- Created `docs/reviews/CODEBASE-AUDIT-2026-03-17.md` — Full audit report
+- Created `docs/roadmap/roadmap-fix.md` — Tracked all 121 issues with status
+- Archived both to `docs/archive/2026-03-17/`
+- Updated all docs/ files with current architecture
+- Updated CHANGELOG.md (this file)
+- Updated README.md
+
+### Security Model Updates
+- MCP server now requires token authentication
+- All user inputs validated with strict allowlists
+- Temp directories cleaned up via RAII guards
+- Crypto tokens use `OsRng` instead of `thread_rng()`
+- SSRF protection on external HTTP calls
+
+---
+
 ### Added
 
 #### Smart Build System (v2.0.0)

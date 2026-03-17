@@ -113,7 +113,7 @@ pub(crate) fn validate_flake_ref(flake_ref: &str) -> Result<(), SavantError> {
         )));
     }
 
-    // 5. If it's a filesystem path, validate it exists
+    // 5. If it's a filesystem path, validate it exists and canonicalize
     if flake_ref.starts_with("./") || flake_ref.starts_with("../") || flake_ref.starts_with("/") {
         let path = std::path::Path::new(flake_ref);
         let resolved = if path.is_relative() {
@@ -124,8 +124,17 @@ pub(crate) fn validate_flake_ref(flake_ref: &str) -> Result<(), SavantError> {
             path.to_path_buf()
         };
 
+        // Canonicalize to resolve symlinks and prevent traversal
+        let canonical = resolved.canonicalize().map_err(|e| {
+            SavantError::InvalidInput(format!(
+                "Nix flake path cannot be resolved: {} ({})",
+                resolved.display(),
+                e
+            ))
+        })?;
+
         // Check parent directory exists for relative references
-        if let Some(parent) = resolved.parent() {
+        if let Some(parent) = canonical.parent() {
             if !parent.exists() {
                 return Err(SavantError::InvalidInput(format!(
                     "Nix flake path parent directory does not exist: {}",

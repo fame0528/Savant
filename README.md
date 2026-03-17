@@ -96,7 +96,6 @@ Savant implements a **mandatory security gate** for all skills. Every skill must
 
 - **Rust** 1.75+ (stable)
 - **Node.js** 18+ (for the dashboard)
-- **Docker** (optional, for containerized skill execution)
 - **AI Provider API Key** (OpenRouter, OpenAI, Anthropic, etc.)
 
 ### 1. Smart Launch (Recommended)
@@ -107,12 +106,14 @@ The smart launcher handles building, dependency installation, and service startu
 # Windows
 start.bat
 
-# Or with force rebuild
+# Force rebuild
 start.bat --force
 
-# Or skip build (use existing binary)
+# Skip build (use existing binary)
 start.bat --skip
 ```
+
+The launcher polls the `/live` health endpoint until the gateway is ready (max 30s), then starts the dashboard.
 
 ### 2. Manual Launch
 
@@ -150,6 +151,10 @@ max_tokens = 262144
 [server]
 port = 3000
 host = "0.0.0.0"
+
+[system]
+db_path = "./data/savant"          # Sovereign substrate storage
+memory_db_path = "./data/memory"   # Agent memory engine (separate instance)
 ```
 
 Changes to `savant.toml` are applied automatically via file watcher.
@@ -208,18 +213,19 @@ Instructions and implementation details...
 
 | Crate | Purpose |
 |:------|:--------|
-| `savant_core` | Shared types, config, error handling, traits |
-| `savant_gateway` | Axum WebSocket server, authentication, skill control |
-| `savant_agent` | Agent lifecycle, swarm coordination, LLM providers |
+| `savant_core` | Shared types, config, error handling, traits, Fjall DB |
+| `savant_gateway` | Axum WebSocket server, authentication, skill control, config watcher |
+| `savant_agent` | Agent lifecycle, swarm coordination, 15 LLM providers |
 | `savant_cognitive` | Strategic synthesis, goal decomposition, proactive loops |
-| `savant_memory` | Hybrid storage (SQLite + Fjall + rkyv vectors) |
-| `savant_skills` | OpenClaw skills, security scanner, ClawHub, Docker/Nix/MCP |
+| `savant_memory` | Hybrid storage (Fjall LSM + vectors + consolidation) |
+| `savant_skills` | OpenClaw skills, security scanner, ClawHub, Docker/Nix |
 | `savant_ipc` | Zero-copy inter-process communication |
-| `savant_echo` | ECHO protocol (speculative ReAct) |
-| `savant_canvas` | A2UI rendering and diff-based state updates |
-| `savant_channels` | Telegram and WhatsApp integrations |
-| `savant_cli` | CLI entry point |
-| `savant_security` | Crypto-cap token verification |
+| `savant_echo` | ECHO protocol (speculative ReAct + circuit breaker) |
+| `savant_canvas` | A2UI rendering and LCS-based diff |
+| `savant_channels` | Discord, Telegram, WhatsApp, Matrix integrations |
+| `savant_mcp` | MCP server with auth + circuit breaker |
+| `savant_cli` | CLI entry point with --config and --keygen |
+| `savant_security` | CCT token verification, PQC signatures |
 | `savant_panopticon` | Monitoring and telemetry |
 
 ---
@@ -235,6 +241,7 @@ Savant/
 │   └── savant.toml         # Settings (auto-reloads on change)
 ├── CHANGELOG.md            # Release changelog
 ├── AUDIT.md                # Production audit report
+├── TOMORROW.md             # Forward planning
 ├── crates/
 │   ├── core/               # Shared types, config, DB, errors
 │   ├── gateway/            # Axum WebSocket server + auth + routing
@@ -243,20 +250,29 @@ Savant/
 │   ├── memory/             # Hybrid storage engine + consolidation
 │   ├── skills/             # OpenClaw skills + security + ClawHub
 │   ├── ipc/                # Zero-copy IPC substrate
-│   ├── echo/               # ECHO protocol (speculative ReAct)
-│   ├── canvas/             # A2UI rendering
-│   ├── channels/           # Telegram, WhatsApp, Discord, Matrix
+│   ├── echo/               # ECHO protocol + circuit breaker
+│   ├── mcp/                # MCP server with auth
+│   ├── canvas/             # A2UI rendering + LCS diff
+│   ├── channels/           # Discord, Telegram, WhatsApp, Matrix
 │   ├── cli/                # CLI entry point
-│   ├── security/           # CCT verification
+│   ├── security/           # CCT verification, PQC signatures
 │   └── panopticon/         # Telemetry and monitoring
 ├── dashboard/              # Next.js 16 observability dashboard
 ├── workspaces/
 │   ├── substrate/          # Savant's own files
 │   └── agents/             # Agent workspaces (swarm members)
-├── data/                   # Database storage (Fjall)
-├── memory/                 # Agent memory files
+├── data/
+│   ├── savant/             # Sovereign substrate storage (Fjall)
+│   └── memory/             # Agent memory engine (separate Fjall)
 ├── skills/                 # Installed skills
-└── docs/                   # Documentation suite
+└── docs/
+    ├── architecture/       # System design documentation
+    ├── api/                # WebSocket protocol reference
+    ├── security/           # Security model documentation
+    ├── reviews/            # Current audit reports
+    ├── roadmap/            # Fix tracking
+    ├── llm-parameters.md   # LLM parameter guide
+    └── archive/            # Archived audit/roadmap reports
 ```
 
 ---

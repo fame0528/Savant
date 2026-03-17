@@ -42,6 +42,10 @@ pub struct WhatsAppAdapter {
     config: WhatsAppConfig,
     sidecar_stdin: Arc<Mutex<Option<ChildStdin>>>,
     events_tx: mpsc::UnboundedSender<EventFrame>,
+    /// Handle to the child process for cleanup
+    child_process: Arc<Mutex<Option<tokio::process::Child>>>,
+    /// Handle to the reader task for cleanup
+    reader_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl WhatsAppAdapter {
@@ -50,6 +54,8 @@ impl WhatsAppAdapter {
             config,
             sidecar_stdin: Arc::new(Mutex::new(None)),
             events_tx,
+            child_process: Arc::new(Mutex::new(None)),
+            reader_task: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -79,7 +85,13 @@ impl WhatsAppAdapter {
             *lock = Some(stdin);
         }
 
-        tokio::spawn(async move {
+        // Store child process handle for cleanup
+        {
+            let mut lock = self.child_process.lock().await;
+            *lock = Some(child);
+        }
+
+        let reader_handle = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 if let Ok(msg) = serde_json::from_str::<WhatsAppMessage>(&line) {
@@ -112,7 +124,30 @@ impl WhatsAppAdapter {
             info!("WhatsApp sidecar stdout closed");
         });
 
+        // Store reader task handle for cleanup
+        {
+            let mut lock = self.reader_task.lock().await;
+            *lock = Some(reader_handle);
+        }
+
         Ok(())
+    }
+}
+
+impl Drop for WhatsAppAdapter {
+    fn drop(&mut self) {
+        // Abort reader task if still running
+        if let Ok(mut lock) = self.reader_task.try_lock() {
+            if let Some(handle) = lock.take() {
+                handle.abort();
+            }
+        }
+        // Kill child process if still running
+        if let Ok(mut lock) = self.child_process.try_lock() {
+            if let Some(mut child) = lock.take() {
+                let _ = child.start_kill();
+            }
+        }
     }
 }
 

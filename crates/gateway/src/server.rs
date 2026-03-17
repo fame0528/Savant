@@ -291,7 +291,7 @@ async fn agent_image_handler(
         }
     }
 
-    let workspaces_dir = std::path::PathBuf::from(&state.config.system.workspaces_path);
+    let workspaces_dir = std::path::PathBuf::from(&state.config.system.agents_path);
     let workspace_path = workspaces_dir.join(format!("workspace-{}", name_lower));
     let candidates = ["avatar.png", "avatar.jpg", "avatar.jpeg", "agentimg.png"];
 

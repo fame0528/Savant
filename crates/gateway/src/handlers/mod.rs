@@ -1186,9 +1186,19 @@ pub async fn handle_config_set(
             "db_path" => {
                 config.system.db_path = request.value.as_str().unwrap_or("savant.db").to_string()
             }
-            "workspaces_path" => {
-                config.system.workspaces_path =
-                    request.value.as_str().unwrap_or("./workspaces").to_string()
+            "substrate_path" => {
+                config.system.substrate_path = request
+                    .value
+                    .as_str()
+                    .unwrap_or("./workspaces/substrate")
+                    .to_string()
+            }
+            "agents_path" => {
+                config.system.agents_path = request
+                    .value
+                    .as_str()
+                    .unwrap_or("./workspaces/agents")
+                    .to_string()
             }
             "log_level" => {
                 config.system.log_level = request.value.as_str().unwrap_or("info").to_string()

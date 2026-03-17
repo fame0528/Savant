@@ -89,7 +89,8 @@ pub struct WasmConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemConfig {
     pub db_path: String,
-    pub workspaces_path: String,
+    pub substrate_path: String,
+    pub agents_path: String,
     pub log_level: String,
     pub log_color: bool,
 }
@@ -191,7 +192,8 @@ impl Default for SystemConfig {
     fn default() -> Self {
         Self {
             db_path: "savant.db".to_string(),
-            workspaces_path: "./workspaces".to_string(),
+            substrate_path: "./workspaces/substrate".to_string(),
+            agents_path: "./workspaces/agents".to_string(),
             log_level: "info".to_string(),
             log_color: true,
         }

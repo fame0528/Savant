@@ -46,7 +46,7 @@ max_tokens = 4096
 # Message given to all new agents
 system_prompt = "You are a helpful Savant agent. Be concise and useful."
 
-# Seconds between agent health checks
+# Seconds between agent health checks (default 60 = 1 minute)
 heartbeat_interval = 60
 
 # ============================================================================

@@ -183,8 +183,8 @@ async fn main() -> Result<()> {
     let swarm_storage = storage.clone();
     let swarm_manager = manager.clone();
     let swarm_config = savant_agent::swarm::SwarmConfig {
-        workspace_root: PathBuf::from("./workspaces"), // Default workspace root
-        memory_db_path: PathBuf::from(&config.system.db_path),
+        workspace_root: PathBuf::from("./workspaces"),
+        memory_db_path: PathBuf::from("./data/memory"), // Separate from storage at ./data/savant
         skills_path: PathBuf::from("./skills"),
         blackboard_name: "savant_swarm".to_string(),
         collective_name: "savant_collective".to_string(),

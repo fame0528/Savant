@@ -215,7 +215,8 @@ enable_cache = true       # Cache compiled skills
 # [system] - Advanced: System paths and logging
 # ============================================================================
 [system]
-db_path = "./data/savant"
+db_path = "./data/savant"         # Sovereign substrate storage (Fjall)
+memory_db_path = "./data/memory"  # Agent memory engine (separate Fjall instance)
 substrate_path = "./workspaces/substrate"  # Savant's own files (identity, memory)
 agents_path = "./workspaces/agents"        # Agent workspaces (swarm members)
 log_level = "info"        # trace, debug, info, warn, error

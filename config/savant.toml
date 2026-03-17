@@ -1,7 +1,9 @@
 # ============================================================================
-# Savant Configuration
+# Savant Configuration - SINGLE SOURCE OF TRUTH (non-secret settings)
 # ============================================================================
-# Edit the values below to configure Savant.
+# This file contains ALL settings that are NOT secrets.
+# Secrets (API keys) go in .env and are loaded at runtime.
+# Model selection, behavior, ports, paths - everything non-secret lives here.
 # Save the file and changes take effect automatically.
 # ============================================================================
 

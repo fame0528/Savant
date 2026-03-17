@@ -89,17 +89,20 @@ Usually, you should adjust **Temperature** OR **Top-P**, but not both. If you're
 - 1,000 tokens ≈ 750 words
 - 4,096 tokens ≈ 3,000 words (about 6 pages)
 - 16,384 tokens ≈ 12,000 words (about 24 pages)
+- 131,072 tokens ≈ 98,000 words (about 200 pages)
+- 1,000,000 tokens ≈ 750,000 words (about 1,500 pages)
 
 **Common use cases:**
 - **Short answers/chat:** 1,024-2,048 tokens
 - **Normal responses:** 4,096 tokens (default)
 - **Detailed explanations:** 8,192-16,384 tokens
-- **Long documents/reports:** 32,768+ tokens
+- **Long documents/reports:** 32,768-131,072 tokens
+- **Massive outputs (1M models):** 500,000+ tokens
 
 **Note:** Longer responses:
 - Take more time to generate
 - Cost more to process
-- May not be supported by all AI models
+- May not be supported by all AI models (check your model's limits)
 
 ---
 

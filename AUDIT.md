@@ -139,7 +139,7 @@ use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 | top_p | 0.0-1.0 | 1.0 | Nucleus sampling |
 | frequency_penalty | -2.0-2.0 | 0.0 | Reduces repetition |
 | presence_penalty | -2.0-2.0 | 0.0 | Encourages new topics |
-| max_tokens | 1-128000 | 4096 | Response length limit |
+| max_tokens | 1-1,000,000 | 4096 | Response length limit |
 | stop | [] | [] | Stop sequences |
 
 ### Supported AI Providers

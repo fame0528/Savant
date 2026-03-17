@@ -1,269 +1,413 @@
-# Development Process
+# Savant Development Process
 
-**Purpose:** Formalize the Savant development workflow  
-**Created:** 2026-03-18  
-**Principle:** Audit → Find Issues → Create Roadmap → Implement → Document → Push
+**Purpose:** Any agent can follow this document and immediately start working without onboarding.  
+**Read this first. Then read `dev/PENDING.md` for what to work on.**
 
 ---
 
 ## The Loop
 
-Every development session follows this exact sequence:
+Every development session follows this exact sequence. No exceptions.
 
 ```
-┌─────────────┐
-│   1. AUDIT  │  Review codebase, run tests, check for issues
-└──────┬──────┘
-       ▼
-┌──────────────┐
-│ 2. FIND GAPS │  Identify bugs, security issues, missing features
-└──────┬───────┘
-       ▼
-┌─────────────────┐
-│ 3. CREATE PLAN  │  Add items to dev/roadmap/roadmap-fix.md
-└──────┬──────────┘
-       ▼
-┌──────────────────┐
-│ 4. IMPLEMENT     │  Fix issues, write code, run tests
-└──────┬───────────┘
-       ▼
-┌──────────────────┐
-│ 5. DOCUMENT      │  Update docs/, CHANGELOG.md, README.md
-└──────┬───────────┘
-       ▼
-┌──────────────┐
-│ 6. PUSH      │  Commit and push to GitHub
-└──────────────┘
+1. AUDIT       →  What's the current state?
+2. FIND GAPS   →  What needs fixing?
+3. PLAN        →  Add items to dev/roadmap/roadmap-fix.md
+4. IMPLEMENT   →  Fix it with AAA quality
+5. DOCUMENT    →  Update all affected docs
+6. PUSH        →  Commit and push
 ```
 
 ---
 
-## Step 1: Audit
+## Step 1: Audit — What's the current state?
 
-**Goal:** Understand the current state of the codebase.
+Before touching any code, run these commands:
 
-**Actions:**
-- Run `cargo check` — must compile with zero errors
-- Run `cargo test --all -- --skip lsm_engine --skip vector_engine` — all tests must pass
-- Read recent git log to understand what changed since last session
-- Check `dev/roadmap/roadmap-fix.md` for any pending items
+```bash
+# 1. Does it compile?
+cargo check
 
-**Success criteria:**
-- Zero compilation errors
-- All tests passing
-- No untracked issues from previous sessions
+# 2. Do tests pass?
+cargo test --all -- --skip lsm_engine --skip vector_engine
 
----
+# 3. What changed recently?
+git log --oneline -10
 
-## Step 2: Find Gaps / Issues
+# 4. What's being worked on?
+cat dev/PENDING.md
+cat dev/roadmap/roadmap-fix.md
+```
 
-**Goal:** Identify everything that needs fixing.
-
-**Audit checklist:**
-- [ ] **Security** — path traversal, injection, auth bypass, SSRF, credential leaks
-- [ ] **Data integrity** — atomic writes, crash safety, concurrent access
-- [ ] **Error handling** — unwrap/expect in non-test code, swallowed errors
-- [ ] **Resource leaks** — unclosed connections, uncancelled tasks, zombie processes
-- [ ] **Concurrency** — race conditions, deadlocks, TOCTOU
-- [ ] **Performance** — blocking in async, unbounded growth, unnecessary allocations
-- [ ] **API consistency** — mismatched types, missing fields, wrong defaults
-- [ ] **Documentation** — outdated README, missing doc comments, stale configs
-
-**Output:** List of issues with severity (CRITICAL/HIGH/MEDIUM/LOW) and file locations.
+**Success criteria:** Zero compilation errors, all tests passing.  
+**If tests fail:** Fix them first. Nothing else matters if tests are broken.
 
 ---
 
-## Step 3: Create / Update Roadmap
+## Step 2: Find Gaps — What needs fixing?
 
-**Goal:** Track every issue in `dev/roadmap/roadmap-fix.md`.
+Read the code. Every file. Look for these specific problems:
 
-**Format for each issue:**
+### Security (CRITICAL)
+- Path traversal — `join()` with user input without validation
+- Injection — user input used in queries, commands, or URLs
+- Auth bypass — missing or weak authentication checks
+- SSRF — HTTP requests with user-controlled URLs or redirects
+- Credential leaks — secrets in logs, error messages, or responses
+
+### Data Integrity (CRITICAL)
+- Non-atomic writes — data that could corrupt on crash
+- Missing error propagation — `unwrap()`, `expect()`, `let _ =`
+- Resource leaks — unclosed connections, uncancelled tasks
+- Race conditions — shared mutable state without synchronization
+
+### Code Quality
+- Dead code — unused functions, imports, structs
+- Blocking in async — sync I/O in async functions
+- Unbounded growth — caches/maps/channels without limits
+- Inconsistent APIs — different patterns for similar operations
+
+---
+
+## Step 3: Plan — Add to roadmap
+
+Every issue goes into `dev/roadmap/roadmap-fix.md` with this format:
 
 ```markdown
 | ID | Severity | File | Issue | Status |
 |----|----------|------|-------|--------|
-| X-NNN | SEVERITY | `crate/src/file.rs:LINE` | Description | PENDING |
+| X-NNN | CRITICAL | `crate/src/file.rs:LINE` | Short description | PENDING |
 ```
+
+**Severity levels:**
+- `CRITICAL` — Data corruption, security vulnerability, crash
+- `HIGH` — Feature broken, significant bug
+- `MEDIUM` — Performance issue, poor error handling
+- `LOW` — Code quality, documentation, naming
 
 **Status values:**
 - `PENDING` — Not started
-- `IN PROGRESS` — Currently being worked on
-- `✅ FIXED` — Completed and tested
-- `N/A` — Not applicable (feature doesn't exist as described)
+- `✅ FIXED` — Completed, tested, committed
 
-**Grouping:** Organize by phase/category (Security, Data Integrity, Memory, Gateway, etc.)
-
-**When done:** Move completed items to `docs/archive/YYYY-MM-DD/roadmap-fix.md`
+Update the roadmap summary table at the bottom of the file after each phase.
 
 ---
 
-## Step 4: Implement
+## Step 4: Implement — Fix it with AAA quality
 
-**Goal:** Fix every issue with enterprise-quality code.
+### Rules (non-negotiable)
 
-**Rules:**
-- No stubs, no TODOs, no `unimplemented!()`, no placeholders
-- No `unwrap()` or `expect()` in non-test code
-- All error paths handled
-- Compilation must remain clean (zero warnings)
-- All tests must pass after changes
+1. **No stubs.** No `todo!()`, `unimplemented!()`, `// TODO`, or empty functions.
+2. **No `unwrap()` in non-test code.** Use `match`, `if let`, or return `Result`.
+3. **No `expect()` in non-test code.** Same reason.
+4. **No swallowed errors.** `let _ = foo()` is only acceptable for cleanup where failure is acceptable.
+5. **All error paths handled.** Every `Result` is either propagated with `?` or handled explicitly.
+6. **Compilation stays clean.** Zero errors, zero warnings after changes.
+7. **Tests pass.** Run `cargo test` after each batch of changes.
 
-**Process:**
-1. Read the file being modified
-2. Understand the context and surrounding code
+### Process per fix
+
+1. Read the file being modified (full file, not just the line)
+2. Understand the surrounding context
 3. Make the fix
-4. Update roadmap status to `✅ FIXED`
-5. Run `cargo check` after every fix
-6. Run `cargo test` after completing a batch of fixes
+4. Update `dev/roadmap/roadmap-fix.md` status to `✅ FIXED`
+5. Run `cargo check`
+6. Move to next fix
+7. After batch: run `cargo test`
 
-**Quality gates:**
-- `cargo check` passes
-- `cargo test --all` passes
-- Zero `todo!()` or `unimplemented!()` in non-test code
+### Common fix patterns
 
----
+**Path validation (prevent traversal):**
+```rust
+// BAD
+let path = base_dir.join(user_input);
 
-## Step 5: Document
+// GOOD
+if !user_input.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    return Err("Invalid input");
+}
+let path = base_dir.join(user_input);
+```
 
-**Goal:** All documentation reflects the current state.
+**Async-safe error handling:**
+```rust
+// BAD
+let result = some_function().unwrap();
 
-**Files to update:**
+// GOOD
+let result = match some_function() {
+    Ok(v) => v,
+    Err(e) => {
+        tracing::error!("Failed: {}", e);
+        return Err(e.into());
+    }
+};
+```
 
-| File | When to update |
-|------|----------------|
-| `dev/roadmap/roadmap-fix.md` | After each fix (real-time) |
-| `dev/roadmap/roadmap-fix.md` summary table | After each phase |
-| `CHANGELOG.md` | After completing a batch of fixes |
-| `README.md` | When features, APIs, or architecture change |
-| `PENDING.md` | At end of session — accurate remaining work |
-| `docs/architecture/README.md` | When system design changes |
-| `docs/api/README.md` | When WebSocket protocol changes |
+**Atomic file writes:**
+```rust
+// BAD
+std::fs::write(path, data)?;
 
-**Changelog format:**
-```markdown
-### Added
-- New feature description
+// GOOD
+let tmp = path.with_extension("tmp");
+std::fs::write(&tmp, data)?;
+std::fs::rename(&tmp, path)?;
+```
 
-### Fixed
-- Bug fix description
+**Blocking I/O in async:**
+```rust
+// BAD
+async fn read_files(&self) -> Result<()> {
+    let content = std::fs::read_to_string(path)?; // Blocks!
+    Ok(())
+}
 
-### Changed
-- What changed and why
+// GOOD
+async fn read_files(&self) -> Result<()> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || std::fs::read_to_string(path)).await??;
+    Ok(())
+}
 ```
 
 ---
 
-## Step 6: Push
+## Step 5: Document — Keep everything current
 
-**Goal:** All changes committed and pushed to GitHub.
+After implementing fixes, update these files:
 
-**Commit message format:**
+| File | What to update |
+|------|----------------|
+| `dev/roadmap/roadmap-fix.md` | Mark fixed items `✅ FIXED`, update summary table |
+| `CHANGELOG.md` | Add new section under `[Unreleased]` with `### Added`, `### Fixed`, `### Changed` |
+| `README.md` | Only if features, APIs, or architecture changed |
+| `dev/PENDING.md` | Update status blocks, remove completed items |
+| `docs/architecture/README.md` | Only if system design changed |
+| `docs/api/README.md` | Only if WebSocket protocol changed |
+
+**Do NOT update docs if nothing relevant changed.** Only touch files that need updating.
+
+---
+
+## Step 6: Push — Get it to GitHub
+
+### Commit message format
 ```
 <type>: <short description>
 
-<optional longer description>
+<optional body if needed>
 - Bullet point changes
-- Test counts
-- Compilation status
 ```
 
 **Types:** `fix`, `feat`, `docs`, `refactor`, `test`, `chore`
 
-**Before pushing:**
-- [ ] `cargo check` passes
-- [ ] `cargo test` passes (or skipped tests documented)
+**Examples:**
+```
+fix: atomic_compact now deletes old messages before inserting
+
+- Added delete phase to atomic_compact in lsm_engine.rs
+- Fixes data corruption from duplicate messages after consolidation
+```
+
+```
+feat: add MCP server authentication and circuit breaker
+
+- Token-based auth with rate limiting (100 req/min)
+- Circuit breaker with CAS state transitions
+- 5 unit tests for circuit breaker
+```
+
+### Before pushing checklist
+- [ ] `cargo check` passes with zero errors
+- [ ] `cargo test` passes (document any skipped tests)
 - [ ] `dev/roadmap/roadmap-fix.md` is updated
-- [ ] `dev/PENDING.md` reflects remaining work
-- [ ] Commit message is descriptive
+- [ ] `CHANGELOG.md` is updated (if user-facing changes)
+- [ ] Commit message follows format above
 
----
-
-## File Structure
-
-```
-docs/                    ← User-facing documentation only
-├── architecture/
-│   └── README.md           System design docs
-├── api/
-│   └── README.md           WebSocket protocol reference
-├── security/
-│   ├── README.md           Security model docs
-│   └── SECURITY.md         Security details
-├── traits/
-│   ├── tool.md             Tool trait docs
-│   └── memory.md           Memory trait docs
-├── perf/
-│   └── BENCHMARKS.md       Performance benchmarks
-├── ops/
-│   └── DEPLOYMENT_CHECKLIST.md
-├── migration/
-│   └── OPENCLAW_MIGRATION.md
-├── llm-parameters.md       LLM parameter guide
-├── swarm.md                Swarm documentation
-├── collecte_intelligence.md
-└── echo_substrate.md
-
-dev/                     ← Development process only
-├── development-process.md    This file — formal dev workflow
-├── PENDING.md                Current session: active work items
-├── roadmap/
-│   └── roadmap-fix.md        Active issue tracking (current phase)
-├── archive/
-│   └── YYYY-MM-DD/
-│       ├── roadmap-fix.md    Completed roadmap (archived)
-│       ├── AUDIT.md          Completed audit (archived)
-│       └── CODEBASE-AUDIT-*  Completed deep audit (archived)
-└── reviews/
-    └── CODEBASE-AUDIT-*.md   Current audit (if in progress)
+### Push command
+```bash
+git add -A && git commit -m "<message>" && git push origin main
 ```
 
 ---
 
-## Status Summary Template
-
-At the end of each session, update `dev/PENDING.md` with:
+## Project Structure Reference
 
 ```
-## End of Day State
-
-✅ X/Y issues fixed
-✅ Z tests passing
-✅ Compilation: clean / warnings / errors
-✅ [Key accomplishments]
+Savant/
+├── config/savant.toml          ← Settings (auto-reloads)
+├── .env                        ← Secrets (API keys)
+├── dev/                        ← Development files
+│   ├── development-process.md  ← This file
+│   ├── PENDING.md              ← Current session work items
+│   ├── roadmap/roadmap-fix.md  ← Issue tracking
+│   ├── archive/                ← Completed work
+│   └── reviews/                ← Audit reports
+├── docs/                       ← User-facing documentation
+├── crates/                     ← Rust source code
+│   ├── core/                   ← Types, config, DB, errors
+│   ├── gateway/                ← WebSocket server, auth
+│   ├── agent/                  ← Agent lifecycle, swarm, providers
+│   ├── memory/                 ← Storage engine (Fjall + vectors)
+│   ├── skills/                 ← Security scanner, ClawHub, Docker/Nix
+│   ├── echo/                   ← Circuit breaker, ECHO protocol
+│   ├── mcp/                    ← MCP server with auth
+│   ├── cognitive/              ← Synthesis, decomposition
+│   ├── ipc/                    ← Zero-copy IPC
+│   ├── canvas/                 ← A2UI, LCS diff
+│   ├── channels/               ← Discord, Telegram, WhatsApp
+│   ├── cli/                    ← CLI entry point
+│   ├── security/               ← CCT tokens, PQC signatures
+│   └── panopticon/             ← Telemetry
+├── dashboard/                  ← Next.js 16 frontend
+├── data/savant/                ← Substrate storage (Fjall)
+├── data/memory/                ← Agent memory (separate Fjall)
+├── workspaces/                 ← Agent workspaces
+│   ├── substrate/              ← Savant's own files
+│   └── agents/                 ← Swarm member workspaces
+└── start.bat                   ← Smart launcher
 ```
 
 ---
 
-## Quick Reference
+## Database Architecture
 
-### Running Tests
+**Two SEPARATE Fjall instances** — cannot share the same path:
+
+```
+./data/savant/    → Sovereign substrate (chat history, WAL, metadata)
+./data/memory/    → Agent memory engine (messages, vectors, metadata)
+```
+
+Fjall uses file locking. If both try to open the same path, you get `FjallError: Locked`.
+
+---
+
+## Configuration Reference
+
+### Files
+```
+.env                    → API keys only (OR_MASTER_KEY, SAVANT_DEV_MODE)
+config/savant.toml      → All settings (auto-reloads on change)
+```
+
+### savant.toml structure
+```toml
+[ai]                   → provider, model, temperature, max_tokens
+[server]               → port (3000), host (0.0.0.0), dashboard_api_key
+[system]               → db_path, memory_db_path, substrate_path, agents_path
+[proactive]            → enabled, heartbeat interval
+```
+
+### Environment variables
+```
+SAVANT_DEV_MODE=1      → Auto-generate master keys (no API key needed)
+OR_MASTER_KEY=<key>    → OpenRouter API key
+RUST_LOG=info          → Log level (trace, debug, info, warn, error)
+```
+
+---
+
+## Testing Reference
+
 ```bash
 # All tests (skip slow memory tests)
 cargo test --all -- --skip lsm_engine --skip vector_engine
 
 # Specific crate
 cargo test -p savant_core
+cargo test -p savant_gateway
+cargo test -p savant_agent
 
-# Specific test
-cargo test -p savant_gateway test_name
+# Specific test by name
+cargo test -p savant_memory test_name_here
+
+# Clippy (lint)
+cargo clippy --all-targets -- -D warnings
+
+# Format check
+cargo fmt --check
 ```
 
-### Common Checks
-```bash
-cargo check          # Compilation check
-cargo test --all     # All tests
-cargo clippy         # Lint warnings
-cargo fmt --check    # Formatting
+**Test counts (as of 2026-03-17):** 157 passing, 1 ignored (Kani-dependent).
+
+---
+
+## Health Endpoints
+
+```
+GET http://localhost:3000/live    → "OK" if gateway running
+GET http://localhost:3000/ready   → "OK" if gateway ready
+WS  ws://localhost:3000/ws        → Dashboard WebSocket
 ```
 
-### Key Paths
+---
+
+## CLI Flags
+
 ```
-start.bat              → Smart launcher
-config/savant.toml     → Settings (auto-reloads)
-.env                   → Secrets (API keys)
-dev/roadmap/           → Active roadmap
-dev/archive/           → Completed roadmaps/audits
-dev/PENDING.md         → Current session work items
-data/savant/           → Substrate storage
-data/memory/           → Agent memory
+--config <path>     → Load config from custom path
+--keygen            → Generate master key pair and print
+--skip              → Skip build (start.bat only)
+--force             → Force rebuild (start.bat only)
 ```
+
+---
+
+## Agent Domain Map
+
+If multiple agents are working simultaneously, respect these boundaries:
+
+| Agent | Domain | Crates |
+|-------|--------|--------|
+| Prometheus | Architecture & DSP | cognitive, echo, mcp, skills |
+| Hephaestus | Implementation & Ops | ipc, gateway, agent, cli |
+| Athena | Security & Review | security, panopticon, all code review |
+
+**WIP tags:** Before editing a file, check for `// WIP:` tags from other agents. If a file is tagged, wait or coordinate.
+
+---
+
+## Quality Standard: "AAA"
+
+This is not negotiable. Every line of code must be:
+
+- **Correct** — Does what it's supposed to do
+- **Safe** — No panics, no data corruption, no security holes
+- **Complete** — All error paths handled, no stubs
+- **Clean** — Readable, consistent naming, no dead code
+- **Tested** — Covered by tests, tests pass
+
+If you find yourself writing `unwrap()`, `todo!()`, or `// TODO` — stop and fix it properly.
+
+---
+
+## When You're Stuck
+
+1. Read the file you're modifying — all of it, not just the line
+2. Read the imports and understand the types
+3. Search for similar patterns in the codebase: `grep -r "pattern" crates/`
+4. Check tests for usage examples: `grep -r "function_name" crates/*/tests/`
+5. If still stuck, leave the item as `PENDING` and move to the next one
+
+---
+
+## End of Session
+
+Update `dev/PENDING.md` with:
+
+```
+## End of Day State
+
+✅ X/Y issues fixed
+✅ Z tests passing
+✅ Compilation: clean
+✅ [What was accomplished]
+```
+
+Then commit and push everything.
+
+---
+
+*Read this file. Then read `dev/PENDING.md`. Then start working.*

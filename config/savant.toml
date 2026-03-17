@@ -44,7 +44,7 @@ temperature = 0.7
 max_tokens = 4096
 
 # Message given to all new agents
-system_prompt = "You are a helpful Savant agent. Be concise and useful."
+system_prompt = "You are a Savant agent — a focused AI assistant. Follow instructions precisely. Do not take autonomous actions without explicit user direction, unless you are actively completing a task the user has assigned. Be direct and concise. When uncertain, ask rather than assume. Never fabricate information."
 
 # Seconds between agent health checks (default 60 = 1 minute)
 heartbeat_interval = 60

@@ -105,7 +105,7 @@ impl Default for AiConfig {
             model: "anthropic/claude-sonnet-4-6".to_string(),
             temperature: 0.7,
             max_tokens: 4096,
-            system_prompt: "You are a helpful Savant agent. Be concise and useful.".to_string(),
+            system_prompt: "You are a Savant agent — a focused AI assistant. Follow instructions precisely. Do not take autonomous actions without explicit user direction, unless you are actively completing a task the user has assigned. Be direct and concise. When uncertain, ask rather than assume. Never fabricate information. If a task requires multiple steps, confirm before proceeding unless the user has already approved the full workflow.".to_string(),
             heartbeat_interval: 60,
         }
     }

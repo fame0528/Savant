@@ -1184,7 +1184,11 @@ pub async fn handle_config_set(
         },
         "system" => match request.key.as_str() {
             "db_path" => {
-                config.system.db_path = request.value.as_str().unwrap_or("savant.db").to_string()
+                config.system.db_path = request
+                    .value
+                    .as_str()
+                    .unwrap_or("./data/savant")
+                    .to_string()
             }
             "substrate_path" => {
                 config.system.substrate_path = request

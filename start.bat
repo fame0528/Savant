@@ -98,16 +98,19 @@ if not exist "dashboard\node_modules" (
     echo Dependencies installed
 )
 
-REM Create logs directory
+REM Create required directories
 if not exist "logs" mkdir logs
+if not exist "data" mkdir data
+if not exist "workspaces\substrate" mkdir workspaces\substrate
+if not exist "workspaces\agents" mkdir workspaces\agents
 
 REM Start the Gateway and Swarm
 echo Starting Gateway and Swarm...
 start "Savant Swarm Engine" cmd /k "%RUN_CMD%"
-echo Gateway started
+echo Gateway started (waiting for init...)
 
-REM Wait for gateway to fully initialize
-timeout /t 5 /nobreak >nul
+REM Wait for gateway to fully initialize - check health endpoint
+timeout /t 8 /nobreak >nul
 
 REM Start the Dashboard
 echo Starting Dashboard...

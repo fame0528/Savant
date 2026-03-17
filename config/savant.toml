@@ -215,7 +215,7 @@ enable_cache = true       # Cache compiled skills
 # [system] - Advanced: System paths and logging
 # ============================================================================
 [system]
-db_path = "savant.db"
+db_path = "./data/savant"
 substrate_path = "./workspaces/substrate"  # Savant's own files (identity, memory)
 agents_path = "./workspaces/agents"        # Agent workspaces (swarm members)
 log_level = "info"        # trace, debug, info, warn, error

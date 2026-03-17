@@ -191,7 +191,7 @@ impl Default for WasmConfig {
 impl Default for SystemConfig {
     fn default() -> Self {
         Self {
-            db_path: "savant.db".to_string(),
+            db_path: "./data/savant".to_string(),
             substrate_path: "./workspaces/substrate".to_string(),
             agents_path: "./workspaces/agents".to_string(),
             log_level: "info".to_string(),

@@ -6,112 +6,143 @@ use figment::{
 use notify::{Event, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Main Savant configuration
+/// Loaded from config/savant.toml (project) or ~/.savant/savant.toml (global)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
-    pub agent_defaults: AgentDefaults,
-    pub gateway: GatewayConfig,
-    pub channels: HashMap<String, ChannelConfig>,
+    pub ai: AiConfig,
+    pub server: ServerConfig,
+    pub channels: ChannelsConfig,
     pub skills: SkillsConfig,
     pub memory: MemoryConfig,
+    pub security: SecurityConfig,
+    pub wasm: WasmConfig,
     pub system: SystemConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentDefaults {
-    pub model_provider: String,
+pub struct AiConfig {
+    pub provider: String,
+    pub model: String,
+    pub temperature: f32,
+    pub max_tokens: u32,
     pub system_prompt: String,
     pub heartbeat_interval: u64,
-    pub env_vars: HashMap<String, String>,
-    pub openrouter_mgmt: Option<OpenRouterMgmtConfig>,
-    pub proactive: ProactiveConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProactiveConfig {
-    pub session_state_file: String,
-    pub workspace_context_file: String,
-    pub task_matrix_file: String,
-    pub heartbeat_file: String,
-}
-
-impl Default for ProactiveConfig {
-    fn default() -> Self {
-        Self {
-            session_state_file: "SESSION-STATE.md".to_string(),
-            workspace_context_file: "WORKSPACE-CONTEXT.md".to_string(),
-            task_matrix_file: "TASK_MATRIX.md".to_string(),
-            heartbeat_file: "HEARTBEAT.md".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenRouterMgmtConfig {
-    pub master_key: String,
-    pub auto_keygen: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GatewayConfig {
+pub struct ServerConfig {
     pub port: u16,
     pub host: String,
     pub max_connections: usize,
     pub lane_capacity: usize,
     pub max_lane_concurrency: usize,
-    /// API key for dashboard authentication (optional, loaded from env if not set)
     pub dashboard_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelConfig {
+pub struct ChannelsConfig {
+    pub discord: ChannelEntry,
+    pub telegram: ChannelEntry,
+    pub whatsapp: ChannelEntry,
+    pub matrix: ChannelEntry,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelEntry {
     pub enabled: bool,
     pub token: Option<String>,
-    pub channel_id: Option<String>, // AAA: Target specific channel if configured
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillsConfig {
     pub path: String,
+    pub enable_clawhub: bool,
+    pub auto_update: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
     pub base_path: String,
+    pub cache_size_mb: u32,
+    pub consolidation_threshold: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    pub enable_blocklist_sync: bool,
+    pub threat_intel_sync_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WasmConfig {
+    pub max_instances: u32,
+    pub fuel_limit: u64,
+    pub memory_limit_mb: u32,
+    pub enable_cache: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemConfig {
     pub db_path: String,
     pub workspaces_path: String,
+    pub log_level: String,
     pub log_color: bool,
 }
 
-impl Default for AgentDefaults {
+// ============================================================================
+// Defaults
+// ============================================================================
+
+impl Default for AiConfig {
     fn default() -> Self {
         Self {
-            model_provider: "openrouter".to_string(),
-            system_prompt: "You are a highly capable and helpful Savant agent. Speak naturally, be concise, and focus on providing value to the user. Avoid robotic or boilerplate phrasing.".to_string(),
+            provider: "openrouter".to_string(),
+            model: "anthropic/claude-sonnet-4-6".to_string(),
+            temperature: 0.7,
+            max_tokens: 4096,
+            system_prompt: "You are a helpful Savant agent. Be concise and useful.".to_string(),
             heartbeat_interval: 60,
-            env_vars: HashMap::new(),
-            openrouter_mgmt: None,
-            proactive: ProactiveConfig::default(),
         }
     }
 }
 
-impl Default for GatewayConfig {
+impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            port: 8080,
-            host: "127.0.0.1".to_string(),
-            max_connections: 100,
+            port: 3000,
+            host: "0.0.0.0".to_string(),
+            max_connections: 1000,
             lane_capacity: 100,
-            max_lane_concurrency: 5,
+            max_lane_concurrency: 10,
             dashboard_api_key: None,
+        }
+    }
+}
+
+impl Default for ChannelsConfig {
+    fn default() -> Self {
+        Self {
+            discord: ChannelEntry {
+                enabled: false,
+                token: None,
+            },
+            telegram: ChannelEntry {
+                enabled: false,
+                token: None,
+            },
+            whatsapp: ChannelEntry {
+                enabled: false,
+                token: None,
+            },
+            matrix: ChannelEntry {
+                enabled: false,
+                token: None,
+            },
         }
     }
 }
@@ -120,6 +151,8 @@ impl Default for SkillsConfig {
     fn default() -> Self {
         Self {
             path: "./skills".to_string(),
+            enable_clawhub: true,
+            auto_update: false,
         }
     }
 }
@@ -128,45 +161,114 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             base_path: "./memory".to_string(),
+            cache_size_mb: 512,
+            consolidation_threshold: 100,
         }
     }
 }
 
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            enable_blocklist_sync: true,
+            threat_intel_sync_interval_secs: 3600,
+        }
+    }
+}
+
+impl Default for WasmConfig {
+    fn default() -> Self {
+        Self {
+            max_instances: 100,
+            fuel_limit: 10_000_000,
+            memory_limit_mb: 256,
+            enable_cache: true,
+        }
+    }
+}
 
 impl Default for SystemConfig {
     fn default() -> Self {
         Self {
             db_path: "savant.db".to_string(),
             workspaces_path: "./workspaces".to_string(),
-            log_color: false,
+            log_level: "info".to_string(),
+            log_color: true,
         }
     }
 }
 
+// ============================================================================
+// Config implementation
+// ============================================================================
+
 impl Config {
-    /// Loads the configuration from files and environment.
-    pub fn load() -> Result<Self, SavantError> {
+    /// Config file search paths in priority order
+    pub fn config_paths() -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+
+        // Project config (highest priority)
+        if let Ok(cwd) = std::env::current_dir() {
+            paths.push(cwd.join("config").join("savant.toml"));
+        }
+
+        // User config
         let home = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .unwrap_or_else(|_| ".".to_string());
-        let config_path = PathBuf::from(home).join(".savant").join("savant.toml");
+        paths.push(PathBuf::from(home).join(".savant").join("savant.toml"));
 
-        tracing::info!("config: Attempting to load config from: {:?}", config_path);
-        if config_path.exists() {
-            tracing::info!("config: ✅ Config file exists at path.");
-        } else {
-            tracing::warn!("config: ❌ Config file NOT FOUND at path: {:?}", config_path);
+        paths
+    }
+
+    /// Loads config from files, then environment overrides
+    pub fn load() -> Result<Self, SavantError> {
+        let mut figment =
+            Figment::new().merge(figment::providers::Serialized::defaults(Self::default()));
+
+        for path in Self::config_paths() {
+            if path.exists() {
+                tracing::info!("config: Loading from {:?}", path);
+                figment = figment.merge(Toml::file(&path));
+                break;
+            }
         }
 
-        Figment::new()
-            .merge(figment::providers::Serialized::defaults(Self::default())) // Start with defaults
-            .merge(Toml::file(config_path))
+        figment
             .merge(Env::prefixed("SAVANT_"))
             .extract()
             .map_err(|e| SavantError::Unknown(format!("Config load error: {}", e)))
     }
 
-    /// Spawns a background task to watch the config file for changes and reload.
+    /// Saves config to file
+    pub fn save(&self, path: &Path) -> Result<(), SavantError> {
+        let toml = toml::to_string_pretty(self)
+            .map_err(|e| SavantError::Unknown(format!("Config serialize error: {}", e)))?;
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(SavantError::IoError)?;
+        }
+
+        std::fs::write(path, toml).map_err(SavantError::IoError)?;
+        tracing::info!("config: Saved to {:?}", path);
+        Ok(())
+    }
+
+    /// Primary config path (where we read from/write to)
+    pub fn primary_config_path() -> PathBuf {
+        if let Ok(cwd) = std::env::current_dir() {
+            let project_path = cwd.join("config").join("savant.toml");
+            if project_path.exists() {
+                return project_path;
+            }
+        }
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home).join(".savant").join("savant.toml")
+    }
+
+    /// Watch config file for changes and auto-reload
     pub fn watch(config_lock: Arc<RwLock<Self>>, path: PathBuf) -> Result<(), SavantError> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
@@ -184,7 +286,7 @@ impl Config {
             .map_err(|e| SavantError::IoError(std::io::Error::other(e)))?;
 
         tokio::spawn(async move {
-            let _watcher = watcher; // Keep watcher alive
+            let _watcher = watcher;
             while let Some(()) = rx.recv().await {
                 tracing::info!("Config changed, reloading...");
                 if let Ok(new_config) = Self::load() {
@@ -198,5 +300,46 @@ impl Config {
         });
 
         Ok(())
+    }
+}
+
+// ============================================================================
+// Backward-compatible types for migration.rs and registry.rs
+// ============================================================================
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProactiveConfig {
+    pub session_state_file: String,
+    pub workspace_context_file: String,
+    pub task_matrix_file: String,
+    pub heartbeat_file: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentDefaults {
+    pub model_provider: String,
+    pub system_prompt: String,
+    pub heartbeat_interval: u64,
+    pub env_vars: HashMap<String, String>,
+    pub openrouter_mgmt: Option<OpenRouterMgmtConfig>,
+    pub proactive: ProactiveConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct OpenRouterMgmtConfig {
+    pub master_key: String,
+    pub auto_keygen: bool,
+}
+
+impl Default for AgentDefaults {
+    fn default() -> Self {
+        Self {
+            model_provider: Config::default().ai.provider,
+            system_prompt: Config::default().ai.system_prompt,
+            heartbeat_interval: Config::default().ai.heartbeat_interval,
+            env_vars: HashMap::new(),
+            openrouter_mgmt: None,
+            proactive: ProactiveConfig::default(),
+        }
     }
 }

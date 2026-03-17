@@ -201,7 +201,7 @@ pub async fn handle_message(
                     tracing::info!("🌈 Bulk manifestation requested for {} agents", agent_count);
                     let registry = savant_core::fs::registry::AgentRegistry::new(
                         std::env::current_dir().unwrap_or_default(),
-                        state.config.agent_defaults.clone(),
+                        savant_core::config::AgentDefaults::default(),
                     );
 
                     for plan in agents {
@@ -1064,6 +1064,159 @@ pub async fn handle_parameter_descriptors(nexus: &Arc<NexusBridge>) -> Result<()
 
     nexus
         .publish("parameter.descriptors.result", &response.to_string())
+        .await
+        .map_err(|e| format!("Failed to publish: {}", e))
+}
+
+/// Get the current Savant configuration
+pub async fn handle_config_get(nexus: &Arc<NexusBridge>) -> Result<(), String> {
+    let config =
+        savant_core::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+
+    let response = serde_json::json!({
+        "event": "CONFIG_GET_RESULT",
+        "data": {
+            "config": config,
+            "config_path": savant_core::config::Config::primary_config_path()
+                .to_string_lossy()
+                .to_string(),
+        }
+    });
+
+    nexus
+        .publish("config.get.result", &response.to_string())
+        .await
+        .map_err(|e| format!("Failed to publish: {}", e))
+}
+
+/// Request payload for updating config
+#[derive(Deserialize, Serialize, Clone)]
+pub struct ConfigUpdateRequest {
+    pub section: String, // "ai", "server", "skills", etc.
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+/// Update a config value and save to disk
+pub async fn handle_config_set(
+    request: ConfigUpdateRequest,
+    nexus: &Arc<NexusBridge>,
+) -> Result<(), String> {
+    let config_path = savant_core::config::Config::primary_config_path();
+
+    let mut config =
+        savant_core::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
+
+    match request.section.as_str() {
+        "ai" => match request.key.as_str() {
+            "provider" => {
+                config.ai.provider = request.value.as_str().unwrap_or("openrouter").to_string()
+            }
+            "model" => config.ai.model = request.value.as_str().unwrap_or("").to_string(),
+            "temperature" => config.ai.temperature = request.value.as_f64().unwrap_or(0.7) as f32,
+            "max_tokens" => config.ai.max_tokens = request.value.as_u64().unwrap_or(4096) as u32,
+            "system_prompt" => {
+                config.ai.system_prompt = request.value.as_str().unwrap_or("").to_string()
+            }
+            "heartbeat_interval" => {
+                config.ai.heartbeat_interval = request.value.as_u64().unwrap_or(60)
+            }
+            _ => return Err(format!("Unknown ai key: {}", request.key)),
+        },
+        "server" => match request.key.as_str() {
+            "port" => config.server.port = request.value.as_u64().unwrap_or(3000) as u16,
+            "host" => config.server.host = request.value.as_str().unwrap_or("0.0.0.0").to_string(),
+            "max_connections" => {
+                config.server.max_connections = request.value.as_u64().unwrap_or(1000) as usize
+            }
+            "lane_capacity" => {
+                config.server.lane_capacity = request.value.as_u64().unwrap_or(100) as usize
+            }
+            "max_lane_concurrency" => {
+                config.server.max_lane_concurrency = request.value.as_u64().unwrap_or(10) as usize
+            }
+            "dashboard_api_key" => {
+                config.server.dashboard_api_key = request.value.as_str().map(|s| s.to_string())
+            }
+            _ => return Err(format!("Unknown server key: {}", request.key)),
+        },
+        "skills" => match request.key.as_str() {
+            "path" => config.skills.path = request.value.as_str().unwrap_or("./skills").to_string(),
+            "enable_clawhub" => {
+                config.skills.enable_clawhub = request.value.as_bool().unwrap_or(true)
+            }
+            "auto_update" => config.skills.auto_update = request.value.as_bool().unwrap_or(false),
+            _ => return Err(format!("Unknown skills key: {}", request.key)),
+        },
+        "memory" => match request.key.as_str() {
+            "base_path" => {
+                config.memory.base_path = request.value.as_str().unwrap_or("./memory").to_string()
+            }
+            "cache_size_mb" => {
+                config.memory.cache_size_mb = request.value.as_u64().unwrap_or(512) as u32
+            }
+            "consolidation_threshold" => {
+                config.memory.consolidation_threshold =
+                    request.value.as_u64().unwrap_or(100) as usize
+            }
+            _ => return Err(format!("Unknown memory key: {}", request.key)),
+        },
+        "security" => match request.key.as_str() {
+            "enable_blocklist_sync" => {
+                config.security.enable_blocklist_sync = request.value.as_bool().unwrap_or(true)
+            }
+            "threat_intel_sync_interval_secs" => {
+                config.security.threat_intel_sync_interval_secs =
+                    request.value.as_u64().unwrap_or(3600)
+            }
+            _ => return Err(format!("Unknown security key: {}", request.key)),
+        },
+        "wasm" => match request.key.as_str() {
+            "max_instances" => {
+                config.wasm.max_instances = request.value.as_u64().unwrap_or(100) as u32
+            }
+            "fuel_limit" => config.wasm.fuel_limit = request.value.as_u64().unwrap_or(10_000_000),
+            "memory_limit_mb" => {
+                config.wasm.memory_limit_mb = request.value.as_u64().unwrap_or(256) as u32
+            }
+            "enable_cache" => config.wasm.enable_cache = request.value.as_bool().unwrap_or(true),
+            _ => return Err(format!("Unknown wasm key: {}", request.key)),
+        },
+        "system" => match request.key.as_str() {
+            "db_path" => {
+                config.system.db_path = request.value.as_str().unwrap_or("savant.db").to_string()
+            }
+            "workspaces_path" => {
+                config.system.workspaces_path =
+                    request.value.as_str().unwrap_or("./workspaces").to_string()
+            }
+            "log_level" => {
+                config.system.log_level = request.value.as_str().unwrap_or("info").to_string()
+            }
+            "log_color" => config.system.log_color = request.value.as_bool().unwrap_or(true),
+            _ => return Err(format!("Unknown system key: {}", request.key)),
+        },
+        _ => return Err(format!("Unknown config section: {}", request.section)),
+    }
+
+    config
+        .save(&config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    info!("Config updated: {}.{}", request.section, request.key);
+
+    let response = serde_json::json!({
+        "event": "CONFIG_SET_RESULT",
+        "data": {
+            "success": true,
+            "section": request.section,
+            "key": request.key,
+            "config_path": config_path.to_string_lossy().to_string(),
+        }
+    });
+
+    nexus
+        .publish("config.set.result", &response.to_string())
         .await
         .map_err(|e| format!("Failed to publish: {}", e))
 }

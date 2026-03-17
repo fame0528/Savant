@@ -190,3 +190,6 @@ A: Most settings work with all major AI providers (OpenAI, Anthropic, Google, et
 
 **Q: Will changing these settings cost more money?**
 A: No, these settings don't affect pricing directly. However, higher Max Tokens means longer responses, which use more tokens and cost more.
+
+**Q: Is adjusting temperature the same as fine-tuning or training the model?**
+A: No. Adjusting temperature, top_p, and other parameters changes how the AI generates responses at runtime - it does NOT change the model itself. Fine-tuning and training permanently modify the model's weights using thousands of example inputs. Parameter adjustments are temporary settings that control creativity and randomness for each request. Think of it like adjusting the volume knob on a radio - you're changing the output, not rebuilding the radio.

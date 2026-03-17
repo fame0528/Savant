@@ -213,37 +213,39 @@ async fn main() -> Result<()> {
     });
 
     // 6.5 Initialize External Channels
-    tracing::info!("🔍 Checking for Discord configuration...");
-    let channels: Vec<String> = config.channels.keys().cloned().collect();
-    tracing::info!("📡 Available channels in config: {:?}", channels);
+    tracing::info!("🔍 Checking channel configurations...");
+    let mut channels: Vec<String> = Vec::new();
+    if config.channels.discord.enabled {
+        channels.push("discord".to_string());
+    }
+    if config.channels.telegram.enabled {
+        channels.push("telegram".to_string());
+    }
+    if config.channels.whatsapp.enabled {
+        channels.push("whatsapp".to_string());
+    }
+    if config.channels.matrix.enabled {
+        channels.push("matrix".to_string());
+    }
+    tracing::info!("📡 Enabled channels: {:?}", channels);
 
-    if let Some(discord_cfg) = config.channels.get("discord") {
+    // Discord
+    if config.channels.discord.enabled {
+        let discord_cfg = &config.channels.discord;
         tracing::info!("📡 Discord config found: enabled={}", discord_cfg.enabled);
-        if discord_cfg.enabled {
-            if let Some(token) = &discord_cfg.token {
-                tracing::info!(
-                    "🔑 Token present (masked: {}...{})",
-                    &token[..4],
-                    &token[token.len() - 4..]
-                );
-                let discord_adapter = savant_channels::discord::DiscordAdapter::new(
-                    token.clone(),
-                    discord_cfg.channel_id.clone(),
-                    nexus.clone(),
-                );
-                discord_adapter.spawn().await;
-                tracing::info!(
-                    "🔗 {}",
-                    "Discord bridge spawned (autonomous task started)".magenta()
-                );
-            } else {
-                tracing::warn!("⚠️ Discord enabled but no token provided in config");
-            }
+        if let Some(token) = &discord_cfg.token {
+            tracing::info!(
+                "🔑 Discord token present (masked: {}...{})",
+                &token[..4],
+                &token[token.len() - 4..]
+            );
+            let discord_adapter =
+                savant_channels::discord::DiscordAdapter::new(token.clone(), None, nexus.clone());
+            discord_adapter.spawn().await;
+            tracing::info!("🔗 Discord bridge spawned");
         } else {
-            tracing::debug!("Discord is disabled in config");
+            tracing::warn!("⚠️ Discord enabled but no token provided in config");
         }
-    } else {
-        tracing::info!("ℹ️ No Discord configuration block found in savant.toml");
     }
 
     print_phase(7, "SWARM IGNITION");
@@ -277,7 +279,7 @@ async fn main() -> Result<()> {
     println!(
         "{} {}",
         "🔗 GATE:  ".bright_cyan().bold(),
-        "ws://localhost:8080".white().underline()
+        "ws://localhost:3000".white().underline()
     );
     println!(
         "{}",

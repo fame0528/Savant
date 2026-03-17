@@ -1,0 +1,119 @@
+# ============================================================================
+# Savant Configuration
+# ============================================================================
+# Edit the values below to configure Savant.
+# Save the file and changes take effect automatically.
+# ============================================================================
+
+# ============================================================================
+# [ai] - What brain powers your agents?
+# ============================================================================
+[ai]
+# Which AI company to use:
+#   openrouter, openai, anthropic, google, mistral, groq, deepseek,
+#   cohere, together, azure, xai, fireworks, ollama
+provider = "openrouter"
+
+# Which specific AI model to use (varies by provider):
+#   OpenRouter:   anthropic/claude-sonnet-4-6, openai/gpt-5.4, google/gemini-2.5-pro
+#   OpenAI:       gpt-5.4, gpt-4.1, o4-mini
+#   Anthropic:    claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5
+#   Google:       gemini-2.5-pro, gemini-2.5-flash
+#   Groq:         llama-3.3-70b-versatile, mixtral-8x7b-32768
+#   Deepseek:     deepseek-chat, deepseek-reasoner
+#   Mistral:      mistral-large-latest, mistral-small-latest
+#   Cohere:       command-a-03-2025, command-r-plus-08-2024
+#   xAI:          grok-3, grok-3-mini
+#   Fireworks:    llama-v3p3-70b-instruct
+#   Together:     meta-llama/Llama-3.3-70B-Instruct-Turbo
+#   Ollama:       llama3.3, llama3.2, mistral (requires local server)
+model = "anthropic/claude-sonnet-4-6"
+
+# How creative responses are (0.0 to 2.0)
+#   0.0-0.3 = Factual/coding (predictable)
+#   0.4-0.7 = Balanced (recommended)
+#   0.8-1.2 = Creative writing
+#   1.3-2.0 = Very creative (may have errors)
+temperature = 0.7
+
+# Max response length in tokens (1 to 1,000,000)
+#   4096 = ~3000 words (default)
+#   16384 = ~12000 words
+#   131072 = ~98000 words
+#   500000+ = massive outputs (latest models only)
+max_tokens = 4096
+
+# Message given to all new agents
+system_prompt = "You are a helpful Savant agent. Be concise and useful."
+
+# Seconds between agent health checks
+heartbeat_interval = 60
+
+# ============================================================================
+# [server] - How does the gateway run?
+# ============================================================================
+[server]
+port = 3000
+host = "0.0.0.0"
+max_connections = 1000
+lane_capacity = 100
+max_lane_concurrency = 10
+# dashboard_api_key = ""  # Optional: set for dashboard auth
+
+# ============================================================================
+# [channels] - What chat platforms are connected?
+# ============================================================================
+[channels.discord]
+enabled = false
+# token = "your-discord-bot-token"
+
+[channels.telegram]
+enabled = false
+# token = "your-telegram-bot-token"
+
+[channels.whatsapp]
+enabled = false
+
+[channels.matrix]
+enabled = false
+
+# ============================================================================
+# [skills] - Skill system settings
+# ============================================================================
+[skills]
+path = "./skills"
+enable_clawhub = true    # Enable skill marketplace
+auto_update = false      # Auto-update skills when new versions available
+
+# ============================================================================
+# [memory] - Conversation memory settings
+# ============================================================================
+[memory]
+base_path = "./memory"
+cache_size_mb = 512           # In-memory cache
+consolidation_threshold = 100 # Consolidate after N messages
+
+# ============================================================================
+# [security] - Security and threat intelligence
+# ============================================================================
+[security]
+enable_blocklist_sync = true
+threat_intel_sync_interval_secs = 3600  # Sync every hour
+
+# ============================================================================
+# [wasm] - Advanced: WASM skill runtime
+# ============================================================================
+[wasm]
+max_instances = 100       # Max concurrent skill instances
+fuel_limit = 10000000     # Instructions per execution
+memory_limit_mb = 256     # Per-instance memory limit
+enable_cache = true       # Cache compiled skills
+
+# ============================================================================
+# [system] - Advanced: System paths and logging
+# ============================================================================
+[system]
+db_path = "savant.db"
+workspaces_path = "./workspaces"
+log_level = "info"        # trace, debug, info, warn, error
+log_color = true

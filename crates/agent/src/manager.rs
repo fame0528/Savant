@@ -14,7 +14,10 @@ impl AgentManager {
         let workspaces_path = PathBuf::from("."); // Project root for discovery
         Self {
             _config: config.clone(),
-            registry: AgentRegistry::new(workspaces_path, config.agent_defaults),
+            registry: AgentRegistry::new(
+                workspaces_path,
+                savant_core::config::AgentDefaults::default(),
+            ),
         }
     }
 

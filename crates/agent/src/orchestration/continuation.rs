@@ -90,8 +90,8 @@ impl ContinuationEngine {
 
         // Try to extract delay after colon
         if let Some(idx) = response.find("CONTINUE_WORK:") {
-            // Everything after "CONTINUE_WORK:" (12 chars)
-            let delay_str = &response[idx + 12..];
+            // Everything after "CONTINUE_WORK:" (14 chars)
+            let delay_str = &response[idx + 14..];
             // Take only digits
             let digits: String = delay_str
                 .chars()

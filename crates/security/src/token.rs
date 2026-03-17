@@ -47,3 +47,30 @@ pub struct AgentToken {
     /// The raw signature bytes (variable length to support PQC)
     pub signature: Vec<u8>,
 }
+
+impl AgentToken {
+    /// Verifies if the token grants the requested capability.
+    /// 
+    /// OMEGA-Tier: Checks resource URI and permitted action against the payload.
+    pub fn verify_capability(&self, resource: &str, action: &str) -> bool {
+        // AAA: Resource URI matching (prefix-based for hierarchy support)
+        let resource_match = resource.starts_with(&self.payload.resource_uri);
+        
+        // AAA: Action matching (exact match only - no wildcards permitted)
+        let action_match = self.payload.permitted_action == action;
+        
+        // AAA: Expiration check
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let not_expired = self.payload.expires_at > now;
+
+        resource_match && action_match && not_expired
+    }
+
+    /// Verifies that the token belongs to the specified agent.
+    pub fn assignee_matches(&self, agent_id_hash: u64) -> bool {
+        self.payload.assignee_hash == agent_id_hash
+    }
+}

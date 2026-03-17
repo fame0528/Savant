@@ -214,7 +214,20 @@ impl LsmStorageEngine {
                     continue;
                 }
             };
-            let archived: &<AgentMessage as rkyv::Archive>::Archived = unsafe { rkyv::access_unchecked(&value_bytes) };
+            // OMEGA: 309GB Protection - Validate raw byte length before accessing
+            if value_bytes.len() > 10 * 1024 * 1024 {
+                warn!("Oversized message byte count detected (corruption?): {} bytes", value_bytes.len());
+                continue;
+            }
+
+            // AAA: Use validated access with CheckBytes to prevent UB from corrupted data
+            let archived = match rkyv::access::<<AgentMessage as rkyv::Archive>::Archived, Error>(&value_bytes) {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!("Failed to validate archived message bytes: {}", e);
+                    continue;
+                }
+            };
             match rkyv::deserialize::<AgentMessage, Error>(archived) {
                 Ok(msg) => messages.push(msg),
                 Err(e) => warn!("Failed to deserialize message: {}", e),
@@ -353,15 +366,6 @@ impl LsmStorageEngine {
         Ok(StorageStats::default())
     }
 
-    /// Determines if a message should be persisted with SyncAll mode.
-    fn is_critical_message(&self, msg: &AgentMessage) -> bool {
-        use crate::MessageRole::*;
-        matches!(
-            msg.role,
-            Tool | // Tool results must be durable
-                      System // System messages are critical
-        ) || !msg.tool_results.is_empty() // Any message with tool results is critical
-    }
 
     /// Returns a reference to the underlying Fjall keyspace (for advanced operations).
     pub fn keyspace(&self) -> &fjall::Keyspace {
@@ -379,7 +383,18 @@ impl LsmStorageEngine {
                 Err(_) => continue,
             };
             
-            let archived: &<crate::models::MemoryEntry as rkyv::Archive>::Archived = unsafe { rkyv::access_unchecked(&val) };
+            if val.len() > 1 * 1024 * 1024 { // Metadata entry shouldn't exceed 1MB
+                warn!("Oversized metadata entry detected, skipping");
+                continue;
+            }
+            // AAA: Use validated access with CheckBytes to prevent UB from corrupted data
+            let archived = match rkyv::access::<<crate::models::MemoryEntry as rkyv::Archive>::Archived, Error>(&val) {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!("Failed to validate archived metadata bytes: {}", e);
+                    continue;
+                }
+            };
             if let Ok(entry) = rkyv::deserialize::<crate::models::MemoryEntry, Error>(archived) {
                 entries.push(entry);
             }
@@ -429,6 +444,7 @@ mod tests {
             }],
             timestamp: 1000.into(),
             parent_id: None,
+            channel: "Telemetry".to_string(),
         };
 
         let batch = vec![msg_with_orphan];

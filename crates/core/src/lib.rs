@@ -15,5 +15,6 @@ pub mod migration;
 pub mod traits;
 pub mod learning;
 pub mod session;
+pub mod storage;
 pub mod types;
 pub mod utils;

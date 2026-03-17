@@ -9,5 +9,5 @@ pub mod collective;
 mod error;
 
 pub use blackboard::{hash_session_id, SwarmBlackboard, SwarmSharedContext};
-pub use collective::{CollectiveBlackboard, CollectiveState, ConsensusResult};
+pub use collective::{CollectiveBlackboard, GlobalState, AgentEntry, ConsensusResult};
 pub use error::SwarmIpcError;

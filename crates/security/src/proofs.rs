@@ -5,7 +5,7 @@
 
 #[cfg(kani)]
 mod verification {
-    use crate::enclave::SecurityEnclave;
+    use crate::enclave::SecurityAuthority;
     use crate::token::{AgentToken, CapabilityPayload};
     use ed25519_dalek::{SigningKey};
     use rand_core::OsRng;
@@ -16,7 +16,7 @@ mod verification {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
         let verifying_key = signing_key.verifying_key();
-        let enclave = SecurityEnclave::new(verifying_key);
+        let enclave = SecurityAuthority::new(verifying_key, None);
         let symbolic_hash: u64 = kani::any();
         let symbolic_expires: u64 = kani::any();
         let symbolic_resource = String::from("fixed_path"); // Simplified for bounded proof

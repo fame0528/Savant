@@ -40,6 +40,41 @@ impl SpeculativeDag {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
+
+    /// Partitions the DAG into parallel execution lanes.
+    /// 
+    /// Returns a list of "Lanes", where each lane contains indices of nodes 
+    /// that can be executed concurrently because all their dependencies 
+    /// were satisfied by previous lanes.
+    pub fn partition_lanes(&self) -> Vec<Vec<usize>> {
+        let mut planes = Vec::new();
+        let mut executed = HashSet::new();
+        let mut remaining: HashSet<usize> = (0..self.nodes.len()).collect();
+
+        while !remaining.is_empty() {
+            let mut current_lane = Vec::new();
+
+            for &idx in &remaining {
+                let node = &self.nodes[idx];
+                if node.dependencies.is_subset(&executed) {
+                    current_lane.push(idx);
+                }
+            }
+
+            if current_lane.is_empty() {
+                // Dependency cycle detected or missing dependencies
+                break;
+            }
+
+            for &idx in &current_lane {
+                executed.insert(idx);
+                remaining.remove(&idx);
+            }
+            planes.push(current_lane);
+        }
+
+        planes
+    }
 }
 
 /// Parses a list of actions into a simple sequential DAG.

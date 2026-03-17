@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use serde_json::Value;
 use savant_core::error::SavantError;
-use savant_core::types::{ExecutionMode, CapabilityGrants};
+use savant_core::types::{CapabilityGrants, ExecutionMode};
+use serde_json::Value;
 
-pub mod wasm;
 pub mod native;
+pub mod wasm;
 
 /// Trait for executing a skill in a sandboxed environment.
 #[async_trait]
@@ -27,10 +27,12 @@ impl SandboxDispatcher {
         match mode {
             ExecutionMode::WasmComponent(url) => {
                 Box::new(wasm::WassetteExecutor::new(url.clone(), workspace_dir))
-            },
-            ExecutionMode::LegacyNative(script) => {
-                Box::new(native::LegacyNativeExecutor::new(script.clone(), workspace_dir, capabilities))
             }
+            ExecutionMode::LegacyNative(script) => Box::new(native::LegacyNativeExecutor::new(
+                script.clone(),
+                workspace_dir,
+                capabilities,
+            )),
         }
     }
 }

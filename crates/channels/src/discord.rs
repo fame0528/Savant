@@ -2,22 +2,28 @@ use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
 use savant_core::types::{EventFrame, ChatMessage, ChatRole};
 use async_trait::async_trait;
-use serenity::all::{GatewayIntents, Http, Message};
+use serenity::all::{GatewayIntents, Message};
 use serenity::prelude::*;
 use std::sync::Arc;
-use tokio::sync::broadcast;
-use tracing::{info, error, warn};
+use tracing::{info, error, debug};
 
 /// OMEGA-VIII: Discord Adapter with WAL-Strict Ingestion and Identity Isolation.
 pub struct DiscordAdapter {
     token: String,
     allowed_channel: Option<String>,
+    allowed_bots: Vec<String>,
     nexus: Arc<savant_core::bus::NexusBridge>,
 }
 
 impl DiscordAdapter {
     pub fn new(token: String, allowed_channel: Option<String>, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
-        Self { token, allowed_channel, nexus }
+        Self { token, allowed_channel, allowed_bots: Vec::new(), nexus }
+    }
+
+    /// Sets the explicit allow-list of bot IDs that this adapter will process messages from.
+    pub fn with_allowed_bots(mut self, bot_ids: Vec<String>) -> Self {
+        self.allowed_bots = bot_ids;
+        self
     }
 
     /// Spawns the Discord client event loop.
@@ -28,10 +34,12 @@ impl DiscordAdapter {
 
         let nexus_clone = self.nexus.clone();
         let allowed_channel = self.allowed_channel.clone();
+        let allowed_bots = self.allowed_bots.clone();
         let mut client = Client::builder(&self.token, intents)
             .event_handler(Handler { 
                 nexus: nexus_clone,
-                allowed_channel 
+                allowed_channel,
+                allowed_bots,
             })
             .await
             .map_err(|e| SavantError::Unknown(format!("Discord client error: {}", e)))?;
@@ -50,13 +58,25 @@ impl DiscordAdapter {
 struct Handler {
     nexus: Arc<savant_core::bus::NexusBridge>,
     allowed_channel: Option<String>,
+    allowed_bots: Vec<String>,
 }
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
+        debug!("[Discord] Inbound signal from {}: {}", msg.author.name, msg.content);
+        
+        // Perfection: Show immediate intent via typing indicator
+        let _ = msg.channel_id.broadcast_typing(&ctx.http).await;
+
+        // 🤖 Bot Filtering: Only process messages from bots in the explicit allow-list.
+        // Echo-back is handled at the Agent level via HeartbeatPulse identity pinning.
         if msg.author.bot {
-            return;
+            let bot_id = msg.author.id.to_string();
+            if !self.allowed_bots.contains(&bot_id) {
+                debug!("[Discord] Ignoring message from non-allowed bot: {}", msg.author.name);
+                return;
+            }
         }
 
         // 🛡️ AAA: Channel-Level Isolation
@@ -137,7 +157,8 @@ impl DiscordAdapter {
             let mut client = match Client::builder(&token, intents)
                 .event_handler(Handler { 
                     nexus: nexus_clone.clone(),
-                    allowed_channel
+                    allowed_channel,
+                    allowed_bots: self.allowed_bots.clone(),
                 })
                 .await {
                     Ok(c) => {
@@ -156,16 +177,57 @@ impl DiscordAdapter {
             // Spawn outbound listener task
             tokio::spawn(async move {
                 while let Ok(event) = event_rx.recv().await {
-                    if event.event_type == "chat.response" {
+                    if event.event_type == "chat.message" {
                         if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) {
+                            let is_assistant = payload["role"].as_str() == Some("Assistant");
                             if let Some(recipient) = payload["recipient"].as_str() {
-                                if recipient.starts_with("discord:") {
-                                    if let Some(channel_id_str) = payload["channel_id"].as_str() {
+                                // Perfection: Deliver if it's an Assistant response OR tagging discord:
+                                let is_for_discord = recipient.starts_with("discord:");
+
+                                if is_assistant || is_for_discord {
+                                    let session_id = payload["session_id"].as_str().unwrap_or("");
+                                    if session_id.starts_with("discord:") {
+                                        let channel_id_str = &session_id[8..];
                                         if let Ok(channel_id) = channel_id_str.parse::<u64>() {
                                             let content = payload["content"].as_str().unwrap_or("");
-                                            let _ = serenity::model::id::ChannelId::new(channel_id)
-                                                .say(&http, content)
-                                                .await;
+                                            
+                                            // Perfection: Chunk message for Discord (2000 char limit, UTF-8 safe)
+                                            let mut chunks = Vec::new();
+                                            let mut current = content;
+                                            while current.len() > 1900 {
+                                                // Find the largest char boundary <= 1900 bytes
+                                                let split_idx = current
+                                                    .char_indices()
+                                                    .map(|(i, _)| i)
+                                                    .take_while(|&i| i <= 1900)
+                                                    .last()
+                                                    .unwrap_or(0);
+                                                
+                                                if split_idx == 0 { break; } // Safety break
+
+                                                let (chunk, rest) = current.split_at(split_idx);
+                                                chunks.push(chunk);
+                                                current = rest;
+                                            }
+                                            chunks.push(current);
+
+                                            let total = chunks.len();
+                                            for (i, chunk_content) in chunks.into_iter().enumerate() {
+                                                let display_content = if total > 1 {
+                                                    format!("[Chunk {}/{}] {}", i + 1, total, chunk_content)
+                                                } else {
+                                                    chunk_content.to_string()
+                                                };
+
+                                                debug!("[Discord] Delivering chunk {}/{} to channel {}: {}...", i+1, total, channel_id, &display_content.chars().take(20).collect::<String>());
+                                                
+                                                match serenity::model::id::ChannelId::new(channel_id)
+                                                    .say(&http, display_content)
+                                                    .await {
+                                                        Ok(_) => debug!("[Discord] Chunk {}/{} delivered successfully.", i+1, total),
+                                                        Err(e) => error!("[Discord] FAILED to deliver chunk {}/{}: {}", i+1, total, e),
+                                                    }
+                                            }
                                         }
                                     }
                                 }
@@ -176,7 +238,7 @@ impl DiscordAdapter {
             });
 
             // Spawn SCS (Symbolic Channel State) projection loop
-            let http_scs = client.http.clone();
+            let _http_scs = client.http.clone();
             let nexus_scs = nexus_clone.clone();
             tokio::spawn(async move {
                 loop {

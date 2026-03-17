@@ -41,7 +41,7 @@ set FORCE_BUILD=1
 if "%1"=="--fast" set SKIP_BUILD=1
 
 if %SKIP_BUILD% equ 1 (
-    echo ⚡ Fast startup enabled: Skipping build check...
+     echo ⚡ Fast startup enabled: Skipping build check...
     goto :start_services
 )
 

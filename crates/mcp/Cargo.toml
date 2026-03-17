@@ -5,9 +5,13 @@ edition = "2021"
 
 [dependencies]
 savant_core = { path = "../core" }
+savant_skills = { path = "../skills" }
 rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
+serde = { workspace = true }
+axum = { version = "0.7", features = ["ws"] }
+async-trait = { workspace = true }

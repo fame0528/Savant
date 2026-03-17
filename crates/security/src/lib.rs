@@ -7,4 +7,4 @@ pub mod attestation;
 pub mod proofs;
 
 pub use token::{AgentToken, CapabilityPayload};
-pub use enclave::{SecurityEnclave, SecurityError};
+pub use enclave::{SecurityAuthority, SecurityError};

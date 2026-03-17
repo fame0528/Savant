@@ -1,7 +1,7 @@
 use anyhow::Result;
 use wasmtime::component::*;
-use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView, ResourceTable};
+use wasmtime::{component::ResourceTable, Config, Engine, Store};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
 
 bindgen!({
     world: "tool",
@@ -42,28 +42,26 @@ impl WasmToolHost {
         Ok(Self { engine, linker })
     }
 
-    pub async fn execute_tool(
-        &self,
-        component: &Component,
-        args: &str,
-    ) -> Result<String> {
+    pub async fn execute_tool(&self, component: &Component, args: &str) -> Result<String> {
         let mut store = Store::new(
             &self.engine,
             HostState {
                 ctx: WasiCtxBuilder::new()
-                    .inherit_stdout()
+                    .envs(&[] as &[(&str, &str)])
                     .inherit_stderr()
                     .build(),
                 table: ResourceTable::new(),
             },
         );
-        
+
         // ECHO Tools have a 10M fuel limit (Law #9 compliant)
         store.set_fuel(10_000_000)?;
 
-        let tool_instance = Tool::instantiate_async(&mut store, component, &self.linker).await?;
-        let result = tool_instance.savant_agent_tools_tools().call_execute(&mut store, args)?;
-        
+        let tool_instance = Tool::instantiate(&mut store, component, &self.linker)?;
+        let result = tool_instance
+            .savant_agent_tools_tools()
+            .call_execute(&mut store, args)?;
+
         Ok(result)
     }
 }

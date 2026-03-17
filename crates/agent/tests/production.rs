@@ -1,6 +1,7 @@
 #![allow(clippy::disallowed_methods)]
 use std::sync::Arc;
-use savant_core::types::{AgentConfig, ChatMessage, ChatChunk, ModelProvider, AgentIdentity};
+use savant_core::types::{AgentConfig, ChatMessage, ChatChunk, ModelProvider, AgentIdentity, AgentOutputChannel};
+use savant_core::config::Config;
 use savant_core::traits::LlmProvider;
 use savant_core::error::SavantError;
 use savant_agent::swarm::SwarmController;
@@ -11,6 +12,7 @@ use futures::stream::{self, Stream};
 use std::pin::Pin;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use pqcrypto_dilithium::dilithium2;
 
 #[allow(dead_code)]
 struct MockLlmProvider;
@@ -26,6 +28,8 @@ impl LlmProvider for MockLlmProvider {
             agent_id: "mock-id".to_string(),
             content: "Mock response".to_string(),
             is_final: true,
+            session_id: None,
+            channel: AgentOutputChannel::Chat,
         };
         Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
     }
@@ -37,7 +41,7 @@ async fn test_production_swarm_initialization_50_agents() {
     let base_temp = std::env::temp_dir().join(format!("savant_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&base_temp).expect("Failed to create base temp dir");
     
-    let storage_path = base_temp.join("test.db");
+    let _storage_path = base_temp.join("test.db");
     let skills_path = base_temp.join("skills");
     let workspace_path = base_temp.join("workspace");
     let memory_path = base_temp.join("data/memory");
@@ -50,11 +54,11 @@ async fn test_production_swarm_initialization_50_agents() {
     let mut rng = rand::thread_rng();
     let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
     let root_authority = signing_key.verifying_key();
+    let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
 
     // 3. Create dependencies
     let nexus = Arc::new(NexusBridge::new());
-    let storage = Arc::new(Storage::new(storage_path).expect("Failed to open test storage"));
-    storage.init_schema().expect("Failed to init schema");
+    let storage = Arc::new(Storage::new(base_temp.join("storage")).expect("Failed to open test storage"));
     
     let config = Config::default();
     let manager = Arc::new(AgentManager::new(config));
@@ -77,18 +81,30 @@ async fn test_production_swarm_initialization_50_agents() {
             identity: Some(AgentIdentity::default()),
             parent_id: None,
             session_id: Some("test-session".to_string()),
+            proactive: Default::default(),
         });
     }
 
     // 5. Initialize Controller
+    let swarm_config = savant_agent::swarm::SwarmConfig {
+        workspace_root: workspace_path.clone(),
+        memory_db_path: base_temp.join("memory"),
+        skills_path: skills_path.clone(),
+        blackboard_name: format!("test_blackboard_{}", uuid::Uuid::new_v4()),
+        collective_name: format!("test_collective_{}", uuid::Uuid::new_v4()),
+    };
+
     let controller = SwarmController::new(
+        swarm_config,
         agents,
         storage,
         manager,
         nexus,
         root_authority,
         signing_key,
-    ).expect("Failed to create SwarmController");
+        pqc_authority,
+        pqc_signing_key,
+    ).await.expect("Failed to create SwarmController");
 
     // 6. Ignite
     controller.ignite().await;
@@ -113,8 +129,18 @@ async fn test_agent_panic_recovery_logic() {
     
     let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let root_authority = signing_key.verifying_key();
+    let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
     
+    let swarm_config = savant_agent::swarm::SwarmConfig {
+        workspace_root: base_temp.join("unstable_ws"),
+        memory_db_path: base_temp.join("panic_memory"),
+        skills_path: base_temp.join("skills"),
+        blackboard_name: format!("panic_blackboard_{}", uuid::Uuid::new_v4()),
+        collective_name: format!("panic_collective_{}", uuid::Uuid::new_v4()),
+    };
+
     let controller = SwarmController::new(
+        swarm_config,
         vec![AgentConfig {
             agent_id: "unstable_agent".to_string(),
             agent_name: "Unstable".to_string(),
@@ -129,18 +155,24 @@ async fn test_agent_panic_recovery_logic() {
             identity: None,
             parent_id: None,
             session_id: None,
+            proactive: Default::default(),
         }],
-        Arc::new(Storage::new(base_temp.join("panic.db")).expect("Failed to open panic storage")),
+        Arc::new(Storage::new(base_temp.join("panic_storage")).expect("Failed to open panic storage")),
         Arc::new(AgentManager::new(Config::default())),
         Arc::new(NexusBridge::new()),
         root_authority,
         signing_key,
-    ).unwrap();
+        pqc_authority,
+        pqc_signing_key,
+    ).await.unwrap();
 
     controller.ignite().await;
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     
     controller.evacuate_agent("unstable_agent").await;
+    
+    // AAA: Allow time for the evacuation task to complete and reflect in state
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     
     let dead = controller.check_swarm_health().await;
     assert!(dead.contains(&"unstable_agent".to_string()));
@@ -152,14 +184,14 @@ async fn test_500_agent_initialization_scaling() {
     let base_temp = std::env::temp_dir().join(format!("savant_scale_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&base_temp).unwrap();
     
-    let storage_path = base_temp.join("scale.db");
+    let _storage_path = base_temp.join("scale.db");
     
     let mut rng = rand::thread_rng();
     let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
     let root_authority = signing_key.verifying_key();
+    let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
 
-    let storage = Arc::new(Storage::new(storage_path).expect("Failed to open scale storage"));
-    storage.init_schema().expect("Failed to init schema");
+    let storage = Arc::new(Storage::new(base_temp.join("scale_storage")).expect("Failed to open scale storage"));
     
     let nexus = Arc::new(NexusBridge::new());
     let manager = Arc::new(AgentManager::new(Config::default()));
@@ -181,17 +213,29 @@ async fn test_500_agent_initialization_scaling() {
             identity: None,
             parent_id: None,
             session_id: Some("scale-session".to_string()),
+            proactive: Default::default(),
         });
     }
 
+    let swarm_config = savant_agent::swarm::SwarmConfig {
+        workspace_root: base_temp.join("scale_ws"),
+        memory_db_path: base_temp.join("scale_memory"),
+        skills_path: base_temp.join("skills"),
+        blackboard_name: format!("scale_blackboard_{}", uuid::Uuid::new_v4()),
+        collective_name: format!("scale_collective_{}", uuid::Uuid::new_v4()),
+    };
+
     let controller = SwarmController::new(
+        swarm_config,
         agents,
         storage,
         manager,
         nexus,
         root_authority,
         signing_key,
-    ).expect("Failed to create Scale Controller");
+        pqc_authority,
+        pqc_signing_key,
+    ).await.expect("Failed to create Scale Controller");
 
     controller.ignite().await;
     

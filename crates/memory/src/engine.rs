@@ -5,7 +5,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::error::MemoryError;
 use crate::lsm_engine::{LsmConfig, LsmStorageEngine};
@@ -142,11 +142,17 @@ impl MemoryEngine {
             entry.shannon_entropy = Self::calculate_entropy(&entry.content).into();
         }
 
+        // Index in vector engine
         self.vector
             .index_memory(&entry.id.to_string(), &entry.embedding)?;
         
         // --- OMEGA: Persist the updated MemoryEntry with entropy in LSM ---
-        self.lsm.insert_metadata(entry.id.to_native(), &entry)?;
+        if let Err(e) = self.lsm.insert_metadata(entry.id.to_native(), &entry) {
+            warn!("Memory Engine: LSM metadata write failed for entry {}. Rolling back vector index.", entry.id);
+            // 🛡️ AAA Atomicity Rollback
+            let _ = self.vector.remove(&entry.id.to_string());
+            return Err(e);
+        }
 
         debug!("Indexed memory entry: id={}, entropy={:.2}", entry.id, entry.shannon_entropy.to_native());
         Ok(())
@@ -353,7 +359,7 @@ mod tests {
             related_to: vec![],
         };
         
-        engine.index_memory(&entry).unwrap();
+        engine.index_memory(entry).unwrap();
         
         let results = engine.semantic_search(&embedding, 1).unwrap();
         assert_eq!(results.len(), 1);

@@ -4,9 +4,9 @@
 //! zero heap allocation during read operations. They maintain identical
 //! in-memory and on-disk representations via `#[repr(C)]` and `rkyv` derives.
 
+use crate::error::MemoryError;
 use chrono::Utc;
 use savant_core::types::{ChatMessage, ChatRole};
-use crate::error::MemoryError;
 use std::collections::HashMap;
 use tracing::error;
 
@@ -23,9 +23,18 @@ use tracing::error;
 /// The `#[rkyv(check_bytes)]` attribute ensures that any bytes loaded from
 /// disk are cryptographically validated against the schema before mapping,
 /// preventing maliciously crafted data from causing undefined behavior.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+)]
 #[bytecheck(crate = bytecheck)]
-#[repr(C, align(64))]
+#[repr(C)]
 pub struct AgentMessage {
     /// Unique message identifier (UUID v4)
     pub id: String,
@@ -128,7 +137,9 @@ impl AgentMessage {
         };
 
         // AAA: Unified Context Harmony - Prioritize session_id over agent_id or implicit session
-        let sid = msg.session_id.as_ref()
+        let sid = msg
+            .session_id
+            .as_ref()
             .map(|s| s.0.clone())
             .unwrap_or_else(|| session_id.to_string());
 
@@ -144,7 +155,9 @@ impl AgentMessage {
             tool_results: Vec::new(),
             timestamp: Utc::now().timestamp_millis().into(),
             parent_id: None,
-            channel: serde_json::to_string(&msg.channel).unwrap_or_default().replace('"', ""),
+            channel: serde_json::to_string(&msg.channel)
+                .unwrap_or_default()
+                .replace('"', ""),
         }
     }
 
@@ -172,7 +185,19 @@ impl AgentMessage {
 /// Role of the message sender.
 ///
 /// This is a compact enum optimized for storage and serialization.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes, rkyv::Portable, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    bytecheck::CheckBytes,
+    rkyv::Portable,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+)]
 #[bytecheck(crate = bytecheck)]
 #[repr(u8)]
 pub enum MessageRole {
@@ -186,7 +211,16 @@ pub enum MessageRole {
 ///
 /// This is stored inline in the AgentMessage to maintain atomicity between
 /// a tool call and its result (prevents OpenClaw Issue #39609).
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+)]
 #[bytecheck(crate = bytecheck)]
 #[repr(C)]
 pub struct ToolCallRef {
@@ -202,7 +236,16 @@ pub struct ToolCallRef {
 ///
 /// Every ToolResultRef must have a matching ToolCallRef in the session
 /// to prevent orphaned results that would break the conversation.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+)]
 #[bytecheck(crate = bytecheck)]
 #[repr(C)]
 pub struct ToolResultRef {
@@ -219,9 +262,17 @@ pub struct ToolResultRef {
 /// This structure represents tagged, important memories that should be
 /// indexed for semantic retrieval. It is separate from the conversation
 /// transcript to allow for summarization and distillation.
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes, Debug, Clone, PartialEq)]
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+)]
 #[bytecheck(crate = bytecheck)]
-#[repr(C, align(64))]
+#[repr(C)]
 pub struct MemoryEntry {
     /// Unique ID for this memory
     pub id: rend::u64_le,
@@ -386,5 +437,77 @@ mod tests {
         // Pointer-heavy structs have size dominated by Vec<f32> (3 usize) + 7 fields
         // This is just a sanity check
         assert!(size > 0);
+    }
+
+    #[test]
+    fn test_session_key_format() {
+        let key = session_key("sess-abc");
+        assert!(key.contains("sess-abc"));
+    }
+
+    #[test]
+    fn test_message_key_format() {
+        let key = message_key("sess-abc", 1710000000, "msg-1");
+        assert!(key.contains("sess-abc"));
+        assert!(key.contains("msg-1"));
+    }
+
+    #[test]
+    fn test_agent_message_system_role() {
+        let msg = AgentMessage::system("sess", "System message");
+        assert_eq!(msg.role, MessageRole::System);
+        assert_eq!(msg.content, "System message");
+    }
+
+    #[test]
+    fn test_agent_message_assistant_role() {
+        let msg = AgentMessage::assistant("sess", "Response");
+        assert_eq!(msg.role, MessageRole::Assistant);
+    }
+
+    #[test]
+    fn test_agent_message_tool_role() {
+        let msg = AgentMessage::tool_result("sess", "call-1", "Tool output", false);
+        assert_eq!(msg.role, MessageRole::Tool);
+        assert_eq!(msg.tool_results.len(), 1);
+        assert!(!msg.tool_results[0].is_error);
+    }
+
+    #[test]
+    fn test_agent_message_tool_error() {
+        let msg = AgentMessage::tool_result("sess", "call-2", "Error output", true);
+        assert!(msg.tool_results[0].is_error);
+    }
+
+    #[test]
+    fn test_verify_tool_pair_integrity_empty() {
+        assert!(verify_tool_pair_integrity(&[]).is_ok());
+    }
+
+    #[test]
+    fn test_agent_message_serialization_roundtrip() {
+        // AgentMessage uses rkyv for zero-copy serialization, not serde.
+        // Verify struct fields are correctly populated.
+        let msg = AgentMessage::user("sess-1", "Hello world");
+        assert_eq!(msg.role, MessageRole::User);
+        assert_eq!(msg.content, "Hello world");
+        assert_eq!(msg.session_id, "sess-1");
+        assert!(!msg.id.is_empty());
+        assert!(msg.timestamp > 0);
+    }
+
+    #[test]
+    fn test_message_key_uniqueness() {
+        let key1 = message_key("sess", 1000, "m1");
+        let key2 = message_key("sess", 2000, "m1");
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_message_role_debug() {
+        assert_eq!(format!("{:?}", MessageRole::User), "User");
+        assert_eq!(format!("{:?}", MessageRole::Assistant), "Assistant");
+        assert_eq!(format!("{:?}", MessageRole::System), "System");
+        assert_eq!(format!("{:?}", MessageRole::Tool), "Tool");
     }
 }

@@ -44,11 +44,34 @@ impl EchoCompiler {
             .arg("--target=wasm32-wasip2")
             .arg("--release")
             .current_dir(&full_project_path)
-            .env_clear()
-            // Provide minimal path for the compiler
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // Preserve critical environment variables for cargo to function
+        // On Windows, cargo needs PATH, USERPROFILE, TEMP, APPDATA, CARGO_HOME, etc.
+        // On Linux, we still want a minimal environment for sandboxing
+        #[cfg(target_os = "linux")]
+        {
+            cmd.env_clear()
+                .env("PATH", std::env::var("PATH").unwrap_or_default());
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            // On Windows/macOS, preserve critical environment variables for cargo to function
+            // Explicitly preserve these before clearing sensitive vars
+            let preserve_vars = ["USERPROFILE", "TEMP", "APPDATA", "CARGO_HOME", "PATH", "SystemRoot", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA"];
+            for var in preserve_vars {
+                if let Ok(val) = std::env::var(var) {
+                    cmd.env(var, val);
+                }
+            }
+            // Clear sensitive vars that could leak credentials to untrusted code
+            let sensitive_vars = ["OPENROUTER_API_KEY", "SAVANT_MASTER_SECRET_KEY", "SAVANT_MASTER_PUBLIC_KEY"];
+            for var in sensitive_vars {
+                cmd.env_remove(var);
+            }
+        }
 
         #[cfg(target_os = "linux")]
         {

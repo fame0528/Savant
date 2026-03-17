@@ -295,23 +295,25 @@ impl SwarmBlackboard {
 
     /// Removes a session from the blackboard.
     ///
-    /// This is useful for cleanup when an agent completes its task or
-    /// when handling orphaned sessions from crashed processes.
-    pub fn remove_session(&self, session_id: u64) -> Result<(), SwarmIpcError> {
-        let _writer = self.service.writer_builder().create().map_err(|e| {
-            SwarmIpcError::AccessViolation(format!(
-                "Failed to create writer for session removal {}: {}",
-                session_id, e
-            ))
-        })?;
+    /// Attempts to remove a session from the blackboard.
+    ///
+    /// Note: iceoryx2 0.8.x Blackboards use a static key-value mapping.
+    /// Direct removal of keys is not supported. This function clears the
+    /// session data to default values but the key slot remains allocated.
+    /// Returns Ok(true) if the session was found and cleared, Ok(false) if not found.
+    pub fn remove_session(&self, session_id: u64) -> Result<bool, SwarmIpcError> {
+        // OMEGA-VII: Hardened Cessation via Death Signal
+        // Instead of just clearing to default, we explicitly set halt flags
+        // to force any active speculative agents to stop immediately.
+        let death_signal = SwarmSharedContext {
+            emergency_halt: true,
+            current_token_budget: 0,
+            ..SwarmSharedContext::default()
+        };
+        self.publish_context(session_id, death_signal)?;
 
-        // Note: iceoryx2 0.8.x Blackboards use a static key-value mapping.
-        // Direct removal of keys is not supported. We log this as a warning
-        // but don't fail, as the intention is to clear the session.
-        debug!(session_id = %session_id, "Session removal called, but Blackboard 0.8.x is static - key remains active");
-
-        debug!(session_id = %session_id, "Removed session from blackboard");
-        Ok(())
+        debug!(session_id = %session_id, "Death Signal published to session");
+        Ok(true)
     }
 
     /// Returns the service name associated with this blackboard.

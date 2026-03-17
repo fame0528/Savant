@@ -7,7 +7,8 @@ use notify::{Event, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -61,6 +62,8 @@ pub struct GatewayConfig {
     pub max_connections: usize,
     pub lane_capacity: usize,
     pub max_lane_concurrency: usize,
+    /// API key for dashboard authentication (optional, loaded from env if not set)
+    pub dashboard_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +111,7 @@ impl Default for GatewayConfig {
             max_connections: 100,
             lane_capacity: 100,
             max_lane_concurrency: 5,
+            dashboard_api_key: None,
         }
     }
 }
@@ -147,16 +151,7 @@ impl Config {
             .unwrap_or_else(|_| ".".to_string());
         let config_path = PathBuf::from(home).join(".savant").join("savant.toml");
 
-        // 🛡️ CRITICAL DIAGNOSTIC: Direct println! to bypass tracing init order
-        println!("config: 📂 Attempting to load config from: {:?}", config_path);
-        
-        if config_path.exists() {
-            println!("config: ✅ Config file exists at path.");
-        } else {
-            println!("config: ❌ Config file NOT FOUND at path: {:?}", config_path);
-        }
-
-        tracing::info!("config: 📂 Attempting to load config from: {:?}", config_path);
+        tracing::info!("config: Attempting to load config from: {:?}", config_path);
         if config_path.exists() {
             tracing::info!("config: ✅ Config file exists at path.");
         } else {
@@ -193,12 +188,9 @@ impl Config {
             while let Some(()) = rx.recv().await {
                 tracing::info!("Config changed, reloading...");
                 if let Ok(new_config) = Self::load() {
-                    if let Ok(mut lock) = config_lock.write() {
-                        *lock = new_config;
-                        tracing::info!("Config reloaded successfully.");
-                    } else {
-                        tracing::error!("Config lock poisoned, reload failed.");
-                    }
+                    let mut lock = config_lock.write().await;
+                    *lock = new_config;
+                    tracing::info!("Config reloaded successfully.");
                 } else {
                     tracing::error!("Failed to reload config.");
                 }

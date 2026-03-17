@@ -27,6 +27,8 @@ use savant_core::traits::{MemoryBackend, Tool};
 use savant_core::types::{AgentConfig, AgentIdentity};
 use savant_ipc::{hash_session_id, SwarmBlackboard, SwarmSharedContext};
 use ed25519_dalek::SigningKey;
+use pqcrypto_dilithium::dilithium2;
+// Omitted imports for cleaner orchestration substrate
 use xxhash_rust;
 
 use super::budget::TokenBudget;
@@ -55,6 +57,7 @@ pub struct Orchestrator {
     session_id: String,
     max_chain_length: u32,
     signing_key: SigningKey,
+    pqc_signing_key: dilithium2::SecretKey,
 }
 
 /// Configuration for the orchestrator.
@@ -129,8 +132,9 @@ impl Orchestrator {
         // Initialize continuation engine (anti-dwindle)
         let continuation_engine = ContinuationEngine::new(orchestrator_config.continuation_config);
 
-        // Initialize Ed25519 signing key for capability tokens
+        // Initialize Ed25519 and Dilithium2 signing keys for capability tokens
         let signing_key = SigningKey::generate(&mut rand::thread_rng());
+        let (_, pqc_signing_key) = dilithium2::keypair();
 
         info!(
             agent_name = %config.agent_name,
@@ -148,6 +152,7 @@ impl Orchestrator {
             session_id,
             max_chain_length: orchestrator_config.max_chain_length,
             signing_key,
+            pqc_signing_key,
         })
     }
 
@@ -422,12 +427,14 @@ impl Orchestrator {
         // Mint a Cryptographic Capability Token (CCT) for the subagent
         // This grants permission to read the workspace/session data
         let subagent_hash = xxhash_rust::xxh3::xxh3_64(subagent_id.as_bytes());
-        let _token = savant_security::SecurityEnclave::mint_token(
+        let _token = savant_security::SecurityAuthority::mint_quantum_token(
             &self.signing_key,
+            &self.pqc_signing_key,
             subagent_hash,
             &format!("/workspace/{}", self.session_id),
             "read",
             3600, // 1 hour TTL
+            subagent_id.as_bytes(),
         ).map_err(|e| OrchestratorError::SecurityError(e.to_string()))?;
 
         info!(

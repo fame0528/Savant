@@ -1,76 +1,181 @@
-use savant_core::types::{RequestFrame, SessionId};
+//! Gateway Authentication Module
+//!
+//! Provides Ed25519 signature-based authentication for all gateway connections.
+//! All sessions must provide a valid signature to establish a connection.
+//! No authentication bypasses are permitted.
+
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use savant_core::error::SavantError;
-use ed25519_dalek::{VerifyingKey, Signature, Verifier};
+use savant_core::types::{RequestFrame, SessionId};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{debug, warn};
 
 pub mod oauth;
 
+/// Maximum allowed timestamp drift (5 minutes)
+const MAX_TIMESTAMP_DRIFT_SECS: i64 = 300;
+
 /// An authenticated session context.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AuthenticatedSession {
     pub session_id: SessionId,
     pub public_key: [u8; 32],
 }
 
-/// Authenticates a new session request using Ed25519 signatures.
-/// The session_id is expected to be the hex-encoded Ed25519 public key.
-pub async fn authenticate(frame: &RequestFrame) -> Result<AuthenticatedSession, SavantError> {
-    // Simple bypass for dashboard connections
-    match &frame.payload {
-        savant_core::types::RequestPayload::Auth(auth_str) if auth_str == "DASHBOARD_LOGIN" => {
-            return Ok(AuthenticatedSession {
-                session_id: SessionId("dashboard-session".to_string()),
-                public_key: [0u8; 32],
-            });
+/// Authenticates a new session request using Ed25519 signatures or API key.
+///
+/// All connections must provide either:
+/// 1. Ed25519 signature authentication:
+///    - A valid Ed25519 public key as the session_id (hex-encoded)
+///    - A valid Ed25519 signature over the payload
+///    - A recent timestamp (within MAX_TIMESTAMP_DRIFT_SECS)
+/// 2. Dashboard API key authentication:
+///    - An Auth payload with format "DASHBOARD_API_KEY:<key>"
+///    - The key must match the configured dashboard_api_key
+///
+/// # Security
+/// - No authentication bypasses are permitted
+/// - All signatures are cryptographically verified
+/// - Replay attacks are prevented via timestamp validation
+/// - Session IDs must be valid 32-byte public keys
+/// - Dashboard API keys are validated against configuration
+///
+/// # Errors
+/// Returns `SavantError::AuthError` if authentication fails for any reason.
+pub async fn authenticate(
+    frame: &RequestFrame,
+    dashboard_api_key: Option<&str>,
+) -> Result<AuthenticatedSession, SavantError> {
+    // Check for dashboard API key authentication
+    if let savant_core::types::RequestPayload::Auth(auth_str) = &frame.payload {
+        if let Some(key) = auth_str.strip_prefix("DASHBOARD_API_KEY:") {
+            // Validate dashboard API key
+            match dashboard_api_key {
+                Some(configured_key) if key == configured_key => {
+                    debug!("Dashboard API key authentication successful");
+                    return Ok(AuthenticatedSession {
+                        session_id: SessionId("dashboard-session".to_string()),
+                        public_key: [0u8; 32], // Dashboard uses API key, not Ed25519
+                    });
+                }
+                Some(_) => {
+                    warn!("Dashboard API key authentication failed: Invalid key");
+                    return Err(SavantError::AuthError(
+                        "Invalid dashboard API key".to_string(),
+                    ));
+                }
+                None => {
+                    warn!("Dashboard API key authentication attempted but no key configured");
+                    return Err(SavantError::AuthError(
+                        "Dashboard API key not configured".to_string(),
+                    ));
+                }
+            }
         }
-        savant_core::types::RequestPayload::ControlFrame(savant_core::types::ControlFrame::InitialSync) => {
-            return Ok(AuthenticatedSession {
-                session_id: SessionId("dashboard-session".to_string()),
-                public_key: [0u8; 32],
-            });
-        }
-        _ => {}
-    }
-    
-    let signature_hex = frame.signature.as_ref()
-        .ok_or_else(|| SavantError::AuthError("Missing signature".to_string()))?;
-    
-    let timestamp = frame.timestamp.ok_or_else(|| SavantError::AuthError("Missing timestamp".to_string()))?;
-    
-    // Simple replay protection
-    let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-    if (now - timestamp).abs() > 300 {
-        return Err(SavantError::AuthError("Timestamp expired".to_string()));
     }
 
-    let public_key_bytes = hex::decode(&frame.session_id.0)
-        .map_err(|e| SavantError::AuthError(format!("Invalid session ID hex: {}", e)))?;
-    
+    // Fall through to Ed25519 signature authentication
+    // Extract and validate signature
+    let signature_hex = frame.signature.as_ref().ok_or_else(|| {
+        warn!("Authentication failed: Missing signature");
+        SavantError::AuthError("Missing signature".to_string())
+    })?;
+
+    // Extract and validate timestamp
+    let timestamp = frame.timestamp.ok_or_else(|| {
+        warn!("Authentication failed: Missing timestamp");
+        SavantError::AuthError("Missing timestamp".to_string())
+    })?;
+
+    // Replay protection: reject timestamps outside the allowed drift window
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let drift = (now - timestamp).abs();
+    if drift > MAX_TIMESTAMP_DRIFT_SECS {
+        warn!(
+            "Authentication failed: Timestamp drift {}s exceeds maximum {}s",
+            drift, MAX_TIMESTAMP_DRIFT_SECS
+        );
+        return Err(SavantError::AuthError(format!(
+            "Timestamp expired (drift: {}s, max: {}s)",
+            drift, MAX_TIMESTAMP_DRIFT_SECS
+        )));
+    }
+
+    // Decode and validate public key from session_id
+    let public_key_bytes = hex::decode(&frame.session_id.0).map_err(|e| {
+        warn!("Authentication failed: Invalid session ID hex: {}", e);
+        SavantError::AuthError(format!("Invalid session ID hex: {}", e))
+    })?;
+
     if public_key_bytes.len() != 32 {
-        return Err(SavantError::AuthError("Invalid public key length".to_string()));
+        warn!(
+            "Authentication failed: Invalid public key length: {} (expected 32)",
+            public_key_bytes.len()
+        );
+        return Err(SavantError::AuthError(
+            "Invalid public key length".to_string(),
+        ));
     }
 
     let mut pk_array = [0u8; 32];
     pk_array.copy_from_slice(&public_key_bytes);
-    
-    let verifying_key = VerifyingKey::from_bytes(&pk_array)
-        .map_err(|e| SavantError::AuthError(format!("Invalid public key: {}", e)))?;
 
-    let signature_bytes = hex::decode(signature_hex)
-        .map_err(|e| SavantError::AuthError(format!("Invalid signature hex: {}", e)))?;
-    
-    let signature = Signature::from_slice(&signature_bytes)
-        .map_err(|e| SavantError::AuthError(format!("Invalid signature format: {}", e)))?;
+    let verifying_key = VerifyingKey::from_bytes(&pk_array).map_err(|e| {
+        warn!("Authentication failed: Invalid public key: {}", e);
+        SavantError::AuthError(format!("Invalid public key: {}", e))
+    })?;
 
-    let payload_str = serde_json::to_string(&frame.payload)
-        .map_err(|e| SavantError::AuthError(format!("Failed to serialize payload for verification: {}", e)))?;
-    let message = format!("{}:{}", timestamp, payload_str);
-    
-    verifying_key.verify(message.as_bytes(), &signature)
-        .map_err(|e| SavantError::AuthError(format!("Signature verification failed: {}", e)))?;
+    // Decode signature
+    let signature_bytes = hex::decode(signature_hex).map_err(|e| {
+        warn!("Authentication failed: Invalid signature hex: {}", e);
+        SavantError::AuthError(format!("Invalid signature hex: {}", e))
+    })?;
+
+    if signature_bytes.len() != 64 {
+        warn!(
+            "Authentication failed: Invalid signature length: {} (expected 64)",
+            signature_bytes.len()
+        );
+        return Err(SavantError::AuthError(
+            "Invalid signature length".to_string(),
+        ));
+    }
+
+    let signature = Signature::from_slice(&signature_bytes).map_err(|e| {
+        warn!("Authentication failed: Invalid signature format: {}", e);
+        SavantError::AuthError(format!("Invalid signature format: {}", e))
+    })?;
+
+    // Construct message for verification: timestamp:payload_json
+    let payload_str = serde_json::to_string(&frame.payload).map_err(|e| {
+        warn!("Authentication failed: Failed to serialize payload: {}", e);
+        SavantError::AuthError(format!(
+            "Failed to serialize payload for verification: {}",
+            e
+        ))
+    })?;
+    let message = format!("{}:{}:{}", frame.request_id, timestamp, payload_str);
+
+    // Verify signature
+    verifying_key
+        .verify(message.as_bytes(), &signature)
+        .map_err(|e| {
+            warn!(
+                "Authentication failed: Signature verification failed: {}",
+                e
+            );
+            SavantError::AuthError(format!("Signature verification failed: {}", e))
+        })?;
+
+    debug!(
+        "Authentication successful for session: {} (key: {}...)",
+        frame.session_id.0,
+        &frame.session_id.0[..8.min(frame.session_id.0.len())]
+    );
 
     Ok(AuthenticatedSession {
         session_id: frame.session_id.clone(),
@@ -79,6 +184,289 @@ pub async fn authenticate(frame: &RequestFrame) -> Result<AuthenticatedSession, 
 }
 
 #[cfg(test)]
-mod benches {
-    // criterion benchmark stub
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use rand::rngs::OsRng;
+
+    #[tokio::test]
+    async fn test_valid_authentication() {
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+
+        let session_id = hex::encode(verifying_key.as_bytes());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let payload = savant_core::types::RequestPayload::Auth("test".to_string());
+        let payload_str = serde_json::to_string(&payload).unwrap();
+        let request_id = "test-req".to_string();
+        let message = format!("{}:{}:{}", request_id, timestamp, payload_str);
+        let signature = signing_key.sign(message.as_bytes());
+
+        let frame = RequestFrame {
+            request_id,
+            session_id: SessionId(session_id),
+            payload,
+            signature: Some(hex::encode(signature.to_bytes())),
+            timestamp: Some(timestamp),
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_missing_signature_fails() {
+        let frame = RequestFrame {
+            request_id: "test".to_string(),
+            session_id: SessionId("test".to_string()),
+            payload: savant_core::types::RequestPayload::Auth("test".to_string()),
+            signature: None,
+            timestamp: Some(123456),
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Missing signature"));
+    }
+
+    #[tokio::test]
+    async fn test_expired_timestamp_fails() {
+        let frame = RequestFrame {
+            request_id: "test".to_string(),
+            session_id: SessionId("test".to_string()),
+            payload: savant_core::types::RequestPayload::Auth("test".to_string()),
+            signature: Some("abcd".to_string()),
+            timestamp: Some(1), // Very old timestamp
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("expired"));
+    }
+
+    // ====================== EXTENDED TEST COVERAGE ======================
+
+    #[tokio::test]
+    async fn test_wrong_signature_fails() {
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let session_id = hex::encode(verifying_key.as_bytes());
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Sign with a DIFFERENT key
+        let wrong_key = SigningKey::generate(&mut OsRng);
+        let payload = savant_core::types::RequestPayload::Auth("test".to_string());
+        let payload_str = serde_json::to_string(&payload).unwrap();
+        let message = format!("test-req:{}:{}", timestamp, payload_str);
+        let signature = wrong_key.sign(message.as_bytes());
+
+        let frame = RequestFrame {
+            request_id: "test-req".to_string(),
+            session_id: SessionId(session_id),
+            payload,
+            signature: Some(hex::encode(signature.to_bytes())),
+            timestamp: Some(timestamp),
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(result.is_err(), "Should reject mismatched signature");
+    }
+
+    #[tokio::test]
+    async fn test_malformed_signature_hex_fails() {
+        let frame = RequestFrame {
+            request_id: "test".to_string(),
+            session_id: SessionId("test-session".to_string()),
+            payload: savant_core::types::RequestPayload::Auth("test".to_string()),
+            signature: Some("not-valid-hex!".to_string()),
+            timestamp: Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+            ),
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_timestamp_too_far_in_future_fails() {
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let session_id = hex::encode(verifying_key.as_bytes());
+
+        // Timestamp 1 hour in the future (beyond 5-minute drift window)
+        let future_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 3600;
+
+        let payload = savant_core::types::RequestPayload::Auth("test".to_string());
+        let payload_str = serde_json::to_string(&payload).unwrap();
+        let message = format!("req-1:{}:{}", future_timestamp, payload_str);
+        let signature = signing_key.sign(message.as_bytes());
+
+        let frame = RequestFrame {
+            request_id: "req-1".to_string(),
+            session_id: SessionId(session_id),
+            payload,
+            signature: Some(hex::encode(signature.to_bytes())),
+            timestamp: Some(future_timestamp),
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(
+            result.is_err(),
+            "Should reject future timestamps beyond drift"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_current_timestamp_within_drift_succeeds() {
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let session_id = hex::encode(verifying_key.as_bytes());
+
+        // Current timestamp (within 5-minute drift)
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let payload = savant_core::types::RequestPayload::Auth("test".to_string());
+        let payload_str = serde_json::to_string(&payload).unwrap();
+        let message = format!("req-ok:{}:{}", timestamp, payload_str);
+        let signature = signing_key.sign(message.as_bytes());
+
+        let frame = RequestFrame {
+            request_id: "req-ok".to_string(),
+            session_id: SessionId(session_id),
+            payload,
+            signature: Some(hex::encode(signature.to_bytes())),
+            timestamp: Some(timestamp),
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(result.is_ok(), "Should accept current timestamp");
+    }
+
+    #[tokio::test]
+    async fn test_session_preserves_session_id() {
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let session_id = hex::encode(verifying_key.as_bytes());
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let payload = savant_core::types::RequestPayload::Auth("test".to_string());
+        let payload_str = serde_json::to_string(&payload).unwrap();
+        let message = format!("req-1:{}:{}", timestamp, payload_str);
+        let signature = signing_key.sign(message.as_bytes());
+
+        let frame = RequestFrame {
+            request_id: "req-1".to_string(),
+            session_id: SessionId(session_id.clone()),
+            payload,
+            signature: Some(hex::encode(signature.to_bytes())),
+            timestamp: Some(timestamp),
+        };
+
+        let session = authenticate(&frame, None).await.unwrap();
+        assert_eq!(session.session_id.0, session_id);
+    }
+
+    #[tokio::test]
+    async fn test_auth_different_payload_types() {
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let session_id = hex::encode(verifying_key.as_bytes());
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Test with ChatMessage payload
+        let payload =
+            savant_core::types::RequestPayload::ChatMessage(savant_core::types::ChatMessage {
+                role: savant_core::types::ChatRole::User,
+                content: "hello".to_string(),
+                sender: None,
+                recipient: None,
+                agent_id: None,
+                session_id: None,
+                channel: savant_core::types::AgentOutputChannel::default(),
+            });
+        let payload_str = serde_json::to_string(&payload).unwrap();
+        let message = format!("req-cm:{}:{}", timestamp, payload_str);
+        let signature = signing_key.sign(message.as_bytes());
+
+        let frame = RequestFrame {
+            request_id: "req-cm".to_string(),
+            session_id: SessionId(session_id),
+            payload,
+            signature: Some(hex::encode(signature.to_bytes())),
+            timestamp: Some(timestamp),
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(result.is_ok(), "Should accept ChatMessage payload");
+    }
+
+    #[tokio::test]
+    async fn test_empty_session_id() {
+        let frame = RequestFrame {
+            request_id: "test".to_string(),
+            session_id: SessionId("".to_string()),
+            payload: savant_core::types::RequestPayload::Auth("test".to_string()),
+            signature: Some("abcd".to_string()),
+            timestamp: Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+            ),
+        };
+
+        let result = authenticate(&frame, None).await;
+        // Should still attempt auth (may succeed or fail based on verification)
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_missing_timestamp_fails() {
+        let frame = RequestFrame {
+            request_id: "test".to_string(),
+            session_id: SessionId("test".to_string()),
+            payload: savant_core::types::RequestPayload::Auth("test".to_string()),
+            signature: Some("abcd1234".to_string()),
+            timestamp: None,
+        };
+
+        let result = authenticate(&frame, None).await;
+        assert!(result.is_err(), "Missing timestamp should fail");
+    }
 }

@@ -4,6 +4,7 @@ use std::cmp;
 use tracing::{debug, info, warn};
 use rkyv::{Archive, Deserialize, Serialize};
 use bytecheck::CheckBytes;
+use savant_core::error::SavantError;
 
 /// Configuration for the DSP trade-off mechanisms.
 ///
@@ -21,7 +22,6 @@ use bytecheck::CheckBytes;
 ///     max_speculative_steps: 10,
 /// };
 /// ```
-/// Configuration for the DSP trade-off mechanisms.
 #[derive(Archive, Deserialize, Serialize, CheckBytes, Debug, Clone, Copy, PartialEq)]
 #[bytecheck(crate = bytecheck)]
 #[repr(C)]
@@ -47,6 +47,12 @@ pub struct DspConfig {
     /// Prevents runaway context bloat even if the model suggests deeper speculation.
     /// Must be at least 1.
     pub max_speculative_steps: u32,
+
+    /// Maximum number of prediction records to keep in memory.
+    ///
+    /// Prevents unbounded memory growth in long-running sessions.
+    /// Default: 1000
+    pub max_history_size: usize,
 }
 
 impl Default for DspConfig {
@@ -55,6 +61,7 @@ impl Default for DspConfig {
             tau: 0.7, // Lean towards speed by default (balanced for most workloads)
             beta: 1,  // Slight aggressive offset
             max_speculative_steps: 10,
+            max_history_size: 1000,
         }
     }
 }
@@ -126,6 +133,21 @@ impl DspPredictor {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         rkyv::from_bytes::<Self, rkyv::rancor::Error>(bytes)
             .map_err(|e| format!("Invalid DspPredictor state: {:?}", e))
+    }
+
+    /// Persists the predictor state to a file.
+    pub async fn save_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), SavantError> {
+        let bytes = self.to_bytes().map_err(|e| SavantError::Unknown(e))?;
+        tokio::fs::write(path, bytes).await
+            .map_err(|e| SavantError::IoError(e))?;
+        Ok(())
+    }
+
+    /// Loads the predictor state from a file.
+    pub async fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Self, SavantError> {
+        let bytes = tokio::fs::read(path).await
+            .map_err(|e| SavantError::IoError(e))?;
+        Self::from_bytes(&bytes).map_err(|e| SavantError::Unknown(e))
     }
 
     /// Computes the Expectile Regression loss.
@@ -210,6 +232,12 @@ impl DspPredictor {
             loss: None,
         };
         self.prediction_history.push(record);
+
+        // 🏰 AAA: Bound Prediction History (Pruning oldest slice on overflow)
+        if self.prediction_history.len() > self.config.max_history_size {
+            let prune_count = (self.config.max_history_size / 10).max(1);
+            self.prediction_history.drain(..prune_count);
+        }
 
         debug!(
             complexity = %trajectory_complexity,
@@ -380,6 +408,7 @@ mod tests {
             tau: 0.5,
             beta: 0,
             max_speculative_steps: 10,
+            max_history_size: 1000,
         }).expect("Failed to create predictor");
 
         // With τ=0.5 (symmetric), loss should be symmetric
@@ -397,6 +426,7 @@ mod tests {
             tau: 0.8,
             beta: 0,
             max_speculative_steps: 10,
+            max_history_size: 1000,
         }).expect("Failed to create predictor");
 
         // With τ=0.8 (favor low k), under-prediction (y < ŷ) should be penalized less
@@ -414,11 +444,13 @@ mod tests {
             tau: 0.7,
             beta: 0,
             max_speculative_steps: 10,
+            max_history_size: 1000,
         }).unwrap();
         let mut predictor_biased = DspPredictor::new(DspConfig {
             tau: 0.7,
             beta: 3,
             max_speculative_steps: 10,
+            max_history_size: 1000,
         }).unwrap();
 
         let k_base = predictor_base.predict_optimal_k(5.0);
@@ -445,11 +477,13 @@ mod tests {
             tau: 0.7,
             beta: 0,
             max_speculative_steps: 10,
+            max_history_size: 1000,
         }).unwrap();
 
         // Simulate a history where we consistently over-predict
+        // Base prediction for complexity 0.4 is 10/1.4 = 7
         for _i in 0..10 {
-            predictor.predict_optimal_k(5.0);
+            predictor.predict_optimal_k(0.4);
             // actual is always less than predicted (we over-predicted)
             predictor.update_accuracy(7, 3); // predicted=7, actual=3
         }
@@ -467,6 +501,7 @@ mod tests {
             tau: 1.5,
             beta: 0,
             max_speculative_steps: 10,
+            max_history_size: 1000,
         };
         assert!(invalid_config.validate().is_err());
 
@@ -474,6 +509,7 @@ mod tests {
             tau: 0.7,
             beta: 0,
             max_speculative_steps: 0,
+            max_history_size: 1000,
         };
         assert!(invalid_config2.validate().is_err());
 
@@ -481,6 +517,7 @@ mod tests {
             tau: 0.7,
             beta: 0,
             max_speculative_steps: 10,
+            max_history_size: 1000,
         };
         assert!(valid_config.validate().is_ok());
     }

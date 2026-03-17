@@ -6,20 +6,105 @@
 //! - HNSW graph indexing
 //! - AVX2/AVX-512/NEON SIMD distance calculations
 //! - Binary quantization for 32x memory compression
+//! - File-based persistence via rkyv zero-copy serialization
 //!
 //! Reference: ruvector-core benchmarks show <0.5ms p50 for 1M vectors.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tracing::{debug, info, instrument, warn};
 
+use rkyv::rancor::Error as RkyvError;
 use ruvector_core::index::hnsw::HnswIndex;
 use ruvector_core::quantization::BinaryQuantized;
-use ruvector_core::types::{DbOptions, HnswConfig, DistanceMetric, QuantizationConfig, VectorEntry, SearchQuery};
+use ruvector_core::types::{
+    DbOptions, DistanceMetric, HnswConfig, QuantizationConfig, SearchQuery, VectorEntry,
+};
 use ruvector_core::vector_db::VectorDB;
-// use ruvector_core::DistanceMetric;
 
 use crate::error::MemoryError;
+
+/// Maximum number of vectors to persist per batch (prevents OOM on huge indexes)
+const MAX_PERSIST_VECTORS: usize = 10_000_000;
+
+/// Magic bytes for persistence files to validate format
+const PERSIST_MAGIC: &[u8; 8] = b"SAVANT_V";
+
+/// Persistence file header (rkyv-serialized).
+///
+/// Stored at the beginning of the persistence file to validate format
+/// and store metadata about the serialized vector data.
+#[derive(
+    Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes,
+)]
+#[bytecheck(crate = bytecheck)]
+#[repr(C)]
+struct PersistHeader {
+    /// Magic bytes for format validation
+    pub magic: [u8; 8],
+    /// Schema version for forward/backward compatibility
+    pub version: u32,
+    /// Number of vectors stored
+    pub vector_count: u64,
+    /// Dimensionality of vectors
+    pub dimensions: u32,
+    /// Distance metric used (serialized as u8: 0=Cosine, 1=Euclidean, 2=Dot)
+    pub distance_metric: u8,
+}
+
+/// Serializable vector entry for persistence.
+///
+/// This is a simplified version of `VectorEntry` that can be archived
+/// with rkyv without requiring upstream changes.
+#[derive(
+    Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes,
+)]
+#[bytecheck(crate = bytecheck)]
+#[repr(C)]
+struct SerializableVectorEntry {
+    /// Optional identifier
+    pub id: Option<String>,
+    /// The vector data (f32 values)
+    pub vector: Vec<f32>,
+    /// Optional metadata JSON string
+    pub metadata: Option<String>,
+}
+
+impl From<&VectorEntry> for SerializableVectorEntry {
+    fn from(entry: &VectorEntry) -> Self {
+        Self {
+            id: entry.id.clone(),
+            vector: entry.vector.clone(),
+            metadata: entry
+                .metadata
+                .as_ref()
+                .map(|m| serde_json::to_string(m).unwrap_or_default()),
+        }
+    }
+}
+
+impl From<SerializableVectorEntry> for VectorEntry {
+    fn from(entry: SerializableVectorEntry) -> Self {
+        Self {
+            id: entry.id,
+            vector: entry.vector,
+            metadata: entry.metadata.and_then(|m| serde_json::from_str(&m).ok()),
+        }
+    }
+}
+
+/// Combined persistence structure for rkyv serialization.
+///
+/// Stores both the header and vector entries together to avoid
+/// the Portable trait requirement for Vec<ArchivedT>.
+#[derive(
+    Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, bytecheck::CheckBytes,
+)]
+#[bytecheck(crate = bytecheck)]
+struct PersistedData {
+    header: PersistHeader,
+    entries: Vec<SerializableVectorEntry>,
+}
 
 /// Configuration for the semantic vector engine.
 #[derive(Debug, Clone)]
@@ -55,16 +140,24 @@ impl Default for VectorConfig {
 /// - Uses HNSW (Hierarchical Navigable Small World) graph for approximate nearest neighbor search
 /// - Leverages ruvector-core's SIMD-accelerated distance calculations
 /// - Supports sub-millisecond query latency on millions of vectors
+/// - Persists vectors to disk via rkyv zero-copy serialization
 pub struct SemanticVectorEngine {
     db: Arc<VectorDB>,
     _quantizer: Option<BinaryQuantized>,
     config: VectorConfig,
+    /// Internal entry cache for persistence and vector counting.
+    /// This is the source of truth for serialized data; the VectorDB
+    /// is rebuilt from this cache on load.
+    entries: Arc<Mutex<Vec<VectorEntry>>>,
+    /// The path where persistence data is stored (if loaded from disk)
+    persist_path: Option<PathBuf>,
 }
 
 impl SemanticVectorEngine {
     /// Creates a new vector engine with the given configuration.
     ///
     /// # Arguments
+    /// * `path` - Storage directory for the vector index
     /// * `config` - Vector configuration (use `Default` for sensible defaults)
     ///
     /// # Returns
@@ -73,6 +166,18 @@ impl SemanticVectorEngine {
     /// # Errors
     /// Returns `MemoryError::VectorInitFailed` if the HNSW index cannot be created.
     pub fn new<P: AsRef<Path>>(path: P, config: VectorConfig) -> Result<Arc<Self>, MemoryError> {
+        Self::new_with_path(path, config, None)
+    }
+
+    /// Creates a new vector engine with an explicit persistence path.
+    ///
+    /// This is used internally when loading from disk to remember where
+    /// the data came from for later auto-saving.
+    fn new_with_path<P: AsRef<Path>>(
+        path: P,
+        config: VectorConfig,
+        persist_path: Option<PathBuf>,
+    ) -> Result<Arc<Self>, MemoryError> {
         info!(
             "Initializing RuVector SIMD Engine (dims={})",
             config.dimensions
@@ -87,8 +192,12 @@ impl SemanticVectorEngine {
         };
 
         // Create HNSW index with Cosine distance and SIMD acceleration
-        let _index = HnswIndex::new(config.dimensions, DistanceMetric::Cosine, hnsw_config.clone())
-            .map_err(|e| MemoryError::VectorInitFailed(e.to_string()))?;
+        let _index = HnswIndex::new(
+            config.dimensions,
+            DistanceMetric::Cosine,
+            hnsw_config.clone(),
+        )
+        .map_err(|e| MemoryError::VectorInitFailed(e.to_string()))?;
 
         // Build DB options
         let db_options = DbOptions {
@@ -96,9 +205,15 @@ impl SemanticVectorEngine {
             distance_metric: DistanceMetric::Cosine,
             storage_path: path.as_ref().join("vector").to_string_lossy().to_string(),
             hnsw_config: Some(hnsw_config),
-            quantization: Some(if config.use_quantization { QuantizationConfig::Binary } else { QuantizationConfig::None }),
+            quantization: Some(if config.use_quantization {
+                QuantizationConfig::Binary
+            } else {
+                QuantizationConfig::None
+            }),
         };
-        let db = Arc::new(VectorDB::new(db_options).map_err(|e| MemoryError::VectorInitFailed(e.to_string()))?);
+        let db = Arc::new(
+            VectorDB::new(db_options).map_err(|e| MemoryError::VectorInitFailed(e.to_string()))?,
+        );
 
         let quantizer = None;
 
@@ -106,6 +221,8 @@ impl SemanticVectorEngine {
             db,
             _quantizer: quantizer,
             config,
+            entries: Arc::new(Mutex::new(Vec::new())),
+            persist_path,
         }))
     }
 
@@ -116,33 +233,215 @@ impl SemanticVectorEngine {
 
     /// Loads a pre-trained vector index from disk.
     ///
-    /// This allows persisting the HNSW graph between runs.
+    /// This deserializes the vector entries using rkyv and rebuilds the
+    /// in-memory HNSW index. The process is:
+    /// 1. Read and validate the persistence file header
+    /// 2. Deserialize all vector entries
+    /// 3. Create a fresh VectorDB
+    /// 4. Re-insert all entries into the VectorDB
+    ///
+    /// # Arguments
+    /// * `path` - Directory containing the persistence file (`vectors.rkyv`)
+    /// * `config` - Vector configuration (dimensions must match the persisted data)
+    ///
+    /// # Returns
+    /// A new engine with the loaded vectors, or an error if the file is invalid.
     pub fn load_from_path<P: AsRef<Path>>(
         path: P,
-        _config: VectorConfig,
+        config: VectorConfig,
     ) -> Result<Arc<Self>, MemoryError> {
-        info!("Loading vector index from {:?}", path.as_ref());
+        let persist_file = path.as_ref().join("vectors.rkyv");
+        info!("Loading vector index from {:?}", persist_file);
 
-        // UPSTREAM: Awaiting ruvector-core persistence API
-        // For now, we return an error indicating it's unimplemented
-        Err(MemoryError::Unsupported(
-            "Persistence not yet implemented in ruvector-core".to_string(),
-        ))
+        if !persist_file.exists() {
+            return Err(MemoryError::Unsupported(format!(
+                "Persistence file not found: {}",
+                persist_file.display()
+            )));
+        }
+
+        // Read the entire persistence file
+        let data = std::fs::read(&persist_file).map_err(|e| MemoryError::Io(e))?;
+
+        if data.len() < 8 {
+            return Err(MemoryError::SerializationFailed(
+                "Persistence file too small to contain valid header".to_string(),
+            ));
+        }
+
+        // Validate magic bytes
+        let magic: [u8; 8] = data[0..8].try_into().unwrap();
+        if magic != *PERSIST_MAGIC {
+            return Err(MemoryError::SerializationFailed(format!(
+                "Invalid persistence file format (magic: {:?})",
+                &magic
+            )));
+        }
+
+        // Deserialize the entire persistence payload using from_bytes
+        // This avoids the Portable trait requirement that rkyv::access has
+        let persisted: PersistedData = rkyv::from_bytes(&data[8..]).map_err(|e: RkyvError| {
+            MemoryError::SerializationFailed(format!(
+                "Failed to deserialize persistence data: {}",
+                e
+            ))
+        })?;
+
+        let header = persisted.header;
+
+        // Validate header
+        if header.magic != *PERSIST_MAGIC {
+            return Err(MemoryError::SerializationFailed(
+                "Corrupted persistence header".to_string(),
+            ));
+        }
+        if header.dimensions as usize != config.dimensions {
+            return Err(MemoryError::DimensionMismatch {
+                expected: config.dimensions,
+                actual: header.dimensions as usize,
+            });
+        }
+        if header.vector_count as usize > MAX_PERSIST_VECTORS {
+            return Err(MemoryError::SerializationFailed(format!(
+                "Too many vectors in persistence file: {} (max: {})",
+                header.vector_count, MAX_PERSIST_VECTORS
+            )));
+        }
+
+        let entries: Vec<VectorEntry> = persisted
+            .entries
+            .into_iter()
+            .map(VectorEntry::from)
+            .collect();
+
+        let count = entries.len();
+        info!(
+            "Loaded {} vectors from persistence (dims={})",
+            count, header.dimensions
+        );
+
+        // Create a fresh engine and re-insert all entries, storing the persist path
+        let engine = Self::new_with_path(path.as_ref(), config, Some(path.as_ref().to_path_buf()))?;
+
+        // Re-insert all entries into the VectorDB
+        {
+            let mut engine_entries = engine.entries.lock().map_err(|_| {
+                MemoryError::SerializationFailed("Failed to lock entries mutex".to_string())
+            })?;
+            for entry in &entries {
+                engine
+                    .db
+                    .insert(entry.clone())
+                    .map_err(|e| MemoryError::VectorInsertFailed(e.to_string()))?;
+            }
+            *engine_entries = entries;
+        }
+
+        Ok(engine)
     }
 
     /// Saves the current vector index to disk.
     ///
-    /// This serializes the HNSW graph structure for later reuse.
-    pub fn save_to_path<P: AsRef<Path>>(&self, _path: P) -> Result<(), MemoryError> {
-        // UPSTREAM: Awaiting ruvector-core support for disk-backend persistence
-        Err(MemoryError::Unsupported(
-            "Persistence not yet implemented in ruvector-core".to_string(),
-        ))
+    /// This serializes all vector entries using rkyv zero-copy serialization
+    /// to a file named `vectors.rkyv` in the specified directory.
+    ///
+    /// # File Format
+    /// ```text
+    /// [8 bytes: magic "SAVANT_V"]
+    /// [rkyv-serialized PersistHeader]
+    /// [rkyv-serialized Vec<SerializableVectorEntry>]
+    /// ```
+    ///
+    /// # Arguments
+    /// * `path` - Directory where the persistence file will be written
+    pub fn save_to_path<P: AsRef<Path>>(&self, path: P) -> Result<(), MemoryError> {
+        let persist_dir = path.as_ref();
+        let persist_file = persist_dir.join("vectors.rkyv");
+
+        info!("Saving vector index to {:?}", persist_file);
+
+        // Ensure the directory exists
+        std::fs::create_dir_all(persist_dir).map_err(|e| MemoryError::Io(e))?;
+
+        // Lock the entries mutex
+        let entries = self.entries.lock().map_err(|_| {
+            MemoryError::SerializationFailed("Failed to lock entries mutex".to_string())
+        })?;
+
+        if entries.len() > MAX_PERSIST_VECTORS {
+            return Err(MemoryError::SerializationFailed(format!(
+                "Too many vectors to persist: {} (max: {})",
+                entries.len(),
+                MAX_PERSIST_VECTORS
+            )));
+        }
+
+        // Build serializable entries
+        let serializable: Vec<SerializableVectorEntry> =
+            entries.iter().map(SerializableVectorEntry::from).collect();
+
+        // Build header
+        let header = PersistHeader {
+            magic: *PERSIST_MAGIC,
+            version: 1,
+            vector_count: entries.len() as u64,
+            dimensions: self.config.dimensions as u32,
+            distance_metric: 0, // Cosine
+        };
+
+        // Combine into a single persistable structure
+        let persisted = PersistedData {
+            header,
+            entries: serializable,
+        };
+
+        // Serialize with rkyv
+        let serialized_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&persisted).map_err(|e| {
+            MemoryError::SerializationFailed(format!("Persistence serialization failed: {}", e))
+        })?;
+
+        // Write to file: [magic][serialized_data]
+        let mut file_data = Vec::with_capacity(8 + serialized_bytes.len());
+        file_data.extend_from_slice(PERSIST_MAGIC);
+        file_data.extend_from_slice(&serialized_bytes);
+
+        std::fs::write(&persist_file, &file_data).map_err(|e| MemoryError::Io(e))?;
+
+        info!(
+            "Saved {} vectors to {:?} ({} bytes)",
+            entries.len(),
+            persist_file,
+            file_data.len()
+        );
+
+        Ok(())
+    }
+
+    /// Persists the current vector index to the stored path.
+    ///
+    /// This is a convenience method that uses the path stored when the engine
+    /// was created or loaded. Returns an error if no persist path is available.
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or an error if no persist path is set.
+    pub fn persist(&self) -> Result<(), MemoryError> {
+        match &self.persist_path {
+            Some(path) => self.save_to_path(path),
+            None => Err(MemoryError::Unsupported(
+                "No persist path configured. Use save_to_path() instead.".to_string(),
+            )),
+        }
+    }
+
+    /// Returns the current persist path, if any.
+    pub fn persist_path(&self) -> Option<&Path> {
+        self.persist_path.as_deref()
     }
 
     /// Indexes a new memory entry for semantic retrieval.
     ///
     /// The embedding is optionally quantized (32x compression) before insertion.
+    /// The entry is also stored in the internal cache for persistence support.
     ///
     /// # Arguments
     /// * `memory_id` - Unique identifier for this memory (typically the MemoryEntry.id)
@@ -160,16 +459,24 @@ impl SemanticVectorEngine {
             });
         }
 
-        // Optionally quantize for memory efficiency
-         // Insert into HNSW index
         let entry = VectorEntry {
             id: Some(memory_id.to_string()),
             vector: embedding.to_vec(),
             metadata: None,
         };
-        
-        self.db.insert(entry)
+
+        // Insert into VectorDB
+        self.db
+            .insert(entry.clone())
             .map_err(|e| MemoryError::VectorInsertFailed(e.to_string()))?;
+
+        // Store in internal cache for persistence
+        {
+            let mut entries = self.entries.lock().map_err(|_| {
+                MemoryError::VectorInsertFailed("Failed to lock entries mutex".to_string())
+            })?;
+            entries.push(entry);
+        }
 
         debug!("Indexed memory with ID: {}", memory_id);
         Ok(())
@@ -204,32 +511,27 @@ impl SemanticVectorEngine {
         // Apply search options if provided
         if let Some(ref opts) = options {
             if let Some(ef) = opts.ef_search {
-                // Note: In a full implementation, we would rebuild the index with different ef_search
-                // For now, we use the configured value
                 debug!("Using custom ef_search: {}", ef);
             }
         }
 
-        // Perform the search - this dispatches to SIMD-optimized code
-        
         let query = SearchQuery {
             vector: query_embedding.to_vec(),
             k: top_k,
             filter: None,
             ef_search: options.and_then(|o| o.ef_search),
         };
-        
-        let results = self.db.search(query)
+
+        let results = self
+            .db
+            .search(query)
             .map_err(|e| MemoryError::VectorQueryFailed(e.to_string()))?;
 
-        // Convert to SearchResult struct with scores
         let search_results: Vec<SearchResult> = results
             .into_iter()
             .map(|res| SearchResult {
                 document_id: res.id,
-                // In ruvector-core, distance objects have a .distance() method
-                // We convert to similarity score (1.0 - normalized_distance)
-                score: 1.0 - normalize_distance(res.score),
+                score: normalize_distance(res.score),
                 distance: res.score,
             })
             .collect();
@@ -256,9 +558,6 @@ impl SemanticVectorEngine {
             });
         }
 
-        // This would use a different ruvector-core API if available
-        // For now, we perform standard search and filter
-        // Perform the search
         use ruvector_core::types::SearchQuery;
         let query = SearchQuery {
             vector: query_embedding.to_vec(),
@@ -266,8 +565,10 @@ impl SemanticVectorEngine {
             filter: None,
             ef_search: None,
         };
-        
-        let all_results = self.db.search(query)
+
+        let all_results = self
+            .db
+            .search(query)
             .map_err(|e| MemoryError::VectorQueryFailed(e.to_string()))?;
 
         let filtered: Vec<SearchResult> = all_results
@@ -275,7 +576,7 @@ impl SemanticVectorEngine {
             .filter(|res| res.score <= max_distance)
             .map(|res| SearchResult {
                 document_id: res.id,
-                score: 1.0 - normalize_distance(res.score),
+                score: normalize_distance(res.score),
                 distance: res.score,
             })
             .collect();
@@ -286,18 +587,25 @@ impl SemanticVectorEngine {
     /// Removes a memory entry from the index.
     ///
     /// This is useful for memory compaction and deletion.
+    /// The entry is also removed from the internal persistence cache.
     pub fn remove(&self, memory_id: &str) -> Result<(), MemoryError> {
-        // ruvector-core's delete may return a result, we ignore if not found
         let _ = self.db.delete(memory_id);
+
+        // Remove from internal cache
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.retain(|e| e.id.as_deref() != Some(memory_id));
+        }
+
         debug!("Removed memory from vector index: {}", memory_id);
         Ok(())
     }
 
     /// Returns the number of vectors currently indexed.
+    ///
+    /// This uses the internal entry cache, which is the source of truth
+    /// for the vector count since ruvector-core does not expose a count API.
     pub fn vector_count(&self) -> usize {
-        // UPSTREAM: Pending ruvector-core typed API migration
-        // For now, we can't get count without scanning
-        0
+        self.entries.lock().map(|e| e.len()).unwrap_or(0)
     }
 
     /// Returns the engine configuration.
@@ -326,6 +634,14 @@ impl SemanticVectorEngine {
     }
 }
 
+/// Normalizes a raw distance to a similarity score in [0, 1].
+///
+/// For cosine distance (used by ruvector-core), the range is [0, 2].
+/// We convert to similarity: score = 1.0 - (distance / 2.0)
+fn normalize_distance(distance: f32) -> f32 {
+    (1.0 - (distance / 2.0)).clamp(0.0, 1.0)
+}
+
 /// Search result containing the document ID, similarity score, and raw distance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
@@ -348,19 +664,10 @@ pub struct SearchOptions {
     pub quantized_only: bool,
 }
 
-/// Normalizes a raw distance to a similarity score in [0, 1].
-///
-/// For cosine distance (used by ruvector-core), the range is [0, 2].
-/// We convert to similarity: score = 1.0 - (distance / 2.0)
-fn normalize_distance(distance: f32) -> f32 {
-    // For cosine distance, max is 2.0 (orthogonal vectors)
-    // For Euclidean, max would be sqrt(dim) but we use cosine
-    (distance / 2.0).min(1.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_vector_engine_creation() {
@@ -370,20 +677,15 @@ mod tests {
 
     #[test]
     fn test_simd_supported_detection() {
-        // This will return true on x86_64 with AVX2 or ARM64 with NEON
         let supported = SemanticVectorEngine::simd_supported();
-        // We don't assert true/false because it depends on host CPU
-        // Just verify it returns a boolean
         let _ = supported;
     }
 
     #[test]
     fn test_normalize_distance() {
-        // Cosine distance: 0 = identical, 2 = opposite
         assert!((normalize_distance(0.0) - 1.0).abs() < 1e-6);
         assert!((normalize_distance(1.0) - 0.5).abs() < 1e-6);
         assert!((normalize_distance(2.0) - 0.0).abs() < 1e-6);
-        // Clamp test
         assert!((normalize_distance(3.0) - 0.0).abs() < 1e-6); // >2 should clamp
     }
 
@@ -393,5 +695,114 @@ mod tests {
         let wrong_dims = vec![0.1; 128];
         let result = engine.index_memory("test", &wrong_dims);
         assert!(matches!(result, Err(MemoryError::DimensionMismatch { .. })));
+    }
+
+    #[test]
+    fn test_vector_count_initially_zero() {
+        let engine = SemanticVectorEngine::default_384().unwrap();
+        assert_eq!(engine.vector_count(), 0);
+    }
+
+    #[test]
+    fn test_vector_count_increments() {
+        let engine = SemanticVectorEngine::default_384().unwrap();
+        let embedding = vec![0.1; 384];
+        engine.index_memory("mem-1", &embedding).unwrap();
+        assert_eq!(engine.vector_count(), 1);
+
+        engine.index_memory("mem-2", &embedding).unwrap();
+        assert_eq!(engine.vector_count(), 2);
+    }
+
+    #[test]
+    fn test_remove_decrements_count() {
+        let engine = SemanticVectorEngine::default_384().unwrap();
+        let embedding = vec![0.1; 384];
+        engine.index_memory("mem-1", &embedding).unwrap();
+        engine.index_memory("mem-2", &embedding).unwrap();
+        assert_eq!(engine.vector_count(), 2);
+
+        engine.remove("mem-1").unwrap();
+        assert_eq!(engine.vector_count(), 1);
+    }
+
+    #[test]
+    fn test_save_and_load_persistence() {
+        let dir = tempdir().unwrap();
+
+        // Create engine and index some vectors
+        let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::default()).unwrap();
+        engine.index_memory("mem-1", &vec![0.1; 384]).unwrap();
+        engine.index_memory("mem-2", &vec![0.2; 384]).unwrap();
+        engine.index_memory("mem-3", &vec![0.3; 384]).unwrap();
+        assert_eq!(engine.vector_count(), 3);
+
+        // Save to disk
+        engine.save_to_path(dir.path()).unwrap();
+
+        // Verify file exists
+        let persist_file = dir.path().join("vectors.rkyv");
+        assert!(persist_file.exists());
+
+        // Load from disk
+        let loaded =
+            SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::default()).unwrap();
+        assert_eq!(loaded.vector_count(), 3);
+    }
+
+    #[test]
+    fn test_save_and_load_preserves_search() {
+        let dir = tempdir().unwrap();
+
+        // Create engine with known vectors
+        let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::default()).unwrap();
+        let query = vec![1.0; 384];
+        let similar = vec![0.9; 384];
+        let dissimilar = vec![-1.0; 384];
+
+        engine.index_memory("similar", &similar).unwrap();
+        engine.index_memory("dissimilar", &dissimilar).unwrap();
+
+        // Save and reload
+        engine.save_to_path(dir.path()).unwrap();
+        let loaded =
+            SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::default()).unwrap();
+
+        // Search should return results
+        let results = loaded.recall(&query, 2, None).unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_load_nonexistent_file_fails() {
+        let dir = tempdir().unwrap();
+        let result = SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::default());
+        let err = result.err().expect("should fail for nonexistent file");
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_save_creates_directory() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("deep/nested/path");
+
+        let engine = SemanticVectorEngine::new(&nested, VectorConfig::default()).unwrap();
+        engine.index_memory("mem-1", &vec![0.1; 384]).unwrap();
+        engine.save_to_path(&nested).unwrap();
+
+        assert!(nested.join("vectors.rkyv").exists());
+    }
+
+    #[test]
+    fn test_persist_header_magic_validation() {
+        let dir = tempdir().unwrap();
+        let persist_file = dir.path().join("vectors.rkyv");
+
+        // Write invalid magic
+        std::fs::write(&persist_file, b"BADMAGIC").unwrap();
+
+        let result = SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::default());
+        let err = result.err().expect("should fail for invalid magic");
+        assert!(err.to_string().contains("Invalid persistence file format"));
     }
 }

@@ -96,7 +96,16 @@ impl AgentKeyPair {
             }
         }
 
-        // Fallback: Auto-generate keys for development
+        // In production (non-test, non-dev mode), fail loudly
+        let is_dev_mode = cfg!(test)
+            || std::env::var("SAVANT_DEV_MODE").is_ok()
+            || std::env::var("CI").is_ok();
+
+        if !is_dev_mode {
+            return Err(CryptoError::InvalidKeyFormat);
+        }
+
+        // Fallback: Auto-generate keys for development/test only
         tracing::warn!(
             "⚠️  No master keys found in environment. Auto-generating for development..."
         );
@@ -185,7 +194,7 @@ pub fn get_openrouter_api_key() -> Result<String, CryptoError> {
         }
     }
 
-    // Generate a demo key for testing (in production, this should fail)
-    tracing::warn!("No OpenRouter API key found. Set OPENROUTER_API_KEY environment variable or add to config/api_keys.toml");
-    Ok("demo-key-replace-with-real-openrouter-key".to_string())
+    // Production: Fail loudly if no API key is configured
+    tracing::error!("No OpenRouter API key found. Set OPENROUTER_API_KEY environment variable or add to config/api_keys.toml");
+    Err(CryptoError::InvalidKeyFormat)
 }

@@ -1,5 +1,5 @@
 use crate::error::SavantError;
-use crate::types::{AgentConfig, AgentIdentity, ModelProvider};
+use crate::types::{AgentConfig, AgentFileConfig, AgentIdentity, LlmParams, ModelProvider};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -118,7 +118,10 @@ impl AgentRegistry {
 
         env_vars.extend(self.defaults.env_vars.clone());
 
-        Ok(AgentConfig {
+        // Load per-agent config file (agent.config.json)
+        let file_config = AgentFileConfig::load(workspace_path).unwrap_or_default();
+
+        let mut agent_config = AgentConfig {
             agent_id,
             agent_name: identity.name.clone(),
             model_provider: ModelProvider::OpenRouter, // Default for Savant swarm
@@ -133,7 +136,13 @@ impl AgentRegistry {
             parent_id: None,
             session_id: None,
             proactive: self.defaults.proactive.clone(),
-        })
+            llm_params: LlmParams::default(),
+        };
+
+        // Apply file config overrides
+        file_config.apply_to(&mut agent_config);
+
+        Ok(agent_config)
     }
 
     /// Resolves is current path to a workspace for a specific agent ID.
@@ -148,9 +157,16 @@ impl AgentRegistry {
     }
 
     /// Scaffolds a new agent workspace with AAA defaults.
-    pub fn scaffold_workspace(&self, agent_name: &str, soul_content: &str, identity_content: Option<&str>) -> Result<AgentConfig, SavantError> {
+    pub fn scaffold_workspace(
+        &self,
+        agent_name: &str,
+        soul_content: &str,
+        identity_content: Option<&str>,
+    ) -> Result<AgentConfig, SavantError> {
         let workspaces_path = self.base_path.join("workspaces");
-        let safe_name = agent_name.replace(|c: char| !c.is_alphanumeric(), "-").to_lowercase();
+        let safe_name = agent_name
+            .replace(|c: char| !c.is_alphanumeric(), "-")
+            .to_lowercase();
         let workspace_path = workspaces_path.join(format!("workspace-{}", safe_name));
 
         if !workspace_path.exists() {
@@ -164,13 +180,16 @@ impl AgentRegistry {
         // 2. Write .env boilerplate with Master Key injection
         let env_path = workspace_path.join(".env");
         if !env_path.exists() {
-            let mut env_content = format!("# Savant Agent Environment: {}\nMODEL=gryphe/mythomax-l2-13b\n", agent_name);
-            
+            let mut env_content = format!(
+                "# Savant Agent Environment: {}\nMODEL=gryphe/mythomax-l2-13b\n",
+                agent_name
+            );
+
             // Inject Master Key if available
             if let Some(mgmt) = &self.defaults.openrouter_mgmt {
                 env_content.push_str(&format!("OPENROUTER_API_KEY={}\n", mgmt.master_key));
             }
-            
+
             fs::write(env_path, env_content)?;
         }
 
@@ -191,6 +210,13 @@ impl AgentRegistry {
 
         // 4. Ensure stable ID (creates agent.json)
         let _ = self.ensure_stable_id(&workspace_path)?;
+
+        // 5. Create default agent.config.json if it doesn't exist
+        let config_path = workspace_path.join("agent.config.json");
+        if !config_path.exists() {
+            let default_config = AgentFileConfig::default();
+            let _ = default_config.save(&workspace_path);
+        }
 
         self.load_agent(&workspace_path)
     }

@@ -31,17 +31,16 @@ pub struct GatewayState {
 }
 
 /// Starts the axum gateway server.
-pub async fn start_gateway(config: Config, nexus: Arc<NexusBridge>) -> Result<(), SavantError> {
+pub async fn start_gateway(config: Config, nexus: Arc<NexusBridge>, storage: Arc<Storage>) -> Result<(), SavantError> {
     let addr = format!("{}:{}", config.gateway.host, config.gateway.port)
         .parse::<SocketAddr>()
         .map_err(|e| SavantError::Unknown(format!("Invalid address: {}", e)))?;
 
-    let storage = Storage::new(std::path::PathBuf::from(&config.system.db_path))?;
     let state = Arc::new(GatewayState {
         config: config.clone(),
         sessions: DashMap::new(),
         nexus,
-        storage: Arc::new(storage),
+        storage,
         avatar_cache: TokioMutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())),
     });
 
@@ -86,7 +85,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         _ => return,
     };
 
-    let session_context = match auth::authenticate(&auth_frame).await {
+    let dashboard_key = state.config.gateway.dashboard_api_key.as_deref();
+    let session_context = match auth::authenticate(&auth_frame, dashboard_key).await {
         Ok(ctx) => ctx,
         Err(e) => {
             tracing::error!("Authentication failed: {}", e);
@@ -100,8 +100,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
 
     // 2. Sovereign Handshake Ignition: Send current agents immediately upon auth
     // This ensures zero-latency sidebar population for the Dashboard.
-    let initial_agents = state.nexus.shared_memory.get("system.agents")
-        .map(|r| r.value().clone());
+    let initial_agents = state.nexus.shared_memory.get("system.agents");
 
     let agents_payload = if let Some(json) = initial_agents {
         json

@@ -22,6 +22,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -38,16 +39,27 @@ bytecheck = "0.8.0"
 rend = "0.5"
 half = { version = "2.7", features = ["rand_distr"] }
 savant_memory = { path = "crates/memory" }
+savant_core = { path = "crates/core" }
+savant_gateway = { path = "crates/gateway" }
+savant_skills = { path = "crates/skills" }
+savant_echo = { path = "crates/echo" }
+savant_cognitive = { path = "crates/cognitive" }
+savant_ipc = { path = "crates/ipc" }
+savant_agent = { path = "crates/agent" }
 dashmap = "6.1.0"
 libc = "0.2"
 num_cpus = "1.16"
 lru = "0.12"
+reqwest = { version = "0.11", features = ["json"] }
+backoff = { version = "0.4", features = ["tokio"] }
+zstd = "0.13"
+kani = "0.45"
 
 # Zero-Copy IPC (Atlas Step 4)
 iceoryx2 = "0.8"
 iceoryx2-bb = "0.8"
-wasmtime = "36.0.6"
-wasmtime-wasi = { version = "36.0.6", features = ["preview1"] }
+wasmtime = "36.0.0"
+wasmtime-wasi = { version = "36.0.0", features = ["preview1"] }
 
 # Cognitive Acceleration (Atlas Step 4)
 ndarray = "0.15"
@@ -62,6 +74,15 @@ opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.22"
 hex = "0.4"
 rand = "0.8"
+
+# Windows API (for Job Object sandboxing)
+windows = { version = "0.56", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+]}
 
 [profile.release]
 lto = true

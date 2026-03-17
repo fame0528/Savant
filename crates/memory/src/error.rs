@@ -100,7 +100,7 @@ mod tests {
             session_id: "sess456".to_string(),
         };
         let s = format!("{}", err);
-        assert!(s.contains("orphaned"));
+        assert!(s.contains("Orphaned"));
         assert!(s.contains("call123"));
         assert!(s.contains("sess456"));
     }

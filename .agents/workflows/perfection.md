@@ -1,3 +1,7 @@
+---
+description: The Savant Protocol for elevating code from functional to flawless (AAA Standard).
+---
+
 # 🌀 The Perfection Loop (Development Protocol)
 
 The **Perfection Loop** is the standard protocol for AG (Antigravity) when elevating a Savant feature from "functional" to "flawless." It is triggered whenever Spencer requests perfection or when a feature requires absolute technical sympathy.
@@ -5,42 +9,46 @@ The **Perfection Loop** is the standard protocol for AG (Antigravity) when eleva
 ## 🛠️ Loop Execution Steps
 
 ### 1. **Deep Audit (Code & Architecture)**
-- Analyze every line of the proposed or existing implementation.
-- Check for: Redundancy, Tech Debt, Security Vulnerabilities, Naming Inconsistencies.
-- Verify compliance with "WAL is Law" (does the code *implement* WAL logging?) and "Rust is Law" (memory safety, zero-cost abstractions).
-- **Output:** Report audit findings to Spencer *before* implementing changes.
+
+- **Requirement:** Read all target files COMPLETELY (1-EOF) before any analysis.
+- Analyze every line of the implementation for redundancy, tech debt, and security vulnerabilities.
+- Verify compliance with "WAL is Law" and "Rust is Law" (memory safety, zero-cost abstractions).
+- **Output:** Generate a structured `aaa_quality_audit_report.md` for Spencer *before* implementing changes.
 
 ### 2. **Heuristic Enhancement (Implementation)**
-- Apply performance optimizations (zero-copy, efficient memory mapping, SIMD where applicable).
-- Enhance error handling with descriptive, contextual telemetry (ensure errors log to WAL).
-- Refine UI/UX micro-interactions for maximum polish (TypeScript/React best practices).
-- **Constraint:** Do not introduce `unwrap()`, `todo!()`, or `as any`.
+
+- Apply performance optimizations (zero-copy, SIMD, efficient memory mapping).
+- Enhance error handling with context-rich telemetry logging to WAL.
+- Refine UI/UX micro-interactions using modern TypeScript/React best practices.
+- **Constraint:** Do not introduce `unwrap()`, `todo!()`, `unimplemented!()`, or `as any`. Ever.
 
 ### 3. **Validation Strike (Verification)**
-- Ensure code compiles (`cargo check` ready).
-- Ensure linting passes (`npm run lint` ready).
-- Verify unit tests are written and pass for the specific module.
-- Verify visual fidelity in the dashboard (if UI changes).
-- **Output:** Confirm validation status to Spencer.
+
+- **Rust:** Ensure `cargo check` and `cargo test` pass with zero warnings.
+- **Frontend:** Ensure `npx tsc --noEmit` and `npm run lint` pass.
+- Verify unit and integration tests are written and pass for the specific module.
+- **Output:** Provide a `walkthrough.md` with proof of work and validation status.
 
 ### 4. **Iterative Convergence**
+
 - If improvements are identified during Audit or Validation:
   - **Implement them immediately.**
   - **Return to Step 1** (Deep Audit) within the same session.
   - **Track Iteration:** Note the iteration count (e.g., "Perfection Loop: Iteration 2").
 - If NO improvements are identified:
   - **Proceed to Step 5** (Final Certification).
-- **User Checkpoint Gate:** If loop exceeds 3 iterations, pause and ask Spencer: "Continuing Perfection Loop. Diminishing returns detected. Proceed or ship?"
+- **User Checkpoint Gate:** If loop exceeds 3 iterations, pause and ask: "Continuing Perfection Loop. Diminishing returns detected. Proceed or ship?"
 
 ### 5. **Final Certification**
-- Report the final LOC, performance gains, and quality metrics to Spencer.
-- Include: Iteration count, time spent, improvements made, known limitations (if any).
+
+- Report final metrics (LOC, performance gains, quality metrics).
+- Include: Iteration count, time spent, and synergistic improvements made.
 - Declare: **"Perfection achieved. Synergistic convergence reached."**
-- **Deliverable:** Provide the final code blocks, migration steps (if any), and verification commands for Spencer to run.
+- **Deliverable:** Provide final code, migration steps, and verification commands.
 
 ---
 
-## 🛡️ Termination Criteria (Clear Exit Conditions)
+## 🛡️ Termination Criteria
 
 The loop terminates when **ANY** of the following are met:
 
@@ -48,48 +56,11 @@ The loop terminates when **ANY** of the following are met:
 |-----------|-----------|
 | Deep Audit yields ZERO actionable improvements | → Proceed to Final Certification |
 | Spencer explicitly requests to ship | → Proceed to Final Certification (note: "User-terminated") |
-| 5 iterations reached without convergence | → Pause, flag for Spencer review (possible architecture smell) |
-| Diminishing returns detected (improvements < threshold) | → Recommend ship, await Spencer approval |
-
----
-
-## 🧠 Core Principles (AG Specific)
-
-| Principle | **Mandate** |
-|-----------|-------------|
-| **No Rash Implementation** | Audit findings must be reported BEFORE implementing (Spencer approves direction). |
-| **WAL Integrity** | Ensure the *code written* implements WAL logging correctly. AG does not log to runtime WAL directly. |
-| **User Sovereignty** | Spencer can terminate at any time. The loop serves the mission, not the ego. |
-| **AAA Quality** | No `todo!()`, no `unimplemented!()`, no `as any`. Ever. |
-| **Tool Respect** | AG does not assume runtime access. AG writes code *for* the runtime. |
+| 5 iterations reached without convergence | → Flag for Spencer review (possible architecture smell) |
+| Diminishing returns detected | → Recommend ship, await Spencer approval |
 
 ---
 
 ## 🚀 Usage
 
-Trigger the loop by stating:
-
-- "Run perfection"
-- "Initiate perfection loop"
-- "Perfect this feature"
-- "AAA audit this module"
-
----
-
-## 📜 Example Session Flow
-
-```
-Spencer: "Run perfection on the gateway WebSocket handler."
-
-AG:
-  1. [Audit] "Found 3 issues: redundant clone, missing error context, naming inconsistency. Also, WAL logging hook is missing."
-  2. [Enhance] "Applied zero-copy buffer, added telemetry, renamed `ws_handler` → `websocket_dispatch`, added WAL log hook."
-  3. [Validate] "Code compiles. Lint passes. Tests written for dispatch logic."
-  4. [Converge] "Iteration 1 complete. Re-auditing..."
-  5. [Audit] "Found 1 minor issue: doc comment missing."
-  6. [Enhance] "Added doc comment with example usage."
-  7. [Validate] "cargo doc: 0 warnings."
-  8. [Converge] "Iteration 2 complete. Re-auditing..."
-  9. [Audit] "ZERO actionable improvements found."
-  10. [Certify] "Perfection achieved. 2 iterations. 4 improvements. Ready for Spencer review."
-```
+Trigger the loop by stating: "Run perfection", "Initiate perfection loop", or "AAA audit this module".

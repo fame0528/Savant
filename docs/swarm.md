@@ -49,7 +49,7 @@ The migration to **Savant**, a Rust-native re-architecture, provides an unpreced
 ### Operational Constraints
 
 ```yaml
-heartbeat_cycle: 10_minutes  # Proactive, not reactive operation
+heartbeat_cycle: 1_minute  # Proactive, not reactive operation
 max_peer_relationships: 15   # Cognitive load limit per agent
 ephemeral_subagents: true    # Dynamic spawning without governance tracking
 target_scale: 500+ agents    # Without architectural rework

@@ -14,7 +14,7 @@ notify = "6.1.1" # Cross-platform async file watcher
 notify-debouncer-mini = "0.4.1"
 
 # WebAssembly & Compilation
-wasmtime = "36.0.6"
+wasmtime = { workspace = true }
 wit-bindgen = "0.24"
 
 # Telemetry & Math for Circuit Breaker

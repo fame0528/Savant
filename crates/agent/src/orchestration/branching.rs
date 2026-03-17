@@ -11,6 +11,7 @@ use savant_core::traits::Tool;
 use savant_core::error::SavantError;
 use serde_json::Value;
 use futures::future::join_all;
+use std::io::Write;
 
 /// Represents a single potential branch of execution.
 pub struct CausalBranch {
@@ -37,12 +38,28 @@ impl HyperCausalEngine {
         Self { max_branches }
     }
 
+    /// Tools with side effects must NOT be executed speculatively.
+    /// These tools modify state and running them 3x would cause data corruption.
+    fn is_side_effect_tool(name: &str) -> bool {
+        matches!(
+            name,
+            "file_delete" | "file_move" | "file_create" | "file_atomic_edit" | "shell" | "foundation"
+        )
+    }
+
     /// Executes a tool across multiple potential timelines and returns the "Collapsed" result.
+    /// For side-effect tools, executes directly without speculation.
     pub async fn execute_speculative(
         &self,
         tool: Arc<dyn Tool>,
         payload: Value,
     ) -> Result<String, SavantError> {
+        // Side-effect tools must execute exactly once
+        if Self::is_side_effect_tool(tool.name()) {
+            info!("HCC: Side-effect tool '{}' detected — executing directly (no speculation)", tool.name());
+            return tool.execute(payload).await;
+        }
+
         info!("HCC: Initiating Hyper-Causal execution for tool: {}", tool.name());
 
         let mut branches = Vec::new();
@@ -50,6 +67,7 @@ impl HyperCausalEngine {
         for i in 0..self.max_branches {
             let tool_clone = Arc::clone(&tool);
             let payload_clone = payload.clone();
+            let _tool_name = tool.name().to_string();
             
             // Spawn a parallel potential timeline
             let handle = tokio::spawn(async move {
@@ -57,12 +75,26 @@ impl HyperCausalEngine {
                 let outcome = tool_clone.execute(payload_clone).await;
                 let _duration = start_time.elapsed();
 
-                // Mock Entropy Gain calculation
-                // In a real implementation, this would compare the state before/after
-                let entropy_gain = if outcome.is_ok() { 0.85 } else { 0.0 };
+                // --- OMEGA: Real Entropy Gain (Zstd Compression Density) ---
+                let entropy_gain = if let Ok(ref res) = outcome {
+                    // Informational Density: Lower compression ratio = Higher entropy/originality
+                    let mut encoder = zstd::Encoder::new(Vec::new(), 3).unwrap();
+                    encoder.write_all(res.as_bytes()).unwrap_or_default();
+                    let compressed = encoder.finish().unwrap_or_default();
+                    
+                    let original_size = res.len() as f32;
+                    let compressed_size = compressed.len() as f32;
+                    
+                    // Ratio of informational novelty (higher is better)
+                    if original_size > 0.0 {
+                        compressed_size / original_size
+                    } else { 0.0 }
+                } else { 0.0 };
                 
-                // Mock Formal Verification (Symbolic Simulation)
-                let verified = outcome.is_ok(); // Placeholder for Z3/Kani proof
+                // --- OMEGA: Semantic Verification ---
+                // In a production AAA system, we verify that the JSON output matches the tool's 
+                // expected verification schema (Contract Logic).
+                let verified = outcome.is_ok(); // Placeholder for deeper semantic logic transition
 
                 CausalBranch {
                     timeline_id: i as u64,

@@ -84,6 +84,45 @@ impl Tool for FileAtomicEditTool {
     }
 }
 
+/// Tool for file and directory creation.
+pub struct FileCreateTool;
+
+#[async_trait]
+impl Tool for FileCreateTool {
+    fn name(&self) -> &str { "file_create" }
+    fn description(&self) -> &str { "Creates a new file with content or a new directory." }
+    async fn execute(&self, payload: Value) -> Result<String, SavantError> {
+        let path = payload["path"].as_str()
+            .ok_or_else(|| SavantError::Unknown("Missing 'path' for create".to_string()))?;
+
+        // Check if this is a directory creation request
+        if payload["directory"].as_bool().unwrap_or(false) {
+            info!("[WAL:ACTUATOR] Action: create_directory, Path: {}", path);
+            fs::create_dir_all(path).await
+                .map_err(|e| SavantError::Unknown(format!("Failed to create directory {}: {}", path, e)))?;
+            return Ok(format!("Successfully created directory: {}", path));
+        }
+
+        // File creation with optional content
+        let content = payload["content"].as_str().unwrap_or("");
+        
+        info!("[WAL:ACTUATOR] Action: create_file, Path: {}", path);
+        
+        // Create parent directories if they don't exist
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).await
+                    .map_err(|e| SavantError::Unknown(format!("Failed to create parent dirs: {}", e)))?;
+            }
+        }
+
+        fs::write(path, content).await
+            .map_err(|e| SavantError::Unknown(format!("Failed to create file {}: {}", path, e)))?;
+        
+        Ok(format!("Successfully created file: {} ({} bytes)", path, content.len()))
+    }
+}
+
 /// Legacy Foundation Tool for general operations.
 pub struct FoundationTool;
 
@@ -117,6 +156,31 @@ impl Tool for FoundationTool {
                     out.push_str(&format!("{}\n", e.file_name().to_string_lossy()));
                 }
                 Ok(out)
+            }
+            "write" => {
+                let path = payload["path"].as_str().ok_or_else(|| SavantError::Unknown("Missing path".into()))?;
+                let content = payload["content"].as_str().unwrap_or("");
+                info!("[WAL:ACTUATOR] Action: write, Path: {}", path);
+                fs::write(path, content).await.map_err(|e| SavantError::Unknown(format!("Write failed: {}", e)))?;
+                Ok(format!("Successfully wrote {} bytes to {}", content.len(), path))
+            }
+            "mkdir" => {
+                let path = payload["path"].as_str().ok_or_else(|| SavantError::Unknown("Missing path".into()))?;
+                info!("[WAL:ACTUATOR] Action: mkdir, Path: {}", path);
+                fs::create_dir_all(path).await.map_err(|e| SavantError::Unknown(format!("Mkdir failed: {}", e)))?;
+                Ok(format!("Successfully created directory: {}", path))
+            }
+            "create" => {
+                let path = payload["path"].as_str().ok_or_else(|| SavantError::Unknown("Missing path".into()))?;
+                let content = payload["content"].as_str().unwrap_or("");
+                info!("[WAL:ACTUATOR] Action: create, Path: {}", path);
+                if let Some(parent) = Path::new(path).parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).await.map_err(|e| SavantError::Unknown(format!("Failed to create parent dirs: {}", e)))?;
+                    }
+                }
+                fs::write(path, content).await.map_err(|e| SavantError::Unknown(format!("Create failed: {}", e)))?;
+                Ok(format!("Successfully created file: {} ({} bytes)", path, content.len()))
             }
             _ => Err(SavantError::Unknown("Use specialized FS tools for destructive actions.".into()))
         }

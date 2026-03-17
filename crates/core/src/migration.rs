@@ -1,5 +1,5 @@
+use crate::types::{AgentConfig, ChatMessage, ChatRole, ModelProvider};
 use serde::{Deserialize, Serialize};
-use crate::types::{AgentConfig, ModelProvider, ChatRole, ChatMessage};
 use std::collections::HashMap;
 
 /// Legacy OpenClaw Agent Configuration (JSON Shape)
@@ -38,6 +38,7 @@ impl From<LegacyOpenClawConfig> for AgentConfig {
             parent_id: None,
             session_id: None,
             proactive: crate::config::ProactiveConfig::default(),
+            llm_params: crate::types::LlmParams::default(),
         }
     }
 }

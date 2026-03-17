@@ -62,7 +62,7 @@ impl SessionLane {
                 };
 
                 let response = ResponseFrame {
-                    request_id: "ack".to_string(),
+                    request_id: frame.request_id.clone(),
                     payload: response_payload,
                 };
                 let _ = response_tx.send(response).await;

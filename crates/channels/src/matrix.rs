@@ -3,7 +3,7 @@ use savant_core::traits::ChannelAdapter;
 use savant_core::types::EventFrame;
 use matrix_sdk::{Client, config::SyncSettings};
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use async_trait::async_trait;
 
 use crate::pool::InboxPool;
@@ -79,14 +79,42 @@ impl ChannelAdapter for MatrixAdapter {
     }
 
     async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
-        let _client = self.client.clone();
-        // Placeholder: Routing logic for room-specific events
-        info!("Matrix sending event: {:?}", event.event_type);
+        info!("Matrix processing outbound event: {}", event.event_type);
+        
+        match event.event_type.as_str() {
+            "message.send" => {
+                let payload: serde_json::Value = serde_json::from_str(&event.payload)
+                    .map_err(|e| SavantError::InvalidInput(format!("Invalid Matrix payload: {}", e)))?;
+                
+                let room_id_str = payload.get("room_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| SavantError::InvalidInput("Missing room_id in Matrix payload".into()))?;
+                
+                let text = payload.get("text")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| SavantError::InvalidInput("Missing text in Matrix payload".into()))?;
+
+                let room_id = <&matrix_sdk::ruma::RoomId>::try_from(room_id_str)
+                    .map_err(|e| SavantError::InvalidInput(format!("Invalid Matrix RoomID: {}", e)))?;
+
+                if let Some(room) = self.client.get_room(room_id) {
+                    use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
+                    let content = RoomMessageEventContent::text_plain(text);
+                    room.send(content).await
+                        .map_err(|e| SavantError::Unknown(format!("Failed to send Matrix message: {}", e)))?;
+                    info!("Matrix message sent to {}", room_id_str);
+                } else {
+                    return Err(SavantError::Unknown(format!("Room not found or not joined: {}", room_id_str)));
+                }
+            }
+            _ => {
+                warn!("Matrix: Unhandled event type for send_event: {}", event.event_type);
+            }
+        }
         Ok(())
     }
 
     async fn handle_event(&self, event: EventFrame) -> Result<(), SavantError> {
-        info!("Matrix incoming event: {:?}", event.event_type);
-        Ok(())
+        self.send_event(event).await
     }
 }

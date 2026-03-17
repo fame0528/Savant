@@ -49,6 +49,7 @@ impl HeartbeatPulse {
                 // 1. Listen for immediate chat messages
                 Ok(chat_event) = chat_rx.recv() => {
                     if chat_event.event_type == "chat.message" {
+                        debug!("[{}] Heartbeat received chat.message from Nexus", self.agent.agent_name);
                         if let Err(e) = self.handle_chat_message(chat_event.payload, &mut agent_loop).await {
                             parsing::log_agent_error(&self.agent.agent_name, "Failed to handle chat message", e);
                         }
@@ -82,13 +83,21 @@ impl HeartbeatPulse {
         match &chat_message {
             Ok(message) => {
                 let content = message.content.clone();
-                let recipient = message.recipient.clone();
                 let sender = message.sender.clone();
                 let agent_id = message.agent_id.clone();
                 
-                // 🛡️ Identity Pinning: Block Echo-Back (Normalized)
+                // 🛡️ Identity Pinning: Block Echo-Back (Normalized & Prefix-Aware)
                 let my_id = self.agent.agent_id.to_lowercase();
                 let my_name = self.agent.agent_name.to_lowercase();
+
+                if let Some(ref s_raw) = sender {
+                    let s = s_raw.to_lowercase();
+                    // Check for direct match or platform-prefixed match (e.g., discord:ID)
+                    let is_self = s == my_id || s == my_name || s.ends_with(&format!(":{}", my_id));
+                    if is_self {
+                        return Ok(());
+                    }
+                }
 
                 if let Some(ref sid_raw) = agent_id {
                     let sid = sid_raw.to_lowercase();
@@ -96,27 +105,11 @@ impl HeartbeatPulse {
                         return Ok(());
                     }
                 }
-                if let Some(ref s_raw) = sender {
-                    let s = s_raw.to_lowercase();
-                    if s == my_id || s == my_name {
-                        return Ok(());
-                    }
-                }
 
-                // Check if message is for us or a broadcast
-                if let Some(ref target) = recipient {
-                    let id = &self.agent.agent_id;
-                    let name = &self.agent.agent_name;
-                    let is_target = target == id || target == name || target == "global" || target == "swarm";
-                    
-                    if !is_target {
-                        return Ok(());
-                    }
-                }
-
+                // 🌌 Universal Eavesdropping: Processing all messages in lane.
                 info!(
-                    "[{}] Received chat message targeting {:?}: {}",
-                    self.agent.agent_name, recipient, content
+                    "[{}] Eavesdropping on message from {:?}: {}",
+                    self.agent.agent_name, sender, content
                 );
 
                 let response_recipient = sender;
@@ -127,8 +120,13 @@ impl HeartbeatPulse {
 
                 {
                     let shutdown_token = self.shutdown_token.clone();
-                    let mut stream = agent_loop.run(content, message.session_id.clone(), shutdown_token);
+                    let mut stream = agent_loop.run(content, message.session_id.clone(), shutdown_token.clone());
                     while let Some(event_res) = stream.next().await {
+                        // Perfection: Yield immediately if shutdown is requested
+                        if shutdown_token.is_cancelled() {
+                            return Ok(());
+                        }
+
                         match event_res {
                             Ok(AgentEvent::Thought(t)) => {
                                 // 🛡️ Perfection Loop: Thoughts are strictly telemetry

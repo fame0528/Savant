@@ -20,6 +20,7 @@ impl From<ConfigChromosome> for DspConfig {
             tau: c.tau,
             beta: c.beta,
             max_speculative_steps: 10,
+            max_history_size: 1000,
         }
     }
 }
@@ -51,8 +52,12 @@ impl GeneticForge {
             })
             .collect();
 
-        // Perform 10 generations of evolution
-        for _ in 0..10 {
+        let mut best_fitness = -1.0;
+        let mut generations_since_improvement = 0;
+        const CONVERGENCE_PLATEAU: usize = 3;
+
+        // Perform up to 50 generations of evolution with early stopping (HS-009)
+        for gen in 0..50 {
             // 1. Evaluate Fitness (structured for potential SIMD autovectorization)
             let mut fitness_scores: Vec<(f32, ConfigChromosome)> = population
                 .iter()
@@ -64,6 +69,24 @@ impl GeneticForge {
 
             // 2. Selection (Sort by fitness descending: higher is better)
             fitness_scores.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+
+            let current_best = fitness_scores[0].0;
+            
+            // 🏰 AAA: Convergence Detection Logic
+            if current_best > best_fitness + 1e-7 {
+                best_fitness = current_best;
+                generations_since_improvement = 0;
+            } else {
+                generations_since_improvement += 1;
+            }
+
+            if generations_since_improvement >= CONVERGENCE_PLATEAU {
+                tracing::info!(
+                    "GeneticForge: Convergence target met at generation {}. Best Fitness: {:.8}", 
+                    gen, best_fitness
+                );
+                break;
+            }
 
             // 3. Breeding (Top 50% survive and reproduce)
             let survivors: Vec<ConfigChromosome> = fitness_scores

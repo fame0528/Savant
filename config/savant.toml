@@ -10,9 +10,7 @@
 # ============================================================================
 [ai]
 provider = "openrouter"
-# Primary: healer-alpha (High-speed, omni-modal execution)
-# Fallback: hunter-alpha (Deep context, heavy reasoning)
-model = "anthropic/claude-sonnet-4-6"
+model = "openrouter/healer-alpha"
 temperature = 0.4
 max_tokens = 65536
 

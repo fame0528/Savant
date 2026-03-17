@@ -39,7 +39,7 @@ REM Set the run command (always needed)
 set RUN_CMD=cargo run --release --bin savant_cli
 
 REM Parse command line arguments
-if "%1"=="--fast" goto :start_services
+if "%1"=="--fast" goto :check_binary
 
 REM Build: Ensure latest code is compiled
 echo Building Savant core...
@@ -50,6 +50,21 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 echo Core build complete
+goto :start_services
+
+:check_binary
+REM Check if binary exists before skipping build
+if not exist "target\release\savant_cli.exe" (
+    echo No binary found. Building first...
+    cargo build --release
+    if %errorlevel% neq 0 (
+        echo Build failed
+        pause
+        exit /b 1
+    )
+    echo Build complete
+)
+echo Fast startup: binary ready
 
 :start_services
 
@@ -71,7 +86,7 @@ start "Savant Swarm Engine" cmd /k "%RUN_CMD%"
 echo Gateway started
 
 REM Wait for gateway to initialize
-timeout /t 3 /nobreak >nul
+timeout /t 5 /nobreak >nul
 
 REM Start the Dashboard
 echo Starting Dashboard...

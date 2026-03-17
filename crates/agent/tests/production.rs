@@ -1,18 +1,20 @@
 #![allow(clippy::disallowed_methods)]
-use std::sync::Arc;
-use savant_core::types::{AgentConfig, ChatMessage, ChatChunk, ModelProvider, AgentIdentity, AgentOutputChannel};
-use savant_core::config::Config;
-use savant_core::traits::LlmProvider;
-use savant_core::error::SavantError;
+use async_trait::async_trait;
+use futures::stream::{self, Stream};
+use pqcrypto_dilithium::dilithium2;
+use savant_agent::manager::AgentManager;
 use savant_agent::swarm::SwarmController;
 use savant_core::bus::NexusBridge;
+use savant_core::config::Config;
 use savant_core::db::Storage;
-use savant_agent::manager::AgentManager;
-use futures::stream::{self, Stream};
-use std::pin::Pin;
-use async_trait::async_trait;
+use savant_core::error::SavantError;
+use savant_core::traits::LlmProvider;
+use savant_core::types::{
+    AgentConfig, AgentIdentity, AgentOutputChannel, ChatChunk, ChatMessage, ModelProvider,
+};
 use std::collections::HashMap;
-use pqcrypto_dilithium::dilithium2;
+use std::pin::Pin;
+use std::sync::Arc;
 
 #[allow(dead_code)]
 struct MockLlmProvider;
@@ -22,7 +24,8 @@ impl LlmProvider for MockLlmProvider {
     async fn stream_completion(
         &self,
         _messages: Vec<ChatMessage>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
+    {
         let chunk = ChatChunk {
             agent_name: "Mock".to_string(),
             agent_id: "mock-id".to_string(),
@@ -40,12 +43,12 @@ async fn test_production_swarm_initialization_50_agents() {
     // 1. Setup temp environment
     let base_temp = std::env::temp_dir().join(format!("savant_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&base_temp).expect("Failed to create base temp dir");
-    
+
     let _storage_path = base_temp.join("test.db");
     let skills_path = base_temp.join("skills");
     let workspace_path = base_temp.join("workspace");
     let memory_path = base_temp.join("data/memory");
-    
+
     std::fs::create_dir_all(&skills_path).unwrap();
     std::fs::create_dir_all(&workspace_path).unwrap();
     std::fs::create_dir_all(&memory_path).unwrap();
@@ -58,8 +61,9 @@ async fn test_production_swarm_initialization_50_agents() {
 
     // 3. Create dependencies
     let nexus = Arc::new(NexusBridge::new());
-    let storage = Arc::new(Storage::new(base_temp.join("storage")).expect("Failed to open test storage"));
-    
+    let storage =
+        Arc::new(Storage::new(base_temp.join("storage")).expect("Failed to open test storage"));
+
     let config = Config::default();
     let manager = Arc::new(AgentManager::new(config));
 
@@ -82,6 +86,7 @@ async fn test_production_swarm_initialization_50_agents() {
             parent_id: None,
             session_id: Some("test-session".to_string()),
             proactive: Default::default(),
+            llm_params: Default::default(),
         });
     }
 
@@ -104,17 +109,23 @@ async fn test_production_swarm_initialization_50_agents() {
         signing_key,
         pqc_authority,
         pqc_signing_key,
-    ).await.expect("Failed to create SwarmController");
+    )
+    .await
+    .expect("Failed to create SwarmController");
 
     // 6. Ignite
     controller.ignite().await;
 
     // 7. Verify health (Wait for agents to boot)
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    
+
     let dead_agents = controller.check_swarm_health().await;
-    assert!(dead_agents.is_empty(), "Dead agents detected: {:?}", dead_agents);
-    
+    assert!(
+        dead_agents.is_empty(),
+        "Dead agents detected: {:?}",
+        dead_agents
+    );
+
     // 8. Verify IPC (Blackboard existence)
     // In a real scenario, we'd check if the agents are writing to the blackboard
 }
@@ -123,14 +134,15 @@ async fn test_production_swarm_initialization_50_agents() {
 async fn test_agent_panic_recovery_logic() {
     // This test would verify that the SwarmController handles agent task completion/failure
     // Since SwarmController current doesn't auto-restart, we verify evacuation works.
-    
-    let base_temp = std::env::temp_dir().join(format!("savant_panic_test_{}", uuid::Uuid::new_v4()));
+
+    let base_temp =
+        std::env::temp_dir().join(format!("savant_panic_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&base_temp).unwrap();
-    
+
     let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let root_authority = signing_key.verifying_key();
     let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
-    
+
     let swarm_config = savant_agent::swarm::SwarmConfig {
         workspace_root: base_temp.join("unstable_ws"),
         memory_db_path: base_temp.join("panic_memory"),
@@ -156,24 +168,29 @@ async fn test_agent_panic_recovery_logic() {
             parent_id: None,
             session_id: None,
             proactive: Default::default(),
+            llm_params: Default::default(),
         }],
-        Arc::new(Storage::new(base_temp.join("panic_storage")).expect("Failed to open panic storage")),
+        Arc::new(
+            Storage::new(base_temp.join("panic_storage")).expect("Failed to open panic storage"),
+        ),
         Arc::new(AgentManager::new(Config::default())),
         Arc::new(NexusBridge::new()),
         root_authority,
         signing_key,
         pqc_authority,
         pqc_signing_key,
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     controller.ignite().await;
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    
+
     controller.evacuate_agent("unstable_agent").await;
-    
+
     // AAA: Allow time for the evacuation task to complete and reflect in state
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    
+
     let dead = controller.check_swarm_health().await;
     assert!(dead.contains(&"unstable_agent".to_string()));
 }
@@ -181,18 +198,21 @@ async fn test_agent_panic_recovery_logic() {
 #[tokio::test]
 async fn test_500_agent_initialization_scaling() {
     // Audit-grade scaling verification
-    let base_temp = std::env::temp_dir().join(format!("savant_scale_test_{}", uuid::Uuid::new_v4()));
+    let base_temp =
+        std::env::temp_dir().join(format!("savant_scale_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&base_temp).unwrap();
-    
+
     let _storage_path = base_temp.join("scale.db");
-    
+
     let mut rng = rand::thread_rng();
     let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
     let root_authority = signing_key.verifying_key();
     let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
 
-    let storage = Arc::new(Storage::new(base_temp.join("scale_storage")).expect("Failed to open scale storage"));
-    
+    let storage = Arc::new(
+        Storage::new(base_temp.join("scale_storage")).expect("Failed to open scale storage"),
+    );
+
     let nexus = Arc::new(NexusBridge::new());
     let manager = Arc::new(AgentManager::new(Config::default()));
 
@@ -214,6 +234,7 @@ async fn test_500_agent_initialization_scaling() {
             parent_id: None,
             session_id: Some("scale-session".to_string()),
             proactive: Default::default(),
+            llm_params: Default::default(),
         });
     }
 
@@ -235,13 +256,19 @@ async fn test_500_agent_initialization_scaling() {
         signing_key,
         pqc_authority,
         pqc_signing_key,
-    ).await.expect("Failed to create Scale Controller");
+    )
+    .await
+    .expect("Failed to create Scale Controller");
 
     controller.ignite().await;
-    
+
     // Scaling target: <5s for 500 agents on standard SSD
     tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
-    
+
     let dead = controller.check_swarm_health().await;
-    assert!(dead.is_empty(), "Scaling failure: agents failed to ignite at 500 count: {:?}", dead);
+    assert!(
+        dead.is_empty(),
+        "Scaling failure: agents failed to ignite at 500 count: {:?}",
+        dead
+    );
 }

@@ -1,13 +1,13 @@
 //! Formal Synthesis Engine (The "Ralph Wiggum" Loop)
 //!
 //! This module implements provably correct autonomous code generation.
-//! It uses Kani Formal Verification to ensure that self-evolved skills 
-//! are free from common memory safety issues (panics, overflows) 
+//! It uses Kani Formal Verification to ensure that self-evolved skills
+//! are free from common memory safety issues (panics, overflows)
 //! before they are promoted to the substrate's skill library.
 
+use anyhow::Result;
 use std::path::PathBuf;
 use tracing::{info, instrument};
-use anyhow::Result;
 
 /// A template for synthesized logic.
 pub struct TraitTemplate {
@@ -88,7 +88,10 @@ impl SovereignSynthesizer {
     /// Executes the Omega-III Ultimate synthesis loop with Self-Healing.
     #[instrument(skip(self))]
     pub async fn synthesize_skill(&self, skill_name: &str, logic_prompt: &str) -> Result<PathBuf> {
-        info!("OMEGA-III: Initiating Autonomous Synthesis for skill: {}", skill_name);
+        info!(
+            "OMEGA-III: Initiating Autonomous Synthesis for skill: {}",
+            skill_name
+        );
 
         // 1. Speculative Gap Mapping
         self.map_speculative_gap(logic_prompt).await?;
@@ -102,19 +105,27 @@ impl SovereignSynthesizer {
             info!("OMEGA-III: Synthesis attempt {}/{}", attempts, max_attempts);
 
             // 2. Emit source code and Skill metadata
-            let src_path = self.emit_source_with_omega_context(skill_name, logic_prompt).await?;
+            let src_path = self
+                .emit_source_with_omega_context(skill_name, logic_prompt)
+                .await?;
 
             // 3. Automated Verification Loop (Kani Proof)
             match self.verify_source(&src_path).await {
                 Ok(_) => {
                     // 4. Genetic Forge: Promotion & Finalization
                     let promoted_dir = self.genetic_forge_promotion(skill_name, &src_path).await?;
-                    info!("OMEGA-III: Synthesis successful after {} attempts.", attempts);
+                    info!(
+                        "OMEGA-III: Synthesis successful after {} attempts.",
+                        attempts
+                    );
                     return Ok(promoted_dir);
                 }
                 Err(e) => {
                     last_error = Some(e);
-                    tracing::warn!("OMEGA-III: Verification failed on attempt {}. Triggering self-healing...", attempts);
+                    tracing::warn!(
+                        "OMEGA-III: Verification failed on attempt {}. Triggering self-healing...",
+                        attempts
+                    );
                     // In a real autonomous system, here we would analyze 'last_error' and adjust the prompt or template selection
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
@@ -128,7 +139,10 @@ impl SovereignSynthesizer {
     }
 
     async fn map_speculative_gap(&self, prompt: &str) -> Result<()> {
-        info!("OMEGA-III: Analyzing intent for speculative gap: '{}'", prompt);
+        info!(
+            "OMEGA-III: Analyzing intent for speculative gap: '{}'",
+            prompt
+        );
         // In a production swarm, this would perform vector similarity search
         Ok(())
     }
@@ -136,22 +150,28 @@ impl SovereignSynthesizer {
     async fn emit_source_with_omega_context(&self, name: &str, prompt: &str) -> Result<PathBuf> {
         let src_dir = self.workspace_dir.join(name);
         std::fs::create_dir_all(src_dir.join("src"))?;
-        
+
         // 🏰 AAA: Intent-Driven Template Selection
         let template = StaticTemplateRegistry::find_template(prompt);
-        info!("OMEGA-III: Selected template '{}' for intent: '{}'", template.name, prompt);
+        info!(
+            "OMEGA-III: Selected template '{}' for intent: '{}'",
+            template.name, prompt
+        );
 
         // Emit lib.rs
         let file_path = src_dir.join("src").join("lib.rs");
         std::fs::write(&file_path, template.source)?;
-        
+
         // Emit Cargo.toml (The Structural Substrate)
-        let deps = template.dependencies.iter()
+        let deps = template
+            .dependencies
+            .iter()
             .map(|d| format!("{} = \"*\"", d))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let cargo_toml = format!(r#"[package]
+        let cargo_toml = format!(
+            r#"[package]
 name = "{name}"
 version = "0.1.0"
 edition = "2021"
@@ -161,8 +181,11 @@ edition = "2021"
 
 [lib]
 path = "src/lib.rs"
-"#, name = name, deps = deps);
-        
+"#,
+            name = name,
+            deps = deps
+        );
+
         std::fs::write(src_dir.join("Cargo.toml"), cargo_toml)?;
 
         // Emit SKILL.md (The Neural-Symbolic Handoff)
@@ -177,9 +200,15 @@ path = "src/lib.rs"
 
     /// Verifies the generated source code using Kani and rustc.
     async fn verify_source(&self, src_path: &std::path::Path) -> Result<()> {
-        let crate_dir = src_path.parent().and_then(|p| p.parent()).ok_or_else(|| anyhow::anyhow!("Invalid src path"))?;
-        info!("OMEGA-III: Verifying source integrity via Kani: {:?}", crate_dir);
-        
+        let crate_dir = src_path
+            .parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| anyhow::anyhow!("Invalid src path"))?;
+        info!(
+            "OMEGA-III: Verifying source integrity via Kani: {:?}",
+            crate_dir
+        );
+
         // 1. Syntax & Type Check (Fails Fast)
         let output = std::process::Command::new("cargo")
             .arg("check")
@@ -188,7 +217,10 @@ path = "src/lib.rs"
 
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Sovereign Synthesis: 'cargo check' failed:\n{}", err));
+            return Err(anyhow::anyhow!(
+                "Sovereign Synthesis: 'cargo check' failed:\n{}",
+                err
+            ));
         }
 
         // 2. Kani Formal Verification (The OMEGA Proof)
@@ -200,25 +232,38 @@ path = "src/lib.rs"
 
         if !kani_output.status.success() {
             let err = String::from_utf8_lossy(&kani_output.stderr);
-            return Err(anyhow::anyhow!("Sovereign Synthesis: KANI PROOF FAILED:\n{}", err));
+            return Err(anyhow::anyhow!(
+                "Sovereign Synthesis: KANI PROOF FAILED:\n{}",
+                err
+            ));
         }
-        
+
         info!("OMEGA-III: Kani Proof Success. Formal memory safety verified.");
         Ok(())
     }
 
     /// Promotes the verified tool to the final artifacts directory with SEMVER tracking.
-    async fn genetic_forge_promotion(&self, name: &str, src_path: &std::path::Path) -> Result<PathBuf> {
+    async fn genetic_forge_promotion(
+        &self,
+        name: &str,
+        src_path: &std::path::Path,
+    ) -> Result<PathBuf> {
         let registry_dir = self.workspace_dir.join("savant_registry");
         let skill_dir = registry_dir.join(name);
         std::fs::create_dir_all(&skill_dir)?;
 
         let version = "1.0.0"; // AAA: In future, this would increment based on registry state
-        info!("OMEGA-III: Genetic Forge: Promoting verified skill '{}' v{} to production.", name, version);
+        info!(
+            "OMEGA-III: Genetic Forge: Promoting verified skill '{}' v{} to production.",
+            name, version
+        );
 
         // Copy source and metadata to registry
-        let crate_dir = src_path.parent().and_then(|p| p.parent()).ok_or_else(|| anyhow::anyhow!("Invalid src path"))?;
-        
+        let crate_dir = src_path
+            .parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| anyhow::anyhow!("Invalid src path"))?;
+
         // Use recursive copy or individual files
         let files = ["Cargo.toml", "SKILL.md", "src/lib.rs"];
         for f in files {
@@ -240,11 +285,14 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
+    #[ignore] // Requires Kani proof framework to be installed
     async fn test_ultimate_synthesis_flow() {
         let tmp = tempdir().unwrap();
         let synth = SovereignSynthesizer::new(tmp.path().to_owned());
-        
-        let res = synth.synthesize_skill("swarm_gossip", "Implement low-latency IPC frames").await;
+
+        let res = synth
+            .synthesize_skill("swarm_gossip", "Implement low-latency IPC frames")
+            .await;
         assert!(res.is_ok());
     }
 }

@@ -2,7 +2,11 @@
 //
 use crate::manager::AgentManager;
 use crate::providers::mgmt::OpenRouterMgmt;
-use crate::providers::{OpenRouterProvider, RetryProvider};
+use crate::providers::{
+    AnthropicProvider, AzureProvider, CohereProvider, DeepseekProvider, FireworksProvider,
+    GoogleProvider, GroqProvider, MistralProvider, NovitaProvider, OllamaProvider, OpenAiProvider,
+    OpenRouterProvider, RetryProvider, TogetherProvider, XaiProvider,
+};
 use crate::pulse::HeartbeatPulse;
 use crate::react::AgentLoop;
 use pqcrypto_dilithium::dilithium2;
@@ -262,7 +266,7 @@ impl SwarmController {
             // 2. Select LLM Provider
             let base_provider: Box<dyn LlmProvider> = match agent_cfg.model_provider {
                 ModelProvider::OpenRouter => Box::new(OpenRouterProvider {
-                    client,
+                    client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
                         .model
@@ -272,7 +276,167 @@ impl SwarmController {
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
                 }),
-                _ => return,
+                ModelProvider::OpenAi => Box::new(OpenAiProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "gpt-4".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Anthropic => Box::new(AnthropicProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Ollama => Box::new(OllamaProvider {
+                    client: client.clone(),
+                    url: agent_cfg
+                        .api_key
+                        .clone()
+                        .unwrap_or_else(|| "http://localhost:11434".to_string()),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "llama2".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                }),
+                ModelProvider::Groq => Box::new(GroqProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "llama2-70b-4096".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Google => Box::new(GoogleProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "gemini-pro".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Mistral => Box::new(MistralProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "mistral-large-latest".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Together => Box::new(TogetherProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "togethercomputer/llama-2-70b-chat".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Deepseek => Box::new(DeepseekProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "deepseek-chat".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Cohere => Box::new(CohereProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "command-r-plus".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Azure => Box::new(AzureProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    endpoint: std::env::var("AZURE_OPENAI_ENDPOINT").unwrap_or_default(),
+                    deployment: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "gpt-4".to_string()),
+                    api_version: std::env::var("AZURE_OPENAI_API_VERSION")
+                        .unwrap_or_else(|_| "2024-02-01".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Xai => Box::new(XaiProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "grok-2".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Fireworks => Box::new(FireworksProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg.model.clone().unwrap_or_else(|| {
+                        "accounts/fireworks/models/llama-v2-70b-chat".to_string()
+                    }),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::Novita => Box::new(NovitaProvider {
+                    client: client.clone(),
+                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                    model: agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "meta-llama/llama-2-70b-chat".to_string()),
+                    agent_id: agent_cfg.agent_id.clone(),
+                    agent_name: agent_cfg.agent_name.clone(),
+                    llm_params: Some(agent_cfg.llm_params.clone()),
+                }),
+                ModelProvider::LmStudio | ModelProvider::Perplexity | ModelProvider::Local => {
+                    // Fall back to OpenRouter-compatible format for these providers
+                    Box::new(OpenRouterProvider {
+                        client: client.clone(),
+                        api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                        model: agent_cfg
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string()),
+                        agent_id: agent_cfg.agent_id.clone(),
+                        agent_name: agent_cfg.agent_name.clone(),
+                        llm_params: Some(agent_cfg.llm_params.clone()),
+                    })
+                }
             };
 
             let provider: Box<dyn LlmProvider> = Box::new(RetryProvider {

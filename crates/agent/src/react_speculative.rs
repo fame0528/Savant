@@ -4,12 +4,12 @@
 //! is prompted to provide multiple tool calls in a single response, enabling
 //! reduced latency through speculation.
 
+use crate::react::AgentLoop;
 use futures::stream::{Stream, StreamExt};
 use savant_core::error::SavantError;
 use savant_core::traits::MemoryBackend;
 use savant_core::types::{ChatMessage, ChatRole};
 use std::pin::Pin;
-use crate::react::AgentLoop;
 
 /// Events that can be emitted during speculative execution.
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
     /// 4. Validates results and continues as needed
     ///
     /// The response format expected from the LLM:
-    /// ```
+    /// ```text
     /// Thought: I need to do X
     /// Action: tool_name {"arg": "value"}
     /// Thought: Then I need to do Y

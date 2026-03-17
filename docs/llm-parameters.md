@@ -81,7 +81,7 @@ Usually, you should adjust **Temperature** OR **Top-P**, but not both. If you're
 
 ---
 
-### Max Tokens (1 - 128,000)
+### Max Tokens (1 - 1,048,576)
 
 **What it does:** Limits how long the AI's response can be.
 
@@ -90,14 +90,15 @@ Usually, you should adjust **Temperature** OR **Top-P**, but not both. If you're
 - 4,096 tokens ≈ 3,000 words (about 6 pages)
 - 16,384 tokens ≈ 12,000 words (about 24 pages)
 - 131,072 tokens ≈ 98,000 words (about 200 pages)
-- 1,000,000 tokens ≈ 750,000 words (about 1,500 pages)
+- 262,144 tokens ≈ 196,000 words (healer-alpha context window)
+- 1,048,576 tokens ≈ 750,000 words (hunter-alpha context window)
 
 **Common use cases:**
 - **Short answers/chat:** 1,024-2,048 tokens
-- **Normal responses:** 4,096 tokens (default)
-- **Detailed explanations:** 8,192-16,384 tokens
-- **Long documents/reports:** 32,768-131,072 tokens
-- **Massive outputs (1M models):** 500,000+ tokens
+- **Normal responses:** 4,096-8,192 tokens
+- **Detailed explanations:** 16,384-32,768 tokens
+- **Long documents/reports:** 65,536-131,072 tokens
+- **Massive outputs (hunter-alpha):** 262,144-1,048,576 tokens
 
 **Note:** Longer responses:
 - Take more time to generate
@@ -186,7 +187,7 @@ A: The AI becomes very predictable and may give the same answer to the same ques
 A: The AI becomes very creative but may produce nonsensical or incorrect responses. Use with caution.
 
 **Q: Do these settings work with all AI models?**
-A: Most settings work with all major AI providers (OpenAI, Anthropic, Google, etc.). However, some models may have different limits or may ignore certain parameters.
+A: Most settings work with all 15 supported AI providers (OpenRouter, OpenAI, Anthropic, Google, Mistral, Groq, Deepseek, Cohere, Together, Azure, xAI, Fireworks, Novita, Ollama, LmStudio). However, some models may have different limits or may ignore certain parameters.
 
 **Q: Will changing these settings cost more money?**
 A: No, these settings don't affect pricing directly. However, higher Max Tokens means longer responses, which use more tokens and cost more.

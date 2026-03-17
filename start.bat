@@ -107,10 +107,34 @@ if not exist "workspaces\agents" mkdir workspaces\agents
 REM Start the Gateway and Swarm
 echo Starting Gateway and Swarm...
 start "Savant Swarm Engine" cmd /k "%RUN_CMD%"
-echo Gateway started (waiting for init...)
 
-REM Wait for gateway to fully initialize - check health endpoint
-timeout /t 8 /nobreak >nul
+REM Wait for gateway to fully initialize - poll health endpoint
+echo Waiting for gateway to be ready...
+set GATEWAY_READY=0
+set WAIT_COUNT=0
+set MAX_WAIT=30
+
+:wait_gateway
+timeout /t 1 /nobreak >nul
+set /a WAIT_COUNT=%WAIT_COUNT%+1
+
+REM Try to hit the health endpoint
+curl -s -o nul -w "%%{http_code}" http://localhost:3000/live 2>nul | findstr "200" >nul
+if %errorlevel% equ 0 (
+    set GATEWAY_READY=1
+    echo Gateway is ready after %WAIT_COUNT% seconds
+    goto :gateway_ready
+)
+
+if %WAIT_COUNT% geq %MAX_WAIT% (
+    echo Gateway did not become ready within %MAX_WAIT% seconds
+    echo Check the gateway window for errors
+    goto :gateway_ready
+)
+
+goto :wait_gateway
+
+:gateway_ready
 
 REM Start the Dashboard
 echo Starting Dashboard...

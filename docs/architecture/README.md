@@ -7,24 +7,26 @@ Savant uses a layered architecture with clear separation of concerns:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Presentation Layer                       │
-│   Next.js Dashboard │ Telegram/WhatsApp Channels            │
+│   Next.js 16 Dashboard │ Multi-Channel Gateway              │
+│   (Port 3000)          │ Discord/Telegram/WhatsApp/Matrix   │
 └───────────────────────────┬─────────────────────────────────┘
                             │ WebSocket / HTTP
 ┌───────────────────────────▼─────────────────────────────────┐
 │                     Gateway Layer (Axum)                     │
-│   Auth Middleware │ WS Handler │ Control Frame Router        │
+│   Auth Middleware │ WS Handler │ Config Watcher │ Health     │
 └───────────────────────────┬─────────────────────────────────┘
                             │ NexusBridge (async message bus)
 ┌───────────────────────────▼─────────────────────────────────┐
 │                     Orchestration Layer                      │
 │   Agent Swarm │ Cognitive Engine │ Memory Engine             │
+│   (15 LLM Providers)                                      │
 └───────┬──────────────────┬──────────────────┬───────────────┘
         │                  │                  │
 ┌───────▼──┐ ┌─────────────▼──┐ ┌────────────▼───────────────┐
 │  Skills  │ │  IPC/ECHO      │ │  Persistence               │
-│  Security│ │  Zero-copy +   │ │  SQLite WAL + Fjall LSM    │
-│  Gate +  │ │  Speculative   │ │  + rkyv Vector Store       │
-│  ClawHub │ │  ReAct Loops   │ │  + Consolidation           │
+│  Security│ │  Zero-copy +   │ │  Fjall LSM-Tree            │
+│  Gate +  │ │  Speculative   │ │  + Vector Search           │
+│  ClawHub │ │  ReAct Loops   │ │  + WAL Logging             │
 └──────────┘ └────────────────┘ └────────────────────────────┘
 ```
 
@@ -62,9 +64,22 @@ The gateway is built on **Axum** and provides:
 Agents are autonomous entities with:
 
 - **Identity** — `SOUL.md` manifest defining personality, knowledge domains, and operational directives
-- **Configuration** — `config.json` with model provider, temperature, and behavior parameters
+- **Configuration** — `agent.config.json` with model provider, temperature, and behavior parameters
 - **Pulse Loop** — Continuous heartbeat cycle processing incoming messages and proactive reflections
-- **LLM Provider** — Pluggable interface supporting OpenRouter, OpenAI, and Anthropic
+- **LLM Provider** — Pluggable interface supporting 15 providers:
+  - OpenRouter, OpenAI, Anthropic, Google, Mistral, Groq
+  - Deepseek, Cohere, Together, Azure, xAI, Fireworks
+  - Novita, Ollama (local), LmStudio (local)
+
+### LLM Parameters
+
+All providers support fine-tuning via `LlmParams`:
+- `temperature` (0.0-2.0) — Creativity vs focus
+- `top_p` (0.0-1.0) — Nucleus sampling
+- `frequency_penalty` (-2.0-2.0) — Reduces repetition
+- `presence_penalty` (-2.0-2.0) — Encourages new topics
+- `max_tokens` — Response length limit
+- `stop` — Stop sequences
 
 ### ECHO Protocol
 
@@ -172,55 +187,70 @@ The Nexus event bus provides typed, topic-based publish/subscribe:
 |:----------|:-----------|:----------|
 | **Backend** | Rust (tokio async) | Performance, memory safety, concurrency |
 | **Gateway** | Axum 0.7 | Type-safe, ergonomic, WebSocket support |
-| **Dashboard** | Next.js 14 (App Router) | SSR, fast refresh, component architecture |
-| **Database** | SQLite (WAL mode) | ACID compliance, zero-config, embedded |
-| **KV Store** | Fjall LSM-Tree | High write throughput, range queries |
-| **Vectors** | ruvector-core + rkyv | Zero-copy serialization, cosine similarity |
-| **WASM** | Wasmtime 36.0 | Portable execution, resource limiting |
+| **Dashboard** | Next.js 16 (App Router) | SSR, fast refresh, component architecture |
+| **Database** | Fjall LSM-Tree | High write throughput, range queries, ACID |
+| **Vectors** | ruvector-core | Zero-copy serialization, cosine similarity |
+| **WASM** | Wasmtime 36 | Portable execution, resource limiting |
 | **IPC** | iceoryx2 | Zero-copy shared memory, lock-free |
-| **Sandbox** | Docker / Nix / WASM | Deterministic, resource-limited execution |
-| **Auth** | Ed25519 | High performance, small key size, strong security |
-| **HTTP** | reqwest | Async HTTP client for ClawHub, threat intel |
+| **Sandbox** | WASM + Docker | Deterministic, resource-limited execution |
+| **Auth** | Ed25519 + PQC | High performance + quantum-safe (Dilithium2) |
+| **HTTP** | reqwest | Async HTTP client for providers, ClawHub |
+| **Config** | TOML + Watcher | Human-readable, auto-reload on change |
 
 ## Project Structure
 
 ```
 Savant/
-├── Cargo.toml                    # Workspace root
+├── Cargo.toml                    # Workspace root (wasmtime 36)
+├── start.bat                     # Smart launcher (incremental builds)
+├── .env                          # Secrets (API keys, never committed)
+├── config/
+│   └── savant.toml               # Settings (auto-reloads on change)
 ├── crates/
-│   ├── core/                     # Shared types, traits, errors
+│   ├── core/                     # Shared types, config, DB, errors
 │   │   └── src/
-│   │       ├── types/mod.rs      # ControlFrame, SessionId, etc.
+│   │       ├── types/mod.rs      # ControlFrame, SessionId, LlmParams
 │   │       └── traits/           # Tool, MemoryBackend, ChannelAdapter
-│   ├── gateway/                  # Axum WebSocket + auth + skills
+│   ├── gateway/                  # Axum WebSocket + auth + config
 │   │   └── src/
 │   │       ├── handlers/
-│   │       │   ├── mod.rs        # Control frame routing
+│   │       │   ├── mod.rs        # Control frame routing (port 3000)
 │   │       │   └── skills.rs     # Skill management handlers
-│   │       └── auth/             # Ed25519 authentication
+│   │       ├── auth/             # Ed25519 + PQC authentication
+│   │       └── server.rs         # Gateway server with health endpoints
+│   ├── agent/                    # Agent lifecycle + 15 LLM providers
+│   │   └── src/
+│   │       ├── providers/
+│   │       │   ├── mod.rs        # All provider implementations
+│   │       │   └── mgmt.rs       # OpenRouter management
+│   │       ├── swarm.rs          # SwarmController
+│   │       └── manager.rs        # AgentManager
 │   ├── skills/                   # OpenClaw skills + security
 │   │   └── src/
 │   │       ├── parser.rs         # SKILL.md parser, SkillManager
 │   │       ├── security.rs       # Security scanner (1400+ lines)
 │   │       ├── clawhub.rs        # ClawHub API client
-│   │       ├── nix.rs            # Nix sandbox executor
-│   │       ├── native.rs         # Native sandbox executor
 │   │       └── wasm/             # WASM sandbox executor
 │   ├── memory/                   # Hybrid storage engine
 │   │   └── src/
 │   │       ├── engine.rs         # MemoryEngine orchestrator
 │   │       ├── async_backend.rs  # Async wrapper with consolidation
-│   │       ├── vector_engine.rs  # rkyv vector persistence
+│   │       ├── vector_engine.rs  # Vector persistence
 │   │       └── models.rs         # AgentMessage, MemoryEntry
 │   ├── cognitive/                # Synthesis, decomposition
-│   ├── agent/                    # Agent lifecycle
-│   ├── echo/                     # ECHO protocol
+│   ├── echo/                     # ECHO protocol (speculative ReAct)
 │   ├── canvas/                   # A2UI rendering
-│   ├── channels/                 # Telegram, WhatsApp
+│   ├── channels/                 # Discord, Telegram, WhatsApp, Matrix
 │   ├── ipc/                      # Zero-copy IPC
 │   ├── cli/                      # CLI entry point
-│   ├── security/                 # CCT verification
+│   ├── security/                 # CCT verification (PQC)
 │   └── panopticon/               # Telemetry
-├── dashboard/                    # Next.js observability UI
+├── dashboard/                    # Next.js 16 observability UI
+├── workspaces/
+│   ├── substrate/                # Savant's own files
+│   └── agents/                   # Agent workspaces (swarm members)
+├── data/                         # Database storage (Fjall)
+├── memory/                       # Agent memory files
+├── skills/                       # Installed skills
 └── docs/                         # Documentation
 ```

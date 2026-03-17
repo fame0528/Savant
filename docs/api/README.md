@@ -2,7 +2,16 @@
 
 ## WebSocket Protocol
 
-All communication between the dashboard and gateway occurs over a single WebSocket connection at `/ws`.
+All communication between the dashboard and gateway occurs over a single WebSocket connection at `ws://localhost:3000/ws`.
+
+### Health Endpoints
+
+| Endpoint | Method | Description |
+|:---------|:-------|:------------|
+| `/live` | GET | Returns "OK" if gateway is running |
+| `/ready` | GET | Returns "OK" if gateway is ready |
+| `/ws` | WebSocket | Main communication endpoint |
+| `/api/agents/:name/image` | GET | Agent avatar image |
 
 ### Frame Format
 
@@ -113,6 +122,50 @@ Deploy multiple agents from an expansion plan.
       ]
     }
   }
+}
+```
+
+### ConfigGet
+
+Retrieve the current gateway configuration from `savant.toml`.
+
+```json
+{
+  "session_id": "dashboard-session",
+  "payload": { "type": "ConfigGet" }
+}
+```
+
+### ConfigSet
+
+Update a configuration value (saved to `savant.toml`, auto-reloads).
+
+```json
+{
+  "session_id": "dashboard-session",
+  "payload": {
+    "type": "ConfigSet",
+    "data": {
+      "key": "ai.temperature",
+      "value": 0.7
+    }
+  }
+}
+```
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `key` | string | Yes | Dotted config path (e.g., `ai.temperature`, `server.port`) |
+| `value` | any | Yes | New value (number, string, or boolean) |
+
+### ModelsList
+
+Get available AI providers and their parameter descriptors.
+
+```json
+{
+  "session_id": "dashboard-session",
+  "payload": { "type": "ModelsList" }
 }
 ```
 

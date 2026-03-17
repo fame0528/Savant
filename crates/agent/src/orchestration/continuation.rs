@@ -74,7 +74,7 @@ impl ContinuationEngine {
     ///
     /// # Examples
     /// ```
-    /// # use savant_agent::orchestration::ContinuationEngine;
+    /// # use savant_agent::orchestration::continuation::ContinuationEngine;
     /// # let engine = ContinuationEngine::default();
     /// let resp = "I need to continue working. CONTINUE_WORK:2000";
     /// assert_eq!(engine.parse_delay(resp), Some(2000));

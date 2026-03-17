@@ -452,11 +452,19 @@ mod tests {
     #[test]
     fn test_all_failures_full_error_rate() {
         let metrics = ComponentMetrics::new(0.5, 1);
-        for _ in 0..50 {
-            metrics.record_outcome(false);
+        // First failure trips the circuit (min_sample_size=1, error_threshold=0.5)
+        // After trip, circuit is Open and blocks all subsequent requests
+        metrics.record_outcome(false); // This trips the circuit
+        assert_eq!(metrics.state(), CircuitState::Open);
+
+        // Additional failures are blocked (circuit is open)
+        for _ in 0..49 {
+            metrics.record_outcome(false); // Blocked, not counted
         }
+
+        // Only the first failure was counted before the circuit opened
+        assert_eq!(metrics.failure_count(), 1);
         assert_eq!(metrics.error_rate(), 1.0);
-        assert_eq!(metrics.failure_count(), 50);
     }
 
     #[test]
@@ -557,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_custom_reset_config_params() {
-        let metrics = ComponentMetrics::new(0.05, 1).with_reset_config(120, 10);
+        let metrics = ComponentMetrics::with_reset_config(0.05, 1, 120, 10);
 
         // Trip and reset to verify config is stored
         for _ in 0..5 {

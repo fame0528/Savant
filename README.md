@@ -5,7 +5,8 @@
   <p>A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with OpenClaw skill compatibility, mandatory security scanning, and real-time dashboard observability.</p>
 
   [![Rust](https://img.shields.io/badge/Rust-2021-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-  [![Next.js](https://img.shields.io/badge/Next.js-14-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+  [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+  [![Wasmtime](https://img.shields.io/badge/Wasmtime-36-000000?style=for-the-badge)](https://wasmtime.dev/)
   [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 </div>
 
@@ -16,6 +17,7 @@
 Savant is an autonomous agent swarm orchestrator with **mandatory security scanning** for all skills:
 
 - **Swarm Orchestration** — Spawn, coordinate, and manage hundreds of concurrent AI agents from a unified control plane
+- **15 AI Providers** — OpenRouter, OpenAI, Anthropic, Google, Mistral, Groq, Deepseek, Cohere, Together, Azure, xAI, Fireworks, Novita, Ollama, LmStudio
 - **OpenClaw Skill Compatibility** — Install skills from ClawHub with automatic OpenClaw `SKILL.md` format parsing
 - **Mandatory Security Scanning** — Every skill is scanned before execution; user sovereignty with click-based approval (0-3 clicks based on risk)
 - **Real-Time Dashboard** — A Next.js observability dashboard with live WebSocket streaming, message history, cognitive insights, and soul manifestation
@@ -23,6 +25,8 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 - **Persistent Memory** — Hybrid storage combining SQLite (WAL), Fjall LSM-tree, and rkyv-serialized vector embeddings
 - **Cognitive Architecture** — Goal decomposition, strategic synthesis, memory consolidation, and proactive heartbeat loops
 - **Threat Intelligence** — Global blocklist sync with configurable threat intelligence feed
+- **Smart Build System** — Incremental compilation with automatic source change detection
+- **Config Auto-Reload** — Live configuration updates via file watcher
 
 ---
 
@@ -93,41 +97,62 @@ Savant implements a **mandatory security gate** for all skills. Every skill must
 - **Rust** 1.75+ (stable)
 - **Node.js** 18+ (for the dashboard)
 - **Docker** (optional, for containerized skill execution)
-- **OpenRouter API Key** (for AI-powered agent generation)
+- **AI Provider API Key** (OpenRouter, OpenAI, Anthropic, etc.)
 
-### 1. Start the Backend
+### 1. Smart Launch (Recommended)
+
+The smart launcher handles building, dependency installation, and service startup:
 
 ```bash
-cargo run --bin savant_cli
+# Windows
+start.bat
+
+# Or with force rebuild
+start.bat --force
+
+# Or skip build (use existing binary)
+start.bat --skip
 ```
 
-The gateway starts on `ws://127.0.0.1:8080/ws` by default.
-
-### 2. Start the Dashboard
+### 2. Manual Launch
 
 ```bash
+# Start the Gateway and Swarm
+cargo run --release --bin savant_cli
+
+# In another terminal, start the Dashboard
 cd dashboard
-npm install
+npm install  # first time only
 npm run dev
 ```
 
-The dashboard is available at `http://localhost:3000`.
+The gateway starts on `ws://127.0.0.1:3000/ws` and the dashboard at `http://localhost:3000`.
 
-### 3. Configure Environment
+### 3. Configuration
 
-Create a `.env` file in the project root:
-
+**Secrets** go in `.env` (never committed):
 ```env
-# OpenRouter API Key (required for AI-powered soul generation)
+# OpenRouter API Key (or your preferred provider)
 OR_MASTER_KEY=sk-or-v1-...
 
-# Gateway Configuration
-SAVANT_GATEWAY_HOST=127.0.0.1
-SAVANT_GATEWAY_PORT=8080
-
-# Threat Intelligence (optional)
-SAVANT_THREAT_INTEL_URL=https://api.savant.ai/v1/threat-intel/blocklist
+# Dev mode (auto-generates master keys, no API key required)
+SAVANT_DEV_MODE=1
 ```
+
+**Settings** go in `config/savant.toml` (committed):
+```toml
+[ai]
+provider = "openrouter"
+model = "openrouter/healer-alpha"
+temperature = 0.4
+max_tokens = 262144
+
+[server]
+port = 3000
+host = "0.0.0.0"
+```
+
+Changes to `savant.toml` are applied automatically via file watcher.
 
 ---
 
@@ -203,25 +228,34 @@ Instructions and implementation details...
 
 ```
 Savant/
-├── Cargo.toml              # Workspace root (wasmtime 36.0.0)
-├── .env                    # Environment configuration
+├── Cargo.toml              # Workspace root (wasmtime 36)
+├── start.bat               # Smart launcher (incremental builds)
+├── .env                    # Secrets (API keys, never committed)
+├── config/
+│   └── savant.toml         # Settings (auto-reloads on change)
 ├── CHANGELOG.md            # Release changelog
 ├── AUDIT.md                # Production audit report
 ├── crates/
 │   ├── core/               # Shared types, config, DB, errors
-│   ├── gateway/            # Axum WebSocket server + auth + skills
-│   ├── agent/              # Agent lifecycle + LLM providers
+│   ├── gateway/            # Axum WebSocket server + auth + routing
+│   ├── agent/              # Agent lifecycle, swarm, 15 LLM providers
 │   ├── cognitive/          # Synthesis, decomposition, proactive loops
 │   ├── memory/             # Hybrid storage engine + consolidation
 │   ├── skills/             # OpenClaw skills + security + ClawHub
 │   ├── ipc/                # Zero-copy IPC substrate
 │   ├── echo/               # ECHO protocol (speculative ReAct)
 │   ├── canvas/             # A2UI rendering
-│   ├── channels/           # Telegram, WhatsApp integrations
+│   ├── channels/           # Telegram, WhatsApp, Discord, Matrix
 │   ├── cli/                # CLI entry point
 │   ├── security/           # CCT verification
 │   └── panopticon/         # Telemetry and monitoring
-├── dashboard/              # Next.js observability dashboard
+├── dashboard/              # Next.js 16 observability dashboard
+├── workspaces/
+│   ├── substrate/          # Savant's own files
+│   └── agents/             # Agent workspaces (swarm members)
+├── data/                   # Database storage (Fjall)
+├── memory/                 # Agent memory files
+├── skills/                 # Installed skills
 └── docs/                   # Documentation suite
 ```
 

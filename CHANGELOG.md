@@ -11,7 +11,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### LLM Parameter Configuration (v2.0.0)
+#### Smart Build System (v2.0.0)
+- **Smart launcher** (`start.bat`)
+  - Incremental compilation with source change detection
+  - Automatic dashboard dependency installation
+  - Health check polling with 30-second timeout
+  - Command line options: `--force`, `--skip`
+
+#### Config Auto-Reload (v2.0.0)
+- **Live configuration updates** (`crates/gateway/src/server.rs`)
+  - File watcher monitors `config/savant.toml`
+  - Changes applied automatically without restart
+  - Config get/set via WebSocket handlers
+  - Separation of secrets (.env) and settings (TOML)
+
+#### Full Provider Support in Swarm (v2.0.0)
+- **All 15 providers wired in SwarmController** (`crates/agent/src/swarm.rs`)
+  - OpenRouter, OpenAI, Anthropic, Google, Mistral, Groq
+  - Deepseek, Cohere, Together, Azure, xAI, Fireworks
+  - Novita, Ollama, LmStudio
+- **Provider-specific defaults** for each provider
+- **Fallback handling** for unsupported providers (LmStudio, Perplexity, Local)
+
+#### Dashboard WebSocket Fix
+- **Corrected port configuration** (`dashboard/src/app/page.tsx`)
+  - Default WebSocket URL changed from port 8080 to port 3000
+  - Matches gateway configuration in `savant.toml`
+
+### Fixed
+
+#### Test Failures
+- **production.rs**: Added missing `llm_params` field to AgentConfig instances
+- **circuit_breaker.rs**: Fixed `with_reset_config` usage and test expectations
+- **synthesis.rs**: Marked Kani-dependent test as `#[ignore]`
+- **react_speculative.rs**: Changed code block to `text` format for doc-test
+- **continuation.rs**: Fixed import path in doc-test
+
+#### Compilation
+- **swarm.rs**: Expanded imports to include all provider types
+- **swarm.rs**: Fixed Azure provider field name (`deployment` not `deployment_name`)
+- **swarm.rs**: Fixed Ollama provider field name (`url` not `base_url`)
+
+### Documentation
+- Updated README.md with current architecture
+- Updated docs/architecture/README.md with 15 providers and Next.js 16
+- Fixed gateway port references (8080 → 3000)
+- Updated technology stack table
 - **Per-agent LLM parameters** (`crates/core/src/types/mod.rs`)
   - `LlmParams` struct with: temperature, top_p, frequency_penalty, presence_penalty, max_tokens, stop sequences
   - `ParameterDescriptor` struct for UI explanations

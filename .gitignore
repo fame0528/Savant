@@ -50,3 +50,4 @@ data/
 # Agents (Optional: keep or ignore? User usually wants manifests committed)
 # /workspaces/*/agent.json # We might want to keep IDs
 **/node_modules
+Savant.zip

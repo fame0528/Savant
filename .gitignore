@@ -51,3 +51,4 @@ data/
 # /workspaces/*/agent.json # We might want to keep IDs
 **/node_modules
 Savant.zip
+push-to-github.bat

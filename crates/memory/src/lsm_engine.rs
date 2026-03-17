@@ -20,10 +20,7 @@ use fjall::{OptimisticTxDatabase, PersistMode};
 use rkyv::rancor::Error;
 
 use crate::error::MemoryError;
-use crate::models::{
-    message_key, session_key, verify_tool_pair_integrity, AgentMessage,
-};
-
+use crate::models::{message_key, session_key, verify_tool_pair_integrity, AgentMessage};
 
 /// Statistics about the storage engine (for monitoring)
 #[derive(Debug, Clone, Default)]
@@ -86,7 +83,8 @@ impl LsmStorageEngine {
         info!("Initializing Fjall LSM-Tree at {:?}", storage_path);
 
         // Open the optimistic database (multi-writer capable)
-        let db = OptimisticTxDatabase::builder(storage_path).open()
+        let db = OptimisticTxDatabase::builder(storage_path)
+            .open()
             .map_err(|e| MemoryError::InitFailed(format!("Fjall open failed: {}", e)))?;
 
         // Create keyspace for conversation transcripts
@@ -95,7 +93,9 @@ impl LsmStorageEngine {
             .map_err(|e| MemoryError::InitFailed(e.to_string()))?;
 
         // Create optional keyspace for semantic metadata
-        let metadata_ks = db.keyspace("metadata", fjall::KeyspaceCreateOptions::default).ok(); // Non-fatal if fails
+        let metadata_ks = db
+            .keyspace("metadata", fjall::KeyspaceCreateOptions::default)
+            .ok(); // Non-fatal if fails
 
         info!("Fjall LSM-Tree Engine initialized successfully");
 
@@ -137,7 +137,10 @@ impl LsmStorageEngine {
         let key = message_key(session_id, message.timestamp.into(), &message.id);
 
         // Start a write transaction
-        let mut tx = self.db.write_tx().map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        let mut tx = self
+            .db
+            .write_tx()
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
 
         // Insert the serialized message
         tx.insert(&self.transcript_ks, key, bytes.as_slice());
@@ -152,13 +155,23 @@ impl LsmStorageEngine {
     }
 
     /// Inserts a MemoryEntry into the metadata keyspace.
-    pub fn insert_metadata(&self, id: u64, entry: &crate::models::MemoryEntry) -> Result<(), MemoryError> {
-        let ks = self._metadata_ks.as_ref().ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
+    pub fn insert_metadata(
+        &self,
+        id: u64,
+        entry: &crate::models::MemoryEntry,
+    ) -> Result<(), MemoryError> {
+        let ks = self
+            ._metadata_ks
+            .as_ref()
+            .ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
         let bytes = rkyv::to_bytes::<Error>(entry)
             .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
         let key = id.to_le_bytes();
-        
-        let mut tx = self.db.write_tx().map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+
+        let mut tx = self
+            .db
+            .write_tx()
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
         tx.insert(ks, key, bytes.as_slice());
         tx.commit()
             .map_err(|e| MemoryError::TransactionFailed(format!("IO Error: {:?}", e)))?
@@ -168,9 +181,15 @@ impl LsmStorageEngine {
 
     /// Removes a MemoryEntry from the metadata keyspace.
     pub fn remove_metadata(&self, id: u64) -> Result<(), MemoryError> {
-        let ks = self._metadata_ks.as_ref().ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
+        let ks = self
+            ._metadata_ks
+            .as_ref()
+            .ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
         let key = id.to_le_bytes();
-        let mut tx = self.db.write_tx().map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        let mut tx = self
+            .db
+            .write_tx()
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
         tx.remove(ks, key);
         tx.commit()
             .map_err(|e| MemoryError::TransactionFailed(format!("IO Error: {:?}", e)))?
@@ -201,6 +220,7 @@ impl LsmStorageEngine {
         // we could maintain a separate index of message timestamps for efficiency.
         let guard = self.transcript_ks.inner().prefix(&prefix).rev();
         let mut count = 0;
+        let mut validation_failures = 0;
 
         for item in guard {
             if count >= limit {
@@ -216,23 +236,47 @@ impl LsmStorageEngine {
             };
             // OMEGA: 309GB Protection - Validate raw byte length before accessing
             if value_bytes.len() > 10 * 1024 * 1024 {
-                warn!("Oversized message byte count detected (corruption?): {} bytes", value_bytes.len());
+                warn!(
+                    "Oversized message byte count detected (corruption?): {} bytes",
+                    value_bytes.len()
+                );
                 continue;
             }
 
             // AAA: Use validated access with CheckBytes to prevent UB from corrupted data
-            let archived = match rkyv::access::<<AgentMessage as rkyv::Archive>::Archived, Error>(&value_bytes) {
+            let archived = match rkyv::access::<<AgentMessage as rkyv::Archive>::Archived, Error>(
+                &value_bytes,
+            ) {
                 Ok(a) => a,
-                Err(e) => {
-                    warn!("Failed to validate archived message bytes: {}", e);
+                Err(_) => {
+                    validation_failures += 1;
                     continue;
                 }
             };
             match rkyv::deserialize::<AgentMessage, Error>(archived) {
                 Ok(msg) => messages.push(msg),
-                Err(e) => warn!("Failed to deserialize message: {}", e),
+                Err(_) => {
+                    validation_failures += 1;
+                }
             }
             count += 1;
+        }
+
+        // Report validation failures once at the end instead of per-message
+        if validation_failures > 0 {
+            if validation_failures == count && count > 0 {
+                // All entries failed - likely schema mismatch from old database
+                warn!(
+                    "Session '{}' has {} stale/corrupt entries. Delete the database directory to clear.",
+                    session_id,
+                    validation_failures
+                );
+            } else {
+                debug!(
+                    "Skipped {} invalid entries for session '{}'",
+                    validation_failures, session_id
+                );
+            }
         }
 
         debug!(
@@ -270,7 +314,10 @@ impl LsmStorageEngine {
         verify_tool_pair_integrity(&batch)?;
 
         // Start a write transaction
-        let mut tx = self.db.write_tx().map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        let mut tx = self
+            .db
+            .write_tx()
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
 
         // Insert all messages in the batch
         for msg in &batch {
@@ -310,7 +357,9 @@ impl LsmStorageEngine {
     /// Fetches all message IDs for a session (for maintenance/cascaded deletion).
     pub fn fetch_all_message_ids_for_session(&self, session_id: &str) -> Vec<String> {
         let prefix = session_key(session_id);
-        self.transcript_ks.inner().prefix(&prefix)
+        self.transcript_ks
+            .inner()
+            .prefix(&prefix)
             .filter_map(|item| {
                 // Deserialize key to extract ID
                 if let Ok(key) = item.key() {
@@ -318,7 +367,7 @@ impl LsmStorageEngine {
                     // Extracting the ID suffix
                     let s = String::from_utf8_lossy(&key);
                     if let Some(last_pipe) = s.rfind('|') {
-                         return Some(s[last_pipe+1..].to_string());
+                        return Some(s[last_pipe + 1..].to_string());
                     }
                 }
                 None
@@ -338,10 +387,11 @@ impl LsmStorageEngine {
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
 
         // Collect keys to delete (can't delete while iterating)
-        let keys_to_delete: Vec<Vec<u8>> = self.transcript_ks.inner().prefix(&prefix)
-            .filter_map(|item: fjall::Guard| {
-                item.key().ok().map(|k| k.to_vec())
-            })
+        let keys_to_delete: Vec<Vec<u8>> = self
+            .transcript_ks
+            .inner()
+            .prefix(&prefix)
+            .filter_map(|item: fjall::Guard| item.key().ok().map(|k| k.to_vec()))
             .collect();
 
         for key_bytes in &keys_to_delete {
@@ -366,7 +416,6 @@ impl LsmStorageEngine {
         Ok(StorageStats::default())
     }
 
-
     /// Returns a reference to the underlying Fjall keyspace (for advanced operations).
     pub fn keyspace(&self) -> &fjall::Keyspace {
         self.transcript_ks.inner()
@@ -374,30 +423,45 @@ impl LsmStorageEngine {
 
     /// Returns an iterator over all metadata entries.
     pub fn iter_metadata(&self) -> Result<Vec<crate::models::MemoryEntry>, MemoryError> {
-        let ks = self._metadata_ks.as_ref().ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
+        let ks = self
+            ._metadata_ks
+            .as_ref()
+            .ok_or_else(|| MemoryError::InitFailed("Metadata keyspace unavailable".to_string()))?;
         let mut entries = Vec::new();
-        
+        let mut stale_count = 0;
+
         for item in ks.inner().iter() {
             let val = match item.value() {
                 Ok(v) => v,
                 Err(_) => continue,
             };
-            
-            if val.len() > 1 * 1024 * 1024 { // Metadata entry shouldn't exceed 1MB
-                warn!("Oversized metadata entry detected, skipping");
+
+            if val.len() > 1 * 1024 * 1024 {
+                // Metadata entry shouldn't exceed 1MB
+                stale_count += 1;
                 continue;
             }
             // AAA: Use validated access with CheckBytes to prevent UB from corrupted data
-            let archived = match rkyv::access::<<crate::models::MemoryEntry as rkyv::Archive>::Archived, Error>(&val) {
+            let archived = match rkyv::access::<
+                <crate::models::MemoryEntry as rkyv::Archive>::Archived,
+                Error,
+            >(&val)
+            {
                 Ok(a) => a,
-                Err(e) => {
-                    warn!("Failed to validate archived metadata bytes: {}", e);
+                Err(_) => {
+                    stale_count += 1;
                     continue;
                 }
             };
             if let Ok(entry) = rkyv::deserialize::<crate::models::MemoryEntry, Error>(archived) {
                 entries.push(entry);
+            } else {
+                stale_count += 1;
             }
+        }
+
+        if stale_count > 0 {
+            debug!("Skipped {} stale metadata entries", stale_count);
         }
         Ok(entries)
     }

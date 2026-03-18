@@ -46,28 +46,37 @@
 
 ### 1. Agent Personality Studio ★★★★★
 
-**Status:** 🔴 NOT STARTED
+**Status:** 🟡 FOUNDATION BUILT — Working but needs enhancements
 
-Visual drag-and-drop personality builder that generates SOUL.md files from natural language descriptions.
+The SOUL MANIFESTATION ENGINE is fully functional in both frontend and backend.
 
-**Why users will love it:** No more writing markdown by hand. "I want a sarcastic coding assistant who loves Rust" → complete SOUL.md with tone, expertise, ethics, quirks.
+**What works now:**
+- Dashboard UI with name input, prompt input, draft editor, preview panel, metrics HUD
+- `SoulManifest` WebSocket message → gateway handler → `execute_manifestation()`
+- Calls OpenRouter API with master key exchange for SOUL generation
+- Draft rendered with formatted preview
+- `SoulUpdate` writes SOUL.md to agent workspace
+- Metrics HUD calculates depth, integrity, fidelity, ethics, etc.
+
+**What needs fixing:**
+1. **Model mismatch** — Hardcodes `anthropic/claude-3.5-sonnet` (`handlers/mod.rs:513`) instead of using Savant's configured model from `config/savant.toml`. Should use the same provider system the rest of Savant uses.
+2. **Dashboard key derivation** — Currently uses `resolve_openrouter_key()` (master key exchange). Dashboard should have its own key derived from the master key, separate from the system's provider key.
+3. **No structured personality generation** — Currently sends raw prompt to LLM. Should use trait sliders (tone, formality, humor, creativity) to guide generation.
+4. **No live preview** — No "how would the agent respond" with the generated SOUL.
+5. **No template library** — No preset SOUL.md templates to start from.
 
 **Injection Points:**
-- Frontend: `dashboard/src/app/studio/page.tsx` → new page
-- Backend: `crates/agent/src/identity/studio.rs` → new module
+- Frontend: `dashboard/src/app/page.tsx` → enhance existing SOUL MANIFESTATION ENGINE
+- Backend: `crates/gateway/src/handlers/mod.rs` → fix model routing + key derivation
 
 **Foundation already exists:**
+- Full UI (name input, prompt, draft editor, preview, metrics)
+- Backend manifestation with OpenRouter API call
 - Agent identity system (`crates/agent/src/identity.rs`)
-- SOUL.md parsing
-- LLM provider integration for generation
+- SOUL.md parsing and workspace integration
+- Master key exchange for API access
 
-**What's missing:**
-- Frontend UI for personality builder
-- LLM prompt engineering for SOUL.md generation
-- Live preview of agent responses
-- One-click deploy to workspace
-
-**Estimate:** 3-4 days
+**Estimate:** 15-20 min
 
 ---
 
@@ -94,7 +103,7 @@ Built-in marketplace UI showing available skills from ClawHub with ratings, revi
 - Skill preview (read SKILL.md before installing)
 - Dependency visualization
 
-**Estimate:** 4-5 days
+**Estimate:** 20-30 min
 
 **Easter Egg:** 🎯 100th installed skill triggers confetti and unlocks "Skill Collector" badge.
 
@@ -124,7 +133,7 @@ Visual timeline of agent decisions, tool calls, reasoning chains. Click any step
 - Tool call result recording
 - Reasoning chain export/import
 
-**Estimate:** 5-6 days
+**Estimate:** 20-30 min
 
 ---
 
@@ -152,7 +161,7 @@ Type commands in plain English in the dashboard. "restart the discord bot" just 
 - Command confirmation flow
 - Command history with autocomplete
 
-**Estimate:** 3-4 days
+**Estimate:** 15-20 min
 
 **Easter Egg:** 🎭 Typing "sudo make me a sandwich" shows XKCD reference and generates a haiku.
 
@@ -183,7 +192,7 @@ Intelligent context management — automatic summarization, relevance scoring, t
 - Relevance scoring using embeddings for context selection
 - Priority tier enforcement
 
-**Estimate:** 4-5 days
+**Estimate:** 20-30 min
 
 ---
 
@@ -210,7 +219,7 @@ Visual graph showing how agents collaborate, hand off tasks, share context.
 - D3.js/React Force Graph visualization
 - Real-time edge updates when agents collaborate
 
-**Estimate:** 3-4 days
+**Estimate:** 15-20 min
 
 **Easter Egg:** 🕸️ 5+ agents collaborating → spider web animation with "The Swarm is Strong."
 
@@ -241,7 +250,7 @@ Real-time health metrics with predictive failure detection.
 - Dashboard health page with charts
 - Alert thresholds and notifications
 
-**Estimate:** 3-4 days
+**Estimate:** 15-20 min
 
 ---
 
@@ -268,7 +277,7 @@ Route queries to multiple LLM providers simultaneously, use the best response.
 - Cost tracking for multi-provider calls
 - Configuration for which providers to ensemble
 
-**Estimate:** 5-6 days
+**Estimate:** 20-30 min
 
 ---
 
@@ -294,7 +303,7 @@ Edit a skill's SKILL.md, see changes instantly without restarting the swarm.
 - Hot-reload notification to agents using the skill
 - Rollback on parse error
 
-**Estimate:** 2-3 days
+**Estimate:** 10-15 min
 
 **Easter Egg:** 🔥 First hot-reload shows "Your skill is on fire! (in a good way)"
 
@@ -323,7 +332,7 @@ Speak to your agents via WebRTC audio. Agents respond with synthesized speech.
 - Voice activity detection
 - Audio codec handling
 
-**Estimate:** 7-10 days (highest complexity)
+**Estimate:** 30-45 min
 
 ---
 
@@ -331,18 +340,18 @@ Speak to your agents via WebRTC audio. Agents respond with synthesized speech.
 
 | # | Feature | Impact | Status | Foundation | Estimate |
 |---|---------|--------|--------|------------|----------|
-| 1 | Personality Studio | ★★★★★ | 🔴 Not Started | Agent identity, SOUL parsing, LLM | 3-4 days |
-| 2 | Skill Marketplace | ★★★★★ | 🟡 Foundation | ClawHub client, scanner, parser | 4-5 days |
-| 3 | Conversation Replay | ★★★★★ | 🟡 Foundation | Panopticon, event bus, memory | 5-6 days |
-| 4 | NL Commands | ★★★★★ | 🟡 Foundation | CLI, channels, swarm controller | 3-4 days |
-| 5 | Context Manager | ★★★★★ | 🟡 Foundation | Embeddings, semantic search, LRU | 4-5 days |
-| 6 | Collaboration Graph | ★★★★☆ | 🔴 Not Started | IPC, blackboard, event bus | 3-4 days |
-| 7 | Health Dashboard | ★★★★☆ | 🟡 Foundation | Perception, DSP, circuit breakers | 3-4 days |
-| 8 | Multi-Model Ensemble | ★★★★☆ | 🔴 Not Started | 15 providers, fallback system | 5-6 days |
-| 9 | Skill Hot-Reload | ★★★★☆ | 🟡 Foundation | Skill parser, file watcher | 2-3 days |
-| 10 | Voice Interface | ★★★☆☆ | 🔴 Not Started | Channel abstraction | 7-10 days |
+| 1 | Personality Studio | ★★★★★ | 🟡 Foundation | Working UI + backend, needs model/key fix | 15-20 min |
+| 2 | Skill Marketplace | ★★★★★ | 🟡 Foundation | ClawHub client, scanner, parser | 20-30 min |
+| 3 | Conversation Replay | ★★★★★ | 🟡 Foundation | Panopticon, event bus, memory | 20-30 min |
+| 4 | NL Commands | ★★★★★ | 🟡 Foundation | CLI, channels, swarm controller | 15-20 min |
+| 5 | Context Manager | ★★★★★ | 🟡 Foundation | Embeddings, semantic search, LRU | 20-30 min |
+| 6 | Collaboration Graph | ★★★★☆ | 🔴 Not Started | IPC, blackboard, event bus | 15-20 min |
+| 7 | Health Dashboard | ★★★★☆ | 🟡 Foundation | Perception, DSP, circuit breakers | 15-20 min |
+| 8 | Multi-Model Ensemble | ★★★★☆ | 🔴 Not Started | 15 providers, fallback system | 20-30 min |
+| 9 | Skill Hot-Reload | ★★★★☆ | 🟡 Foundation | Skill parser, file watcher | 10-15 min |
+| 10 | Voice Interface | ★★★☆☆ | 🔴 Not Started | Channel abstraction | 30-45 min |
 
-**Total estimated effort:** 39-52 days
+**Total estimated effort:** ~3 hours (autonomous agent execution)
 
 ---
 
@@ -387,6 +396,7 @@ Speak to your agents via WebRTC audio. Agents respond with synthesized speech.
 ### Code Quality
 | Issue | Location | Impact | Status |
 |-------|----------|--------|--------|
+| **Hardcoded LLM model** | `crates/gateway/src/handlers/mod.rs:513` — uses `anthropic/claude-3.5-sonnet` instead of configured model | High | 🔴 Open |
 | Monolithic file (1073 lines) | `crates/cognitive/src/synthesis.rs` | Medium | 🔴 Open |
 | Monolithic file (548 lines) | `crates/agent/src/pulse/heartbeat.rs` | Medium | 🔴 Open |
 | Monolithic file (405 lines) | `crates/gateway/src/server.rs` | Medium | 🔴 Open |
@@ -408,28 +418,29 @@ Speak to your agents via WebRTC audio. Agents respond with synthesized speech.
 | No request size limits | Medium | 🔴 Open |
 | Capability grants not enforced at runtime | High | 🔴 Open |
 | No Docker seccomp profiles | Medium | 🔴 Open |
+| **Dashboard uses system OpenRouter key** — should derive own key from master | Medium | 🔴 Open |
 
 ---
 
 ## Sprint Planning
 
-### Sprint 1 (Next 2 weeks)
-1. Personality Studio — 3-4 days
-2. Natural Language Commands — 3-4 days
-3. Skill Hot-Reload — 2-3 days
+### Sprint 1 (Next session)
+1. Personality Studio — 15-20 min
+2. Natural Language Commands — 15-20 min
+3. Skill Hot-Reload — 10-15 min
 
-### Sprint 2 (Weeks 3-4)
-1. Skill Marketplace — 4-5 days
-2. Conversation Replay Timeline — 5-6 days
+### Sprint 2 (Session after)
+1. Skill Marketplace — 20-30 min
+2. Conversation Replay Timeline — 20-30 min
 
-### Sprint 3 (Weeks 5-6)
-1. Smart Context Window Manager — 4-5 days
-2. Proactive Health Dashboard — 3-4 days
-3. Agent Collaboration Graph — 3-4 days
+### Sprint 3 (Session after)
+1. Smart Context Window Manager — 20-30 min
+2. Proactive Health Dashboard — 15-20 min
+3. Agent Collaboration Graph — 15-20 min
 
-### Sprint 4 (Weeks 7-8)
-1. Multi-Model Ensemble — 5-6 days
-2. Voice Interface — 7-10 days
+### Sprint 4 (Session after)
+1. Multi-Model Ensemble — 20-30 min
+2. Voice Interface — 30-45 min
 3. Easter eggs + UX polish
 
 ---

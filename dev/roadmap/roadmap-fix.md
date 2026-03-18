@@ -296,7 +296,8 @@ pub async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
 | 11 | Performance | 6 | PENDING (requires profiling tools) |
 | 12 | Documentation | 5 | ✅ 1/5 DONE (example skill created) |
 | 13 | CI/CD | 7 | ✅ 1/7 DONE (ci.yml created) |
-| **CODE FIXES** | | **107** | **✅ ALL CODE FIXES COMPLETE** |
-| **VERIFICATION** | | **69** | **PENDING (runtime/testing tasks)** |
+| **CODE FIXES** | | **107** | **✅ ALL COMPLETE** |
+| **TESTING** | | **69** | **✅ 26/69 COMPLETE** (tests written for MCP, memory, ECHO) |
+| **VERIFICATION** | | **43** | **PENDING** (Docker, cross-platform, profiling, docs) |
 
 All code-level audit issues (107/107) are fixed. Remaining items are verification tasks requiring runtime environments (Docker, Nix, cross-platform), profiling tools, or infrastructure setup (CI/CD, threat intel endpoint).

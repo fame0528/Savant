@@ -11,7 +11,7 @@ pub struct SessionId(pub String);
 pub struct DeviceId(pub String);
 
 /// Control Frame for system operations
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "data")]
 pub enum ControlFrame {
     HistoryRequest {
@@ -54,6 +54,31 @@ pub enum ControlFrame {
     SkillScan {
         skill_path: String,
     },
+    // Configuration control frames
+    ConfigGet,
+    ConfigSet {
+        section: String, // "ai", "server", "skills", "memory", "security", "wasm", "system"
+        key: String,
+        value: serde_json::Value,
+    },
+    ModelsList,
+    ParameterDescriptors,
+    AgentConfigGet {
+        agent_id: String,
+    },
+    AgentConfigSet {
+        agent_id: String,
+        model: Option<String>,
+        model_provider: Option<String>,
+        system_prompt: Option<String>,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
+        max_tokens: Option<u32>,
+        heartbeat_interval: Option<u64>,
+        description: Option<String>,
+    },
 }
 
 /// A plan for manifestations of a single agent
@@ -65,7 +90,7 @@ pub struct AgentManifestPlan {
 }
 
 /// Request Payload
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum RequestPayload {
     ChatMessage(ChatMessage),
@@ -74,7 +99,7 @@ pub enum RequestPayload {
 }
 
 /// Request Frame
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RequestFrame {
     #[serde(default)]
     pub request_id: String,

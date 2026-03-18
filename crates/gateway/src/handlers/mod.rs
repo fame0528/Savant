@@ -259,6 +259,61 @@ pub async fn handle_message(
                 | savant_core::types::ControlFrame::SkillScan { .. } => {
                     skills::handle_skill_control(control, &session.session_id, &state.nexus).await;
                 }
+                // Configuration control frames
+                savant_core::types::ControlFrame::ConfigGet => {
+                    let _ = handle_config_get(&state.nexus).await;
+                }
+                savant_core::types::ControlFrame::ConfigSet {
+                    section,
+                    key,
+                    value,
+                } => {
+                    let request = ConfigUpdateRequest {
+                        section,
+                        key,
+                        value,
+                    };
+                    let _ = handle_config_set(request, &state.nexus).await;
+                }
+                savant_core::types::ControlFrame::ModelsList => {
+                    let _ = handle_models_list(&state.nexus).await;
+                }
+                savant_core::types::ControlFrame::ParameterDescriptors => {
+                    let _ = handle_parameter_descriptors(&state.nexus).await;
+                }
+                savant_core::types::ControlFrame::AgentConfigGet { agent_id } => {
+                    let _ = handle_agent_config_get(agent_id, &state.nexus).await;
+                }
+                savant_core::types::ControlFrame::AgentConfigSet {
+                    agent_id,
+                    model,
+                    model_provider,
+                    system_prompt,
+                    temperature,
+                    top_p,
+                    frequency_penalty,
+                    presence_penalty,
+                    max_tokens,
+                    heartbeat_interval,
+                    description,
+                } => {
+                    let request = AgentConfigRequest {
+                        agent_id,
+                        config: AgentConfigUpdate {
+                            model,
+                            model_provider,
+                            system_prompt,
+                            temperature,
+                            top_p,
+                            frequency_penalty,
+                            presence_penalty,
+                            max_tokens,
+                            heartbeat_interval,
+                            description,
+                        },
+                    };
+                    let _ = handle_agent_config_set(request, &state.nexus).await;
+                }
             }
         }
         savant_core::types::RequestPayload::Auth(_) => {

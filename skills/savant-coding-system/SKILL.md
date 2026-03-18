@@ -1,7 +1,7 @@
 ---
 name: savant-coding-system
-description: AAA-quality autonomous coding standards for all Savant agents. Universal foundation + language supplements.
-version: "0.0.1"
+description: AAA-quality autonomous coding standards for all Savant agents. Universal foundation + language supplements. Everything goes through the Perfection Loop.
+version: "0.0.2"
 execution_mode: Reference
 capabilities:
   network_access: false
@@ -10,11 +10,11 @@ capabilities:
   max_execution_time_ms: 0
 ---
 
-# Savant Coding System v0.0.1
+# Savant Coding System v0.0.2
 
 **Embedded skill. Loaded as agent context. Not executed.**
 
-Every agent working in code loads this skill before starting any task. It defines HOW code should be written, audited, and verified.
+Every agent working in code loads this skill before starting any task. It defines HOW code should be written, audited, and verified. **Everything goes through the Perfection Loop.**
 
 ---
 
@@ -27,8 +27,95 @@ coding-standards/     = Language-specific supplements
 When agent starts coding task:
 1. Read this SKILL.md (foundation)
 2. Read coding-standards/<LANGUAGE>.md (supplement for what you're working in)
-3. Follow both exactly
+3. Run Perfection Loop on EVERY feature/task
+4. Follow both exactly
 ```
+
+---
+
+## The Perfection Loop
+
+**This is the core quality protocol. Everything goes through it. No exceptions.**
+
+The Perfection Loop is a 5-step cycle that elevates code from "functional" to "flawless." It runs on every feature, every fix, every refactor. It is not optional.
+
+```
+┌─────────────────────────────────────────────────────┐
+│              PERFECTION LOOP                        │
+│                                                     │
+│  1. DEEP AUDIT                                      │
+│     Read all target files 1-EOF                     │
+│     Analyze for redundancy, debt, vulnerabilities   │
+│     Output: list of improvements                    │
+│          ↓                                          │
+│  2. ENHANCE                                         │
+│     Apply optimizations                             │
+│     Improve error handling                          │
+│     Constraint: no unwrap/todo/placeholder          │
+│          ↓                                          │
+│  3. VALIDATE                                        │
+│     Run verification (check, test, lint)            │
+│     Must pass with 0 errors, 0 warnings             │
+│          ↓                                          │
+│  4. ITERATE                                         │
+│     If improvements found → return to step 1        │
+│     If none found → proceed to step 5               │
+│     Max 5 iterations before flagging                │
+│          ↓                                          │
+│  5. CERTIFY                                         │
+│     Report metrics (LOC, tests, quality)            │
+│     Mark complete                                   │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+### Step 1: Deep Audit
+
+- Read ALL target files COMPLETELY (1-EOF) before any analysis
+- Analyze every line for redundancy, tech debt, security vulnerabilities
+- Verify compliance with project standards
+- **Output:** A clear list of improvements before writing any code
+
+### Step 2: Enhance
+
+- Apply performance optimizations (zero-copy, batch operations, efficient data structures)
+- Enhance error handling with context-rich logging
+- Refine patterns to match existing codebase conventions
+- **Constraint:** Do not introduce `unwrap()`, `todo!()`, `unimplemented!()`, `as any`, or placeholders. Ever.
+
+### Step 3: Validate
+
+- Run the language-appropriate verification commands (see supplements)
+- All must pass: compilation, tests, linting
+- Verify unit and integration tests are written and passing
+- **If any fail:** return to Step 2, fix, then re-validate
+
+### Step 4: Iterate
+
+- If Deep Audit or Validation identified improvements:
+  - Implement them immediately
+  - Return to Step 1
+  - Track iteration count (e.g., "Perfection Loop: Iteration 2")
+- If NO improvements identified:
+  - Proceed to Step 5
+- **Checkpoint:** If loop exceeds 3 iterations, reassess scope. If 5 iterations without convergence, flag for review.
+
+### Step 5: Certify
+
+- Report final metrics (LOC, files changed, tests passing, quality metrics)
+- Include: iteration count, improvements made
+- **Deliverable:** Final code, verification passes, updated documentation
+- Mark feature as COMPLETE in tracker
+
+### Termination Criteria
+
+The loop terminates when ANY of:
+
+| Condition | Action |
+|-----------|--------|
+| Deep Audit yields ZERO improvements | → Certify |
+| 5 iterations reached without convergence | → Flag for review |
+| Diminishing returns detected | → Recommend ship |
 
 ---
 
@@ -70,16 +157,23 @@ After every tool response, check:
 
 ---
 
-## Implementation Protocol (12 Steps)
+## Implementation Flow
 
 ```
 Objective Triggered
     ↓
 1. Understand the task (scope, acceptance criteria)
-2. Pattern Discovery (find 2-3 working examples)
+2. Pattern Discovery (find 2-3 working examples in codebase)
 3. Create Structured Todo (atomic tasks, proper order)
-4-N. Execute Each Task (atomic, complete, documented)
-N+1. Verification (0 errors, all tests pass)
+    ↓
+4-N. Execute Each Task
+    ├── Read target files (1-EOF)
+    ├── Generate complete code (no placeholders)
+    ├── Follow discovered patterns exactly
+    └── Run Perfection Loop on each task
+    ↓
+N+1. Final Verification (all checks pass)
+    ↓
 Final. Completion Report (LOC, files, metrics)
 ```
 
@@ -162,6 +256,8 @@ BEFORE touching ANY file:
 
 **ALWAYS:** Read completely | Production code | Proper types | Log intent | Search first | Follow patterns | Verify | Track progress
 
+**ALWAYS:** Run Perfection Loop on every task. This is the standard.
+
 ---
 
 ## Language Supplements
@@ -171,8 +267,8 @@ See `coding-standards/` directory for language-specific rules:
 - `TYPESCRIPT.md` — strict mode, branded types, Result pattern, React
 - `PYTHON.md` — type hints, dataclass, asyncio, pydantic
 
-**When working in a language:** Read the supplement AFTER reading this foundation.
+**When working in a language:** Read the supplement AFTER reading this foundation. The Perfection Loop applies regardless of language.
 
 ---
 
-*This skill is loaded as context by every Savant agent before coding. Version 0.0.1.*
+*This skill is loaded as context by every Savant agent before coding. Version 0.0.2. Everything goes through the Perfection Loop.*

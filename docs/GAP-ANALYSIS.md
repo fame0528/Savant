@@ -59,11 +59,10 @@ The SOUL MANIFESTATION ENGINE is fully functional in both frontend and backend.
 - Metrics HUD calculates depth, integrity, fidelity, ethics, etc.
 
 **What needs fixing:**
-1. **Model mismatch** — Hardcodes `anthropic/claude-3.5-sonnet` (`handlers/mod.rs:513`) instead of using Savant's configured model from `config/savant.toml`. Should use the same provider system the rest of Savant uses.
-2. **Dashboard key derivation** — Currently uses `resolve_openrouter_key()` (master key exchange). Dashboard should have its own key derived from the master key, separate from the system's provider key.
-3. **No structured personality generation** — Currently sends raw prompt to LLM. Should use trait sliders (tone, formality, humor, creativity) to guide generation.
-4. **No live preview** — No "how would the agent respond" with the generated SOUL.
-5. **No template library** — No preset SOUL.md templates to start from.
+1. **Dashboard settings page** — Backend supports ConfigGet/ConfigSet via WebSocket, but frontend has no settings UI. Non-technical users need a dashboard page to change model, provider, temperature, system prompt without touching config files.
+2. **No structured personality generation** — Currently sends raw prompt to LLM. Should use trait sliders (tone, formality, humor, creativity) to guide generation.
+3. **No live preview** — No "how would the agent respond" with the generated SOUL.
+4. **No template library** — No preset SOUL.md templates to start from.
 
 **Injection Points:**
 - Frontend: `dashboard/src/app/page.tsx` → enhance existing SOUL MANIFESTATION ENGINE
@@ -396,7 +395,7 @@ Speak to your agents via WebRTC audio. Agents respond with synthesized speech.
 ### Code Quality
 | Issue | Location | Impact | Status |
 |-------|----------|--------|--------|
-| **Hardcoded LLM model** | `crates/gateway/src/handlers/mod.rs:513` — uses `anthropic/claude-3.5-sonnet` instead of configured model | High | 🔴 Open |
+| **No dashboard settings page** — Backend ConfigGet/ConfigSet works, frontend has no UI | High | 🔴 Open |
 | Monolithic file (1073 lines) | `crates/cognitive/src/synthesis.rs` | Medium | 🔴 Open |
 | Monolithic file (548 lines) | `crates/agent/src/pulse/heartbeat.rs` | Medium | 🔴 Open |
 | Monolithic file (405 lines) | `crates/gateway/src/server.rs` | Medium | 🔴 Open |

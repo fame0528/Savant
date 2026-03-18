@@ -450,6 +450,11 @@ async fn execute_manifestation(
     // 1. Resolve the OpenRouter API key (master key → regular key exchange if needed).
     let api_key = resolve_openrouter_key().await;
 
+    // 2. Load configured model from config (dashboard-controllable)
+    let model = savant_core::config::Config::load_from(None)
+        .map(|c| c.ai.model)
+        .unwrap_or_else(|_| "openrouter/hunter-alpha".to_string());
+
     // 2. Construct the AAA Master Framework Prompt.
     let name_hint = name
         .as_ref()
@@ -510,7 +515,7 @@ Output ONLY the raw Markdown content of the SOUL.md file. No preamble, no explan
             .header("HTTP-Referer", "https://github.com/Savant-AI/Savant")
             .header("X-Title", "Savant Soul Manifestation Engine")
             .json(&serde_json::json!({
-                "model": "anthropic/claude-3.5-sonnet",
+                "model": &model,
                 "messages": messages,
                 "max_tokens": 8192,
                 "temperature": 0.85,
@@ -906,129 +911,68 @@ pub async fn handle_agent_config_set(
         .map_err(|e| format!("Failed to publish: {}", e))
 }
 
-/// Get available models for UI dropdown, includes parameter descriptions for config UI
+/// Get available models for UI dropdown — free models only, never paid.
+///
+/// Model selection strategy:
+///   1. `openrouter/hunter-alpha` (primary)
+///   2. `openrouter/healer-alpha` (backup)
+///   3. `stepfun/step-3.5-flash:free` (step 3)
+///   4. `openrouter/free` (free router — OpenRouter picks best available free model)
 pub async fn handle_models_list(nexus: &Arc<NexusBridge>) -> Result<(), String> {
     let models = serde_json::json!({
         "openrouter": {
-            "display": "OpenRouter (100+ models)",
+            "display": "OpenRouter (Free Only)",
+            "note": "Free tier only. Hunter Alpha is primary.",
             "models": [
-                "anthropic/claude-opus-4-6",
-                "anthropic/claude-sonnet-4-6",
-                "anthropic/claude-haiku-4-5",
-                "openai/gpt-5.4",
-                "openai/gpt-5-mini",
-                "openai/gpt-4.1",
-                "google/gemini-2.5-pro",
-                "google/gemini-2.5-flash",
-                "x-ai/grok-3",
-                "deepseek/deepseek-chat",
-                "mistralai/mistral-large",
+                {
+                    "name": "openrouter/hunter-alpha",
+                    "display_name": "Hunter Alpha",
+                    "tier": "primary",
+                    "description": "Primary model. Fast, capable, free."
+                },
+                {
+                    "name": "openrouter/healer-alpha",
+                    "display_name": "Healer Alpha",
+                    "tier": "backup",
+                    "description": "Backup model. Reliable, free."
+                },
+                {
+                    "name": "stepfun/step-3.5-flash:free",
+                    "display_name": "Step 3.5 Flash",
+                    "tier": "step3",
+                    "description": "Step 3 free model. Fast flash variant."
+                },
+                {
+                    "name": "openrouter/free",
+                    "display_name": "OpenRouter Free Router",
+                    "tier": "free_router",
+                    "description": "OpenRouter picks the best available free model automatically."
+                }
             ]
-        },
-        "openai": {
-            "display": "OpenAI",
-            "models": [
-                "gpt-5.4",
-                "gpt-5-mini",
-                "gpt-4.1",
-                "gpt-4.1-mini",
-                "gpt-4.1-nano",
-                "o4-mini",
-                "o3-mini",
-            ]
-        },
-        "anthropic": {
-            "display": "Anthropic",
-            "models": [
-                "claude-opus-4-6",
-                "claude-sonnet-4-6",
-                "claude-haiku-4-5",
-                "claude-sonnet-4-5",
-                "claude-opus-4-5",
-            ]
-        },
-        "google": {
-            "display": "Google AI (Gemini)",
-            "models": [
-                "gemini-2.5-pro",
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-1.5-pro",
-            ]
-        },
-        "mistral": {
-            "display": "Mistral AI",
-            "models": [
-                "mistral-large-latest",
-                "mistral-small-latest",
-                "mistral-medium-latest",
-            ]
-        },
-        "groq": {
-            "display": "Groq",
-            "models": [
-                "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant",
-                "mixtral-8x7b-32768",
-            ]
-        },
-        "deepseek": {
-            "display": "Deepseek",
-            "models": [
-                "deepseek-chat",
-                "deepseek-reasoner",
-            ]
-        },
-        "xai": {
-            "display": "xAI (Grok)",
-            "models": [
-                "grok-3",
-                "grok-3-mini",
-                "grok-2-1212",
-            ]
-        },
-        "together": {
-            "display": "Together AI",
-            "models": [
-                "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-                "meta-llama/Llama-4-Maverick-Instruct",
-                "mistralai/Mixtral-8x22B-Instruct-v0.1",
-            ]
-        },
-        "cohere": {
-            "display": "Cohere",
-            "models": [
-                "command-a-03-2025",
-                "command-r-plus-08-2024",
-                "command-r-08-2024",
-            ]
-        },
-        "fireworks": {
-            "display": "Fireworks AI",
-            "models": [
-                "llama-v3p3-70b-instruct",
-                "mixtral-8x22b-instruct-v0.1",
-            ]
-        },
-        "azure": {
-            "display": "Azure OpenAI",
-            "models": [
-                "gpt-4.1",
-                "gpt-4.1-mini",
-                "o4-mini",
-            ],
-            "note": "Requires Azure endpoint and deployment name"
         },
         "ollama": {
             "display": "Ollama (Local)",
             "models": [
-                "llama3.3",
-                "llama3.2",
-                "mistral",
-                "qwen2.5",
-                "deepseek-coder-v2",
+                {
+                    "name": "llama3.3",
+                    "display_name": "Llama 3.3",
+                    "tier": "local",
+                    "description": "Local model. Always free."
+                },
+                {
+                    "name": "llama3.2",
+                    "display_name": "Llama 3.2",
+                    "tier": "local",
+                    "description": "Local model. Always free."
+                },
+                {
+                    "name": "qwen2.5",
+                    "display_name": "Qwen 2.5",
+                    "tier": "local",
+                    "description": "Local model. Always free."
+                }
             ],
-            "note": "Requires local Ollama server running"
+            "note": "Requires local Ollama server. Always free."
         },
     });
 

@@ -12,7 +12,7 @@
 # ============================================================================
 [ai]
 provider = "openrouter"
-model = "openrouter/healer-alpha"
+model = "openrouter/hunter-alpha"
 temperature = 0.4
 max_tokens = 262144
 

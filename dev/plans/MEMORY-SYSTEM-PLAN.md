@@ -10,6 +10,10 @@
 
 7 architectural upgrades identified, building on each other. 3 quick wins, 4 complex features.
 
+**Critical architectural principle:** Savant is a hive mind. Memories are global by default — if Agent A learns something, Agent F knows it too. The substrate (Savant itself) IS the memory. Individual agents are processing nodes, not isolated silos. Session isolation exists for conversation flow, not knowledge isolation.
+
+---
+
 ## Implementation Roadmap
 
 ### Sprint A: Quick Wins (3 features, all LOW complexity)
@@ -88,13 +92,26 @@ Prepend to system prompt before LLM sees it
 
 **Goal:** Track when facts become true/stop being true. Filter stale facts automatically.
 
+**⚠️ Important:** Adding fields to `MemoryEntry` breaks rkyv serialization of existing data. Two approaches:
+
+**Option A (Recommended):** New struct `TemporalEntry` wrapping `MemoryEntry` + `TemporalMetadata`
+```rust
+pub struct TemporalEntry {
+    pub memory: MemoryEntry,
+    pub temporal: TemporalMetadata,
+}
+```
+Stored in a SEPARATE Fjall keyspace (`temporal_metadata`). No breaking change to existing data.
+
+**Option B:** Add `valid_from`/`valid_to` directly to `MemoryEntry`. Requires migration script or fresh database.
+
 **Data structures:**
 ```rust
 pub struct TemporalMetadata {
-    pub valid_from: rend::i64_le,        // When fact became true in reality
+    pub valid_from: rend::i64_le,
     pub valid_to: Option<rend::i64_le>,   // None = currently active
-    pub recorded_at: rend::i64_le,        // When agent stored it
-    pub superseded_by: Option<rend::u64_le>, // Links to replacement fact
+    pub recorded_at: rend::i64_le,
+    pub superseded_by: Option<rend::u64_le>,
 }
 ```
 
@@ -111,8 +128,9 @@ memories.retain(|m| m.temporal.valid_to.is_none());
 ```
 
 **Files to modify:**
-- `crates/memory/src/models.rs` — add `TemporalMetadata` to `MemoryEntry`
+- `crates/memory/src/models.rs` — add `TemporalMetadata` struct
 - `crates/memory/src/engine.rs` — update `index_memory()` for contradiction detection
+- `crates/memory/src/lsm_engine.rs` — add `temporal_metadata` keyspace
 
 **Tests:** 6 (create, invalidate, query active only, query history, multiple invalidations, no false positives)
 
@@ -148,38 +166,42 @@ workspaces/agents/<agent>/memory/
 
 ---
 
-### 4. Blackboard (Swarm Sharing)
+### 4. Hive-Mind Notification Channel
 
-**Goal:** Agents publish discoveries to shared memory. Other agents receive async interrupts.
+**Goal:** When any agent discovers something important, ALL agents get alerted instantly. Memory is already global — this is proactive notification, not sharing.
 
-**Architecture:**
+**Architecture (hive-mind model):**
 ```
-Agent Alpha discovers bug
+Agent Alpha discovers bug → writes to global memory (automatic, no publish needed)
     ↓
-Publishes BlackboardEvent to global Fjall keyspace
+Savant substrate detects new high-importance memory (importance >= 7)
     ↓
-tokio::sync::broadcast sends to subscribers
+tokio::sync::broadcast sends notification to all active agents
     ↓
-Agent Beta receives interrupt → injects into context
+Agent Beta receives interrupt → context updated automatically
+    ↓
+Agent Beta never knew it was Agent Alpha's discovery — it's just "known"
 ```
+
+**Key difference:** No publish/subscribe gate. Memories are global by default. The notification channel just alerts agents about NEW discoveries without polling.
 
 **Data structures:**
 ```rust
-pub struct BlackboardEvent {
-    pub event_id: String,
-    pub publisher_agent_id: String,
-    pub domain_tags: Vec<String>,   // "docker", "security", "api"
-    pub payload: String,
+pub struct MemoryNotification {
+    pub notification_id: String,
+    pub source_session: String,         // Which session generated it
+    pub memory_id: u64_le,              // Reference to MemoryEntry
+    pub domain_tags: Vec<String>,       // "docker", "security", "api"
+    pub importance: u8,                 // Only notify on importance >= 7
     pub timestamp: rend::i64_le,
-    pub confidence: f32,
 }
 ```
 
 **Files to create/modify:**
-- `crates/ipc/src/blackboard.rs` — new module
-- `crates/ipc/src/lib.rs` — add blackboard module
+- `crates/memory/src/notifications.rs` — notification channel
+- `crates/memory/src/engine.rs` — trigger notification on `index_memory()` when importance >= 7
 
-**Tests:** 5 (publish, subscribe, domain filtering, multiple subscribers, event ordering)
+**Tests:** 5 (global memory access, notification on high-importance, domain filtering, multiple agents, no notification for low-importance)
 
 ---
 
@@ -187,15 +209,29 @@ pub struct BlackboardEvent {
 
 **Goal:** Replace destructive `atomic_compact()` with reversible DAG nodes.
 
-**Current (destructive):**
+**Current behavior (DESTRUCTIVE — lines 311-362 of lsm_engine.rs):**
 ```rust
-// Deletes old messages, inserts summary. Original data lost.
-engine.atomic_compact(&sid, vec![summary, ...recent]);
+// 1. Collect ALL keys for session
+// 2. Delete ALL messages in transaction
+// 3. Insert compacted batch
+// Old data is GONE FOREVER
+pub fn atomic_compact(&self, session_id, batch) {
+    let keys_to_delete = self.transcript_ks.inner().prefix(&prefix)...;
+    for key in &keys_to_delete { tx.remove(key); }  // DELETE ALL
+    for msg in &batch { tx.insert(key, bytes); }     // INSERT NEW
+    tx.commit();
+}
 ```
 
-**New (reversible):**
+**Current consolidation (lines 225-295 of async_backend.rs):**
+- Triggers at 50+ messages
+- Keeps last 20 messages
+- Creates summary from old messages
+- Calls atomic_compact → DESTRUCTIVE
+
+**New approach (reversible):**
 ```rust
-// Keep raw messages. Create DAG node that references them.
+// Keep raw messages in Fjall. Create DAG node that REFERENCES them.
 pub struct DagNode {
     pub node_id: String,
     pub depth_level: u8,
@@ -203,13 +239,14 @@ pub struct DagNode {
     pub raw_message_ids: Vec<String>,  // References to original messages
     pub child_nodes: Vec<String>,       // Links to sub-DAG nodes
 }
-// Raw messages stay in Fjall. Summary is just an index.
 ```
 
-**Expand tool:** Agent calls `expand_memory_node(node_id)` → fetches raw messages by ID → injects into context.
+**Change to atomic_compact():**
+Instead of deleting old messages, keep them. Create a DagNode in a separate `dag_nodes` keyspace. The summary is just an index pointing to original data. Agent calls `expand_memory_node(node_id)` to page raw messages back into context.
 
 **Files to modify:**
 - `crates/memory/src/models.rs` — add `DagNode` struct
+- `crates/memory/src/lsm_engine.rs` — add `dag_nodes` keyspace, new `compact_with_dag()` method
 - `crates/memory/src/async_backend.rs` — rewrite `consolidate()` to use DAG
 
 **Tests:** 5 (create node, expand node, multi-level DAG, node ordering, no data loss)

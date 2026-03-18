@@ -104,6 +104,15 @@ pub struct ContextCacheBlock {
 - ContextCacheBlock exceeds token budget → truncate to max_results, then truncate content to fit
 - Concurrent auto-recall calls → no shared state, each call is independent (safe)
 
+**Configuration (Iteration 4):**
+- Auto-recall config should live in `config/savant.toml` under `[memory.auto_recall]` section
+- Dashboard Settings page can tune `similarity_threshold`, `max_results`, `max_tokens` via ConfigSet
+- Default: enabled=true, similarity_threshold=0.3, max_results=5, max_tokens=2000
+
+**New method needed (Iteration 4):**
+- `semantic_search_temporal()` in `engine.rs` — joins VectorEngine results with TemporalEntry, filters `valid_to.is_none()`
+- Keeps existing `semantic_search()` unchanged for backward compatibility
+
 ---
 
 ### 2. Bi-Temporal Tracking
@@ -193,6 +202,11 @@ workspaces/agents/<agent>/memory/
 - Log file exceeds 10KB → rotate to archive, start fresh file
 - Multiple agents writing to same log → one log per agent per day, no conflicts
 - New day boundary → auto-create new file, stop appending to yesterday's
+
+**Configuration (Iteration 4):**
+- Daily log config in `config/savant.toml` under `[memory.daily_logs]`
+- `enabled=true`, `max_tokens=500`, `retention_days=30`
+- Dashboard Settings can toggle and tune
 
 ---
 
@@ -412,6 +426,17 @@ After Sprint A completion, run integration tests that verify features work toget
 2. Auto-Recall + Daily Logs → daily log context is included in recall
 3. Bi-Temporal + Notifications → invalidated facts trigger notification to agents
 4. All three together → agent queries "what happened yesterday" → auto-recall fetches daily log + semantic memories, all filtered by temporal validity
+
+**Context Budget Interaction (Iteration 4):**
+When all features inject context, the total budget must be enforced:
+```
+System prompt:             20% (existing TokenBudget)
+Auto-recall cache:         15% (auto-recall max_tokens)
+Daily log context:          5% (daily log max_tokens)
+Notification highlights:    3% (recent high-importance memories)
+Remaining for conversation: 57% (existing transcript)
+```
+Total injected context: 23% of window. Leaves 77% for actual conversation. Safe.
 
 ---
 

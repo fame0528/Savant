@@ -133,6 +133,43 @@ The loop terminates when ANY of:
 | 8 | Follow discovered patterns EXACTLY | Inconsistency |
 | 9 | Run verification before completion | Broken builds |
 | 10 | Never expose sensitive data in logs/errors | Security breach |
+| 11 | **Utility-first, universal logic** | Duplication is debugging debt |
+
+### Law 11: Utility-First, Universal Logic
+
+**Build modular. Combine overlap. One function, one truth.**
+
+```
+BEFORE writing a new function:
+1. Does a similar function already exist?
+2. Does this new function overlap with an existing one?
+3. Can the existing function be expanded to cover both cases?
+
+IF yes to any → expand the existing function. Don't create a duplicate.
+
+IF two functions share logic → combine them into one universal function
+   with parameters that cover both cases.
+
+IF a pattern appears twice → extract it into a shared utility.
+
+THINK: Is this a special case of something more general?
+   If yes → build the general version. Use it everywhere.
+```
+
+**Examples:**
+
+```
+BAD:  validate_email(), validate_username(), validate_phone()
+GOOD: validate_input(input, InputType::Email | Username | Phone)
+
+BAD:  format_for_discord(), format_for_telegram(), format_for_matrix()
+GOOD: format_message(content, ChannelType) — one function, all channels
+
+BAD:  agent_embed(), skill_embed(), memory_embed()
+GOOD: embed(text, &embedding_service) — one universal embedding call
+```
+
+**The rule:** If you're about to copy-paste logic, stop. Combine instead. Expand scope. One function handles all cases. This makes debugging easier because there's only one place to look.
 
 ---
 
@@ -252,9 +289,9 @@ BEFORE touching ANY file:
 
 ## Golden Rules
 
-**NEVER:** Edit without reading | Pseudo-code | Type shortcuts | Skip planning | Copy-paste | Expose secrets | Skip verification
+**NEVER:** Edit without reading | Pseudo-code | Type shortcuts | Skip planning | Copy-paste | Expose secrets | Skip verification | Duplicate logic
 
-**ALWAYS:** Read completely | Production code | Proper types | Log intent | Search first | Follow patterns | Verify | Track progress
+**ALWAYS:** Read completely | Production code | Proper types | Log intent | Search first | Follow patterns | Verify | Track progress | Combine overlap into universal functions
 
 **ALWAYS:** Run Perfection Loop on every task. This is the standard.
 

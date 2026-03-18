@@ -43,7 +43,7 @@
 | NX-002 | Verify path canonicalization works on Linux | `crates/skills/src/nix.rs:117-135` | ✅ FIXED (canonicalize added) |
 | NX-003 | Test flake reference validation for all 5 prefixes | `crates/skills/src/nix.rs:80-115` | ⏳ NEEDS NIX ON LINUX |
 | NX-004 | Verify 10KB payload limit enforcement | `crates/skills/src/nix.rs:200-250` | ⏳ NEEDS NIX ON LINUX |
-| NX-005 | Document WSL2 detection approach | `docs/ops/DEPLOYMENT_CHECKLIST.md` | PENDING |
+| NX-005 | Document WSL2 detection approach | `docs/ops/DEPLOYMENT_CHECKLIST.md` | ✅ FIXED (full deployment doc) |
 
 ---
 
@@ -193,9 +193,9 @@
 |---|------|------|--------|
 | DOC-001 | Create example skill package | `skills/hello-savant/` | ✅ DONE (full skill with 6 tests) |
 | DOC-002 | Write ClawHub publishing tutorial | `docs/tutorials/` | PENDING |
-| DOC-003 | Write Docker sandbox setup tutorial | `docs/tutorials/` | PENDING |
+| DOC-003 | Write Docker sandbox setup tutorial | `docs/ops/DEPLOYMENT_CHECKLIST.md` | ✅ DONE (full deployment checklist) |
 | DOC-004 | Write troubleshooting guide | `docs/ops/` | PENDING |
-| DOC-005 | Write contributing guidelines | `CONTRIBUTING.md` | PENDING |
+| DOC-005 | Write contributing guidelines | `CONTRIBUTING.md` | ✅ DONE |
 
 ---
 

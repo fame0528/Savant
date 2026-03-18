@@ -1,33 +1,70 @@
 # Savant Production Deployment Checklist
 
-Follow this A-Z checklist to deploy a Savant Swarm in a production environment.
+## Prerequisites
 
-## 1. Environment Preparation
+- [ ] **Rust 1.75+** installed
+- [ ] **Node.js 18+** installed (for dashboard)
+- [ ] **Docker** installed and running (for sandbox execution)
+- [ ] **AI Provider API Key** (OpenRouter, OpenAI, Anthropic, etc.)
 
-- [ ] **Rust 1.80+**: Required for async-trait and latest wasmtime features.
-- [ ] **Iceoryx2 Deamon**: Ensure memory segments are configured (`/dev/shm` on Linux).
-- [ ] **SQLite/WAL**: Database must be on a high-speed NVMe for peak performance.
+## Environment Setup
 
-## 2. Security Configuration
-- [ ] **Master Seed**: Generate a 32-byte Ed25519 signing key for the Gateway.
-- [ ] **Vault Integration**: Ensure API keys (OpenRouter, etc.) are injected via secure env vars.
-- [ ] **Sandboxing**: Enable `Landlock` (Linux) or `AppSandbox` (macOS) if using `LegacyNative` tools.
+- [ ] Copy `.env.example` to `.env` and configure:
+  - `OR_MASTER_KEY` — OpenRouter API key
+  - `SAVANT_DEV_MODE=1` — for development (auto-generates keys)
+- [ ] Review `config/savant.toml` settings:
+  - `ai.provider` — your AI provider (openrouter, openai, anthropic, etc.)
+  - `ai.model` — model name (e.g., `openrouter/healer-alpha`)
+  - `server.port` — gateway port (default: 3000)
+- [ ] Verify database directories will be created:
+  - `./data/savant/` — sovereign substrate storage
+  - `./data/memory/` — agent memory engine (MUST be separate path)
 
-## 3. High-Scale Tuning
+## Security Configuration
 
-- [ ] **IPC Buffers**: Increase `max_readers` to 2048 for swarms > 500 agents.
-- [ ] **LSM Compaction**: Set `Fjall` strategy to `Leveled` for heavy write workloads.
-- [ ] **Vector SIMD**: Ensure CPU supports AVX-512 or NEON for `ruvector-core`.
+- [ ] Generate master key pair: `savant_cli --keygen`
+- [ ] Set `SAVANT_MASTER_SECRET_KEY` and `SAVANT_MASTER_PUBLIC_KEY` in `.env`
+- [ ] Ensure `.env` is in `.gitignore`
+- [ ] Verify `config/savant.toml` has no secrets (only settings)
 
-## 4. Monitoring & Governance
+## Nix Sandbox (Linux/macOS only)
 
-- [ ] **Consensus Quorum**: Set `quorum_threshold` to `n/2 + 1` for safety.
-- [ ] **Heartbeat Pulse**: Monitor the pulse bus for agent "zombie" states.
-- [ ] **ECHO Handoffs**: Trace task cycles using the IPC `DelegationBloomFilter`.
+- Nix requires Unix-like environment (Linux or macOS)
+- On Windows: returns `SavantError::Unsupported` with clear message
+- For Nix on Windows: run Savant inside WSL2
+- Ensure `nix` CLI is in PATH
+- Enable flakes: `nix.settings.experimental-features = "flakes"`
 
-## 5. Deployment Command
+## Docker Sandbox
+
+- Docker Desktop (Windows/macOS) or Docker Engine (Linux)
+- Network access for pulling container images
+- Sufficient disk space for container images
+- Default sandbox: `alpine:latest`
+
+## Launch
 
 ```bash
-# Production ignition
-savant-gateway --release --config ./prod.json --ignite
+# Smart launcher (Windows)
+start.bat
+
+# Manual launch
+cargo run --release --bin savant_cli    # Gateway + Swarm
+cd dashboard && npm run dev             # Dashboard (separate terminal)
 ```
+
+## Health Check
+
+```bash
+curl http://localhost:3000/live    # Should return "OK"
+curl http://localhost:3000/ready   # Should return "OK"
+```
+
+## Verification
+
+- [ ] Dashboard loads at http://localhost:3000
+- [ ] WebSocket connects successfully
+- [ ] Agent discovery shows workspace agents
+- [ ] Config auto-reload works (edit savant.toml, verify log message)
+- [ ] Threat intel sync runs (MalwareBazaar + URLhaus)
+- [ ] Skill installation works

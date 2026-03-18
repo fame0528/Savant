@@ -169,6 +169,7 @@ impl NixSkillExecutor {
     }
 }
 
+#[cfg(not(windows))]
 #[async_trait]
 impl savant_core::traits::Tool for NixSkillExecutor {
     fn name(&self) -> &str {
@@ -226,6 +227,29 @@ impl savant_core::traits::Tool for NixSkillExecutor {
                 )))
             }
         }
+    }
+}
+
+/// Windows-specific implementation that returns a clear error.
+/// Nix requires a Unix-like environment. On Windows, use Docker sandbox or WSL2.
+#[cfg(windows)]
+#[async_trait]
+impl savant_core::traits::Tool for NixSkillExecutor {
+    fn name(&self) -> &str {
+        "nix_skill"
+    }
+
+    fn description(&self) -> &str {
+        "Nix flake executor (requires Linux/macOS)"
+    }
+
+    async fn execute(&self, _payload: serde_json::Value) -> Result<String, SavantError> {
+        Err(SavantError::Unsupported(
+            "Nix sandbox requires a Unix-like environment (Linux or macOS). \
+             On Windows, use the Docker sandbox for skill execution. \
+             For Nix on Windows, run Savant inside WSL2."
+                .to_string(),
+        ))
     }
 }
 

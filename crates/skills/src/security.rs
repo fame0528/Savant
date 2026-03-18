@@ -18,7 +18,7 @@
 //! 7. Cryptojacking patterns (mining code in instructions)
 //! 8. Reverse shell indicators (outbound connection patterns)
 //! 9. Keylogger patterns (keystroke capture attempts)
-//! 10. Screenshot/screen capture without consent
+//! 10. Screenshot/screen capture without consentx
 
 use hex;
 use regex::Regex;
@@ -106,8 +106,14 @@ pub fn is_blocked_domain(domain: &str) -> bool {
 // THREAT INTELLIGENCE SYNC
 // ============================================================================
 
-/// Threat intelligence feed URL (can be configured)
-const THREAT_INTEL_FEED_URL: &str = "https://api.savant.ai/v1/threat-intel/blocklist";
+// ============================================================================
+// THREAT INTELLIGENCE SYNC
+// ============================================================================
+
+/// Multi-source threat intelligence feeds.
+/// Combines MalwareBazaar (malware hashes) + URLhaus (malicious URLs/domains).
+const MALWARE_BAZAAR_URL: &str = "https://mb-api.abuse.ch/api/v1/";
+const URLHAUS_URL: &str = "https://urlhaus.abuse.ch/downloads/json_recent/";
 
 /// Result of a threat intelligence sync
 #[derive(Debug, Clone)]
@@ -124,12 +130,15 @@ pub struct ThreatIntelSyncResult {
     pub error: Option<String>,
 }
 
-/// Sync the local blocklists with the threat intelligence feed.
+/// Sync the local blocklists with multiple threat intelligence sources.
 ///
-/// This fetches the latest threat data from the Savant threat intelligence
-/// feed and updates the local blocklists. Should be called:
+/// Combines data from:
+/// - MalwareBazaar (abuse.ch): Malware content hashes
+/// - URLhaus (abuse.ch): Malicious URLs and domains
+///
+/// Should be called:
 /// - On startup
-/// - Periodically (e.g., every 6 hours)
+/// - Periodically (configurable interval)
 /// - Before installing new skills
 ///
 /// # Returns
@@ -137,101 +146,175 @@ pub struct ThreatIntelSyncResult {
 pub async fn sync_threat_intelligence() -> ThreatIntelSyncResult {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none()) // SSRF protection: no redirects
+        .redirect(reqwest::redirect::Policy::none()) // SSRF protection
         .build()
         .unwrap_or_default();
 
-    match client.get(THREAT_INTEL_FEED_URL).send().await {
-        Ok(response) if response.status().is_success() => {
-            match response.text().await {
-                Ok(body) => {
-                    // Parse the JSON response
-                    #[derive(serde::Deserialize)]
-                    struct ThreatIntelData {
-                        #[serde(default)]
-                        content_hashes: Vec<String>,
-                        #[serde(default)]
-                        malicious_names: Vec<String>,
-                        #[serde(default)]
-                        malicious_domains: Vec<String>,
-                    }
+    let mut total_hashes = 0usize;
+    let mut total_names = 0usize;
+    let mut total_domains = 0usize;
+    let mut errors: Vec<String> = Vec::new();
 
-                    match serde_json::from_str::<ThreatIntelData>(&body) {
-                        Ok(data) => {
-                            let mut hashes_synced = 0;
-                            let mut names_synced = 0;
-                            let mut domains_synced = 0;
+    // Source 1: MalwareBazaar - recent malware hashes
+    match sync_malwarebazaar(&client).await {
+        Ok(count) => {
+            total_hashes += count;
+            tracing::info!("MalwareBazaar: synced {} hashes", count);
+        }
+        Err(e) => {
+            tracing::warn!("MalwareBazaar sync failed: {}", e);
+            errors.push(format!("MalwareBazaar: {}", e));
+        }
+    }
 
-                            // Update content hashes
-                            if let Ok(mut list) = get_blocklist().write() {
-                                for hash in &data.content_hashes {
-                                    if list.insert(hash.clone()) {
-                                        hashes_synced += 1;
-                                    }
-                                }
-                            }
+    // Source 2: URLhaus - malicious URLs and domains
+    match sync_urlhaus(&client).await {
+        Ok((urls, domains)) => {
+            total_names += urls;
+            total_domains += domains;
+            tracing::info!("URLhaus: synced {} URLs, {} domains", urls, domains);
+        }
+        Err(e) => {
+            tracing::warn!("URLhaus sync failed: {}", e);
+            errors.push(format!("URLhaus: {}", e));
+        }
+    }
 
-                            // Update malicious names
-                            if let Ok(mut list) = get_malicious_names().write() {
-                                for name in &data.malicious_names {
-                                    if list.insert(name.to_lowercase()) {
-                                        names_synced += 1;
-                                    }
-                                }
-                            }
+    let success = total_hashes + total_names + total_domains > 0;
+    ThreatIntelSyncResult {
+        hashes_synced: total_hashes,
+        names_synced: total_names,
+        domains_synced: total_domains,
+        success,
+        error: if errors.is_empty() {
+            None
+        } else {
+            Some(errors.join("; "))
+        },
+    }
+}
 
-                            // Update malicious domains
-                            if let Ok(mut list) = get_malicious_domains().write() {
-                                for domain in &data.malicious_domains {
-                                    if list.insert(domain.to_lowercase()) {
-                                        domains_synced += 1;
-                                    }
-                                }
-                            }
+/// Fetches recent malware hashes from MalwareBazaar API.
+/// Returns the number of hashes added to the blocklist.
+async fn sync_malwarebazaar(client: &reqwest::Client) -> Result<usize, String> {
+    #[derive(serde::Deserialize)]
+    struct MbResponse {
+        #[serde(default)]
+        query_status: String,
+        #[serde(default)]
+        data: Vec<MbSample>,
+    }
 
-                            ThreatIntelSyncResult {
-                                hashes_synced,
-                                names_synced,
-                                domains_synced,
-                                success: true,
-                                error: None,
-                            }
-                        }
-                        Err(e) => ThreatIntelSyncResult {
-                            hashes_synced: 0,
-                            names_synced: 0,
-                            domains_synced: 0,
-                            success: false,
-                            error: Some(format!("Failed to parse threat intel data: {}", e)),
-                        },
-                    }
+    #[derive(serde::Deserialize)]
+    struct MbSample {
+        sha256_hash: Option<String>,
+    }
+
+    let response = client
+        .post(MALWARE_BAZAAR_URL)
+        .form(&[("query", "get_recent"), ("selector", "100")])
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    let body = response.text().await.map_err(|e| e.to_string())?;
+    let parsed: MbResponse =
+        serde_json::from_str(&body).map_err(|e| format!("parse error: {}", e))?;
+
+    if parsed.query_status != "ok" {
+        return Err(format!("API status: {}", parsed.query_status));
+    }
+
+    let mut count = 0;
+    if let Ok(mut list) = get_blocklist().write() {
+        for sample in &parsed.data {
+            if let Some(hash) = &sample.sha256_hash {
+                if list.insert(hash.clone()) {
+                    count += 1;
                 }
-                Err(e) => ThreatIntelSyncResult {
-                    hashes_synced: 0,
-                    names_synced: 0,
-                    domains_synced: 0,
-                    success: false,
-                    error: Some(format!("Failed to read response: {}", e)),
-                },
             }
         }
-        Ok(response) => ThreatIntelSyncResult {
-            hashes_synced: 0,
-            names_synced: 0,
-            domains_synced: 0,
-            success: false,
-            error: Some(format!(
-                "Threat intel feed returned status: {}",
-                response.status()
-            )),
-        },
-        Err(e) => ThreatIntelSyncResult {
-            hashes_synced: 0,
-            names_synced: 0,
-            domains_synced: 0,
-            success: false,
-            error: Some(format!("Failed to connect to threat intel feed: {}", e)),
-        },
+    }
+
+    Ok(count)
+}
+
+/// Fetches malicious URLs from URLhaus API.
+/// Returns (url_count, domain_count) added to blocklists.
+async fn sync_urlhaus(client: &reqwest::Client) -> Result<(usize, usize), String> {
+    #[derive(serde::Deserialize)]
+    struct UrlhausResponse {
+        #[serde(default)]
+        results: Vec<UrlhausEntry>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct UrlhausEntry {
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        threat: Option<String>,
+    }
+
+    let response = client
+        .get(URLHAUS_URL)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    let body = response.text().await.map_err(|e| e.to_string())?;
+    let parsed: UrlhausResponse =
+        serde_json::from_str(&body).map_err(|e| format!("parse error: {}", e))?;
+
+    let mut url_count = 0;
+    let mut domain_count = 0;
+
+    if let Ok(mut names) = get_malicious_names().write() {
+        if let Ok(mut domains) = get_malicious_domains().write() {
+            for entry in &parsed.results {
+                if let Some(url) = &entry.url {
+                    if names.insert(url.to_lowercase()) {
+                        url_count += 1;
+                    }
+                    // Extract domain from URL
+                    if let Some(domain) = extract_domain(url) {
+                        if domains.insert(domain) {
+                            domain_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok((url_count, domain_count))
+}
+
+/// Extracts domain from a URL string.
+fn extract_domain(url: &str) -> Option<String> {
+    let url = url.trim();
+    // Strip protocol
+    let without_proto = if let Some(pos) = url.find("://") {
+        &url[pos + 3..]
+    } else {
+        url
+    };
+    // Get host (before first /)
+    let host = without_proto.split('/').next().unwrap_or(without_proto);
+    // Strip port
+    let domain = host.split(':').next().unwrap_or(host);
+    if domain.is_empty() || !domain.contains('.') {
+        None
+    } else {
+        Some(domain.to_lowercase())
     }
 }
 

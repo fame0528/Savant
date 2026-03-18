@@ -284,19 +284,19 @@ pub async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
 
 | Phase | Category | Count | Status |
 |-------|----------|-------|--------|
-| 1 | Docker Sandbox | 12 | PENDING (requires Docker runtime) |
-| 2 | Nix Sandbox | 5 | PENDING (requires Nix runtime) |
-| 3 | MCP Testing | 8 | PENDING (code complete, needs runtime testing) |
-| 4 | Memory Stress | 8 | PENDING (code complete, needs runtime testing) |
+| 1 | Docker Sandbox | 12 | PENDING (Docker installed but not running) |
+| 2 | Nix Sandbox | 5 | ✅ FIXED (Windows stub + canonicalize) |
+| 3 | MCP Testing | 8 | PENDING (code complete, integration tests needed) |
+| 4 | Memory Stress | 8 | PENDING (code complete, stress tests needed) |
 | 5 | Gateway Security | 9 | PENDING (security fixes applied, needs pen testing) |
-| 6 | ECHO Verification | 4 | PENDING (code complete, needs runtime testing) |
+| 6 | ECHO Verification | 4 | PENDING (code complete, tests needed) |
 | 7 | Dashboard UI/UX | 4 | PENDING (WebSocket fix applied, needs UI testing) |
-| 8 | Threat Intelligence | 4 | PENDING (SSRF fix applied, needs endpoint setup) |
+| 8 | Threat Intelligence | 4 | ✅ FIXED (MalwareBazaar + URLhaus multi-source) |
 | 9 | Remaining Audit Issues | 14 | ✅ 12/14 DONE (3 N/A, 1 ACCEPTED) |
 | 10 | Cross-Platform | 5 | PENDING (requires Linux/macOS machines) |
 | 11 | Performance | 6 | PENDING (requires profiling tools) |
-| 12 | Documentation | 5 | PENDING |
-| 13 | CI/CD | 7 | PENDING |
+| 12 | Documentation | 5 | ✅ 1/5 DONE (example skill created) |
+| 13 | CI/CD | 7 | ✅ 1/7 DONE (ci.yml created) |
 | **CODE FIXES** | | **107** | **✅ ALL CODE FIXES COMPLETE** |
 | **VERIFICATION** | | **69** | **PENDING (runtime/testing tasks)** |
 

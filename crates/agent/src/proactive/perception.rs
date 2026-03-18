@@ -1,14 +1,42 @@
 //! OMEGA-VIII: Perception Engine (Context Hydration)
-//! 
-//! Provides high-fidelity awareness of environment variance 
+//!
+//! Provides high-fidelity awareness of environment variance
 //! (Git changes, FS activity) to the proactive heartbeat.
 
-use std::process::Command;
 use std::path::Path;
+use std::process::Command;
 
-pub struct PerceptionEngine;
+/// Perception configuration with tunable thresholds.
+pub struct PerceptionConfig {
+    /// How many seconds back to check for file modifications.
+    pub fs_activity_window_secs: u64,
+    /// How many files to list at most in activity report.
+    pub max_activity_entries: usize,
+}
+
+impl Default for PerceptionConfig {
+    fn default() -> Self {
+        Self {
+            fs_activity_window_secs: 60,
+            max_activity_entries: 20,
+        }
+    }
+}
+
+/// Perception engine with configurable thresholds.
+pub struct PerceptionEngine {
+    config: PerceptionConfig,
+}
 
 impl PerceptionEngine {
+    pub fn new(config: PerceptionConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn default_engine() -> Self {
+        Self::new(PerceptionConfig::default())
+    }
+
     /// Captures a high-level summary of Git changes in the workspace.
     pub fn get_git_status(path: &Path) -> String {
         let output = Command::new("git")
@@ -49,22 +77,26 @@ impl PerceptionEngine {
         }
     }
 
-    /// Checks for recent file system activity in the last 60 seconds.
-    /// (Simplified: lists files modified in the last minute)
-    pub fn get_fs_activity(path: &Path) -> String {
-        // Note: On Windows, simple file list with timestamps can work
-        // but for high-fidelity, we could use notify events if cached.
-        // For now, we perform a quick glob for recently modified files.
+    /// Checks for recent file system activity within the configured time window.
+    pub fn get_fs_activity(&self, path: &Path) -> String {
+        let window_secs = self.config.fs_activity_window_secs;
+        let max_entries = self.config.max_activity_entries;
         let mut activity = Vec::new();
+
         if let Ok(entries) = std::fs::read_dir(path) {
             for entry in entries.flatten() {
+                if activity.len() >= max_entries {
+                    break;
+                }
                 if let Ok(metadata) = entry.metadata() {
                     if let Ok(modified) = metadata.modified() {
                         if let Ok(elapsed) = modified.elapsed() {
-                            if elapsed.as_secs() < 60 {
-                                activity.push(format!("- {} (modified {}s ago)", 
+                            if elapsed.as_secs() < window_secs {
+                                activity.push(format!(
+                                    "- {} (modified {}s ago)",
                                     entry.file_name().to_string_lossy(),
-                                    elapsed.as_secs()));
+                                    elapsed.as_secs()
+                                ));
                             }
                         }
                     }
@@ -73,9 +105,13 @@ impl PerceptionEngine {
         }
 
         if activity.is_empty() {
-            "No recent FS activity in immediate workspace.".to_string()
+            format!("No recent FS activity in last {}s.", window_secs)
         } else {
-            format!("Recent FS Activity:\n{}", activity.join("\n"))
+            format!(
+                "Recent FS Activity (last {}s):\n{}",
+                window_secs,
+                activity.join("\n")
+            )
         }
     }
 }

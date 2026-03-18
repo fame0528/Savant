@@ -1,4 +1,3 @@
-//
 use async_trait::async_trait;
 use bollard::Docker;
 use savant_core::error::SavantError;

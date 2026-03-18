@@ -4,9 +4,9 @@
 //! relevant tools from the substrate's skill library based on current intent.
 //! It implements predictive prefetching to ensure sub-5ms latency.
 
-use savant_core::traits::Tool;
-use savant_core::error::SavantError;
 use async_trait::async_trait;
+use savant_core::error::SavantError;
+use savant_core::traits::Tool;
 use serde_json::Value;
 use std::path::PathBuf;
 use tracing::info;
@@ -20,41 +20,79 @@ pub struct LibrarianTool {
 impl LibrarianTool {
     /// Creates a new Librarian tool.
     pub fn new(skill_registry: PathBuf) -> Self {
-        Self { _skill_registry: skill_registry }
+        Self {
+            _skill_registry: skill_registry,
+        }
     }
 
     /// Broadcasts and listens for Capability Availability frames via IPC Gossip.
     async fn gossip_discovery(&self, intent: &str) -> Result<(), SavantError> {
-        info!("OMEGA-III: Cognitive Gossip active: Propagating intent '{}' to swarm.", intent);
+        info!(
+            "OMEGA-III: Cognitive Gossip active: Propagating intent '{}' to swarm.",
+            intent
+        );
         // In a real swarm, this would broadcast to other agents.
         // For now, we ensure the local skill library is synchronized.
         Ok(())
     }
 
-    /// Aligns neural-symbolic intent using the global embedding aligner.
-    async fn align_semantic_context(&self, intent: &str) -> Result<Vec<(String, String)>, SavantError> {
+    /// Aligns neural-symbolic intent using keyword relevance scoring.
+    /// Returns skills sorted by relevance score (highest first).
+    async fn align_semantic_context(
+        &self,
+        intent: &str,
+    ) -> Result<Vec<(String, String)>, SavantError> {
         info!("OMEGA-III: Semantic Alignment Engine: Mapping intent to cognitive substrate.");
-        
+
         let mut registry = savant_skills::parser::SkillRegistry::new();
         registry.discover_skills(&self._skill_registry).await?;
 
-        let mut matched = Vec::new();
+        let mut scored: Vec<(String, String, f32)> = Vec::new();
         let intent_lower = intent.to_lowercase();
+        let intent_words: Vec<&str> = intent_lower.split_whitespace().collect();
 
         for (name, manifest) in &registry.manifests {
             let name_lower = name.to_lowercase();
             let desc_lower = manifest.description.to_lowercase();
 
-            // Perform keyword-based semantic alignment
-            if name_lower.contains(&intent_lower) 
-               || desc_lower.contains(&intent_lower) 
-               || intent_lower.contains(&name_lower)
-            {
-                matched.push((name.clone(), manifest.description.clone()));
+            let mut score: f32 = 0.0;
+
+            // Exact name match (highest priority)
+            if name_lower == intent_lower {
+                score += 100.0;
+            }
+            // Name contains intent
+            if name_lower.contains(&intent_lower) {
+                score += 50.0;
+            }
+            // Intent contains name
+            if intent_lower.contains(&name_lower) {
+                score += 40.0;
+            }
+            // Description contains intent
+            if desc_lower.contains(&intent_lower) {
+                score += 30.0;
+            }
+            // Keyword overlap with description
+            for word in &intent_words {
+                if desc_lower.contains(word) {
+                    score += 10.0;
+                }
+                if name_lower.contains(word) {
+                    score += 20.0;
+                }
+            }
+
+            if score > 0.0 {
+                scored.push((name.clone(), manifest.description.clone(), score));
             }
         }
 
-        Ok(matched)
+        // Sort by score descending
+        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Return name/description pairs sorted by relevance
+        Ok(scored.into_iter().map(|(n, d, _)| (n, d)).collect())
     }
 }
 
@@ -70,11 +108,14 @@ impl Tool for LibrarianTool {
     }
 
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {
-        let intent = payload["intent"].as_str().ok_or_else(|| {
-            SavantError::InvalidInput("Missing 'intent' field".to_string())
-        })?;
+        let intent = payload["intent"]
+            .as_str()
+            .ok_or_else(|| SavantError::InvalidInput("Missing 'intent' field".to_string()))?;
 
-        info!("OMEGA-III: Librarian performing Ultimate Swarm Discovery for intent: '{}'", intent);
+        info!(
+            "OMEGA-III: Librarian performing Ultimate Swarm Discovery for intent: '{}'",
+            intent
+        );
 
         // 1. Cognitive Gossip Discovery
         self.gossip_discovery(intent).await?;
@@ -83,7 +124,10 @@ impl Tool for LibrarianTool {
         let matched_skills = self.align_semantic_context(intent).await?;
 
         if matched_skills.is_empty() {
-            return Ok(format!("No skills found in registry '{:?}' matching intent: '{}'", self._skill_registry, intent));
+            return Ok(format!(
+                "No skills found in registry '{:?}' matching intent: '{}'",
+                self._skill_registry, intent
+            ));
         }
 
         // 3. Predictive Prefetch & Speculative Hydration
@@ -91,7 +135,7 @@ impl Tool for LibrarianTool {
         for (name, desc) in matched_skills {
             output.push_str(&format!("- {}: {}\n", name, desc));
         }
-        
+
         output.push_str("\nSemantic Alignment: 100% (Intent mapped to skill substrate)\n");
         output.push_str("Context Hydration: READY (Use these tools by name in your next action)");
 

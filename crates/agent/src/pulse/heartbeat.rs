@@ -9,8 +9,8 @@ use savant_core::utils::{io, parsing};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info, warn};
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
 /// The Autonomous Pulse (Heartbeat) system for Savant agents.
 pub struct HeartbeatPulse {
@@ -22,7 +22,12 @@ pub struct HeartbeatPulse {
 }
 
 impl HeartbeatPulse {
-    pub fn new(agent: AgentConfig, nexus: Arc<NexusBridge>, _storage: Arc<Storage>, shutdown_token: CancellationToken) -> Self {
+    pub fn new(
+        agent: AgentConfig,
+        nexus: Arc<NexusBridge>,
+        _storage: Arc<Storage>,
+        shutdown_token: CancellationToken,
+    ) -> Self {
         let heartbeat_file = agent.workspace_path.join(&agent.proactive.heartbeat_file);
         let proactive = ProactivePartner::new(agent.workspace_path.clone(), &agent.proactive);
         Self {
@@ -35,7 +40,10 @@ impl HeartbeatPulse {
     }
 
     /// Starts the heartbeat loop for this agent.
-    pub async fn start<M: savant_core::traits::MemoryBackend + std::clone::Clone>(self, mut agent_loop: AgentLoop<M>) {
+    pub async fn start<M: savant_core::traits::MemoryBackend + std::clone::Clone>(
+        self,
+        mut agent_loop: AgentLoop<M>,
+    ) {
         // Subscribe to chat messages
         let mut chat_rx = self.nexus.subscribe().await.0;
 
@@ -85,7 +93,7 @@ impl HeartbeatPulse {
                 let content = message.content.clone();
                 let sender = message.sender.clone();
                 let agent_id = message.agent_id.clone();
-                
+
                 // 🛡️ Identity Pinning: Block Echo-Back (Normalized & Prefix-Aware)
                 let my_id = self.agent.agent_id.to_lowercase();
                 let my_name = self.agent.agent_name.to_lowercase();
@@ -113,14 +121,15 @@ impl HeartbeatPulse {
                 );
 
                 let response_recipient = sender;
-                
+
                 // Process the message through Agent loop
                 let mut full_response = String::new();
                 let memory_clone = agent_loop.memory.clone();
 
                 {
                     let shutdown_token = self.shutdown_token.clone();
-                    let mut stream = agent_loop.run(content, message.session_id.clone(), shutdown_token.clone());
+                    let mut stream =
+                        agent_loop.run(content, message.session_id.clone(), shutdown_token.clone());
                     while let Some(event_res) = stream.next().await {
                         // Perfection: Yield immediately if shutdown is requested
                         if shutdown_token.is_cancelled() {
@@ -151,7 +160,10 @@ impl HeartbeatPulse {
                                 let chunk = savant_core::types::ChatChunk {
                                     agent_name: self.agent.agent_name.clone(),
                                     agent_id: self.agent.agent_id.to_lowercase(),
-                                    content: format!("\n\n> 🛠️ **Executing Tool:** `{}`\n> *Args:* `{}`\n\n", name, args),
+                                    content: format!(
+                                        "\n\n> 🛠️ **Executing Tool:** `{}`\n> *Args:* `{}`\n\n",
+                                        name, args
+                                    ),
                                     is_final: false,
                                     session_id: message.session_id.clone(),
                                     channel: savant_core::types::AgentOutputChannel::Telemetry,
@@ -202,7 +214,7 @@ impl HeartbeatPulse {
                             Ok(AgentEvent::FinalAnswerChunk(c)) => {
                                 // 🌀 Perfection Loop: Assistant final chunks are GUARANTEED dialogue
                                 full_response.push_str(&c);
-                                
+
                                 let chunk = savant_core::types::ChatChunk {
                                     agent_name: self.agent.agent_name.clone(),
                                     agent_id: self.agent.agent_id.to_lowercase(),
@@ -246,7 +258,7 @@ impl HeartbeatPulse {
                     role: savant_core::types::ChatRole::Assistant,
                     content: full_response,
                     sender: Some(self.agent.agent_id.clone()),
-                    recipient: response_recipient, 
+                    recipient: response_recipient,
                     agent_id: None,
                     session_id: message.session_id.clone(),
                     channel: savant_core::types::AgentOutputChannel::Chat,
@@ -258,7 +270,10 @@ impl HeartbeatPulse {
                     .await
                     .map_err(|e| SavantError::Unknown(e.to_string()))?;
 
-                info!("[{}] Chat response sent (Standardized Lane)", self.agent.agent_name);
+                info!(
+                    "[{}] Chat response sent (Standardized Lane)",
+                    self.agent.agent_name
+                );
             }
             Err(e) => {
                 info!(
@@ -293,15 +308,20 @@ impl HeartbeatPulse {
 
         // 城堡 OMEGA-VIII: Orchestration Injection (Task Matrix - Config Driven)
         let matrix = crate::orchestration::tasks::TaskMatrix::new(
-            &self.agent.workspace_path, 
-            &self.agent.proactive
+            &self.agent.workspace_path,
+            &self.agent.proactive,
         );
         let orchestration_tasks = matrix.get_pending_summary();
 
         // 🏰 OMEGA-VIII: High-Fidelity Perception Injection
-        let git_status = crate::proactive::perception::PerceptionEngine::get_git_status(&self.agent.workspace_path);
-        let git_diff = crate::proactive::perception::PerceptionEngine::get_git_diff(&self.agent.workspace_path);
-        let fs_activity = crate::proactive::perception::PerceptionEngine::get_fs_activity(&self.agent.workspace_path);
+        let git_status = crate::proactive::perception::PerceptionEngine::get_git_status(
+            &self.agent.workspace_path,
+        );
+        let git_diff = crate::proactive::perception::PerceptionEngine::get_git_diff(
+            &self.agent.workspace_path,
+        );
+        let perception = crate::proactive::perception::PerceptionEngine::default_engine();
+        let fs_activity = perception.get_fs_activity(&self.agent.workspace_path);
 
         // 🏰 OMEGA-VIII: Anomaly Detection (Proactive Push Logic)
         let has_conflict = git_status.contains("CONFLICT");
@@ -333,7 +353,7 @@ impl HeartbeatPulse {
 
         // --- 🛡️ OMEGA-VIII: Deterministic Pre-filtering (Lane-Perfection) ---
         let current_hash = xxhash_rust::xxh3::xxh3_64(prompt_base.as_bytes());
-        
+
         // AAA: Restore working buffer
         let mut buffer = self.proactive.restore_state().unwrap_or_default();
 
@@ -346,7 +366,7 @@ impl HeartbeatPulse {
         buffer.last_pulse_hash = Some(current_hash);
 
         let prompt = prompt_base;
-        
+
         let mut pulse_thought = String::new();
         let mut pulse_dialogue = String::new();
         let mut action_taken = false;
@@ -381,7 +401,10 @@ impl HeartbeatPulse {
                         let chunk = savant_core::types::ChatChunk {
                             agent_name: self.agent.agent_name.clone(),
                             agent_id: self.agent.agent_id.to_lowercase(),
-                            content: format!("\n\n> 🛠️ **Foundation Action:** `{}`\n> *Parameters:* `{}`\n\n", name, args),
+                            content: format!(
+                                "\n\n> 🛠️ **Foundation Action:** `{}`\n> *Parameters:* `{}`\n\n",
+                                name, args
+                            ),
                             is_final: false,
                             session_id: None,
                             channel: savant_core::types::AgentOutputChannel::Telemetry,
@@ -392,8 +415,8 @@ impl HeartbeatPulse {
                     }
                     Ok(AgentEvent::Observation(o)) => {
                         debug!("[{}] Observation: {}", self.agent.agent_name, o);
-                         // 🛰️ Observation Telemetry
-                         let chunk = savant_core::types::ChatChunk {
+                        // 🛰️ Observation Telemetry
+                        let chunk = savant_core::types::ChatChunk {
                             agent_name: self.agent.agent_name.clone(),
                             agent_id: self.agent.agent_id.to_lowercase(),
                             content: format!("\n> 👁️ **Substrate Perception:** *Mapped {} bytes of system data.*\n\n", o.len()),
@@ -437,11 +460,19 @@ impl HeartbeatPulse {
 
         // 🏰 Substrate Logic: Handle Stillness and Reflections
         let is_silent = pulse_dialogue.trim().is_empty() || pulse_dialogue.trim() == "HEARTBEAT_OK";
-        
+
         if !action_taken && is_silent {
             if !pulse_thought.trim().is_empty() {
-                info!("[{}] Internal reflection captured during stillness.", self.agent.agent_name);
-                let _ = emitter.emit_emergent(pulse_thought.clone(), Some(savant_core::learning::LearningCategory::Insight)).await;
+                info!(
+                    "[{}] Internal reflection captured during stillness.",
+                    self.agent.agent_name
+                );
+                let _ = emitter
+                    .emit_emergent(
+                        pulse_thought.clone(),
+                        Some(savant_core::learning::LearningCategory::Insight),
+                    )
+                    .await;
             } else {
                 info!("[{}] Complete stillness maintained.", self.agent.agent_name);
             }
@@ -451,14 +482,16 @@ impl HeartbeatPulse {
         // AAA: Update WorkingBuffer based on Pulse results
         buffer.current_goal = "Autonomous Maintenance & Swarm Sync".to_string();
         if action_taken {
-            buffer.pending_actions.push("Verify substrate health post-actuation".to_string());
+            buffer
+                .pending_actions
+                .push("Verify substrate health post-actuation".to_string());
         }
-        
+
         // AAA: Sovereign Distillation (OMEGA-VIII)
         if !pulse_thought.is_empty() || !pulse_dialogue.is_empty() {
-             let summary = format!("Thought: {}\nDialogue: {}", pulse_thought, pulse_dialogue);
-             let _ = self.proactive.distill_context(&summary);
-             buffer.context_summary = summary;
+            let summary = format!("Thought: {}\nDialogue: {}", pulse_thought, pulse_dialogue);
+            let _ = self.proactive.distill_context(&summary);
+            buffer.context_summary = summary;
         }
 
         // Commit to WAL
@@ -483,9 +516,14 @@ impl HeartbeatPulse {
             }
             full_payload.push_str(&pulse_dialogue);
         }
-        
+
         if !full_payload.trim().is_empty() {
-            let _ = emitter.emit_emergent(full_payload.clone(), Some(savant_core::learning::LearningCategory::Insight)).await;
+            let _ = emitter
+                .emit_emergent(
+                    full_payload.clone(),
+                    Some(savant_core::learning::LearningCategory::Insight),
+                )
+                .await;
         }
 
         // 🛰️ Final Telemetry Message (Standardized Lane for History)

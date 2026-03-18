@@ -289,15 +289,40 @@
 | Total files audited | 130 |
 | Total lines audited | 29,020 |
 | Total issues found | 65 |
-| CRITICAL issues fixed | 3/3 |
-| HIGH issues fixed | 8/8 |
-| MEDIUM issues fixed | 12/12 |
-| LOW issues fixed | 10/15 (core crate complete) |
-| INFO (previously fixed) | 7 |
+| CRITICAL issues | 3/3 FIXED ✅ |
+| HIGH issues | 5/8 FIXED (3 N/A - code doesn't exist) |
+| MEDIUM issues | 10/12 FIXED (2 accepted: global state, memory engine) |
+| LOW issues | 10/18 FIXED (8 remaining: feature requests) |
+| INFO (already fixed) | 7 |
 | Compilation | Clean (zero warnings) |
 | Test suite | 157 tests passing |
 
-## Status: PHASE 1-3 COMPLETE, PHASE 4 IN PROGRESS
+---
+
+## Items Verified as N/A or Accepted
+
+| ID | Status | Reason |
+|----|--------|--------|
+| H-013 | N/A | `shell.rs` uses `tokio::process::Command` which is async |
+| H-015 | N/A | `manager.rs` has no `shutdown()` method — code doesn't exist |
+| A-004 | ACCEPTED | `OnceCell<String>` is thread-safe by design, move to struct is optimization not bugfix |
+| A-001 | ACCEPTED | Three Fjall instances serve different purposes (core memory, substrate, IPC) |
+| L-006 | N/A | `is_blocked` field was removed in security refactor |
+| L-004/L-009 | FIXED | Uses `urlencoding` crate, `with_base_urls` is `#[cfg(test)]` |
+
+---
+
+## Remaining LOW Items (Feature Requests, Not Bugs)
+
+| ID | File | Issue | Action |
+|----|------|-------|--------|
+| L-005 | `parser.rs:321` | Skill name collision rejection | Already implemented |
+| L-007 | `tools/librarian.rs:39` | Search has no ranking | Feature request |
+| L-008 | `tools/memory.rs:67` | Full scan for search | Feature request |
+| L-009 | `proactive/perception.rs:89` | Fixed thresholds | Feature request |
+| L-015 | `ipc/collective.rs:78` | Sleep polling loop | Feature request |
+| L-020 | `fs/registry.rs` | Blocking .env parsing | Acceptable for startup |
+| L-022 | `utils/embeddings.rs` | Embedding blocks async | non-Send constraint |
 
 ---
 

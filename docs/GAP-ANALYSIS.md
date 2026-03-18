@@ -396,6 +396,7 @@ Speak to your agents via WebRTC audio. Agents respond with synthesized speech.
 | Issue | Location | Impact | Status |
 |-------|----------|--------|--------|
 | **No dashboard settings page** — Backend ConfigGet/ConfigSet works, frontend has no UI | High | 🔴 Open |
+| **No dashboard FAQ page** — Users don't know how to set up providers | High | 🔴 Open |
 | Monolithic file (1073 lines) | `crates/cognitive/src/synthesis.rs` | Medium | 🔴 Open |
 | Monolithic file (548 lines) | `crates/agent/src/pulse/heartbeat.rs` | Medium | 🔴 Open |
 | Monolithic file (405 lines) | `crates/gateway/src/server.rs` | Medium | 🔴 Open |

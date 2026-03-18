@@ -70,7 +70,7 @@ candle-nn = "0.8.0"
 ctrlc = "3.4"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 opentelemetry = "0.21"
-opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.22"
 hex = "0.4"
 rand = "0.8"

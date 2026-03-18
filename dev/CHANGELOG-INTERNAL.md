@@ -8,14 +8,13 @@
 ## [Unreleased]
 
 ### Added
-- Savant Coding System v0.0.2 as embedded skill (`skills/savant-coding-system/`)
-- Perfection Loop embedded in coding system (5-step quality protocol)
-- Law 11: Utility-First, Universal Logic (combine overlap into universal functions)
-- Free Model Router (`crates/agent/src/free_model_router.rs`) — hunter-alpha → healer-alpha → stepfun → openrouter/free
-- Language supplements: RUST.md, TYPESCRIPT.md, PYTHON.md
-- DEV-FOLDER-SPECIFICATION.md — complete agent-facing reference for /dev structure
-- Dual-level architecture (swarm-wide skills/ vs agent-specific workspaces/)
-- Key management architecture design (auto vs manual modes)
+- Memory System Research — Gemini 3 Deep Research (390 lines, 87 citations)
+- Memory System Plan — 7-phase plan certified via Perfection Loop (5 iterations)
+- `dev/plans/MEMORY-SYSTEM-PLAN.md` — full implementation specs with data flow, edge cases, failure recovery
+- `docs/prompts/MEMORY-SYSTEM-RESEARCH.md` — research prompt (448 lines)
+- `docs/research/Savant Memory System Improvements Research.md` — deep research report
+- `docs/research/AI Agent Memory System Architecture.md` — first-pass research (296 lines)
+- `docs/prompts/` directory — reusable research prompts
 
 ### Changed
 - All paid models removed from model list (only free models shown)
@@ -25,6 +24,14 @@
 - dev/ folder cleaned — stale files archived to dev/archive/2026-03-19/
 - development-process.md reorganized into DEVELOPMENT-WORKFLOW.md
 - perfection.md renamed to PERFECTION-LOOP.md
+
+### Memory System Research Findings
+- `atomic_compact()` is DESTRUCTIVE — deletes all messages before inserting compacted batch
+- `MemoryEntry` is rkyv `#[repr(C)]` — adding fields breaks existing serialized data
+- Vector engine is global (no per-agent isolation) — confirms hive-mind architecture
+- `EmbeddingService` IS `Send` in fastembed 5.12.1 — no dedicated thread needed
+- Auto-recall latency target: <200ms (30ms FastEmbed + 15ms Fjall scan)
+- Bi-temporal contradiction detection threshold: cosine similarity > 0.92
 
 ---
 

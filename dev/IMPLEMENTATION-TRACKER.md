@@ -7,50 +7,33 @@
 
 ## Active Work — Memory System (7 Phases)
 
-### Sprint A: Quick Wins
+**Source:** Gemini 3 Deep Research (390 lines, 87 citations)  
+**Plan:** `dev/plans/MEMORY-SYSTEM-PLAN.md` (certified via Perfection Loop, 5 iterations)  
+**Status:** AWAITING EXECUTION
 
-| # | Feature | Complexity | Status | Where |
-|---|---------|-----------|--------|-------|
-| 1 | Auto-Recall Injection | LOW | PENDING | `async_backend.rs`, `context.rs` |
-| 2 | Bi-Temporal Tracking | LOW | PENDING | `models.rs`, `engine.rs` |
-| 3 | Daily Ops Logs | LOW | PENDING | New: `daily_log.rs` |
+### Sprint A: Quick Wins (all LOW complexity)
 
-### Sprint B: Swarm
+| # | Feature | Status | Files | Tests |
+|---|---------|--------|-------|-------|
+| 1 | Auto-Recall Injection | PENDING | `async_backend.rs`, `context.rs` | 5 |
+| 2 | Bi-Temporal Tracking | PENDING | `models.rs`, `engine.rs`, `lsm_engine.rs` | 6 |
+| 3 | Daily Ops Logs | PENDING | New: `daily_log.rs` | 4 |
 
-| # | Feature | Complexity | Status | Where |
-|---|---------|-----------|--------|-------|
-| 4 | Blackboard (swarm sharing) | MEDIUM | PENDING | New: `ipc/blackboard.rs` |
+### Sprint B: Swarm (MEDIUM complexity)
 
-### Sprint C: Advanced
+| # | Feature | Status | Files | Tests |
+|---|---------|--------|-------|-------|
+| 4 | Hive-Mind Notifications | PENDING | `engine.rs`, new: `notifications.rs` | 5 |
 
-| # | Feature | Complexity | Status | Where |
-|---|---------|-----------|--------|-------|
-| 5 | DAG Session Compaction | HIGH | PENDING | `async_backend.rs`, `models.rs` |
-| 6 | Personality-Driven Promotion | MEDIUM | PENDING | New: `promotion.rs` |
-| 7 | Local NER + Petgraph | HIGH | PENDING | New: `entities.rs` |
+### Sprint C: Advanced (HIGH complexity)
 
----
+| # | Feature | Status | Files | Tests |
+|---|---------|--------|-------|-------|
+| 5 | DAG Session Compaction | PENDING | `async_backend.rs`, `lsm_engine.rs`, `models.rs` | 5 |
+| 6 | Personality-Driven Promotion | PENDING | `engine.rs`, new: `promotion.rs` | 5 |
+| 7 | Local NER + Petgraph | PENDING | `async_backend.rs`, new: `entities.rs` | 6 |
 
-## Deferred (Future)
-
-| # | Task | Priority | Status | Details |
-|---|------|----------|--------|---------|
-| 1 | Voice Interface | P3 | DEFERRED | Needs WebRTC + TTS integration, revisit later |
-
----
-
-## Completed — Sprint 2
-
-| # | Task | Priority | Status | Details |
-|---|------|----------|--------|---------|
-| 1 | Dashboard Command Input | P0 | ✅ COMPLETE | / prefix triggers NL command via WebSocket |
-| 2 | Conversation Replay Timeline | P1 | ✅ COMPLETE | Timeline.tsx with 7 color-coded event types |
-| 3 | Proactive Health Dashboard | P1 | ✅ COMPLETE | /health page with agent status + system metrics |
-| 4 | Multi-Model Ensemble | P2 | ✅ COMPLETE | EnsembleRouter with BestOfN/Consensus/Fallback |
-
----
-
-## Completed — Sprint 1
+**Cross-feature integration tests:** 4
 
 ---
 
@@ -72,7 +55,7 @@
 | 12 | Fjall Backup/Restore | ✅ COMPLETE | `savant backup` and `savant restore` commands |
 | 13 | Proactive Learning | ✅ VERIFIED | PerceptionEngine with configurable thresholds in heartbeat |
 | 14 | Lambda Executor | ✅ COMPLETE | LambdaSkillExecutor + LambdaTool in skills crate |
-| 15 | Savant Coding System | ✅ COMPLETE | Embedded skill v0.0.2 with Perfection Loop + Law 11 |
+| 15 | Savant Coding System v0.0.2 | ✅ COMPLETE | Embedded skill with Perfection Loop + Law 11 |
 | 16 | Free Model Router | ✅ COMPLETE | hunter-alpha → healer-alpha → stepfun → openrouter/free |
 | 17 | Dev Folder Specification | ✅ COMPLETE | Complete agent-facing reference for /dev structure |
 | 18 | Dashboard Settings Page | ✅ COMPLETE | Settings UI with AI/server/system config |
@@ -83,18 +66,29 @@
 | 23 | Skill Marketplace Frontend | ✅ COMPLETE | Marketplace page with search/install |
 | 24 | Context Manager Token Budget | ✅ COMPLETE | Tier allocation, token estimation, 9 tests |
 | 25 | Conversation Replay Recorder | ✅ COMPLETE | ReplayRecorder with 7 event types, 7 tests |
-| 26 | Savant Coding System v0.0.2 | ✅ COMPLETE | Embedded skill with Perfection Loop + Law 11 |
-| 27 | Free Model Router | ✅ COMPLETE | hunter-alpha → healer-alpha → stepfun → openrouter/free |
+| 26 | Collaboration Graph | ✅ COMPLETE | SVG agent network visualization component |
+| 27 | Multi-Model Ensemble | ✅ COMPLETE | EnsembleRouter with BestOfN/Consensus/Fallback |
 | 28 | CI Clippy Fix | ✅ COMPLETE | Split production/test linting, ~50 clippy issues fixed |
+| 29 | Memory System Research | ✅ COMPLETE | Gemini 3 Deep Research (390 lines, 87 citations) |
+| 30 | Memory System Plan | ✅ COMPLETE | 7-phase plan certified via Perfection Loop (5 iterations) |
+
+---
+
+## Deferred (Future)
+
+| # | Task | Priority | Status | Details |
+|---|------|----------|--------|---------|
+| 1 | Voice Interface | P3 | DEFERRED | Needs WebRTC + TTS integration, revisit later |
+| 2 | Easter Eggs + UX Polish | P3 | DEFERRED | Progressive enhancement (ongoing) |
 
 ---
 
 ## Quality Status
 
-- **Total tests:** 346 passing, 0 failing, 1 ignored
+- **Total tests:** 370+ passing, 0 failing, 1 ignored
 - **Compilation:** 0 errors, 0 warnings across workspace
 - **Crates:** 14 (all healthy)
-- **Test coverage:** Unit + integration + doc-tests + stress + crash recovery + benchmarks
+- **Dashboard pages:** 6 (/, /settings, /faq, /marketplace, /health, /)
 
 ---
 
@@ -106,6 +100,7 @@
 | `IN PROGRESS` | Agent is currently implementing |
 | `COMPLETE` | Shipped, tested, documented |
 | `BLOCKED` | Cannot proceed (external dependency) |
+| `DEFERRED` | Not planned for current sprint |
 
 ---
 

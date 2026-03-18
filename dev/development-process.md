@@ -10,12 +10,13 @@
 Every development session follows this exact sequence. No exceptions.
 
 ```
-1. AUDIT       →  What's the current state?
-2. FIND GAPS   →  What needs fixing?
-3. PLAN        →  Add items to dev/roadmap/roadmap-fix.md
-4. IMPLEMENT   →  Fix it with AAA quality
-5. DOCUMENT    →  Update all affected docs
-6. PUSH        →  Commit and push
+1. AUDIT         →  What's the current state?
+2. FIND GAPS     →  What needs fixing?
+3. PLAN          →  Add items to dev/roadmap/roadmap-fix.md
+4. PERFECTION    →  Deep audit → enhance → verify → iterate
+5. IMPLEMENT     →  Fix it with AAA quality
+6. DOCUMENT      →  Update all affected docs
+7. PUSH          →  Commit and push
 ```
 
 ---
@@ -93,7 +94,88 @@ Update the roadmap summary table at the bottom of the file after each phase.
 
 ---
 
-## Step 4: Implement — Fix it with AAA quality
+## Step 4: Perfection Loop — Deep audit before implementation
+
+**Goal:** Ensure the fix is correct, complete, and production-quality before writing it.  
+**When:** After planning each fix, BEFORE implementing it.  
+**Source:** `dev/perfection.md`
+
+The Perfection Loop is mandatory before implementing any fix. It prevents "fix one thing, break another" by requiring deep understanding before touching code.
+
+### The 5 phases:
+
+```
+┌─────────────────┐
+│ 4a. DEEP AUDIT  │  Read ALL related files completely (1-EOF)
+└────────┬────────┘
+         ▼
+┌──────────────────┐
+│ 4b. ENHANCE      │  Identify optimizations while reading
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│ 4c. VERIFY       │  Check impact on related systems
+└────────┬─────────┘
+         ▼
+┌──────────────────────┐
+│ 4d. ITERATIVE CONVERGE│  If new issues found → back to 4a
+└────────┬─────────────┘
+         ▼
+┌──────────────────┐
+│ 4e. CERTIFY      │  Ready to implement
+└──────────────────┘
+```
+
+### 4a. Deep Audit
+
+Before making ANY change, read every file involved:
+
+1. **Read the file you're changing** — 1-EOF, every line
+2. **Read its imports** — understand what types/functions are used
+3. **Read its callers** — who depends on this? Search: `grep -r "function_name" crates/`
+4. **Read its callees** — what does this code call?
+5. **Read related tests** — `grep -r "module_name" crates/*/tests/`
+
+**Output:** You must understand the full call chain before proceeding.
+
+### 4b. Heuristic Enhancement
+
+While reading the code, identify improvements:
+- **Performance** — unnecessary allocations, blocking in async, missing caching
+- **Safety** — missing error handling, race conditions, data corruption risks
+- **Clarity** — unclear variable names, missing doc comments, dead code
+- **Completeness** — missing edge cases, unhandled error paths
+
+Note these improvements. If they're related to your fix, include them. If not, leave them for a separate session.
+
+### 4c. Verify Impact
+
+Before implementing, verify:
+- **Compilation:** Will this change break any other crate? Check all `Cargo.toml` dependencies
+- **Tests:** Which tests exercise this code? Run them first to establish baseline
+- **API surface:** Does this change public interfaces? Check who calls them
+- **Data formats:** Does this change serialized data? Check for backward compatibility
+
+### 4d. Iterative Convergence
+
+If Deep Audit reveals NEW issues not in your plan:
+1. Add them to `dev/roadmap/roadmap-fix.md` as `PENDING`
+2. If they BLOCK your current fix, go back to 4a with the new scope
+3. If they DON'T block, note them and proceed
+4. If you've been through 3 iterations without convergence, STOP and reassess
+
+### 4e. Certify
+
+You're ready to implement when:
+- [ ] All files read completely (1-EOF)
+- [ ] Full call chain understood
+- [ ] Impact on related systems verified
+- [ ] Tests to run identified
+- [ ] No blocking issues discovered
+
+---
+
+## Step 5: Implement — Fix it with AAA quality
 
 ### Rules (non-negotiable)
 
@@ -173,7 +255,7 @@ async fn read_files(&self) -> Result<()> {
 
 ---
 
-## Step 5: Document — Keep everything current
+## Step 6: Document — Keep everything current
 
 After implementing fixes, update these files:
 
@@ -190,7 +272,7 @@ After implementing fixes, update these files:
 
 ---
 
-## Step 6: Push — Get it to GitHub
+## Step 7: Push — Get it to GitHub
 
 ### Commit message format
 ```

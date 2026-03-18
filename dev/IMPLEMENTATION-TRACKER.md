@@ -1,9 +1,17 @@
 # Implementation Progress Tracker
 
-**Started:** 2026-03-18 20:48 UTC  
-**Completed:** 2026-03-19 04:30 UTC  
-**Protocol:** Do NOT re-read files already read. Update status after each edit.  
-**If stuck:** Move to next pending feature.
+> **Purpose:** Track every feature/fix/task through its lifecycle.  
+> **Updated:** After EVERY feature completion.
+
+---
+
+## Active Work
+
+| # | Task | Status | Details |
+|---|------|--------|---------|
+| — | Dashboard Settings Page | PENDING | Backend ConfigGet/ConfigSet works, frontend needs UI |
+| — | Dashboard FAQ Page | PENDING | Provider setup guidance for non-tech users |
+| — | Personality Studio Enhancement | PENDING | SOUL engine needs structured generation + trait sliders |
 
 ---
 
@@ -11,7 +19,7 @@
 
 | # | Feature | Status | Details |
 |---|---------|--------|---------|
-| 1 | Vector Search / Semantic Memory | ✅ COMPLETE | EmbeddingService (fastembed) + semantic retrieval + batch embedding |
+| 1 | Vector Search / Semantic Memory | ✅ COMPLETE | EmbeddingService + semantic retrieval + batch embedding |
 | 2 | Token Auto-Rotation | ✅ COMPLETE | should_rotate + issued_at in CapabilityPayload |
 | 3 | Crash Recovery Verification | ✅ COMPLETE | 6 tests: graceful/crash/ordering/independent/bulk |
 | 4 | MCP Client Tool Discovery | ✅ COMPLETE | McpClient + McpRemoteTool + McpToolDiscovery + McpClientPool |
@@ -25,12 +33,13 @@
 | 12 | Fjall Backup/Restore | ✅ COMPLETE | `savant backup` and `savant restore` commands |
 | 13 | Proactive Learning | ✅ VERIFIED | PerceptionEngine with configurable thresholds in heartbeat |
 | 14 | Lambda Executor | ✅ COMPLETE | LambdaSkillExecutor + LambdaTool in skills crate |
-
-**Total:** 14/14 complete (12 implemented + 2 verified)
+| 15 | Savant Coding System | ✅ COMPLETE | Embedded skill v0.0.2 with Perfection Loop + Law 11 |
+| 16 | Free Model Router | ✅ COMPLETE | hunter-alpha → healer-alpha → stepfun → openrouter/free |
+| 17 | Dev Folder Specification | ✅ COMPLETE | Complete agent-facing reference for /dev structure |
 
 ---
 
-## Quality Audit Summary
+## Quality Status
 
 - **Total tests:** 324 passing, 0 failing, 1 ignored
 - **Compilation:** 0 errors, 0 warnings across workspace
@@ -39,31 +48,16 @@
 
 ---
 
-## Session Summary
+## Status Values
 
-### Code Fixes Applied
-1. Fixed gateway security_tests.rs (imports, unique temp paths)
-2. Fixed echo circuit_breaker_tests.rs (rewrote for ComponentMetrics API)
-3. Fixed echo speculative_tests.rs (rewrote for CircuitState API)
-4. Fixed cognitive synthesis.rs error detection (broader patterns)
-5. Fixed gateway auth tests (generic error messages)
-6. Fixed cognitive doc-tests (missing fields, unwrap)
-7. Fixed MCP test warnings (unused variables)
-
-### New Features Implemented
-1. Vector Search with EmbeddingService + semantic retrieval
-2. MCP Client with WebSocket, tool discovery, remote tool execution
-3. Docker ToolExecutor integrated into SandboxDispatcher
-4. Skill Testing CLI subcommand
-5. Database Backup/Restore CLI subcommands
-6. Lambda Executor with AWS integration
-7. CLI subcommand architecture (start, test-skill, backup, restore, list-agents, status)
-
-### Documentation
-- Created `docs/GAP-ANALYSIS.md` — comprehensive feature roadmap with impact ratings
-- Updated `CHANGELOG.md` with v2.0.1 changes
-- Updated `README.md` (existing content maintained)
+| Value | Meaning |
+|-------|---------|
+| `PENDING` | Planned but no code written |
+| `IN PROGRESS` | Agent is currently implementing |
+| `COMPLETE` | Shipped, tested, documented |
+| `BLOCKED` | Cannot proceed (external dependency) |
+| `CANCELLED` | No longer needed |
 
 ---
 
-*Last updated: 2026-03-19 04:30 UTC*
+*Updated after EVERY feature. Session details go in SESSION-SUMMARY.md.*

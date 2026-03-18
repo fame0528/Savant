@@ -13,6 +13,22 @@
 - **Backend:** ConfigGet/ConfigSet/ModelsList/ParameterDescriptors/AgentConfig handlers READY
 - **Gap:** Frontend never built. Users can't change settings without touching config files.
 
+### API Key Architecture
+
+The dashboard does NOT call LLMs directly. All LLM calls go through the backend:
+
+```
+Dashboard → WebSocket → Gateway Backend → OpenRouter API → Response → Dashboard
+```
+
+The API key lives in `.env` (or auto-managed via Management API). The dashboard's job is:
+1. **Settings page:** Tell the backend "use this model/provider" via ConfigSet
+2. **SOUL engine:** Sends SoulManifest → backend calls LLM → returns draft
+3. **NL commands:** Sends command intent → backend parses + executes
+4. **All other features:** Dashboard is a UI layer, backend does the work
+
+This means the Settings page (Feature 1) is the critical unlock — once users can configure their provider from the dashboard, every LLM-dependent feature works.
+
 ---
 
 ## Feature 1: Dashboard Settings Page

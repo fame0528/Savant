@@ -1,6 +1,6 @@
 use crate::server::GatewayState;
 use axum::{extract::State, http::StatusCode, Json};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

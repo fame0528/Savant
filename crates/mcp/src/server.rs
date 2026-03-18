@@ -194,7 +194,7 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                         }
 
                         let token_hash = {
-                            use std::hash::{BuildHasher, Hasher};
+                            use std::hash::Hasher;
                             let mut hasher = std::collections::hash_map::DefaultHasher::new();
                             hasher.write(provided_token.as_bytes());
                             format!("{:x}", hasher.finish())

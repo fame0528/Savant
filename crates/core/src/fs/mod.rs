@@ -1,9 +1,8 @@
 use crate::error::SavantError;
 use crate::types::MemoryEntry;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::fs;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use tokio::task;
 
 pub mod registry;
 
@@ -18,19 +17,16 @@ impl FileIndexer {
     }
 
     fn open_connection(&self) -> Result<Connection, SavantError> {
-        Connection::open(&self.db_path)
-            .map_err(|e| SavantError::IoError(std::io::Error::other(e)))
+        Connection::open(&self.db_path).map_err(|e| SavantError::IoError(std::io::Error::other(e)))
     }
 
     /// Initializes the database tables and enables WAL mode.
     pub fn init_db(&self) -> Result<(), SavantError> {
         let conn = self.open_connection()?;
 
-        // Enable WAL mode for high-concurrency and zero-loss durability
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| SavantError::Unknown(format!("Failed to enable WAL: {}", e)))?;
 
-        // Table for semantic memory chunks
         conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_chunks (
                 id INTEGER PRIMARY KEY,
@@ -44,7 +40,6 @@ impl FileIndexer {
         )
         .map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
 
-        // Table for tracking indexed files to avoid redundant processing
         conn.execute(
             "CREATE TABLE IF NOT EXISTS indexed_files (
                 path TEXT PRIMARY KEY,
@@ -58,9 +53,23 @@ impl FileIndexer {
         Ok(())
     }
 
-    /// Indexes a directory recursively.
+    /// Indexes a directory recursively. Uses spawn_blocking for file I/O.
     pub async fn index_directory(
         &self,
+        agent_id: &str,
+        base_path: &Path,
+    ) -> Result<(), SavantError> {
+        let agent_id = agent_id.to_string();
+        let base_path = base_path.to_path_buf();
+        let db_path = self.db_path.clone();
+
+        task::spawn_blocking(move || Self::scan_and_index_blocking(&db_path, &agent_id, &base_path))
+            .await
+            .map_err(|e| SavantError::Unknown(format!("Task join error: {}", e)))?
+    }
+
+    fn scan_and_index_blocking(
+        db_path: &Path,
         agent_id: &str,
         base_path: &Path,
     ) -> Result<(), SavantError> {
@@ -70,11 +79,17 @@ impl FileIndexer {
             base_path.display()
         );
 
-        for entry in WalkDir::new(base_path).into_iter().filter_map(|e| e.ok()) {
+        let conn = Connection::open(db_path)
+            .map_err(|e| SavantError::IoError(std::io::Error::other(e)))?;
+
+        for entry in walkdir::WalkDir::new(base_path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             if entry.file_type().is_file() {
                 let path = entry.path();
-                if self.should_index(path) {
-                    self.index_file(agent_id, path).await?;
+                if Self::should_index(path) {
+                    Self::index_file_blocking(&conn, agent_id, path)?;
                 }
             }
         }
@@ -82,24 +97,27 @@ impl FileIndexer {
         Ok(())
     }
 
-    fn should_index(&self, path: &Path) -> bool {
+    fn should_index(path: &Path) -> bool {
         let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
         matches!(extension, "md" | "txt" | "json" | "toml")
     }
 
-    async fn index_file(&self, agent_id: &str, path: &Path) -> Result<(), SavantError> {
-        let content = fs::read_to_string(path)?;
+    fn index_file_blocking(
+        conn: &Connection,
+        agent_id: &str,
+        path: &Path,
+    ) -> Result<(), SavantError> {
+        let content = std::fs::read_to_string(path)?;
         let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
 
-        let conn = self.open_connection()?;
-
-        // Check if file has changed
         let mut stmt = conn
             .prepare("SELECT hash FROM indexed_files WHERE path = ?")
             .map_err(|e| SavantError::Unknown(format!("DB prepare error: {}", e)))?;
-        
-        let path_str = path.to_str().ok_or_else(|| SavantError::Unknown("Invalid path encoding".to_string()))?;
-        
+
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| SavantError::Unknown("Invalid path encoding".to_string()))?;
+
         let existing_hash: Option<String> = stmt
             .query_row(params![path_str], |row| row.get(0))
             .optional()
@@ -111,15 +129,12 @@ impl FileIndexer {
 
         tracing::info!("Indexing file: {}", path.display());
 
-        // Update indexed_files
         conn.execute(
             "INSERT OR REPLACE INTO indexed_files (path, hash, last_indexed) VALUES (?, ?, ?)",
-            params![path_str, hash, 0], // timestamp 0 for now
+            params![path_str, hash, 0],
         )
         .map_err(|e| SavantError::Unknown(format!("DB error: {}", e)))?;
 
-        // In a real implementation, we would chunk the content and generate embeddings here.
-        // For now, we store the whole file as one chunk.
         conn.execute(
             "INSERT INTO memory_chunks (content, file_path, agent_id, timestamp) VALUES (?, ?, ?, ?)",
             params![content, path_str, agent_id, 0],
@@ -130,18 +145,19 @@ impl FileIndexer {
 
     pub async fn watch_and_index(
         &self,
-        _agent_id: &str,
+        agent_id: &str,
         base_path: &Path,
     ) -> Result<(), SavantError> {
         tracing::info!("Starting filesystem watcher for {}", base_path.display());
-        // In a full implementation, we'd use notify here to trigger index_file on modification.
-        // For now, we perform a one-time scan.
-        self.index_directory(_agent_id, base_path).await
+        self.index_directory(agent_id, base_path).await
     }
 
-    pub fn semantic_search(&self, _query: &str, _limit: usize) -> Vec<MemoryEntry> {
-        // This will use the EmbeddingService in the future
-        Vec::new()
+    /// Semantic search delegates to full_text_search until embedding service is ready.
+    pub fn semantic_search(&self, query: &str, limit: usize) -> Vec<MemoryEntry> {
+        self.full_text_search(query)
+            .into_iter()
+            .take(limit)
+            .collect()
     }
 
     pub fn full_text_search(&self, query: &str) -> Vec<MemoryEntry> {
@@ -149,21 +165,23 @@ impl FileIndexer {
             Ok(c) => c,
             Err(_) => return Vec::new(),
         };
-        let mut stmt = match conn.prepare("SELECT id, content, timestamp FROM memory_chunks WHERE content LIKE ?") {
+        let mut stmt = match conn
+            .prepare("SELECT id, content, timestamp FROM memory_chunks WHERE content LIKE ?")
+        {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
         let rows = match stmt.query_map(params![format!("%{}%", query)], |row| {
-                Ok(MemoryEntry {
-                    id: row.get(0)?,
-                    content: row.get(1)?,
-                    timestamp: row.get(2)?,
-                    category: crate::types::MemoryCategory::Observation,
-                    importance: 5,
-                    associations: Vec::new(),
-                    embedding: None,
-                })
-            }) {
+            Ok(MemoryEntry {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                timestamp: row.get(2)?,
+                category: crate::types::MemoryCategory::Observation,
+                importance: 5,
+                associations: Vec::new(),
+                embedding: None,
+            })
+        }) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };

@@ -305,6 +305,7 @@ feat: add MCP server authentication and circuit breaker
 - [ ] `cargo test` passes (document any skipped tests)
 - [ ] `dev/roadmap/roadmap-fix.md` is updated
 - [ ] `CHANGELOG.md` is updated (if user-facing changes)
+- [ ] `README.md` is updated to most recent info if any changes were made.
 - [ ] Commit message follows format above
 
 ### Push command

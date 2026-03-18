@@ -170,9 +170,9 @@ pub async fn execute_skill(&self, ...) -> Result<String, SavantError> {
 | # | Phase | ID | File | Issue | Fix | Status |
 |---|-------|-----|------|-------|-----|--------|
 | 1 | 3 | L-026 | `crates/skills/src/docker.rs` | Unused `error` import | Remove line 1 | PENDING |
-| 2 | 4 | H-023 | `crates/core/src/fs/mod.rs:142-145` | `semantic_search` stub returns empty | Implement using `full_text_search` or return `Err(Unsupported)` | PENDING |
-| 3 | 4 | M-012 | `crates/core/src/fs/mod.rs:62-83` | Blocking I/O in async `index_directory` | Wrap `WalkDir` and `read_to_string` in `tokio::task::spawn_blocking` | PENDING |
-| 4 | 4 | M-013 | `crates/core/src/fs/mod.rs:90-94` | New SQLite `Connection::open` per `index_file` call | Pass `&Connection` parameter or use connection pool | PENDING |
+| 2 | 4 | H-023 | `crates/core/src/fs/mod.rs:142-145` | `semantic_search` stub returns empty | Implement using `full_text_search` or return `Err(Unsupported)` | ✅ FIXED |
+| 3 | 4 | M-012 | `crates/core/src/fs/mod.rs:62-83` | Blocking I/O in async `index_directory` | Wrap `WalkDir` and `read_to_string` in `tokio::task::spawn_blocking` | ✅ FIXED |
+| 4 | 4 | M-013 | `crates/core/src/fs/mod.rs:90-94` | New SQLite `Connection::open` per `index_file` call | Pass `&Connection` parameter or use connection pool | ✅ FIXED |
 | 5 | 6 | M-030 | `crates/agent/src/tools/mod.rs` | Input filtering for cognitive events | N/A — `emit_cognitive_event` doesn't exist | N/A |
 | 6 | 9 | M-024 | `crates/channels/src/discord.rs` | Channel resource leak | Store `cancellation_token: Arc<CancellationToken>` in struct, pass to spawned tasks | PENDING |
 | 7 | 9 | M-025 | `crates/channels/src/whatsapp.rs` | WhatsApp child process Drop | Store `child: Option<Child>` and `reader_handle: Option<JoinHandle>`, implement `Drop` | PENDING |

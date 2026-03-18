@@ -76,6 +76,7 @@ impl SecurityAuthority {
             resource_uri: resource_uri.to_string(),
             permitted_action: permitted_action.to_string(),
             expires_at: Self::current_time() + ttl_seconds,
+            issued_at: Self::current_time(),
             entropy_hash,
         };
 
@@ -110,6 +111,7 @@ impl SecurityAuthority {
             resource_uri: resource_uri.to_string(),
             permitted_action: permitted_action.to_string(),
             expires_at: Self::current_time() + ttl_seconds,
+            issued_at: Self::current_time(),
             entropy_hash: [0u8; 32],
         };
 

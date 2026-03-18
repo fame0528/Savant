@@ -14,12 +14,16 @@ pub struct CapabilityPayload {
     pub permitted_action: String,
     /// UNIX timestamp of expiration
     pub expires_at: u64,
+    /// UNIX timestamp of issuance (for rotation calculations)
+    pub issued_at: u64,
     /// OMEGA-VII: Binding to Quantum-Cognitive Stream
     pub entropy_hash: [u8; 32],
 }
 
 /// Supported cryptographic algorithms for token signatures.
-#[derive(Archive, Serialize, Deserialize, CheckBytes, rkyv::Portable, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Archive, Serialize, Deserialize, CheckBytes, rkyv::Portable, Debug, Clone, Copy, PartialEq, Eq,
+)]
 #[bytecheck(crate = bytecheck)]
 #[repr(u8)]
 pub enum SignatureAlgorithm {
@@ -50,15 +54,15 @@ pub struct AgentToken {
 
 impl AgentToken {
     /// Verifies if the token grants the requested capability.
-    /// 
+    ///
     /// OMEGA-Tier: Checks resource URI and permitted action against the payload.
     pub fn verify_capability(&self, resource: &str, action: &str) -> bool {
         // AAA: Resource URI matching (prefix-based for hierarchy support)
         let resource_match = resource.starts_with(&self.payload.resource_uri);
-        
+
         // AAA: Action matching (exact match only - no wildcards permitted)
         let action_match = self.payload.permitted_action == action;
-        
+
         // AAA: Expiration check
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -72,5 +76,37 @@ impl AgentToken {
     /// Verifies that the token belongs to the specified agent.
     pub fn assignee_matches(&self, agent_id_hash: u64) -> bool {
         self.payload.assignee_hash == agent_id_hash
+    }
+
+    /// Checks if the token should be rotated based on TTL.
+    ///
+    /// Returns true when 80% of the token's lifetime has elapsed.
+    /// This provides a safety margin before actual expiration.
+    pub fn should_rotate(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let lifetime = self
+            .payload
+            .expires_at
+            .saturating_sub(self.payload.issued_at);
+        if lifetime == 0 {
+            return true; // Rotate immediately if no lifetime
+        }
+
+        let elapsed = now.saturating_sub(self.payload.issued_at);
+        let threshold = lifetime * 80 / 100; // 80% of lifetime
+        elapsed >= threshold
+    }
+
+    /// Checks if the token has expired.
+    pub fn is_expired(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.payload.expires_at <= now
     }
 }

@@ -2,10 +2,14 @@ use crate::error::SavantError;
 use crate::types::ChatMessage;
 use dashmap::DashMap;
 use fjall::OptimisticTxDatabase;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+
+/// Maximum number of content hashes to keep for deduplication per partition.
+const DEDUP_WINDOW_SIZE: usize = 100;
 
 /// Partitioned Write-Ahead Log utilizing Fjall's multi-writer capabilities.
 pub struct Storage {
@@ -13,6 +17,9 @@ pub struct Storage {
     partitions: DashMap<String, fjall::OptimisticTxKeyspace>,
     /// Per-partition message counters for O(1) count queries.
     partition_counts: DashMap<String, AtomicU64>,
+    /// Per-partition content hash windows for message deduplication.
+    /// Maps agent_id → (hash, timestamp) pairs, oldest evicted first.
+    dedup_hashes: DashMap<String, VecDeque<(u64, String)>>,
 }
 
 impl Storage {
@@ -29,6 +36,7 @@ impl Storage {
             db,
             partitions: DashMap::new(),
             partition_counts: DashMap::new(),
+            dedup_hashes: DashMap::new(),
         };
 
         Ok(storage)
@@ -89,11 +97,25 @@ impl Storage {
         Ok(partition)
     }
 
-    /// Appends a chat message to the partition log.
+    /// Appends a chat message to the partition log with deduplication.
+    ///
+    /// Uses blake3 content hashing to detect and skip duplicate messages
+    /// within a sliding window of `DEDUP_WINDOW_SIZE` entries per partition.
     pub fn append_chat(&self, agent_id: &str, msg: &ChatMessage) -> Result<(), SavantError> {
         let partition = self.get_or_create_partition(agent_id)?;
         let payload =
             serde_json::to_string(msg).map_err(|e| SavantError::Unknown(e.to_string()))?;
+
+        // Compute content hash for deduplication
+        let content_hash = blake3::hash(msg.content.as_bytes()).to_hex().to_string();
+
+        // Check for duplicate within sliding window
+        if let Some(hashes) = self.dedup_hashes.get(agent_id) {
+            if hashes.iter().any(|(_, h)| h == &content_hash) {
+                // Duplicate detected - silently skip
+                return Ok(());
+            }
+        }
 
         // Use timestamp_micros with fallback to avoid collisions
         let timestamp = chrono::Utc::now().timestamp_micros().max(0); // Ensure non-negative
@@ -116,6 +138,16 @@ impl Storage {
             .entry(agent_id.to_string())
             .or_insert_with(|| AtomicU64::new(0))
             .fetch_add(1, Ordering::Relaxed);
+
+        // Add hash to dedup window and evict oldest if over limit
+        let mut hashes = self
+            .dedup_hashes
+            .entry(agent_id.to_string())
+            .or_insert_with(VecDeque::new);
+        hashes.push_back((timestamp as u64, content_hash));
+        while hashes.len() > DEDUP_WINDOW_SIZE {
+            hashes.pop_front();
+        }
 
         Ok(())
     }

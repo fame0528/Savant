@@ -7,7 +7,7 @@
 mod verification {
     use crate::enclave::SecurityAuthority;
     use crate::token::{AgentToken, CapabilityPayload};
-    use ed25519_dalek::{SigningKey};
+    use ed25519_dalek::SigningKey;
     use rand_core::OsRng;
 
     #[kani::proof]
@@ -30,6 +30,7 @@ mod verification {
                 resource_uri: symbolic_resource,
                 permitted_action: symbolic_action,
                 expires_at: symbolic_expires,
+                issued_at: 0u64, // Kani symbolic proof
                 entropy_hash: symbolic_entropy,
             },
             algorithm: crate::token::SignatureAlgorithm::Ed25519,
@@ -50,7 +51,7 @@ mod verification {
         if result.is_ok() {
             kani::assert(
                 hostile_token.payload.assignee_hash == requested_agent_id,
-                "Token ID must match requested ID on success"
+                "Token ID must match requested ID on success",
             );
         }
     }

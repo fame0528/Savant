@@ -6,6 +6,7 @@
 //
 pub mod clawhub;
 pub mod docker;
+pub mod lambda;
 pub mod native;
 pub mod nix;
 pub mod parser;

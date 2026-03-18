@@ -234,7 +234,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Missing signature"));
+            .contains("Authentication failed"));
     }
 
     #[tokio::test]
@@ -249,7 +249,7 @@ mod tests {
 
         let result = authenticate(&frame, None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("expired"));
+        assert!(result.unwrap_err().to_string().contains("Authentication failed"));
     }
 
     // ====================== EXTENDED TEST COVERAGE ======================

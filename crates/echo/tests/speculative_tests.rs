@@ -2,83 +2,94 @@
 
 #[cfg(test)]
 mod echo_speculative_tests {
-    use savant_echo::circuit_breaker::{BreakerState, CircuitBreaker};
+    use savant_echo::circuit_breaker::{CircuitState, ComponentMetrics};
 
     #[test]
-    fn test_circuit_breaker_halfopen_blocks_excess() {
-        let cb = CircuitBreaker::with_thresholds(1, 0, 5);
-        cb.record_failure(); // Trip
-        assert!(cb.allow_request()); // → HalfOpen
+    fn test_circuit_breaker_trip_and_block() {
+        let metrics = ComponentMetrics::new(0.1, 5);
 
-        // Additional requests in HalfOpen should still be allowed
-        // (the breaker doesn't block, it just limits success needed)
-        for _ in 0..10 {
-            cb.allow_request(); // Should not panic
+        // Record failures to exceed threshold
+        for _ in 0..5 {
+            metrics.record_outcome(false);
         }
+
+        // Circuit should be tripped
+        assert_eq!(metrics.state(), CircuitState::Open);
+        assert!(metrics.record_outcome(true)); // Should be blocked
     }
 
     #[test]
-    fn test_circuit_breaker_state_persistence() {
-        let cb = CircuitBreaker::with_thresholds(3, 0, 2);
+    fn test_circuit_breaker_halfopen_recovery() {
+        let metrics = ComponentMetrics::with_reset_config(0.1, 5, 0, 2);
 
         // Trip the circuit
-        cb.record_failure();
-        cb.record_failure();
-        cb.record_failure();
-        assert_eq!(cb.state(), BreakerState::Open);
+        for _ in 0..5 {
+            metrics.record_outcome(false);
+        }
+        assert_eq!(metrics.state(), CircuitState::Open);
 
-        // Check metrics persist
-        let m = cb.metrics();
-        assert_eq!(m.total_failures, 3);
-        assert_eq!(m.state, BreakerState::Open);
-    }
+        // Transition to half-open (reset_duration=0 means immediate)
+        metrics.record_outcome(true); // This triggers time-based check
+        // After transition, need consecutive successes to reset
+        metrics.record_outcome(true);
+        metrics.record_outcome(true);
 
-    #[test]
-    fn test_circuit_breaker_recovery_chain() {
-        let cb = CircuitBreaker::with_thresholds(1, 0, 2);
-
-        // Trip → HalfOpen → fail → Open → HalfOpen → success → success → Closed
-        cb.record_failure(); // Open
-        assert!(cb.allow_request()); // HalfOpen
-        cb.record_failure(); // Back to Open
-        assert_eq!(cb.state(), BreakerState::Open);
-
-        assert!(cb.allow_request()); // HalfOpen again
-        cb.record_success();
-        cb.record_success();
-        assert_eq!(cb.state(), BreakerState::Closed);
+        assert_eq!(metrics.state(), CircuitState::Closed);
     }
 
     #[test]
     fn test_circuit_breaker_high_frequency() {
-        // Test with rapid succession of events
-        let cb = CircuitBreaker::with_thresholds(100, 0, 10);
+        let metrics = ComponentMetrics::new(0.5, 10);
 
-        for _ in 0..99 {
-            cb.record_failure();
-        }
-        assert_eq!(cb.state(), BreakerState::Closed);
-
-        cb.record_failure(); // 100th failure
-        assert_eq!(cb.state(), BreakerState::Open);
-
-        // Rapidly transition through HalfOpen
-        assert!(cb.allow_request());
+        // 50% failure rate should trip with threshold of 0.5 (actually > 0.5)
         for _ in 0..10 {
-            cb.record_success();
+            metrics.record_outcome(false);
         }
-        assert_eq!(cb.state(), BreakerState::Closed);
+        assert_eq!(metrics.state(), CircuitState::Open);
+        assert!(metrics.trip_count() > 0);
     }
 
     #[test]
-    fn test_circuit_breaker_zero_threshold() {
-        // Edge case: threshold of 1
-        let cb = CircuitBreaker::with_thresholds(1, 0, 1);
-        cb.record_failure();
-        assert_eq!(cb.state(), BreakerState::Open);
+    fn test_circuit_breaker_closed_under_threshold() {
+        let metrics = ComponentMetrics::new(0.5, 5);
 
-        assert!(cb.allow_request()); // HalfOpen
-        cb.record_success();
-        assert_eq!(cb.state(), BreakerState::Closed);
+        // 20% failure rate should NOT trip with threshold of 0.5
+        for _ in 0..4 {
+            metrics.record_outcome(true);
+        }
+        metrics.record_outcome(false);
+
+        assert_eq!(metrics.state(), CircuitState::Closed);
+    }
+
+    #[test]
+    fn test_circuit_breaker_reset() {
+        let metrics = ComponentMetrics::new(0.1, 3);
+
+        // Trip the circuit
+        for _ in 0..3 {
+            metrics.record_outcome(false);
+        }
+        assert_eq!(metrics.state(), CircuitState::Open);
+
+        // Manual reset
+        metrics.reset();
+        assert_eq!(metrics.state(), CircuitState::Closed);
+        assert_eq!(metrics.failure_count(), 0);
+    }
+
+    #[test]
+    fn test_circuit_breaker_error_rate() {
+        let metrics = ComponentMetrics::new(0.3, 5);
+
+        // Record mixed outcomes
+        metrics.record_outcome(true);
+        metrics.record_outcome(true);
+        metrics.record_outcome(false);
+        metrics.record_outcome(true);
+        metrics.record_outcome(false);
+
+        // 2 failures out of 5 = 0.4 error rate > 0.3 threshold → tripped
+        assert_eq!(metrics.state(), CircuitState::Open);
     }
 }

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use bollard::Docker;
 use savant_core::error::SavantError;
+use savant_core::traits::Tool;
 use tokio::time::{timeout, Duration};
 
 /// Maximum execution time for Docker container runs (30 seconds)
@@ -29,6 +30,35 @@ impl DockerSkillExecutor {
             .await
             .map_err(|e| SavantError::Unknown(format!("Docker health check failed: {}", e)))?;
         Ok(version.version.unwrap_or_else(|| "unknown".to_string()))
+    }
+
+    /// Returns the Docker image name.
+    pub fn image_name(&self) -> &str {
+        &self.image_name
+    }
+}
+
+/// Docker-based ToolExecutor implementation for the sandbox dispatcher.
+///
+/// This wraps `DockerSkillExecutor` and implements the `ToolExecutor` trait,
+/// enabling Docker execution through the unified sandbox pipeline.
+pub struct DockerToolExecutor {
+    executor: DockerSkillExecutor,
+}
+
+impl DockerToolExecutor {
+    /// Creates a new Docker tool executor for the given image.
+    pub fn new(image_name: String) -> Result<Self, SavantError> {
+        Ok(Self {
+            executor: DockerSkillExecutor::new(image_name)?,
+        })
+    }
+}
+
+#[async_trait]
+impl crate::sandbox::ToolExecutor for DockerToolExecutor {
+    async fn execute(&self, args: serde_json::Value) -> Result<String, SavantError> {
+        self.executor.execute(args).await
     }
 }
 

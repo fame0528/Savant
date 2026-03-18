@@ -2,58 +2,64 @@
 
 #[cfg(test)]
 mod echo_tests {
-    use savant_echo::circuit_breaker::{BreakerState, CircuitBreaker};
+    use savant_echo::circuit_breaker::{CircuitState, ComponentMetrics};
 
     #[test]
     fn test_circuit_breaker_full_lifecycle() {
-        let cb = CircuitBreaker::with_thresholds(3, 0, 2);
+        let metrics = ComponentMetrics::with_reset_config(0.5, 5, 0, 2);
 
         // Start closed
-        assert_eq!(cb.state(), BreakerState::Closed);
+        assert_eq!(metrics.state(), CircuitState::Closed);
 
-        // Accumulate failures
-        cb.record_failure();
-        cb.record_failure();
-        assert_eq!(cb.state(), BreakerState::Closed);
+        // Accumulate failures - 100% error rate with threshold 0.5
+        for _ in 0..5 {
+            metrics.record_outcome(false);
+        }
+        assert_eq!(metrics.state(), CircuitState::Open);
 
-        // Third failure trips the circuit
-        cb.record_failure();
-        assert_eq!(cb.state(), BreakerState::Open);
+        // Time-based transition (reset_duration=0)
+        metrics.record_outcome(true); // Triggers check, transitions to HalfOpen
+        assert_eq!(metrics.state(), CircuitState::HalfOpen);
 
-        // Open blocks requests until timeout
-        // recovery_timeout=0 means immediate transition to HalfOpen
-        assert!(cb.allow_request());
-        assert_eq!(cb.state(), BreakerState::HalfOpen);
-
-        // HalfOpen: success count accumulates
-        cb.record_success();
-        assert_eq!(cb.state(), BreakerState::HalfOpen);
-
-        // Second success closes the circuit
-        cb.record_success();
-        assert_eq!(cb.state(), BreakerState::Closed);
+        // Successes in HalfOpen
+        metrics.record_outcome(true);
+        metrics.record_outcome(true);
+        assert_eq!(metrics.state(), CircuitState::Closed);
     }
 
     #[test]
     fn test_halfopen_failure_reopens() {
-        let cb = CircuitBreaker::with_thresholds(1, 0, 3);
-        cb.record_failure(); // Trip to Open
-        assert!(cb.allow_request()); // → HalfOpen (timeout=0)
+        let metrics = ComponentMetrics::with_reset_config(0.5, 5, 0, 3);
+
+        // Trip
+        for _ in 0..5 {
+            metrics.record_outcome(false);
+        }
+        assert_eq!(metrics.state(), CircuitState::Open);
+
+        // → HalfOpen (timeout=0)
+        metrics.record_outcome(true);
+        assert_eq!(metrics.state(), CircuitState::HalfOpen);
 
         // Failure in HalfOpen immediately re-opens
-        cb.record_failure();
-        assert_eq!(cb.state(), BreakerState::Open);
+        metrics.record_outcome(false);
+        assert_eq!(metrics.state(), CircuitState::Open);
     }
 
     #[test]
     fn test_reset_clears_state() {
-        let cb = CircuitBreaker::with_thresholds(1, 60, 1);
-        cb.record_failure();
-        assert_eq!(cb.state(), BreakerState::Open);
+        let metrics = ComponentMetrics::new(0.1, 3);
 
-        cb.reset();
-        assert_eq!(cb.state(), BreakerState::Closed);
-        assert!(cb.allow_request());
+        // Trip
+        for _ in 0..3 {
+            metrics.record_outcome(false);
+        }
+        assert_eq!(metrics.state(), CircuitState::Open);
+
+        // Reset
+        metrics.reset();
+        assert_eq!(metrics.state(), CircuitState::Closed);
+        assert_eq!(metrics.failure_count(), 0);
     }
 
     #[test]
@@ -61,22 +67,21 @@ mod echo_tests {
         use std::sync::Arc;
         use std::thread;
 
-        let cb = Arc::new(CircuitBreaker::with_thresholds(50, 60, 10));
+        let metrics = Arc::new(ComponentMetrics::new(0.3, 10));
         let mut handles = vec![];
 
-        // Spawn 100 threads recording failures
-        for _ in 0..100 {
-            let cb_clone = cb.clone();
+        // Spawn threads recording outcomes
+        for _ in 0..50 {
+            let m = metrics.clone();
             handles.push(thread::spawn(move || {
-                cb_clone.record_failure();
+                m.record_outcome(false);
             }));
         }
 
-        // Spawn 50 threads recording successes
-        for _ in 0..50 {
-            let cb_clone = cb.clone();
+        for _ in 0..20 {
+            let m = metrics.clone();
             handles.push(thread::spawn(move || {
-                cb_clone.record_success();
+                m.record_outcome(true);
             }));
         }
 
@@ -84,25 +89,25 @@ mod echo_tests {
             h.join().unwrap();
         }
 
-        // With 50+ failures and threshold=50, circuit should be open
-        assert_eq!(cb.state(), BreakerState::Open);
+        // With heavy failure rate, circuit should be open
+        assert_eq!(metrics.state(), CircuitState::Open);
     }
 
     #[test]
-    fn test_metrics_consistency() {
-        let cb = CircuitBreaker::with_thresholds(10, 0, 5);
+    fn test_error_rate_tracking() {
+        let metrics = ComponentMetrics::new(0.3, 5);
 
         for _ in 0..7 {
-            cb.record_failure();
+            metrics.record_outcome(false);
         }
-
         for _ in 0..3 {
-            cb.record_success();
+            metrics.record_outcome(true);
         }
 
-        let metrics = cb.metrics();
-        assert_eq!(metrics.total_failures, 7);
-        assert_eq!(metrics.total_successes, 3);
-        assert_eq!(metrics.trip_count, 0); // threshold=10, only 7 failures
+        // 70% error rate exceeds 0.3 threshold → tripped
+        assert_eq!(metrics.state(), CircuitState::Open);
+        assert!(metrics.trip_count() > 0);
+        // After tripping at 5 min samples, subsequent calls are blocked
+        assert!(metrics.total_count() >= 5);
     }
 }

@@ -3,7 +3,9 @@ use thiserror::Error;
 /// Unified Error Type for Savant.
 #[derive(Error, Debug)]
 pub enum SavantError {
-    #[error("Authentication failed: {0}")]
+    /// Authentication failure. Always returns a generic message to prevent
+    /// information leakage. Internal details are logged separately.
+    #[error("Authentication failed")]
     AuthError(String),
 
     #[error("IO error: {0}")]

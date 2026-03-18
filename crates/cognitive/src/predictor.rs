@@ -17,9 +17,10 @@ use savant_core::error::SavantError;
 /// use savant_cognitive::DspConfig;
 ///
 /// let config = DspConfig {
-///     tau: 0.7,           // Lean towards speed
-///     beta: 1,            // Aggressive offset
+///     tau: 0.7,
+///     beta: 1,
 ///     max_speculative_steps: 10,
+///     max_history_size: 1000,
 /// };
 /// ```
 #[derive(Archive, Deserialize, Serialize, CheckBytes, Debug, Clone, Copy, PartialEq)]
@@ -198,7 +199,7 @@ impl DspPredictor {
     /// ```
     /// use savant_cognitive::DspPredictor;
     ///
-    /// let predictor = DspPredictor::new(Default::default());
+    /// let mut predictor = DspPredictor::new(Default::default()).unwrap();
     /// let k = predictor.predict_optimal_k(2.5);
     /// assert!(k >= 1 && k <= 10);
     /// ```

@@ -511,6 +511,10 @@ impl SynthesisEngine {
                 || lower.contains("\"error\"")
                 || lower.contains("\"failed\"")
                 || lower.contains("exception")
+                || lower.starts_with("error:")
+                || lower.starts_with("error ")
+                || lower.contains(" failed")
+                || lower.contains("failure")
             {
                 failures += 1;
             } else {
@@ -861,7 +865,7 @@ mod tests {
 
     #[test]
     fn test_resolve_action_empty_string() {
-        let (tool, weight) = resolve_action("");
+        let (_tool, weight) = resolve_action("");
         assert!(weight > 0.0);
         // Empty string might resolve to unknown
     }

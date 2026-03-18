@@ -27,6 +27,7 @@ pub use models::{
     message_key, session_key, verify_tool_pair_integrity, AgentMessage, MemoryEntry, MessageRole,
     ToolCallRef, ToolResultRef,
 };
+pub use savant_core::utils::embeddings::EmbeddingService;
 // Safety verification module is conditionally compiled with kani feature
 #[cfg(feature = "kani")]
 pub use safety::verify_memory_safety;

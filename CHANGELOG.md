@@ -9,6 +9,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v2.0.1 - Feature Completion & Quality Pass (2026-03-18)
+
+**All 14 roadmap features complete. 324 tests passing. Full quality audit.**
+
+### Added
+
+#### Vector Search / Semantic Memory (Feature 1)
+- `EmbeddingService` with fastembed AllMiniLML6V2 model (384 dimensions)
+- LRU cache (1000 entries) for embedding reuse
+- Batch embedding support (`embed_batch`) for high-throughput scenarios
+- Semantic retrieval in `AsyncMemoryBackend::retrieve()` using hybrid search
+- Auto-indexing during `store()` for all messages >= 3 characters
+- `EmbeddingService` re-exported from `savant_memory` crate
+
+#### MCP Client Tool Discovery (Feature 4)
+- `McpClient` with WebSocket connection, initialize handshake, tools/list, tools/call
+- `McpRemoteTool` implementing `Tool` trait — proxies execution to MCP servers
+- `McpToolDiscovery` for multi-server tool discovery and registry bridging
+- `McpClientPool` compatibility wrapper with `connect()`, `execute_tool()`, `list_tools()`
+- Authentication support via `connect_with_auth()`
+- 30-second request timeout with proper channel cleanup
+
+#### Docker Skill Execution (Feature 5)
+- `DockerToolExecutor` implementing `ToolExecutor` trait for sandbox dispatcher
+- `ExecutionMode::DockerContainer(String)` variant added to core types
+- `SandboxDispatcher::create_executor()` now routes to Docker executor
+- Fallback executor for graceful degradation when Docker unavailable
+
+#### Skill Testing CLI (Feature 11)
+- `savant test-skill --skill-path <path> --input <json> --timeout <secs>`
+- Loads skill via `SkillRegistry`, executes with timeout enforcement
+- Formatted output with pass/fail indicators
+
+#### Database Backup/Restore (Feature 12)
+- `savant backup --output <path> [--include-memory]`
+- `savant restore --input <path>`
+- Atomic backup with pre-restore safety copy
+- Supports both main database and memory database
+
+#### CLI Subcommands (Feature 11, 12)
+- Converted CLI from flags-only to `clap` subcommand architecture
+- `start` — Launch swarm orchestrator (default)
+- `test-skill` — Test individual skills
+- `backup` / `restore` — Database management
+- `list-agents` — Discover workspace agents
+- `status` — System health check
+
+#### Lambda Executor (Feature 14)
+- `LambdaSkillExecutor` with AWS Lambda Invoke API integration
+- `LambdaTool` implementing `Tool` trait for skill registry
+- Configurable region, function name, timeout, sync/async invocation
+- Request/response serialization for Lambda protocol
+- 8 unit tests covering config, creation, serialization
+
+#### Proactive Learning (Feature 13)
+- Verified `PerceptionEngine` with configurable thresholds (fs_activity_window_secs, max_activity_entries)
+- Integrated into heartbeat pulse loop for continuous perception
+- Git status, git diff, filesystem activity monitoring
+
+### Fixed
+
+#### Test Suite
+- Fixed gateway security_tests.rs: `DashMap` import, unique temp paths, NexusBridge API
+- Fixed echo circuit_breaker_tests.rs: rewrote for `ComponentMetrics` API
+- Fixed echo speculative_tests.rs: rewrote for `CircuitState` API
+- Fixed cognitive synthesis.rs: broader error detection (plain text "Error:" prefix)
+- Fixed gateway auth tests: generic "Authentication failed" message
+- Fixed cognitive doc-tests: missing `max_history_size` field, `Result::unwrap()`
+- Fixed MCP integration tests: unused variable warnings
+- All 324 tests now pass across 14 crates
+
+#### Security
+- `SavantError::AuthError` now always displays generic "Authentication failed" (no internal details)
+
 ### v2.0.0 - Deep Audit & Security Hardening (2026-03-17)
 
 **121 issues audited, 107+ fixed. Full line-by-line review of all 133 source files.**

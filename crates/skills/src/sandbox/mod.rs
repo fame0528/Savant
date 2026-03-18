@@ -19,6 +19,11 @@ pub struct SandboxDispatcher;
 
 impl SandboxDispatcher {
     /// Creates a boxed ToolExecutor based on the execution mode.
+    ///
+    /// Routes to:
+    /// - `WasmComponent` → WASM executor (wasmtime-based)
+    /// - `LegacyNative` → Native executor (Landlock-sandboxed)
+    /// - `DockerContainer` → Docker executor (bollard-based, full isolation)
     pub fn create_executor(
         mode: &ExecutionMode,
         workspace_dir: std::path::PathBuf,
@@ -33,6 +38,34 @@ impl SandboxDispatcher {
                 workspace_dir,
                 capabilities,
             )),
+            ExecutionMode::DockerContainer(image) => {
+                match crate::docker::DockerToolExecutor::new(image.clone()) {
+                    Ok(executor) => Box::new(executor),
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to create Docker executor for image {}: {}",
+                            image,
+                            e
+                        );
+                        // Fall back to a no-op executor that returns the error
+                        Box::new(FallbackExecutor {
+                            error: format!("Docker executor init failed: {}", e),
+                        })
+                    }
+                }
+            }
         }
+    }
+}
+
+/// Fallback executor that returns an error when the primary executor fails to initialize.
+struct FallbackExecutor {
+    error: String,
+}
+
+#[async_trait]
+impl ToolExecutor for FallbackExecutor {
+    async fn execute(&self, _args: Value) -> Result<String, SavantError> {
+        Err(SavantError::Unknown(self.error.clone()))
     }
 }

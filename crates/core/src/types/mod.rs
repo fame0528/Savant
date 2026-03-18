@@ -612,6 +612,8 @@ pub enum ExecutionMode {
     WasmComponent(String),
     /// Legacy OpenClaw bash/python script requiring Landlock fallback
     LegacyNative(String),
+    /// Docker container execution with full isolation
+    DockerContainer(String),
 }
 
 /// Explicit permission declarations to prevent silent data exfiltration

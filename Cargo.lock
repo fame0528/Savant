@@ -7082,6 +7082,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]
@@ -7217,6 +7218,7 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "futures",
+ "futures-util",
  "rmcp",
  "savant_core",
  "savant_skills",
@@ -7224,7 +7226,9 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite 0.21.0",
  "tracing",
+ "url",
 ]
 
 [[package]]

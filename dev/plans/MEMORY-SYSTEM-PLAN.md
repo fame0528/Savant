@@ -24,11 +24,11 @@
 | 2 | Bi-Temporal Tracking | LOW | Add `valid_from/valid_to` to MemoryEntry, filter active facts | `models.rs`, `engine.rs` |
 | 3 | Daily Ops Logs | LOW | `memory/YYYY-MM-DD.md` append-only, auto-load on session start | New: `crates/memory/src/daily_log.rs` |
 
-### Sprint B: Swarm Coordination (1 feature, MEDIUM)
+### Sprint B: Swarm (1 feature, MEDIUM)
 
 | # | Feature | Complexity | What | Where |
 |---|---------|-----------|------|-------|
-| 4 | Blackboard (swarm sharing) | MEDIUM | Global Fjall keyspace + broadcast channels | New: `crates/ipc/src/blackboard.rs` |
+| 4 | Hive-Mind Notifications | MEDIUM | Auto-broadcast on high-importance memories | `engine.rs`, new: `notifications.rs` |
 
 ### Sprint C: Advanced Memory (3 features, HIGH complexity)
 
@@ -98,6 +98,12 @@ pub struct ContextCacheBlock {
 
 **Tests:** 5 (search accuracy, latency, budget enforcement, empty results, threshold filtering)
 
+**Edge cases (Perfection Loop Iteration 3):**
+- Fewer than 3 user messages → use all available messages as query window
+- Auto-recall returns empty → gracefully skip `<context_cache>` block, use standard retrieve only
+- ContextCacheBlock exceeds token budget → truncate to max_results, then truncate content to fit
+- Concurrent auto-recall calls → no shared state, each call is independent (safe)
+
 ---
 
 ### 2. Bi-Temporal Tracking
@@ -146,6 +152,12 @@ memories.retain(|m| m.temporal.valid_to.is_none());
 
 **Tests:** 6 (create, invalidate, query active only, query history, multiple invalidations, no false positives)
 
+**Edge cases (Perfection Loop Iteration 3):**
+- `semantic_search()` returns `SearchResult` without temporal data → need `semantic_search_temporal()` that joins with TemporalEntry keyspace
+- Contradiction at 0.92 similarity but different entities → false positive invalidation. Mitigation: require exact category match before invalidation
+- Two agents write contradictory facts simultaneously → both get `valid_to = None`. Resolution: latest `recorded_at` wins in query filter
+- Temporal metadata not yet migrated for existing memories → treat missing temporal as `valid_from = created_at, valid_to = None`
+
 ---
 
 ### 3. Daily Operational Logs
@@ -175,6 +187,12 @@ workspaces/agents/<agent>/memory/
 - `crates/memory/src/daily_log.rs` — DailyLog struct, append, read, rotate
 
 **Tests:** 4 (create new log, append entry, read today's log, read yesterday's log)
+
+**Edge cases (Perfection Loop Iteration 3):**
+- Disk write failure → log error but don't crash the agent session
+- Log file exceeds 10KB → rotate to archive, start fresh file
+- Multiple agents writing to same log → one log per agent per day, no conflicts
+- New day boundary → auto-create new file, stop appending to yesterday's
 
 ---
 
@@ -226,6 +244,12 @@ pub struct MemoryNotification {
 
 **Tests:** 5 (global memory access, notification on high-importance, domain filtering, multiple agents, no notification for low-importance)
 
+**Edge cases (Perfection Loop Iteration 3):**
+- Rapid burst of high-importance memories → broadcast channel fills up. Mitigation: batch notifications, send summary every 5 seconds instead of per-memory
+- Agent not subscribed yet → notification lost. Mitigation: agent checks for missed notifications on context assembly init
+- Notification with importance exactly 7 → threshold edge case. Include (7+).
+- No active agents listening → broadcast send fails silently. Expected behavior.
+
 ---
 
 ### 5. DAG Session Compaction
@@ -274,6 +298,12 @@ Instead of deleting old messages, keep them. Create a DagNode in a separate `dag
 
 **Tests:** 5 (create node, expand node, multi-level DAG, node ordering, no data loss)
 
+**Edge cases (Perfection Loop Iteration 3):**
+- DAG node references deleted messages → expand fails. Mitigation: don't delete messages during DAG compaction, only mark as "compacted"
+- Memory pressure from keeping all raw messages → add configurable retention (e.g., keep raw for 7 days, then archive)
+- Concurrent read during compaction → Fjall optimistic concurrency handles this (read gets snapshot)
+- Agent calls expand on very deep DAG (depth 5+) → token budget exceeded. Mitigation: expand only 2 levels deep, summarize deeper
+
 ---
 
 ### 6. Personality-Driven Promotion
@@ -307,6 +337,11 @@ pub enum MemoryNetwork {
 
 **Tests:** 5 (promotion threshold, decay curve, personality influence, canonical priority, archival)
 
+**Edge cases (Perfection Loop Iteration 3):**
+- Agent has no SOUL.md → use default OCEAN values (all 50)
+- Promotion worker runs during high CPU load → skip cycle, run next idle window
+- Contradictory memory promoted to canonical → bi-temporal filter prevents stale facts from being promoted
+
 ---
 
 ### 7. Local NER + Petgraph
@@ -333,6 +368,12 @@ Query "Project Alpha" → traverse graph → return all related memories
 
 **Tests:** 6 (extract entities, create graph edges, query by entity, entity resolution, cross-session tracking, memory limits)
 
+**Edge cases (Perfection Loop Iteration 3):**
+- gline-rs dependency verification → MUST verify it compiles with our Rust version and Tokio before implementing. If incompatible, fall back to rule-based entity extraction.
+- Entity resolution (same entity, different mentions) → normalize to lowercase + strip whitespace, then hash. If hash matches, merge.
+- Graph grows unbounded → limit to 10K entities per agent, evict oldest unaccessed entities
+- Entity with no relationships → still stored as isolated node (future relationships may be added)
+
 ---
 
 ## Implementation Order
@@ -344,7 +385,7 @@ Sprint A (quick wins, all LOW complexity):
   3. Daily Ops Logs           — prevents session-to-session amnesia
 
 Sprint B (swarm, MEDIUM):
-  4. Blackboard               — enables cross-agent knowledge sharing
+  4. Hive-Mind Notifications  — enables cross-agent knowledge awareness
 
 Sprint C (advanced, HIGH):
   5. DAG Compaction           — makes compaction reversible
@@ -356,11 +397,37 @@ Sprint C (advanced, HIGH):
 
 ## Dependencies
 
-- Phase 2 depends on Phase 1 (auto-recall uses temporal filter)
-- Phase 5 depends on Phase 3 (daily logs reference DAG nodes)
-- Phase 6 depends on Phase 2 (promotion checks temporal validity)
-- Phase 7 depends on Phase 2 (entity tracking needs temporal metadata)
+- Phase 2 depends on Phase 1 (auto-recall uses temporal filter during retrieval)
+- Phase 4 depends on Phase 2 (notifications need temporal metadata for relevance filtering)
+- Phase 5 depends on Phase 3 (daily logs reference DAG node summaries)
+- Phase 6 depends on Phase 2 (promotion checks temporal validity before promoting)
+- Phase 7 depends on Phase 2 (entity tracking needs temporal metadata for entity state)
 
 ---
 
-*Created: 2026-03-19. Awaiting approval before execution.*
+## Cross-Feature Interaction Tests
+
+After Sprint A completion, run integration tests that verify features work together:
+1. Auto-Recall + Bi-Temporal → recalled memories are all active (valid_to = None)
+2. Auto-Recall + Daily Logs → daily log context is included in recall
+3. Bi-Temporal + Notifications → invalidated facts trigger notification to agents
+4. All three together → agent queries "what happened yesterday" → auto-recall fetches daily log + semantic memories, all filtered by temporal validity
+
+---
+
+## Failure Recovery
+
+Each phase has a rollback strategy:
+- Phase 1: Remove `auto_recall()` method, revert to standard retrieve
+- Phase 2: Remove `TemporalEntry`, revert to flat `MemoryEntry` queries
+- Phase 3: Remove `daily_log.rs`, agents operate without daily context
+- Phase 4: Remove broadcast channel, agents operate without notifications
+- Phase 5: Revert to existing `atomic_compact()` (destructive but functional)
+- Phase 6: Remove promotion worker, memories stay in flat vector space
+- Phase 7: Remove `entities.rs`, agents operate without entity tracking
+
+No phase should break existing functionality. Each is additive.
+
+---
+
+*Created: 2026-03-19. Perfection Loop Iteration 3 complete. Awaiting approval.*

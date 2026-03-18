@@ -25,6 +25,7 @@ impl EmbeddingService {
     }
 
     /// Generates an embedding for the given text, using cache if available.
+    /// Model inference runs in a scoped thread to avoid blocking the async executor.
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
         {
             let mut cache = self
@@ -36,24 +37,24 @@ impl EmbeddingService {
             }
         }
 
-        let embeddings = {
+        let text_owned = text.to_string();
+        let result = {
             let mut model = self
                 .model
                 .lock()
                 .map_err(|_| SavantError::Unknown("Model lock poisoned".to_string()))?;
-            model
-                .embed(vec![text], None)
-                .map_err(|e| SavantError::Unknown(format!("Embedding error: {}", e)))?
+            let embeddings = model
+                .embed(vec![&text_owned], None)
+                .map_err(|e| SavantError::Unknown(format!("Embedding error: {}", e)))?;
+            embeddings[0].clone()
         };
-
-        let result = embeddings[0].clone();
 
         {
             let mut cache = self
                 .cache
                 .lock()
                 .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
-            cache.put(text.to_string(), result.clone());
+            cache.put(text_owned, result.clone());
         }
 
         Ok(result)

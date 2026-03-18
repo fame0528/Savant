@@ -176,7 +176,7 @@ pub async fn execute_skill(&self, ...) -> Result<String, SavantError> {
 | 5 | 6 | M-030 | `crates/agent/src/tools/mod.rs` | Input filtering for cognitive events | N/A — `emit_cognitive_event` doesn't exist | N/A |
 | 6 | 9 | M-024 | `crates/channels/src/discord.rs` | Channel resource leak | Store `cancellation_token: Arc<CancellationToken>` in struct, pass to spawned tasks | PENDING |
 | 7 | 9 | M-025 | `crates/channels/src/whatsapp.rs` | WhatsApp child process Drop | Store `child: Option<Child>` and `reader_handle: Option<JoinHandle>`, implement `Drop` | PENDING |
-| 8 | 11 | L-022 | `crates/core/src/utils/embeddings.rs:27` | Embedding service blocks async | Wrap `embed()` body in `tokio::task::spawn_blocking` | PENDING |
+| 8 | 11 | L-022 | `crates/core/src/utils/embeddings.rs:27` | Embedding service blocks async | Documented: TextEmbedding non-Send. Cache provides hit rate optimization. | DOCUMENTED |
 | 9 | 13 | A-001 | `core/src/db.rs`, `memory/src/lsm_engine.rs` | Three separate Fjall instances | Document the separation (already done), no consolidation needed | DOCUMENTED |
 | 10 | 13 | A-003 | Multiple crates | Error type proliferation | Add `From` impls to `SavantError` for common error types | PENDING |
 | 11 | 13 | A-004 | `gateway/src/handlers/mod.rs:332` | Global mutable state for API keys | Move to `GatewayState` struct | PENDING |
@@ -292,7 +292,7 @@ pub async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
 | 6 | ECHO Verification | 4 | PENDING |
 | 7 | Dashboard UI/UX | 4 | PENDING |
 | 8 | Threat Intelligence | 4 | PENDING |
-| 9 | Remaining Audit Issues | 14 | 2 N/A, 2 DONE |
+| 9 | Remaining Audit Issues | 14 | 3 N/A, 5 DONE, 6 PENDING |
 | 10 | Cross-Platform | 5 | PENDING |
 | 11 | Performance | 6 | PENDING |
 | 12 | Documentation | 5 | PENDING |

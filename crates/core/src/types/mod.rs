@@ -79,6 +79,10 @@ pub enum ControlFrame {
         heartbeat_interval: Option<u64>,
         description: Option<String>,
     },
+    /// Natural language command from dashboard
+    NLCommand {
+        text: String,
+    },
 }
 
 /// A plan for manifestations of a single agent

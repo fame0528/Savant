@@ -314,6 +314,23 @@ pub async fn handle_message(
                     };
                     let _ = handle_agent_config_set(request, &state.nexus).await;
                 }
+                // Natural language command
+                savant_core::types::ControlFrame::NLCommand { text } => {
+                    let intent = savant_agent::nlp::parse_command(&text);
+                    let _ = send_control_response(
+                        "NL_COMMAND_RESULT",
+                        serde_json::json!({
+                            "category": format!("{:?}", intent.category),
+                            "action": intent.action,
+                            "target": intent.target,
+                            "confidence": intent.confidence,
+                            "original": intent.original,
+                        }),
+                        &session.session_id,
+                        &state.nexus,
+                    )
+                    .await;
+                }
             }
         }
         savant_core::types::RequestPayload::Auth(_) => {

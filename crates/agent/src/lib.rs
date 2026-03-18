@@ -6,6 +6,7 @@
 
 pub mod budget;
 pub mod context;
+pub mod ensemble;
 pub mod free_model_router;
 pub mod manager;
 pub mod nlp;

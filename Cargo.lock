@@ -7184,6 +7184,7 @@ dependencies = [
  "lru",
  "rand 0.8.5",
  "reqwest 0.11.27",
+ "savant_agent",
  "savant_core",
  "savant_skills",
  "serde",

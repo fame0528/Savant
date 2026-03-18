@@ -5,13 +5,11 @@
 
 ---
 
-## Active Work — Sprint 3 (Final)
+## Deferred (Future)
 
 | # | Task | Priority | Status | Details |
 |---|------|----------|--------|---------|
-| 1 | Agent Collaboration Graph | P2 | ✅ COMPLETE | SVG component with agent nodes and edges |
-| 2 | Voice Interface | P3 | PENDING | Requires WebRTC + TTS integration (future) |
-| 3 | Easter Eggs + UX Polish | P3 | PENDING | Progressive enhancement (ongoing) |
+| 1 | Voice Interface | P3 | DEFERRED | Needs WebRTC + TTS integration, revisit later |
 
 ---
 

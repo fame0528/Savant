@@ -253,6 +253,7 @@ async fn sync_urlhaus(client: &reqwest::Client) -> Result<(usize, usize), String
     }
 
     #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
     struct UrlhausEntry {
         #[serde(default)]
         url: Option<String>,

@@ -5,11 +5,16 @@
 
 use async_trait::async_trait;
 use savant_core::error::SavantError;
+#[cfg(not(windows))]
 use tokio::process::Command;
+#[cfg(not(windows))]
 use tokio::time::{timeout, Duration};
-use tracing::{info, warn};
+#[cfg(not(windows))]
+use tracing::info;
+use tracing::warn;
 
 /// Maximum execution time for Nix flake invocations (30 seconds)
+#[cfg(not(windows))]
 const NIX_EXEC_TIMEOUT_SECS: u64 = 30;
 
 /// Maximum length for a flake reference string (1024 characters)

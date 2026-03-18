@@ -13,25 +13,49 @@ The `/dev` folder is the project's operational brain. It tracks everything: what
 
 ---
 
+## Dual-Level Architecture
+
+Savant has two levels of resources:
+
+### Swarm-Wide (shared by ALL agents)
+
+| Location | What | Who reads it |
+|----------|------|-------------|
+| `skills/` | Shared skills (including coding system) | All agents |
+| `workspaces/substrate/` | System config, API keys | System |
+| `config/savant.toml` | System settings | System + dashboard |
+
+### Agent-Specific (isolated per agent)
+
+| Location | What | Who reads it |
+|----------|------|-------------|
+| `workspaces/agents/<name>/` | Agent identity, SOUL.md, AGENTS.md | That agent only |
+| `workspaces/agents/<name>/skills/` | Agent-specific skills | That agent only |
+| `workspaces/agents/<name>/dev/` | Agent's own tracking | That agent only |
+
+**Key rule:** Coding standards live in `skills/savant-coding-system/` (swarm-wide). Every agent gets them automatically. Never put coding standards in an agent-specific directory.
+
+---
+
 ## Folder Structure
 
 ```
-dev/
-├── SAVANT-CODING-SYSTEM.md          ← Universal coding standards (ALL agents read this)
-├── coding-standards/
-│   ├── RUST.md                       ← Rust supplement
-│   ├── TYPESCRIPT.md                 ← TypeScript supplement
-│   └── PYTHON.md                     ← Python supplement
-├── PERFECTION-LOOP.md                ← Quality audit protocol
-├── DEVELOPMENT-WORKFLOW.md           ← Step-by-step development process
-├── IMPLEMENTATION-TRACKER.md         ← Feature status (PENDING → IN PROGRESS → COMPLETE)
-├── SESSION-SUMMARY.md                ← Report from the most recent session
-├── CHANGELOG-INTERNAL.md             ← Project changelog (agent-facing, detailed)
-├── archive/
-│   └── YYYY-MM-DD/                   ← Archived documents by date
-│       └── *.md
-└── coding-standards/
-    └── <LANGUAGE>.md                 ← One file per language
+skills/                                    ← SWARM-WIDE skills (all agents share)
+├── hello-savant/                          ← Example WASM skill
+└── savant-coding-system/                  ← AAA coding standards (embedded)
+
+workspaces/
+├── substrate/                             ← SAVANT system config
+│   ├── agent.json
+│   └── .env
+├── agents/                                ← Agent-specific workspaces
+│   └── <agent-name>/
+│       ├── SOUL.md                        ← Personality
+│       ├── AGENTS.md                      ← Operating instructions
+│       ├── IDENTITY.md                    ← Identity card
+│       ├── skills/                        ← Agent-specific skills only
+│       └── dev/                           ← Agent's own tracking
+└── workspace-Savant/                      ← System agent workspace
 ```
 
 ---

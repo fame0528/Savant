@@ -46,12 +46,43 @@
 
 **Goal:** Before the LLM sees any prompt, automatically search memory and inject relevant context.
 
+**Data flow (verified against actual code):**
+```
+User query arrives via WebSocket (gateway)
+    ↓
+AsyncMemoryBackend::retrieve(agent_id, query, limit) is called
+    ↓ (currently: embed query → semantic_search → session tail → merge)
+    ↓ (NEW: add parallel auto-recall with tokio::join!)
+    
+tokio::join!(
+    standard_retrieve(),    // existing: semantic + transcript
+    auto_recall(),          // NEW: embed last 3 interactions → semantic search
+)
+    ↓
+auto_recall extracts last 3 user messages as query window
+    ↓
+EmbeddingService::embed(query_window) → 384-dim vector (~30ms measured)
+    ↓
+MemoryEngine::semantic_search(embedding, 5) → Vec<SearchResult>
+    ↓
+SearchResult.document_id → lookup MemoryEntry from iter_metadata()
+    ↓
+Filter by similarity_threshold (score >= 0.3) and max_tokens (15% of budget)
+    ↓
+Format as <context_cache> block, prepend to system prompt
+```
+
+**Where context is injected:**
+- NOT inside the memory crate — that's just storage
+- The injection happens in `crates/agent/src/context.rs` where context is assembled for the LLM
+- The agent's context assembly calls `auto_recall()` and prepends results to the system prompt
+
 **Data structures:**
 ```rust
 pub struct AutoRecallConfig {
-    pub max_tokens: usize,           // Cap at 15% of context window
-    pub similarity_threshold: f32,    // Minimum cosine score (0.3)
-    pub max_results: usize,           // Max memories to inject (5)
+    pub max_tokens: usize,           // 15% of context window
+    pub similarity_threshold: f32,    // 0.3 minimum cosine score
+    pub max_results: usize,           // 5 max memories
 }
 
 pub struct ContextCacheBlock {
@@ -59,25 +90,6 @@ pub struct ContextCacheBlock {
     pub retrieved_memories: Vec<MemoryEntry>,
     pub injected_at: rend::i64_le,
 }
-```
-
-**Flow:**
-```
-User query arrives via WebSocket
-    ↓
-tokio::join!(transcript_fetch, auto_recall_fetch)  ← parallel
-    ↓
-auto_recall:
-    1. Extract last 3 interactions as query window
-    2. Embed via EmbeddingService (~30ms)
-    3. Semantic search + BM25 keyword search (~15ms)
-    4. RRF fusion of results
-    5. Filter by similarity_threshold
-    6. Cap by max_tokens
-    ↓
-Format as <context_cache> XML block
-    ↓
-Prepend to system prompt before LLM sees it
 ```
 
 **Files to modify:**
@@ -170,36 +182,47 @@ workspaces/agents/<agent>/memory/
 
 **Goal:** When any agent discovers something important, ALL agents get alerted instantly. Memory is already global — this is proactive notification, not sharing.
 
-**Architecture (hive-mind model):**
+**Architecture (hive-mind model, verified against actual code):**
 ```
-Agent Alpha discovers bug → writes to global memory (automatic, no publish needed)
+Agent Alpha discovers bug → writes to global memory via AsyncMemoryBackend::store()
     ↓
-Savant substrate detects new high-importance memory (importance >= 7)
+store() calls MemoryEngine::index_memory(entry) — this already runs for every store
     ↓
-tokio::sync::broadcast sends notification to all active agents
+NEW: index_memory() checks if entry.importance >= 7
+    ↓ (if yes)
+Savant substrate sends MemoryNotification to broadcast channel
     ↓
-Agent Beta receives interrupt → context updated automatically
+tokio::sync::broadcast sends to all active agent sessions
+    ↓
+Each agent's context assembly (context.rs) receives notification
+    ↓
+Auto-injects the new memory into the next context window
     ↓
 Agent Beta never knew it was Agent Alpha's discovery — it's just "known"
 ```
 
-**Key difference:** No publish/subscribe gate. Memories are global by default. The notification channel just alerts agents about NEW discoveries without polling.
+**Connection to existing code:**
+- `index_memory()` in `engine.rs` already runs for every store operation
+- Adding notification there means every high-importance memory is automatically broadcast
+- The broadcast channel is a `tokio::sync::broadcast::Sender<MemoryNotification>` on the MemoryEngine
+- Agent sessions subscribe during initialization
 
 **Data structures:**
 ```rust
 pub struct MemoryNotification {
     pub notification_id: String,
-    pub source_session: String,         // Which session generated it
-    pub memory_id: u64_le,              // Reference to MemoryEntry
-    pub domain_tags: Vec<String>,       // "docker", "security", "api"
-    pub importance: u8,                 // Only notify on importance >= 7
+    pub source_session: String,
+    pub memory_id: u64_le,
+    pub domain_tags: Vec<String>,
+    pub importance: u8,
     pub timestamp: rend::i64_le,
 }
 ```
 
-**Files to create/modify:**
-- `crates/memory/src/notifications.rs` — notification channel
-- `crates/memory/src/engine.rs` — trigger notification on `index_memory()` when importance >= 7
+**Files to modify:**
+- `crates/memory/src/engine.rs` — add broadcast sender, trigger on `index_memory()` when importance >= 7
+- `crates/memory/src/notifications.rs` — new module with broadcast channel setup
+- `crates/agent/src/context.rs` — subscribe to notifications, inject into context
 
 **Tests:** 5 (global memory access, notification on high-importance, domain filtering, multiple agents, no notification for low-importance)
 

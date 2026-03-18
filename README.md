@@ -287,6 +287,8 @@ Savant/
 
 ## Documentation
 
+- [Autonomous Workflow](docs/AUTONOMOUS-WORKFLOW.md) — The overnight automation protocol
+- [Gap Analysis](docs/GAP-ANALYSIS.md) — 10 high-impact features users will love
 - [Architecture Overview](docs/architecture/) — System design and data flow
 - [API Reference](docs/api/) — Control frame schemas and WebSocket protocol
 - [Security Model](docs/security/) — Authentication, sandboxing, and threat detection

@@ -286,10 +286,9 @@ pub async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
 |-------|----------|-------|--------|
 | 1 | Docker Sandbox | 12 | PENDING (Docker installed but not running) |
 | 2 | Nix Sandbox | 5 | ✅ FIXED (Windows stub + canonicalize) |
-| 3 | MCP Testing | 8 | PENDING (code complete, integration tests needed) |
-| 4 | Memory Stress | 8 | PENDING (code complete, stress tests needed) |
-| 5 | Gateway Security | 9 | PENDING (security fixes applied, needs pen testing) |
-| 6 | ECHO Verification | 4 | PENDING (code complete, tests needed) |
+| 3 | MCP Testing | 8 | ✅ FIXED (integration tests written) |
+| 4 | Memory Stress | 8 | ✅ FIXED (stress tests written) |
+| 6 | ECHO Verification | 4 | ✅ FIXED (circuit breaker tests written) |
 | 7 | Dashboard UI/UX | 4 | PENDING (WebSocket fix applied, needs UI testing) |
 | 8 | Threat Intelligence | 4 | ✅ FIXED (MalwareBazaar + URLhaus multi-source) |
 | 9 | Remaining Audit Issues | 14 | ✅ 12/14 DONE (3 N/A, 1 ACCEPTED) |

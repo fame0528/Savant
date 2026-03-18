@@ -1,7 +1,7 @@
 use crate::types::EventFrame;
-use tracing::{debug, warn};
 use moka::sync::Cache;
 use tokio::sync::{broadcast, RwLock};
+use tracing::{debug, warn};
 
 /// Maximum number of entries in the shared memory before eviction.
 const MAX_SHARED_MEMORY_ENTRIES: u64 = 10_000;
@@ -37,14 +37,20 @@ impl NexusBridge {
     }
 
     /// Attempts to pin the shared memory pages to RAM to prevent swapping/jitter.
+    /// This reduces latency jitter by preventing the OS from swapping critical data to disk.
     fn pre_flight_pinning(&self) {
         #[cfg(unix)]
         {
             unsafe {
+                // SAFETY: mlockall is safe to call here because:
+                // 1. MCL_CURRENT | MCL_FUTURE are valid flags on all Unix platforms
+                // 2. The call may fail if RLIMIT_MEMLOCK is exceeded, which we handle gracefully
+                // 3. No pointers are passed - the kernel operates on the process address space
                 if libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE) == 0 {
                     tracing::info!("NexusBridge: Memory pinning successful.");
                 } else {
-                    warn!("NexusBridge: Memory pinning failed. Check RLIMIT_MEMLOCK.");
+                    // Log at debug level - failure is non-critical
+                    debug!("NexusBridge: Memory pinning failed (check RLIMIT_MEMLOCK). Continuing without pinning.");
                 }
             }
         }
@@ -54,15 +60,33 @@ impl NexusBridge {
         }
     }
 
+    /// Updates a key-value pair in the shared memory bus.
+    ///
+    /// # Arguments
+    /// * `key` - State key (max 256 characters)
+    /// * `value` - State value (max 1MB)
     pub async fn update_state(&self, key: String, value: String) {
-        // AAA-Perfection: Bounded Memory Enforcement (HS-003)
-        // Prevent individual "Bloat-Bombs"
-        if value.len() > 1_000_000 {
-            warn!("NexusBridge: Rejected large state update for key {} ({} bytes)", key, value.len());
+        // Validate key length to prevent unbounded key storage
+        if key.len() > 256 {
+            warn!(
+                "NexusBridge: Rejected state update - key too long ({} bytes, max 256)",
+                key.len()
+            );
             return;
         }
 
-        // 🏰 Invalidate cache on write
+        // AAA-Perfection: Bounded Memory Enforcement (HS-003)
+        // Prevent individual "Bloat-Bombs"
+        if value.len() > 1_000_000 {
+            warn!(
+                "NexusBridge: Rejected large state update for key {} ({} bytes, max 1MB)",
+                key,
+                value.len()
+            );
+            return;
+        }
+
+        // Invalidate context cache on write
         let mut cache = self.context_cache.write().await;
         *cache = None;
 
@@ -87,16 +111,17 @@ impl NexusBridge {
             }
         }
 
-        let context = self.shared_memory
+        let context = self
+            .shared_memory
             .iter()
             .map(|(k, v)| format!("{}: {}", k, v))
             .collect::<Vec<_>>()
             .join("\n");
-        
+
         // Update cache
         let mut cache = self.context_cache.write().await;
         *cache = Some(context.clone());
-        
+
         context
     }
 
@@ -117,7 +142,9 @@ impl NexusBridge {
         Ok(())
     }
 
-    pub async fn subscribe(&self) -> (broadcast::Receiver<EventFrame>, broadcast::Receiver<String>) {
+    pub async fn subscribe(
+        &self,
+    ) -> (broadcast::Receiver<EventFrame>, broadcast::Receiver<String>) {
         (self.event_bus.subscribe(), self.swarm_sync.subscribe())
     }
 }
@@ -135,10 +162,12 @@ mod tests {
     #[tokio::test]
     async fn benchmark_global_context_cache() {
         let bridge = NexusBridge::new();
-        
+
         // Fill shared memory with 1000 keys
         for i in 0..1000 {
-            bridge.update_state(format!("key_{}", i), "value".to_string()).await;
+            bridge
+                .update_state(format!("key_{}", i), "value".to_string())
+                .await;
         }
 
         // First call (cache miss)
@@ -151,7 +180,16 @@ mod tests {
         let _ = bridge.get_global_context().await;
         let duration_hit = start.elapsed();
 
-        tracing::info!("Context Cache: Miss={:?}, Hit={:?}", duration_miss, duration_hit);
-        assert!(duration_hit < duration_miss, "Cache hit ({:?}) must be faster than miss ({:?})", duration_hit, duration_miss);
+        tracing::info!(
+            "Context Cache: Miss={:?}, Hit={:?}",
+            duration_miss,
+            duration_hit
+        );
+        assert!(
+            duration_hit < duration_miss,
+            "Cache hit ({:?}) must be faster than miss ({:?})",
+            duration_hit,
+            duration_miss
+        );
     }
 }

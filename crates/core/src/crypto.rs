@@ -120,14 +120,12 @@ impl AgentKeyPair {
             "⚠️  No master keys found in environment. Auto-generating for development..."
         );
         let generated_key = Self::generate()?;
-        tracing::info!(
-            "✅ Generated development master key: {}...",
-            &generated_key.key_id[0..8]
-        );
+        let key_id_short = &generated_key.key_id[..generated_key.key_id.len().min(8)];
+        tracing::info!("✅ Generated development master key: {}...", key_id_short);
         tracing::warn!("⚠️  For production, set these environment variables:");
         tracing::warn!("   SAVANT_MASTER_SECRET_KEY=<your-secret-key>");
         tracing::warn!("   SAVANT_MASTER_PUBLIC_KEY=<your-public-key>");
-        tracing::warn!("   SAVANT_MASTER_KEY_ID={}...", &generated_key.key_id[0..8]);
+        tracing::warn!("   SAVANT_MASTER_KEY_ID={}...", key_id_short);
 
         Ok(generated_key)
     }

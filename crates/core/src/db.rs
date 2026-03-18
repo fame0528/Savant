@@ -31,18 +31,7 @@ impl Storage {
             partition_counts: DashMap::new(),
         };
 
-        // Warm up partition counts from existing data
-        storage.rebuild_partition_counts()?;
-
         Ok(storage)
-    }
-
-    /// Rebuilds partition counts by scanning existing data on startup.
-    fn rebuild_partition_counts(&self) -> Result<(), SavantError> {
-        // We intentionally don't scan here - counts start at 0
-        // and are maintained incrementally going forward.
-        // Historical counts are not needed for correctness.
-        Ok(())
     }
 
     /// Ghost-Restore: Re-opens all partitions to ensure data consistency.
@@ -160,6 +149,10 @@ impl Storage {
     }
 
     /// Prunes old history entries, keeping only the most recent `keep_last` messages.
+    ///
+    /// Keys are formatted as `{timestamp}:{uuid}` where timestamp is microseconds-since-epoch.
+    /// Fjall stores keys in lexicographic order, so iterating forward yields the oldest entries first.
+    /// This function takes the first `to_delete` entries (oldest) and removes them.
     pub fn prune_history(&self, agent_id: &str, keep_last: usize) -> Result<(), SavantError> {
         let partition = self.get_or_create_partition(agent_id)?;
         let count = partition.inner().iter().count();
@@ -220,11 +213,19 @@ impl Storage {
     }
 
     /// Gracefully shuts down the storage engine, ensuring all data is flushed.
+    ///
+    /// Clears all in-memory partitions and counters. The underlying Fjall database
+    /// is dropped when the Arc reference count reaches zero, which triggers
+    /// Fjall's Drop implementation to flush pending writes.
     pub fn shutdown(&self) -> Result<(), SavantError> {
         info!("Storage: Initiating graceful shutdown...");
+        let partition_count = self.partitions.len();
         self.partitions.clear();
         self.partition_counts.clear();
-        info!("Storage: Shutdown complete. All data persisted.");
+        info!(
+            "Storage: Shutdown complete. {} partitions cleared. Database will be dropped when last Arc reference is released.",
+            partition_count
+        );
         Ok(())
     }
 }

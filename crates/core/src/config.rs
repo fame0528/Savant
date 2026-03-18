@@ -249,13 +249,13 @@ impl Config {
         figment
             .merge(Env::prefixed("SAVANT_"))
             .extract()
-            .map_err(|e| SavantError::Unknown(format!("Config load error: {}", e)))
+            .map_err(|e| SavantError::ConfigError(format!("Config load error: {}", e)))
     }
 
     /// Saves config to file
     pub fn save(&self, path: &Path) -> Result<(), SavantError> {
         let toml = toml::to_string_pretty(self)
-            .map_err(|e| SavantError::Unknown(format!("Config serialize error: {}", e)))?;
+            .map_err(|e| SavantError::ConfigError(format!("Config serialize error: {}", e)))?;
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(SavantError::IoError)?;

@@ -16,7 +16,7 @@ impl EmbeddingService {
         let model = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::AllMiniLML6V2).with_show_download_progress(true),
         )
-        .map_err(|e| SavantError::Unknown(format!("Embedding init error: {}", e)))?;
+        .map_err(|e| SavantError::ModelError(format!("Embedding init error: {}", e)))?;
 
         Ok(Self {
             model: Mutex::new(model),

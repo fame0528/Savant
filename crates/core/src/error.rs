@@ -30,6 +30,21 @@ pub enum SavantError {
     #[error("Network error: {0}")]
     NetworkError(String),
 
+    #[error("Storage error: {0}")]
+    StorageError(String),
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+
+    #[error("Model/embedding error: {0}")]
+    ModelError(String),
+
+    #[error("Operation failed: {0}")]
+    OperationFailed(String),
+
+    #[error("Unsupported operation: {0}")]
+    Unsupported(String),
+
     #[error("Unknown error: {0}")]
     Unknown(String),
 }

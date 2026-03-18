@@ -14,7 +14,6 @@
 //! - Success-based reset: Reset after consecutive successes in half-open state
 
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
@@ -69,8 +68,6 @@ pub struct ComponentMetrics {
     reset_count: AtomicU64,
     /// Total number of times the circuit has been tripped
     trip_count: AtomicU64,
-    /// Mutex to prevent TOCTOU races between state check and counter updates.
-    update_lock: Mutex<()>,
 }
 
 impl ComponentMetrics {
@@ -88,7 +85,6 @@ impl ComponentMetrics {
             success_threshold: DEFAULT_SUCCESS_THRESHOLD,
             reset_count: AtomicU64::new(0),
             trip_count: AtomicU64::new(0),
-            update_lock: Mutex::new(()),
         }
     }
 
@@ -111,7 +107,6 @@ impl ComponentMetrics {
             success_threshold,
             reset_count: AtomicU64::new(0),
             trip_count: AtomicU64::new(0),
-            update_lock: Mutex::new(()),
         }
     }
 

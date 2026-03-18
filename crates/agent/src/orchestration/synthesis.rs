@@ -270,7 +270,9 @@ path = "src/lib.rs"
             let src = crate_dir.join(f);
             let dest = skill_dir.join(f);
             if src.exists() {
-                std::fs::create_dir_all(dest.parent().unwrap())?;
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
                 std::fs::copy(src, dest)?;
             }
         }

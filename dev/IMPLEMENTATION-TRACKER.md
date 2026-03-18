@@ -5,6 +5,32 @@
 
 ---
 
+## Active Work — Memory System (7 Phases)
+
+### Sprint A: Quick Wins
+
+| # | Feature | Complexity | Status | Where |
+|---|---------|-----------|--------|-------|
+| 1 | Auto-Recall Injection | LOW | PENDING | `async_backend.rs`, `context.rs` |
+| 2 | Bi-Temporal Tracking | LOW | PENDING | `models.rs`, `engine.rs` |
+| 3 | Daily Ops Logs | LOW | PENDING | New: `daily_log.rs` |
+
+### Sprint B: Swarm
+
+| # | Feature | Complexity | Status | Where |
+|---|---------|-----------|--------|-------|
+| 4 | Blackboard (swarm sharing) | MEDIUM | PENDING | New: `ipc/blackboard.rs` |
+
+### Sprint C: Advanced
+
+| # | Feature | Complexity | Status | Where |
+|---|---------|-----------|--------|-------|
+| 5 | DAG Session Compaction | HIGH | PENDING | `async_backend.rs`, `models.rs` |
+| 6 | Personality-Driven Promotion | MEDIUM | PENDING | New: `promotion.rs` |
+| 7 | Local NER + Petgraph | HIGH | PENDING | New: `entities.rs` |
+
+---
+
 ## Deferred (Future)
 
 | # | Task | Priority | Status | Details |

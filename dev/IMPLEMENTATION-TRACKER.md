@@ -5,14 +5,24 @@
 
 ---
 
-## Active Work — Sprint 2
+## Active Work — Sprint 3 (Final)
 
 | # | Task | Priority | Status | Details |
 |---|------|----------|--------|---------|
-| 1 | Dashboard Command Input | P0 | PENDING | Wire NL commands to chat UI |
-| 2 | Conversation Replay Timeline | P1 | PENDING | Timeline.tsx visualization component |
-| 3 | Proactive Health Dashboard | P1 | PENDING | /health page with system metrics |
-| 4 | Multi-Model Ensemble | P2 | PENDING | Parallel provider dispatch + best-of-N |
+| 1 | Agent Collaboration Graph | P2 | ✅ COMPLETE | SVG component with agent nodes and edges |
+| 2 | Voice Interface | P3 | PENDING | Requires WebRTC + TTS integration (future) |
+| 3 | Easter Eggs + UX Polish | P3 | PENDING | Progressive enhancement (ongoing) |
+
+---
+
+## Completed — Sprint 2
+
+| # | Task | Priority | Status | Details |
+|---|------|----------|--------|---------|
+| 1 | Dashboard Command Input | P0 | ✅ COMPLETE | / prefix triggers NL command via WebSocket |
+| 2 | Conversation Replay Timeline | P1 | ✅ COMPLETE | Timeline.tsx with 7 color-coded event types |
+| 3 | Proactive Health Dashboard | P1 | ✅ COMPLETE | /health page with agent status + system metrics |
+| 4 | Multi-Model Ensemble | P2 | ✅ COMPLETE | EnsembleRouter with BestOfN/Consensus/Fallback |
 
 ---
 

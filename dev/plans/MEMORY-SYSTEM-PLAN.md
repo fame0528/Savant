@@ -113,6 +113,35 @@ pub struct ContextCacheBlock {
 - `semantic_search_temporal()` in `engine.rs` — joins VectorEngine results with TemporalEntry, filters `valid_to.is_none()`
 - Keeps existing `semantic_search()` unchanged for backward compatibility
 
+**semantic_search_temporal() implementation spec (Iteration 5):**
+```rust
+pub fn semantic_search_temporal(
+    &self,
+    query_embedding: &[f32],
+    top_k: usize,
+) -> Result<Vec<SearchResult>, MemoryError> {
+    // 1. Get raw search results from vector engine
+    let raw_results = self.vector.recall(query_embedding, top_k * 2, None)?;
+    
+    // 2. Look up temporal metadata for each result
+    let mut filtered = Vec::new();
+    for result in raw_results {
+        if let Ok(Some(temporal)) = self.get_temporal_metadata(&result.document_id) {
+            // Only include active facts (valid_to is None)
+            if temporal.valid_to.is_none() {
+                filtered.push(result);
+            }
+        } else {
+            // No temporal data → treat as active (backward compatible)
+            filtered.push(result);
+        }
+        if filtered.len() >= top_k { break; }
+    }
+    
+    Ok(filtered)
+}
+```
+
 ---
 
 ### 2. Bi-Temporal Tracking
@@ -304,6 +333,59 @@ pub struct DagNode {
 
 **Change to atomic_compact():**
 Instead of deleting old messages, keep them. Create a DagNode in a separate `dag_nodes` keyspace. The summary is just an index pointing to original data. Agent calls `expand_memory_node(node_id)` to page raw messages back into context.
+
+**expand_memory_node() implementation spec (Iteration 5):**
+```rust
+pub fn expand_memory_node(
+    &self,
+    node_id: &str,
+    max_depth: usize,
+) -> Result<Vec<AgentMessage>, MemoryError> {
+    // 1. Load DAG node from dag_nodes keyspace
+    let node = self.load_dag_node(node_id)?;
+    
+    // 2. Fetch raw messages by ID
+    let mut messages = Vec::new();
+    for msg_id in &node.raw_message_ids {
+        if let Some(msg) = self.lsm.fetch_message_by_id(msg_id)? {
+            messages.push(msg);
+        }
+    }
+    
+    // 3. If depth < max_depth, recursively expand child nodes
+    if node.depth_level < max_depth as u8 {
+        for child_id in &node.child_nodes {
+            let child_messages = self.expand_memory_node(child_id, max_depth)?;
+            messages.extend(child_messages);
+        }
+    }
+    
+    messages.sort_by_key(|m| m.timestamp);
+    Ok(messages)
+}
+```
+
+**New method in lsm_engine.rs (Iteration 5):**
+```rust
+pub fn fetch_message_by_id(&self, msg_id: &str) -> Result<Option<AgentMessage>, MemoryError> {
+    // Scan transcript keyspace for message with matching ID
+    for item in self.transcript_ks.inner().iter() {
+        if let Ok(value) = item.value() {
+            if let Ok(archived) = rkyv::access::<...>(&value) {
+                if let Ok(msg) = rkyv::deserialize::<AgentMessage, _>(archived) {
+                    if msg.id == msg_id {
+                        return Ok(Some(msg));
+                    }
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+```
+
+**Retention policy (Iteration 5):**
+Messages in Fjall are never deleted during DAG compaction. They're marked as "compacted" in the DagNode. Only deleted after configurable retention period (default: 7 days). This prevents expand_memory_node from referencing deleted data.
 
 **Files to modify:**
 - `crates/memory/src/models.rs` — add `DagNode` struct

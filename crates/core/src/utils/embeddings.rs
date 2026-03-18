@@ -5,6 +5,12 @@ use std::num::NonZeroUsize;
 use std::sync::Mutex;
 use tracing::info;
 
+/// Cache capacity — 1000 is always non-zero.
+const CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(1000) {
+    Some(v) => v,
+    None => unreachable!(),
+};
+
 /// Service for generating text embeddings using fastembed.
 ///
 /// Uses the AllMiniLML6V2 model (384 dimensions) for sentence embeddings.
@@ -32,7 +38,7 @@ impl EmbeddingService {
 
         Ok(Self {
             model: Mutex::new(model),
-            cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
+            cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),
         })
     }
 

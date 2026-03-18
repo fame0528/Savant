@@ -182,7 +182,7 @@ impl SecurityAuthority {
                 let pqc_key = self
                     .pqc_authority
                     .as_ref()
-                    .ok_or_else(|| SecurityError::UnsupportedAlgorithm(token.algorithm))?;
+                    .ok_or(SecurityError::UnsupportedAlgorithm(token.algorithm))?;
 
                 if token.signature.len() < 64 {
                     return Err(SecurityError::InvalidSignature(token.algorithm));

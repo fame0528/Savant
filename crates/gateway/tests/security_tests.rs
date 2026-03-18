@@ -1,5 +1,7 @@
 //! Gateway security penetration tests - tests all security fixes.
 
+#![allow(clippy::disallowed_methods)]
+
 use dashmap::DashMap;
 use lru::LruCache;
 use rand::rngs::OsRng;

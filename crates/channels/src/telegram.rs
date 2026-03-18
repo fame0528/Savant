@@ -316,6 +316,7 @@ impl ChannelAdapter for TelegramAdapter {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

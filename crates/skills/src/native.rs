@@ -155,7 +155,7 @@ impl savant_core::traits::Tool for FileSystemSkill {
 
                 let content = fs::read_to_string(&canonical_path)
                     .await
-                    .map_err(|e| SavantError::IoError(e))?;
+                    .map_err(SavantError::IoError)?;
 
                 debug!(
                     "Read {} bytes from {}",
@@ -190,12 +190,12 @@ impl savant_core::traits::Tool for FileSystemSkill {
                 if let Some(parent) = canonical_path.parent() {
                     fs::create_dir_all(parent)
                         .await
-                        .map_err(|e| SavantError::IoError(e))?;
+                        .map_err(SavantError::IoError)?;
                 }
 
                 fs::write(&canonical_path, content)
                     .await
-                    .map_err(|e| SavantError::IoError(e))?;
+                    .map_err(SavantError::IoError)?;
 
                 debug!(
                     "Wrote {} bytes to {}",
@@ -218,19 +218,19 @@ impl savant_core::traits::Tool for FileSystemSkill {
 
                 let mut entries = fs::read_dir(&canonical_path)
                     .await
-                    .map_err(|e| SavantError::IoError(e))?;
+                    .map_err(SavantError::IoError)?;
 
                 let mut result = Vec::new();
                 while let Some(entry) = entries
                     .next_entry()
                     .await
-                    .map_err(|e| SavantError::IoError(e))?
+                    .map_err(SavantError::IoError)?
                 {
                     let name = entry.file_name().to_string_lossy().to_string();
                     let metadata = entry
                         .metadata()
                         .await
-                        .map_err(|e| SavantError::IoError(e))?;
+                        .map_err(SavantError::IoError)?;
 
                     let entry_type = if metadata.is_dir() { "dir" } else { "file" };
                     result.push(format!("{} [{}]", name, entry_type));

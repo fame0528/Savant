@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)] // subprocess and serde_json false positives
+
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;

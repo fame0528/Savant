@@ -60,7 +60,7 @@ impl TokenBudget {
 
     /// Estimates token count from text (rough: 4 chars ≈ 1 token).
     pub fn estimate_tokens(text: &str) -> usize {
-        (text.len() + 3) / 4
+        text.len().div_ceil(4)
     }
 
     /// Resets the budget to zero usage.

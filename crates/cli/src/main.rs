@@ -619,7 +619,7 @@ async fn cmd_status(config_path: &Option<String>) -> Result<()> {
         let agent_count = std::fs::read_dir(&workspaces)
             .map(|entries| entries.filter_map(|e| e.ok()).count())
             .unwrap_or(0);
-        println!("{} Workspaces: {} ({})", "✓".green(), "Present".green(), format!("{} agents", agent_count));
+        println!("{} Workspaces: {} ({agent_count} agents)", "✓".green(), "Present".green());
     } else {
         println!("{} Workspaces: {}", "⚠".yellow(), "Not found".yellow());
     }
@@ -630,7 +630,7 @@ async fn cmd_status(config_path: &Option<String>) -> Result<()> {
         let skill_count = std::fs::read_dir(&skills)
             .map(|entries| entries.filter_map(|e| e.ok()).count())
             .unwrap_or(0);
-        println!("{} Skills:    {} ({})", "✓".green(), "Present".green(), format!("{} skills", skill_count));
+        println!("{} Skills:    {} ({skill_count} skills)", "✓".green(), "Present".green());
     } else {
         println!("{} Skills:    {}", "⚠".yellow(), "Not found".yellow());
     }

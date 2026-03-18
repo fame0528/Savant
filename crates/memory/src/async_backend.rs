@@ -213,10 +213,7 @@ impl MemoryBackend for AsyncMemoryBackend {
             // 3. Apply substring filter if query is non-empty
             if !query_owned.is_empty() && embedding_service.is_none() {
                 let query_lower = query_owned.to_lowercase();
-                results = results
-                    .into_iter()
-                    .filter(|msg| msg.content.to_lowercase().contains(&query_lower))
-                    .collect();
+                results.retain(|msg| msg.content.to_lowercase().contains(&query_lower));
             }
 
             Ok(results)

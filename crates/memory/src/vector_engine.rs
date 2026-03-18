@@ -261,7 +261,7 @@ impl SemanticVectorEngine {
         }
 
         // Read the entire persistence file
-        let data = std::fs::read(&persist_file).map_err(|e| MemoryError::Io(e))?;
+        let data = std::fs::read(&persist_file).map_err(MemoryError::Io)?;
 
         if data.len() < 8 {
             return Err(MemoryError::SerializationFailed(
@@ -361,7 +361,7 @@ impl SemanticVectorEngine {
         info!("Saving vector index to {:?}", persist_file);
 
         // Ensure the directory exists
-        std::fs::create_dir_all(persist_dir).map_err(|e| MemoryError::Io(e))?;
+        std::fs::create_dir_all(persist_dir).map_err(MemoryError::Io)?;
 
         // Lock the entries mutex
         let entries = self.entries.lock().map_err(|_| {
@@ -407,8 +407,8 @@ impl SemanticVectorEngine {
 
         // Write to file atomically: write to temp file, then rename
         let tmp_file = persist_dir.join("vectors.rkyv.tmp");
-        std::fs::write(&tmp_file, &file_data).map_err(|e| MemoryError::Io(e))?;
-        std::fs::rename(&tmp_file, &persist_file).map_err(|e| MemoryError::Io(e))?;
+        std::fs::write(&tmp_file, &file_data).map_err(MemoryError::Io)?;
+        std::fs::rename(&tmp_file, &persist_file).map_err(MemoryError::Io)?;
 
         info!(
             "Saved {} vectors to {:?} ({} bytes)",

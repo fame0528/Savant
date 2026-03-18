@@ -143,7 +143,7 @@ impl Storage {
         let mut hashes = self
             .dedup_hashes
             .entry(agent_id.to_string())
-            .or_insert_with(VecDeque::new);
+            .or_default();
         hashes.push_back((timestamp as u64, content_hash));
         while hashes.len() > DEDUP_WINDOW_SIZE {
             hashes.pop_front();

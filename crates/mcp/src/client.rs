@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)] // serde_json::json! macro false positives
+
 use futures_util::{SinkExt, StreamExt};
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
@@ -509,7 +511,7 @@ impl McpToolDiscovery {
     pub fn get_remote_tools(&self) -> Vec<Arc<dyn Tool>> {
         let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
 
-        for (_tool_name, (server_url, tool_info)) in &self.discovered_tools {
+        for (server_url, tool_info) in self.discovered_tools.values() {
             if let Some(client) = self.clients.get(server_url) {
                 let remote_tool = McpRemoteTool::new(
                     tool_info.name.clone(),

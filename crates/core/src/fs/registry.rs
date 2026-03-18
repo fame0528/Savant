@@ -244,7 +244,7 @@ impl AgentRegistry {
                     let value = value.trim();
                     // Strip inline comments (unquoted # only)
                     let value = if value.starts_with('"') || value.starts_with('\'') {
-                        let quote_char = value.chars().next().unwrap();
+                        let quote_char = value.chars().next().unwrap_or('"');
                         let inner = value.trim_matches(quote_char);
                         inner.to_string()
                     } else {
@@ -289,7 +289,7 @@ impl AgentRegistry {
                     let value = value.trim();
                     // Strip inline comments (unquoted # only)
                     let value = if value.starts_with('"') || value.starts_with('\'') {
-                        let quote_char = value.chars().next().unwrap();
+                        let quote_char = value.chars().next().unwrap_or('"');
                         let inner = value.trim_matches(quote_char);
                         inner.to_string()
                     } else {

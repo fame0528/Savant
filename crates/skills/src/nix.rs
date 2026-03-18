@@ -123,7 +123,7 @@ pub(crate) fn validate_flake_ref(flake_ref: &str) -> Result<(), SavantError> {
         let path = std::path::Path::new(flake_ref);
         let resolved = if path.is_relative() {
             std::env::current_dir()
-                .map_err(|e| SavantError::IoError(e))?
+                .map_err(SavantError::IoError)?
                 .join(path)
         } else {
             path.to_path_buf()

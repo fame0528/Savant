@@ -457,7 +457,7 @@ impl LsmStorageEngine {
                 Err(_) => continue,
             };
 
-            if val.len() > 1 * 1024 * 1024 {
+            if val.len() > 1024 * 1024 {
                 // Metadata entry shouldn't exceed 1MB
                 stale_count += 1;
                 continue;

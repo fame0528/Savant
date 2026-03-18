@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)] // serde_json::json! macro false positives
+
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     routing::get,

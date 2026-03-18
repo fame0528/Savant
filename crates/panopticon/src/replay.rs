@@ -100,7 +100,7 @@ impl ReplayRecorder {
         events
             .iter()
             .filter(|e| e.agent_id == agent_id)
-            .filter(|e| event_type.as_ref().map_or(true, |t| &e.event_type == t))
+            .filter(|e| event_type.as_ref().is_none_or(|t| &e.event_type == t))
             .rev()
             .take(limit)
             .cloned()
@@ -130,6 +130,7 @@ pub fn now_timestamp() -> i64 {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

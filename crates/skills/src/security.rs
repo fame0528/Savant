@@ -537,6 +537,7 @@ pub struct SecurityScanner {
 }
 
 impl SecurityScanner {
+    #[allow(clippy::disallowed_methods)]
     pub fn new() -> Self {
         Self {
             // ======================== URL THREATS ========================
@@ -708,8 +709,7 @@ impl SecurityScanner {
         let content = tokio::fs::read_to_string(&skill_md_path)
             .await
             .map_err(|e| {
-                SavantError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                SavantError::IoError(std::io::Error::other(
                     format!("Failed to read SKILL.md: {}", e),
                 ))
             })?;
@@ -1276,6 +1276,7 @@ impl SecurityScanner {
     }
 
     /// Scan for obfuscation
+    #[allow(clippy::disallowed_methods)]
     fn scan_for_obfuscation(&self, content: &str) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
         let b64_pattern = Regex::new(r"[A-Za-z0-9+/]{50,}={0,2}").unwrap();
@@ -1319,6 +1320,7 @@ impl Default for SecurityScanner {
 // ============================================================================
 
 /// Detect typosquatting - skill names that mimic popular skills
+#[allow(clippy::needless_range_loop, clippy::disallowed_methods)]
 fn detect_typosquatting(skill_name: &str, known_skills: &[&str]) -> Option<(String, f32)> {
     let name_lower = skill_name.to_lowercase();
 
@@ -1354,6 +1356,7 @@ fn detect_typosquatting(skill_name: &str, known_skills: &[&str]) -> Option<(Stri
 }
 
 /// Calculate Levenshtein distance between two strings
+#[allow(clippy::needless_range_loop)]
 fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     let s1_chars: Vec<char> = s1.chars().collect();
     let s2_chars: Vec<char> = s2.chars().collect();
@@ -1399,6 +1402,7 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 /// 1. Suspiciously generic names (core, helper, etc.)
 /// 2. Not found on legitimate registries (async check)
 /// 3. Shadowing well-known packages
+#[allow(clippy::disallowed_methods)]
 async fn detect_dependency_confusion(content: &str) -> Option<String> {
     let install_patterns = [
         Regex::new(r"(?i)(npm)\s+install\s+([a-zA-Z0-9_-]+)").unwrap(),
@@ -1529,6 +1533,7 @@ fn truncate_line(line: &str, max: usize) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use tempfile::tempdir;

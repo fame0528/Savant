@@ -206,6 +206,7 @@ impl LambdaSkillExecutor {
     }
 
     /// Tests connectivity to the Lambda function.
+    #[allow(clippy::disallowed_methods)]
     pub async fn health_check(&self) -> Result<(), SavantError> {
         let test_payload = serde_json::json!({"action": "health_check"});
         self.invoke(&test_payload).await?;

@@ -256,6 +256,7 @@ impl ClawHubClient {
     }
 
     /// Install a skill from ClawHub with security scanning
+    #[allow(clippy::disallowed_methods)]
     pub async fn install(
         &self,
         slug: &str,

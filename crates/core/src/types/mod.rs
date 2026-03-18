@@ -473,7 +473,7 @@ impl LlmParams {
 
 /// On-disk config file format for per-agent settings
 /// This is what users edit in agent.config.json
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentFileConfig {
     /// Override the model (e.g., "anthropic/claude-3-opus", "openai/gpt-4o")
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -518,7 +518,7 @@ impl AgentFileConfig {
         let config_path = workspace_path.join("agent.config.json");
         if config_path.exists() {
             let content =
-                std::fs::read_to_string(&config_path).map_err(|e| serde_json::Error::io(e))?;
+                std::fs::read_to_string(&config_path).map_err(serde_json::Error::io)?;
             serde_json::from_str(&content)
         } else {
             Ok(Self::default())
@@ -529,7 +529,7 @@ impl AgentFileConfig {
     pub fn save(&self, workspace_path: &std::path::Path) -> Result<(), serde_json::Error> {
         let config_path = workspace_path.join("agent.config.json");
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&config_path, content).map_err(|e| serde_json::Error::io(e))
+        std::fs::write(&config_path, content).map_err(serde_json::Error::io)
     }
 
     /// Apply file config on top of base AgentConfig
@@ -565,22 +565,6 @@ impl AgentFileConfig {
         }
         if let Some(ref vars) = self.env_vars {
             base.env_vars.extend(vars.clone());
-        }
-    }
-}
-
-impl Default for AgentFileConfig {
-    fn default() -> Self {
-        Self {
-            model: None,
-            model_provider: None,
-            system_prompt: None,
-            llm_params: None,
-            heartbeat_interval: None,
-            allowed_skills: None,
-            env_vars: None,
-            description: None,
-            avatar: None,
         }
     }
 }

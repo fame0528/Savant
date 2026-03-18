@@ -138,17 +138,17 @@ impl DspPredictor {
 
     /// Persists the predictor state to a file.
     pub async fn save_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), SavantError> {
-        let bytes = self.to_bytes().map_err(|e| SavantError::Unknown(e))?;
+        let bytes = self.to_bytes().map_err(SavantError::Unknown)?;
         tokio::fs::write(path, bytes).await
-            .map_err(|e| SavantError::IoError(e))?;
+            .map_err(SavantError::IoError)?;
         Ok(())
     }
 
     /// Loads the predictor state from a file.
     pub async fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Self, SavantError> {
         let bytes = tokio::fs::read(path).await
-            .map_err(|e| SavantError::IoError(e))?;
-        Self::from_bytes(&bytes).map_err(|e| SavantError::Unknown(e))
+            .map_err(SavantError::IoError)?;
+        Self::from_bytes(&bytes).map_err(SavantError::Unknown)
     }
 
     /// Computes the Expectile Regression loss.

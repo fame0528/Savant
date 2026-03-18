@@ -5,18 +5,18 @@
 
 ---
 
-## Active Work — Sprint 1
+## Active Work — Sprint 2
 
-| # | Task | Priority | Status | Files |
-|---|------|----------|--------|-------|
-| 1 | Dashboard Settings Page | P0 | ✅ COMPLETE | Settings UI with AI/server/system config |
-| 2 | Dashboard FAQ Page | P0 | ✅ COMPLETE | Provider setup + troubleshooting guide |
-| 3 | Personality Studio Enhancement | P1 | ✅ COMPLETE | Trait sliders, templates, enriched prompt generation |
-| 4 | Natural Language Commands | P1 | ✅ COMPLETE | NLU parser + command execution (14 tests) |
-| 5 | Skill Hot-Reload | P1 | ✅ COMPLETE | File watcher on skills/ with auto-reload |
-| 6 | Skill Marketplace Frontend | P2 | ✅ COMPLETE | Marketplace page with search/install |
-| 7 | Context Manager Token Budget | P2 | ✅ COMPLETE | Tier allocation, token estimation, 9 tests |
-| 8 | Conversation Replay Timeline | P2 | ✅ COMPLETE | ReplayRecorder with 7 event types, 7 tests |
+| # | Task | Priority | Status | Details |
+|---|------|----------|--------|---------|
+| 1 | Dashboard Command Input | P0 | PENDING | Wire NL commands to chat UI |
+| 2 | Conversation Replay Timeline | P1 | PENDING | Timeline.tsx visualization component |
+| 3 | Proactive Health Dashboard | P1 | PENDING | /health page with system metrics |
+| 4 | Multi-Model Ensemble | P2 | PENDING | Parallel provider dispatch + best-of-N |
+
+---
+
+## Completed — Sprint 1
 
 ---
 
@@ -41,12 +41,23 @@
 | 15 | Savant Coding System | ✅ COMPLETE | Embedded skill v0.0.2 with Perfection Loop + Law 11 |
 | 16 | Free Model Router | ✅ COMPLETE | hunter-alpha → healer-alpha → stepfun → openrouter/free |
 | 17 | Dev Folder Specification | ✅ COMPLETE | Complete agent-facing reference for /dev structure |
+| 18 | Dashboard Settings Page | ✅ COMPLETE | Settings UI with AI/server/system config |
+| 19 | Dashboard FAQ Page | ✅ COMPLETE | Provider setup + troubleshooting guide |
+| 20 | Personality Studio Enhancement | ✅ COMPLETE | Trait sliders, OCEAN trait hints for SOUL generation |
+| 21 | Natural Language Commands | ✅ COMPLETE | NLU parser + command execution (14 tests) |
+| 22 | Skill Hot-Reload | ✅ COMPLETE | File watcher on skills/ with auto-reload |
+| 23 | Skill Marketplace Frontend | ✅ COMPLETE | Marketplace page with search/install |
+| 24 | Context Manager Token Budget | ✅ COMPLETE | Tier allocation, token estimation, 9 tests |
+| 25 | Conversation Replay Recorder | ✅ COMPLETE | ReplayRecorder with 7 event types, 7 tests |
+| 26 | Savant Coding System v0.0.2 | ✅ COMPLETE | Embedded skill with Perfection Loop + Law 11 |
+| 27 | Free Model Router | ✅ COMPLETE | hunter-alpha → healer-alpha → stepfun → openrouter/free |
+| 28 | CI Clippy Fix | ✅ COMPLETE | Split production/test linting, ~50 clippy issues fixed |
 
 ---
 
 ## Quality Status
 
-- **Total tests:** 324 passing, 0 failing, 1 ignored
+- **Total tests:** 346 passing, 0 failing, 1 ignored
 - **Compilation:** 0 errors, 0 warnings across workspace
 - **Crates:** 14 (all healthy)
 - **Test coverage:** Unit + integration + doc-tests + stress + crash recovery + benchmarks

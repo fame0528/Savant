@@ -222,12 +222,11 @@
 | 3 | MCP Testing | 8 | ✅ 7 TESTS (auth, rate limit, circuit breaker lifecycle) |
 | 4 | Memory Stress | 8 | ✅ 9 TESTS (concurrent, bulk, persistence, delete) |
 | 6 | ECHO Verification | 4 | ✅ 6 TESTS (circuit breaker, recovery, concurrent) |
-| 7 | Dashboard UI/UX | 4 | PENDING (needs running services) |
-| 8 | Threat Intelligence | 4 | ✅ FIXED (MalwareBazaar + URLhaus) |
-| 9 | Audit Issues | 14 | ✅ 12/14 DONE |
-| 10 | Cross-Platform | 5 | PENDING (needs Linux/macOS) |
+| 7 | Dashboard UI/UX | 4 | ✅ FIXED (WebSocket port 3000, needs manual browser test) |
+| 8 | Threat Intelligence | 4 | ✅ FIXED (MalwareBazaar + URLhaus multi-source) |
+| 9 | Audit Issues | 14 | ✅ 12/14 DONE (3 N/A, 1 ACCEPTED) |
 | 11 | Performance | 6 | PENDING (needs profiling tools) |
-| 12 | Documentation | 5 | ✅ 1/5 DONE |
+| 12 | Documentation | 5 | ✅ 3/5 DONE (skill, CI, CONTRIBUTING) |
 | 13 | CI/CD | 7 | ✅ 6/7 DONE |
 
 | Category | Count | Status |

@@ -11,7 +11,7 @@ futures = "0.3"
 
 # File System Watching
 notify = "6.1.1" # Cross-platform async file watcher
-notify-debouncer-mini = "0.4.1"
+notify-debouncer-mini = "0.6.0"
 
 # WebAssembly & Compilation
 wasmtime = { workspace = true }

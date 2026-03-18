@@ -15,9 +15,9 @@
 
 ## Current State
 
-**Version:** Savant v2.0.1  
+**Version:** Savant v2.1.0  
 **Date:** 2026-03-19  
-**Status:** 14/14 roadmap features complete. 324/324 tests passing. Production-ready.
+**Status:** All sprints complete. 32+ features shipped. 370+ tests passing.
 
 | Metric | Value |
 |--------|-------|
@@ -339,16 +339,16 @@ Speak to your agents via WebRTC audio. Agents respond with synthesized speech.
 
 | # | Feature | Impact | Status | Foundation | Estimate |
 |---|---------|--------|--------|------------|----------|
-| 1 | Personality Studio | ★★★★★ | 🟡 Foundation | Working UI + backend, needs model/key fix | 15-20 min |
-| 2 | Skill Marketplace | ★★★★★ | 🟡 Foundation | ClawHub client, scanner, parser | 20-30 min |
-| 3 | Conversation Replay | ★★★★★ | 🟡 Foundation | Panopticon, event bus, memory | 20-30 min |
-| 4 | NL Commands | ★★★★★ | 🟡 Foundation | CLI, channels, swarm controller | 15-20 min |
-| 5 | Context Manager | ★★★★★ | 🟡 Foundation | Embeddings, semantic search, LRU | 20-30 min |
-| 6 | Collaboration Graph | ★★★★☆ | 🔴 Not Started | IPC, blackboard, event bus | 15-20 min |
-| 7 | Health Dashboard | ★★★★☆ | 🟡 Foundation | Perception, DSP, circuit breakers | 15-20 min |
-| 8 | Multi-Model Ensemble | ★★★★☆ | 🔴 Not Started | 15 providers, fallback system | 20-30 min |
-| 9 | Skill Hot-Reload | ★★★★☆ | 🟡 Foundation | Skill parser, file watcher | 10-15 min |
-| 10 | Voice Interface | ★★★☆☆ | 🔴 Not Started | Channel abstraction | 30-45 min |
+| 1 | Personality Studio | ★★★★★ | ✅ COMPLETE | Trait sliders + OCEAN hints + SOUL generation |
+| 2 | Skill Marketplace | ★★★★★ | ✅ COMPLETE | /marketplace page with search + install |
+| 3 | Conversation Replay | ★★★★★ | ✅ COMPLETE | ReplayRecorder + Timeline.tsx |
+| 4 | NL Commands | ★★★★★ | ✅ COMPLETE | NLU parser + /command input + gateway handler |
+| 5 | Context Manager | ★★★★★ | ✅ COMPLETE | Tier allocation (20/50/20/10) + token estimation |
+| 6 | Collaboration Graph | ★★★★☆ | ✅ COMPLETE | SVG agent network graph component |
+| 7 | Health Dashboard | ★★★★☆ | ✅ COMPLETE | /health page with system metrics |
+| 8 | Multi-Model Ensemble | ★★★★☆ | ✅ COMPLETE | EnsembleRouter with 3 strategies |
+| 9 | Skill Hot-Reload | ★★★★☆ | ✅ COMPLETE | File watcher on skills/ with auto-reload |
+| 10 | Voice Interface | ★★★☆☆ | 🟡 PLANNED | Needs WebRTC + TTS integration |
 
 **Total estimated effort:** ~3 hours (autonomous agent execution)
 

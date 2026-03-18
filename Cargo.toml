@@ -58,7 +58,7 @@ kani = "0.45"
 # Zero-Copy IPC (Atlas Step 4)
 iceoryx2 = "0.8"
 iceoryx2-bb = "0.8"
-wasmtime = "36.0.0"
+wasmtime = "42.0.1"
 wasmtime-wasi = { version = "36.0.0", features = ["preview1"] }
 
 # Cognitive Acceleration (Atlas Step 4)

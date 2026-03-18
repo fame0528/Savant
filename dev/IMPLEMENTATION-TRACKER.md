@@ -5,13 +5,18 @@
 
 ---
 
-## Active Work
+## Active Work — Sprint 1
 
-| # | Task | Status | Details |
-|---|------|--------|---------|
-| — | Dashboard Settings Page | PENDING | Backend ConfigGet/ConfigSet works, frontend needs UI |
-| — | Dashboard FAQ Page | PENDING | Provider setup guidance for non-tech users |
-| — | Personality Studio Enhancement | PENDING | SOUL engine needs structured generation + trait sliders |
+| # | Task | Priority | Status | Files |
+|---|------|----------|--------|-------|
+| 1 | Dashboard Settings Page | P0 | PENDING | `dashboard/src/app/settings/`, gateway handlers |
+| 2 | Dashboard FAQ Page | P0 | PENDING | `dashboard/src/app/faq/` |
+| 3 | Personality Studio Enhancement | P1 | PENDING | `dashboard/src/app/page.tsx` (SOUL engine) |
+| 4 | Natural Language Commands | P1 | PENDING | `crates/agent/src/nlp/`, dashboard command input |
+| 5 | Skill Hot-Reload | P1 | PENDING | `crates/skills/src/hot_reload.rs` |
+| 6 | Skill Marketplace Frontend | P2 | PENDING | `dashboard/src/app/marketplace/` |
+| 7 | Context Manager Token Budget | P2 | PENDING | `crates/agent/src/context/budget.rs` |
+| 8 | Conversation Replay Timeline | P2 | PENDING | `crates/panopticon/src/replay.rs`, Timeline component |
 
 ---
 
@@ -52,11 +57,10 @@
 
 | Value | Meaning |
 |-------|---------|
-| `PENDING` | Planned but no code written |
+| `PENDING` | Planned, no code written |
 | `IN PROGRESS` | Agent is currently implementing |
 | `COMPLETE` | Shipped, tested, documented |
 | `BLOCKED` | Cannot proceed (external dependency) |
-| `CANCELLED` | No longer needed |
 
 ---
 

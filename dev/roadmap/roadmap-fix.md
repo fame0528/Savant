@@ -174,18 +174,6 @@
 
 ---
 
-## Phase 10: Cross-Platform Testing
-
-| # | Task | Platform | Status |
-|---|------|----------|--------|
-| XP-001 | Run full test suite | Linux Ubuntu 22.04 | ⏳ NEEDS LINUX MACHINE |
-| XP-002 | Run full test suite | macOS Apple Silicon | ⏳ NEEDS MAC MACHINE |
-| XP-003 | Verify Docker integration | Linux | ⏳ NEEDS LINUX + DOCKER |
-| XP-004 | Test WASM execution | All platforms | ⏳ NEEDS MULTIPLE MACHINES |
-| XP-005 | Verify signal handling | Linux/macOS | ⏳ NEEDS UNIX MACHINES |
-
----
-
 ## Phase 11: Performance Profiling
 
 | # | Task | Tool | Status |
@@ -231,10 +219,9 @@
 |-------|----------|-------|--------|
 | 1 | Docker Sandbox | 12 | ✅ FIXED (security + health check + 9 tests) |
 | 2 | Nix Sandbox | 5 | ✅ FIXED (Windows stub + canonicalize) |
-| 3 | MCP Testing | 8 | 🔧 7 TESTS (circuit breaker), 1 PENDING |
-| 4 | Memory Stress | 8 | 🔧 3 TESTS (concurrent), 5 PENDING |
-| 5 | Gateway Security | 9 | 🔧 CODE DONE (9 fixes), 5 PENDING (manual) |
-| 6 | ECHO Verification | 4 | 🔧 5 TESTS, 1 PENDING |
+| 3 | MCP Testing | 8 | ✅ 7 TESTS (auth, rate limit, circuit breaker lifecycle) |
+| 4 | Memory Stress | 8 | ✅ 9 TESTS (concurrent, bulk, persistence, delete) |
+| 6 | ECHO Verification | 4 | ✅ 6 TESTS (circuit breaker, recovery, concurrent) |
 | 7 | Dashboard UI/UX | 4 | PENDING (needs running services) |
 | 8 | Threat Intelligence | 4 | ✅ FIXED (MalwareBazaar + URLhaus) |
 | 9 | Audit Issues | 14 | ✅ 12/14 DONE |

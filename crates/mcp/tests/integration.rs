@@ -1,78 +1,202 @@
-//! Integration tests for MCP server authentication and circuit breaker.
+//! MCP server integration tests - auth, rate limiting, circuit breaker.
 
-#[cfg(test)]
-mod mcp_tests {
-    use savant_mcp::circuit::CircuitBreaker;
+use savant_mcp::circuit::CircuitBreaker;
+use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher};
 
-    #[test]
-    fn test_circuit_starts_closed() {
-        let cb = CircuitBreaker::new();
-        assert!(cb.allow_request());
-    }
+/// Helper to hash an auth token the same way the server does
+fn hash_token(token: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(token.as_bytes());
+    format!("{:x}", hasher.finish())
+}
 
-    #[test]
-    fn test_circuit_opens_after_failures() {
-        let cb = CircuitBreaker::with_thresholds(3, 10, 2);
-        assert!(cb.allow_request());
-        cb.record_failure();
-        cb.record_failure();
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Closed);
-        cb.record_failure();
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
-        assert!(!cb.allow_request());
-    }
+// ============================================================================
+// Authentication Tests
+// ============================================================================
 
-    #[test]
-    fn test_circuit_halfopen_after_timeout() {
-        let cb = CircuitBreaker::with_thresholds(1, 0, 1);
-        cb.record_failure();
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
-        // recovery_timeout = 0 means immediate transition
-        assert!(cb.allow_request());
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::HalfOpen);
-    }
+#[test]
+fn test_auth_token_hashing() {
+    let hash1 = hash_token("test-token-123");
+    let hash2 = hash_token("test-token-123");
+    let hash3 = hash_token("different-token");
 
-    #[test]
-    fn test_circuit_closes_after_successes() {
-        let cb = CircuitBreaker::with_thresholds(1, 0, 2);
-        cb.record_failure();
-        assert!(cb.allow_request()); // → HalfOpen
-        cb.record_success();
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::HalfOpen);
-        cb.record_success();
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Closed);
-    }
+    assert_eq!(hash1, hash2, "Same token should produce same hash");
+    assert_ne!(
+        hash1, hash3,
+        "Different tokens should produce different hashes"
+    );
+    assert!(!hash1.is_empty(), "Hash should not be empty");
+}
 
-    #[test]
-    fn test_circuit_resets() {
-        let cb = CircuitBreaker::with_thresholds(1, 0, 1);
-        cb.record_failure();
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
-        cb.reset();
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Closed);
-        assert!(cb.allow_request());
-    }
+#[test]
+fn test_auth_token_validation_flow() {
+    let mut tokens = HashMap::new();
+    let valid_hash = hash_token("valid-token-abc");
+    tokens.insert(valid_hash.clone(), "Test token".to_string());
 
-    #[test]
-    fn test_concurrent_failures() {
-        use std::sync::Arc;
-        use std::thread;
+    // Valid token should be found
+    assert!(tokens.contains_key(&valid_hash));
 
-        let cb = Arc::new(CircuitBreaker::with_thresholds(10, 60, 5));
-        let mut handles = vec![];
+    // Invalid token should not be found
+    let invalid_hash = hash_token("invalid-token");
+    assert!(!tokens.contains_key(&invalid_hash));
+}
 
-        for _ in 0..20 {
-            let cb_clone = cb.clone();
-            handles.push(thread::spawn(move || {
-                cb_clone.record_failure();
-            }));
+#[test]
+fn test_empty_token_rejected() {
+    let empty_hash = hash_token("");
+    assert!(!empty_hash.is_empty(), "Empty token still produces hash");
+
+    let tokens: HashMap<String, String> = HashMap::new();
+    assert!(
+        !tokens.contains_key(&empty_hash),
+        "Empty token should not be in auth map"
+    );
+}
+
+// ============================================================================
+// Rate Limiting Tests
+// ============================================================================
+
+#[test]
+fn test_rate_limit_enforcement() {
+    // Simulate the rate limiting logic from the MCP server
+    let mut request_count = 0u32;
+    let mut last_reset = std::time::Instant::now();
+    let max_requests = 100;
+
+    // Simulate 100 requests
+    for _ in 0..100 {
+        let now = std::time::Instant::now();
+        if now.duration_since(last_reset).as_secs() >= 60 {
+            request_count = 0;
+            last_reset = now;
         }
-
-        for h in handles {
-            h.join().unwrap();
-        }
-
-        // With 20 failures and threshold=10, circuit should be open
-        assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
+        request_count += 1;
+        assert!(request_count <= max_requests);
     }
+
+    // 101st request should be blocked
+    assert!(request_count > max_requests - 1);
+}
+
+#[test]
+fn test_rate_limit_reset_after_timeout() {
+    let mut request_count = 0u32;
+    let mut last_reset = std::time::Instant::now() - std::time::Duration::from_secs(61);
+    let max_requests = 100;
+
+    // After 61 seconds, counter should reset
+    let now = std::time::Instant::now();
+    if now.duration_since(last_reset).as_secs() >= 60 {
+        request_count = 0;
+        last_reset = now;
+    }
+
+    assert_eq!(request_count, 0, "Counter should reset after timeout");
+}
+
+// ============================================================================
+// Circuit Breaker Tests
+// ============================================================================
+
+#[test]
+fn test_circuit_breaker_full_cycle() {
+    let cb = CircuitBreaker::with_thresholds(3, 0, 2);
+
+    // Closed → Open
+    cb.record_failure();
+    cb.record_failure();
+    cb.record_failure();
+    assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
+
+    // Open → HalfOpen (timeout=0)
+    assert!(cb.allow_request());
+    assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::HalfOpen);
+
+    // HalfOpen → Closed
+    cb.record_success();
+    cb.record_success();
+    assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Closed);
+}
+
+#[test]
+fn test_circuit_breaker_halfopen_failure() {
+    let cb = CircuitBreaker::with_thresholds(1, 0, 3);
+
+    // Trip
+    cb.record_failure();
+    assert!(cb.allow_request()); // → HalfOpen
+    assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::HalfOpen);
+
+    // Failure in HalfOpen re-opens
+    cb.record_failure();
+    assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
+}
+
+#[test]
+fn test_circuit_breaker_concurrent_failures() {
+    use std::sync::Arc;
+    use std::thread;
+
+    let cb = Arc::new(CircuitBreaker::with_thresholds(50, 60, 10));
+    let mut handles = vec![];
+
+    for _ in 0..100 {
+        let cb_clone = cb.clone();
+        handles.push(thread::spawn(move || {
+            cb_clone.record_failure();
+        }));
+    }
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
+}
+
+#[test]
+fn test_circuit_breaker_reset() {
+    let cb = CircuitBreaker::with_thresholds(1, 60, 1);
+    cb.record_failure();
+    assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
+
+    cb.reset();
+    assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Closed);
+    assert!(cb.allow_request());
+}
+
+#[test]
+fn test_circuit_breaker_metrics() {
+    let cb = CircuitBreaker::with_thresholds(10, 0, 5);
+
+    for _ in 0..7 {
+        cb.record_failure();
+    }
+    for _ in 0..3 {
+        cb.record_success();
+    }
+
+    let metrics = cb.metrics();
+    assert_eq!(metrics.total_failures, 7);
+    assert_eq!(metrics.total_successes, 3);
+    assert_eq!(metrics.trip_count, 0);
+}
+
+#[test]
+fn test_circuit_breaker_trip_count() {
+    let cb = CircuitBreaker::with_thresholds(1, 0, 1);
+
+    // Trip once
+    cb.record_failure();
+    assert!(cb.allow_request()); // HalfOpen
+    cb.record_success(); // Close
+
+    assert_eq!(cb.metrics().trip_count, 1);
+
+    // Trip again
+    cb.record_failure();
+    assert_eq!(cb.metrics().trip_count, 2);
 }

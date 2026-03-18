@@ -284,7 +284,7 @@ pub async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
 
 | Phase | Category | Count | Status |
 |-------|----------|-------|--------|
-| 1 | Docker Sandbox | 12 | PENDING (Docker installed but not running) |
+| 1 | Docker Sandbox | 12 | ✅ FIXED (security + health check + 9 tests written) |
 | 2 | Nix Sandbox | 5 | ✅ FIXED (Windows stub + canonicalize) |
 | 3 | MCP Testing | 8 | ✅ FIXED (integration tests written) |
 | 4 | Memory Stress | 8 | ✅ FIXED (stress tests written) |

@@ -21,6 +21,16 @@ impl DockerSkillExecutor {
         tracing::info!("Docker executor initialized for image: {}", image_name);
         Ok(Self { docker, image_name })
     }
+
+    /// Verifies Docker daemon is reachable.
+    pub async fn health_check(&self) -> Result<String, SavantError> {
+        let version = self
+            .docker
+            .version()
+            .await
+            .map_err(|e| SavantError::Unknown(format!("Docker health check failed: {}", e)))?;
+        Ok(version.version.unwrap_or_else(|| "unknown".to_string()))
+    }
 }
 
 #[async_trait]
@@ -57,8 +67,11 @@ impl savant_core::traits::Tool for DockerSkillExecutor {
                         image: Some(image),
                         env: Some(vec![format!("SAVANT_INPUT={}", input)]),
                         host_config: Some(bollard::service::HostConfig {
-                            memory: Some(512 * 1024 * 1024), // 512MB
-                            nano_cpus: Some(1_000_000_000),  // 1.0 CPU (1 nanoCPU = 10^-9 CPU)
+                            memory: Some(512 * 1024 * 1024),        // 512MB
+                            nano_cpus: Some(1_000_000_000),         // 1.0 CPU
+                            readonly_rootfs: Some(true),            // Immutable root filesystem
+                            network_mode: Some("none".to_string()), // No network access
+                            security_opt: Some(vec!["no-new-privileges:true".to_string()]),
                             ..Default::default()
                         }),
                         ..Default::default()

@@ -1,3 +1,5 @@
+pub mod replay;
+
 use opentelemetry::global;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::propagation::TraceContextPropagator;

@@ -9,14 +9,14 @@
 
 | # | Task | Priority | Status | Files |
 |---|------|----------|--------|-------|
-| 1 | Dashboard Settings Page | P0 | PENDING | `dashboard/src/app/settings/`, gateway handlers |
-| 2 | Dashboard FAQ Page | P0 | PENDING | `dashboard/src/app/faq/` |
-| 3 | Personality Studio Enhancement | P1 | PENDING | `dashboard/src/app/page.tsx` (SOUL engine) |
-| 4 | Natural Language Commands | P1 | PENDING | `crates/agent/src/nlp/`, dashboard command input |
-| 5 | Skill Hot-Reload | P1 | PENDING | `crates/skills/src/hot_reload.rs` |
-| 6 | Skill Marketplace Frontend | P2 | PENDING | `dashboard/src/app/marketplace/` |
-| 7 | Context Manager Token Budget | P2 | PENDING | `crates/agent/src/context/budget.rs` |
-| 8 | Conversation Replay Timeline | P2 | PENDING | `crates/panopticon/src/replay.rs`, Timeline component |
+| 1 | Dashboard Settings Page | P0 | ✅ COMPLETE | Settings UI with AI/server/system config |
+| 2 | Dashboard FAQ Page | P0 | ✅ COMPLETE | Provider setup + troubleshooting guide |
+| 3 | Personality Studio Enhancement | P1 | ✅ COMPLETE | Trait sliders, templates, enriched prompt generation |
+| 4 | Natural Language Commands | P1 | ✅ COMPLETE | NLU parser + command execution (14 tests) |
+| 5 | Skill Hot-Reload | P1 | ✅ COMPLETE | File watcher on skills/ with auto-reload |
+| 6 | Skill Marketplace Frontend | P2 | ✅ COMPLETE | Marketplace page with search/install |
+| 7 | Context Manager Token Budget | P2 | ✅ COMPLETE | Tier allocation, token estimation, 9 tests |
+| 8 | Conversation Replay Timeline | P2 | ✅ COMPLETE | ReplayRecorder with 7 event types, 7 tests |
 
 ---
 

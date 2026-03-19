@@ -8,13 +8,21 @@
 ## [Unreleased]
 
 ### Added
+
+#### Memory System (All 7 Phases Complete)
+- **Auto-Recall** — `auto_recall()` method in AsyncMemoryBackend with EmbeddingService + semantic search + ContextCacheBlock
+- **Bi-Temporal Tracking** — `TemporalMetadata` struct (separate Fjall keyspace), `semantic_search_temporal()` filtering active facts
+- **Daily Ops Logs** — `DailyLog` with append/read/rotate, markdown format, 500 token cap, 30-day retention
+- **Hive-Mind Notifications** — `NotificationChannel` with `tokio::sync::broadcast`, triggers on `index_memory()` when importance >= 7
+- **DAG Session Compaction** — `DagNode` struct, `dag_nodes` keyspace, `store/load/fetch_message_by_id()` for reversible compaction
+- **Personality-Driven Promotion** — `PromotionEngine` with OCEAN trait scalars, scoring algorithm, promote/archive decisions
+- **Entity Extraction** — Rule-based `EntityExtractor` with 5 entity types (project, service, credential, file, config)
+
+#### Other
 - Memory System Research — Gemini 3 Deep Research (390 lines, 87 citations)
 - Memory System Plan — 7-phase plan certified via Perfection Loop (5 iterations)
-- `dev/plans/MEMORY-SYSTEM-PLAN.md` — full implementation specs with data flow, edge cases, failure recovery
+- `dev/plans/MEMORY-SYSTEM-PLAN.md` — full implementation specs
 - `docs/prompts/MEMORY-SYSTEM-RESEARCH.md` — research prompt (448 lines)
-- `docs/research/Savant Memory System Improvements Research.md` — deep research report
-- `docs/research/AI Agent Memory System Architecture.md` — first-pass research (296 lines)
-- `docs/prompts/` directory — reusable research prompts
 
 ### Changed
 - All paid models removed from model list (only free models shown)

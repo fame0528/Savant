@@ -21,6 +21,7 @@ thiserror = "1.0"
 uuid = { version = "1.8", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Core types and traits

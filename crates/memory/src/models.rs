@@ -7,6 +7,7 @@
 use crate::error::MemoryError;
 use chrono::Utc;
 use savant_core::types::{ChatMessage, ChatRole};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::error;
 
@@ -307,6 +308,195 @@ pub struct MemoryEntry {
     pub hit_count: rend::u32_le,
     /// Relational edges (IDs of related MemoryEntry objects)
     pub related_to: Vec<rend::u64_le>,
+}
+
+/// Configuration for auto-recall context injection.
+#[derive(Debug, Clone)]
+pub struct AutoRecallConfig {
+    /// Maximum tokens to inject (15% of context window)
+    pub max_tokens: usize,
+    /// Minimum cosine similarity score (0.3)
+    pub similarity_threshold: f32,
+    /// Maximum number of memories to inject (5)
+    pub max_results: usize,
+}
+
+impl Default for AutoRecallConfig {
+    fn default() -> Self {
+        Self {
+            max_tokens: 2000,
+            similarity_threshold: 0.3,
+            max_results: 5,
+        }
+    }
+}
+
+/// A context block containing auto-recalled memories for injection into the system prompt.
+#[derive(Debug, Clone)]
+pub struct ContextCacheBlock {
+    /// The query that triggered the recall
+    pub query_intent: String,
+    /// Memories retrieved by semantic search
+    pub retrieved_memories: Vec<MemoryEntry>,
+    /// When this block was generated
+    pub injected_at: i64,
+    /// Total token estimate for the block
+    pub estimated_tokens: usize,
+}
+
+impl ContextCacheBlock {
+    /// Formats the cache block as a string for injection into the system prompt.
+    pub fn to_prompt_block(&self) -> String {
+        if self.retrieved_memories.is_empty() {
+            return String::new();
+        }
+
+        let mut block = String::from("<context_cache>\n");
+        block.push_str(&format!(
+            "Relevant memories for: {}\n\n",
+            self.query_intent
+        ));
+
+        for (i, memory) in self.retrieved_memories.iter().enumerate() {
+            block.push_str(&format!(
+                "[Memory {}] Category: {} | Importance: {}\n{}\n\n",
+                i + 1,
+                memory.category,
+                memory.importance,
+                memory.content
+            ));
+        }
+
+        block.push_str("</context_cache>\n\n");
+        block
+    }
+}
+
+/// Bi-temporal metadata for tracking fact validity over time.
+///
+/// Stored separately from MemoryEntry to avoid breaking rkyv serialization
+/// of existing data. Uses a separate Fjall keyspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalMetadata {
+    /// When the fact became true in the real world
+    pub valid_from: i64,
+    /// When the fact ceased to be true (None = currently active)
+    pub valid_to: Option<i64>,
+    /// When the agent recorded this fact
+    pub recorded_at: i64,
+    /// Links to the MemoryEntry that superseded this fact
+    pub superseded_by: Option<u64>,
+    /// The MemoryEntry this temporal data belongs to
+    pub memory_id: u64,
+    /// Category for contradiction detection (e.g., "config", "budget", "port")
+    pub entity_type: String,
+    /// Normalized entity name for matching (e.g., "budget", "api_key", "port")
+    pub entity_name: String,
+}
+
+impl TemporalMetadata {
+    /// Creates a new temporal metadata for an active fact.
+    pub fn new_active(memory_id: u64, entity_type: &str, entity_name: &str) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        Self {
+            valid_from: now,
+            valid_to: None,
+            recorded_at: now,
+            superseded_by: None,
+            memory_id,
+            entity_type: entity_type.to_string(),
+            entity_name: entity_name.to_string(),
+        }
+    }
+
+    /// Returns whether this fact is currently active.
+    pub fn is_active(&self) -> bool {
+        self.valid_to.is_none()
+    }
+
+    /// Marks this fact as superseded by another memory.
+    pub fn invalidate(&mut self, superseded_by_id: u64) {
+        self.valid_to = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+        );
+        self.superseded_by = Some(superseded_by_id);
+    }
+}
+
+/// Generates a storage key for temporal metadata.
+pub fn temporal_key(memory_id: u64) -> String {
+    format!("temporal:{}", memory_id)
+}
+
+/// Generates a storage key for temporal metadata by entity.
+pub fn temporal_entity_key(entity_name: &str) -> String {
+    format!("temporal_entity:{}", entity_name)
+}
+
+/// DAG node for reversible session compaction.
+///
+/// Instead of deleting old messages, a DagNode references them by ID.
+/// The summary is just an index pointing to the original data.
+/// Raw messages stay in Fjall and can be paged back via expand_memory_node().
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagNode {
+    /// Unique node ID
+    pub node_id: String,
+    /// Depth level in the DAG (0 = root, higher = deeper nesting)
+    pub depth_level: u8,
+    /// Summary text of the compacted messages
+    pub summary_content: String,
+    /// IDs of raw messages this node references
+    pub raw_message_ids: Vec<String>,
+    /// Child DAG nodes (for nested compaction)
+    pub child_nodes: Vec<String>,
+    /// Session this DAG node belongs to
+    pub session_id: String,
+    /// Timestamp when this node was created
+    pub created_at: i64,
+    /// Number of messages this node covers
+    pub message_count: usize,
+}
+
+impl DagNode {
+    /// Creates a new DAG node from a batch of messages.
+    pub fn from_messages(
+        session_id: &str,
+        summary: String,
+        messages: &[AgentMessage],
+        depth: u8,
+    ) -> Self {
+        Self {
+            node_id: uuid::Uuid::new_v4().to_string(),
+            depth_level: depth,
+            summary_content: summary,
+            raw_message_ids: messages.iter().map(|m| m.id.clone()).collect(),
+            child_nodes: Vec::new(),
+            session_id: session_id.to_string(),
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+            message_count: messages.len(),
+        }
+    }
+
+    /// Returns whether this node is expandable (has raw messages).
+    pub fn is_expandable(&self) -> bool {
+        !self.raw_message_ids.is_empty()
+    }
+}
+
+/// Generates a storage key for a DAG node.
+pub fn dag_node_key(node_id: &str) -> String {
+    format!("dag:{}", node_id)
 }
 
 /// Generates a storage key for a session's transcript.

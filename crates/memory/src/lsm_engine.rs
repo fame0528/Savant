@@ -47,6 +47,8 @@ pub struct LsmStorageEngine {
     db: OptimisticTxDatabase,
     transcript_ks: fjall::OptimisticTxKeyspace,
     _metadata_ks: Option<fjall::OptimisticTxKeyspace>,
+    temporal_ks: fjall::OptimisticTxKeyspace,
+    dag_ks: fjall::OptimisticTxKeyspace,
 }
 
 /// Configuration for the LSM storage engine.
@@ -104,12 +106,24 @@ impl LsmStorageEngine {
             }
         };
 
+        // Create keyspace for bi-temporal metadata
+        let temporal_ks = db
+            .keyspace("temporal_metadata", fjall::KeyspaceCreateOptions::default)
+            .map_err(|e| MemoryError::InitFailed(e.to_string()))?;
+
+        // Create keyspace for DAG compaction nodes
+        let dag_ks = db
+            .keyspace("dag_nodes", fjall::KeyspaceCreateOptions::default)
+            .map_err(|e| MemoryError::InitFailed(e.to_string()))?;
+
         info!("Fjall LSM-Tree Engine initialized successfully");
 
         Ok(Arc::new(Self {
             db,
             transcript_ks,
             _metadata_ks: metadata_ks,
+            temporal_ks,
+            dag_ks,
         }))
     }
 
@@ -485,6 +499,126 @@ impl LsmStorageEngine {
             debug!("Skipped {} stale metadata entries", stale_count);
         }
         Ok(entries)
+    }
+
+    /// Stores temporal metadata for a memory entry.
+    pub fn store_temporal_metadata(
+        &self,
+        temporal: &crate::models::TemporalMetadata,
+    ) -> Result<(), MemoryError> {
+        let key = crate::models::temporal_key(temporal.memory_id);
+        let bytes = serde_json::to_vec(temporal)
+            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+
+        let mut tx = self
+            .db
+            .write_tx()
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        tx.insert(&self.temporal_ks, key, bytes.as_slice());
+        tx.commit()
+            .map_err(|e| MemoryError::TransactionFailed(format!("IO Error: {:?}", e)))?
+            .map_err(|e| MemoryError::TransactionFailed(format!("Conflict: {:?}", e)))?;
+        Ok(())
+    }
+
+    /// Looks up temporal metadata by memory ID.
+    pub fn get_temporal_metadata(
+        &self,
+        memory_id: u64,
+    ) -> Result<Option<crate::models::TemporalMetadata>, MemoryError> {
+        let key = crate::models::temporal_key(memory_id);
+
+        let guard = self.temporal_ks.inner();
+        match guard.get(&key) {
+            Ok(Some(bytes)) => {
+                let temporal: crate::models::TemporalMetadata = serde_json::from_slice(&bytes)
+                    .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+                Ok(Some(temporal))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(MemoryError::TransactionFailed(e.to_string())),
+        }
+    }
+
+    /// Finds active temporal entries for an entity name.
+    pub fn find_active_temporal_by_entity(
+        &self,
+        entity_name: &str,
+    ) -> Result<Vec<crate::models::TemporalMetadata>, MemoryError> {
+        let prefix = format!("temporal_entity:{}", entity_name);
+        let mut results = Vec::new();
+
+        for item in self.temporal_ks.inner().prefix(prefix.as_bytes()) {
+            if let Ok(value) = item.value() {
+                if let Ok(temporal) = serde_json::from_slice::<crate::models::TemporalMetadata>(&value) {
+                    if temporal.is_active() {
+                        results.push(temporal);
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Stores a DAG node for reversible compaction.
+    pub fn store_dag_node(&self, node: &crate::models::DagNode) -> Result<(), MemoryError> {
+        let key = crate::models::dag_node_key(&node.node_id);
+        let bytes = serde_json::to_vec(node)
+            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+
+        let mut tx = self
+            .db
+            .write_tx()
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        tx.insert(&self.dag_ks, key, bytes.as_slice());
+        tx.commit()
+            .map_err(|e| MemoryError::TransactionFailed(format!("IO Error: {:?}", e)))?
+            .map_err(|e| MemoryError::TransactionFailed(format!("Conflict: {:?}", e)))?;
+        Ok(())
+    }
+
+    /// Loads a DAG node by ID.
+    pub fn load_dag_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<crate::models::DagNode>, MemoryError> {
+        let key = crate::models::dag_node_key(node_id);
+
+        match self.dag_ks.inner().get(&key) {
+            Ok(Some(bytes)) => {
+                let node: crate::models::DagNode = serde_json::from_slice(&bytes)
+                    .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+                Ok(Some(node))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(MemoryError::TransactionFailed(e.to_string())),
+        }
+    }
+
+    /// Fetches a single message by ID (O(N) scan — optimize with reverse index later).
+    pub fn fetch_message_by_id(&self, msg_id: &str) -> Result<Option<AgentMessage>, MemoryError> {
+        for item in self.transcript_ks.inner().iter() {
+            if let Ok(value) = item.value() {
+                if value.len() > 10 * 1024 * 1024 {
+                    continue;
+                }
+                if let Ok(archived) = rkyv::access::<
+                    <AgentMessage as rkyv::Archive>::Archived,
+                    rkyv::rancor::Error,
+                >(&value)
+                {
+                    if let Ok(msg) =
+                        rkyv::deserialize::<AgentMessage, rkyv::rancor::Error>(archived)
+                    {
+                        if msg.id == msg_id {
+                            return Ok(Some(msg));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 }
 

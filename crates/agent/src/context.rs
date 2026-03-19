@@ -6,6 +6,7 @@ pub struct ContextAssembler {
     identity: AgentIdentity,
     budget: TokenBudget,
     skills_list: Option<String>,
+    auto_recall_block: Option<String>,
 }
 
 impl ContextAssembler {
@@ -15,7 +16,14 @@ impl ContextAssembler {
             identity,
             budget,
             skills_list,
+            auto_recall_block: None,
         }
+    }
+
+    /// Sets the auto-recall context block for injection into the system prompt.
+    pub fn with_auto_recall(mut self, block: String) -> Self {
+        self.auto_recall_block = Some(block);
+        self
     }
 
     /// Assembles the full system prompt from identity components (OpenClaw style).
@@ -40,6 +48,11 @@ impl ContextAssembler {
         // 3. Operating Instructions (AGENTS.md)
         if let Some(instructions) = &self.identity.instructions {
             prompt.push_str(&format!("OPERATING INSTRUCTIONS:\n{}\n\n", instructions));
+        }
+
+        // 3.5 Auto-Recall Context (injected memories from semantic search)
+        if let Some(recall) = &self.auto_recall_block {
+            prompt.push_str(recall);
         }
 
         // 4. User context (USER.md)

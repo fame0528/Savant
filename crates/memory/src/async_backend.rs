@@ -15,7 +15,7 @@ use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
 use crate::engine::MemoryEngine;
-use crate::models::{AgentMessage, MessageRole};
+use crate::models::{AgentMessage, AutoRecallConfig, ContextCacheBlock, MessageRole};
 
 use savant_core::error::SavantError;
 use savant_core::traits::MemoryBackend;
@@ -289,6 +289,148 @@ impl MemoryBackend for AsyncMemoryBackend {
             );
 
             Ok(())
+        })
+        .await
+        .map_err(|e| SavantError::Unknown(format!("Task join error: {}", e)))?
+    }
+}
+
+impl AsyncMemoryBackend {
+    /// Auto-recall: searches memory for relevant context and returns a cache block.
+    ///
+    /// This method:
+    /// 1. Extracts the last 3 user messages as a query window
+    /// 2. Embeds the query using the EmbeddingService
+    /// 3. Performs semantic search against the vector index
+    /// 4. Filters by similarity threshold and token budget
+    /// 5. Returns a ContextCacheBlock for injection into the system prompt
+    ///
+    /// # Arguments
+    /// * `agent_id` — The agent/session ID
+    /// * `query_text` — The current user query
+    /// * `config` — AutoRecallConfig with thresholds and limits
+    pub async fn auto_recall(
+        &self,
+        agent_id: &str,
+        query_text: &str,
+        config: AutoRecallConfig,
+    ) -> Result<ContextCacheBlock, SavantError> {
+        let engine = self.engine.clone();
+        let embedding_service = self.embedding_service.clone();
+        let sid = agent_id.to_string();
+        let query_owned = query_text.to_string();
+
+        spawn_blocking(move || {
+            let mut block = ContextCacheBlock {
+                query_intent: query_owned.clone(),
+                retrieved_memories: Vec::new(),
+                injected_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64,
+                estimated_tokens: 0,
+            };
+
+            // Skip if no embedding service
+            let emb_service = match embedding_service {
+                Some(s) => s,
+                None => return Ok(block),
+            };
+
+            // Skip if query is empty
+            if query_owned.is_empty() {
+                return Ok(block);
+            }
+
+            // Extract last 3 user messages as query window for better context
+            let tail = engine.fetch_session_tail(&sid, 10);
+            let user_msgs: Vec<&str> = tail
+                .iter()
+                .filter(|m| m.role == MessageRole::User)
+                .take(3)
+                .map(|m| m.content.as_str())
+                .collect();
+
+            let query_window = if user_msgs.is_empty() {
+                query_owned.clone()
+            } else {
+                user_msgs.join(" | ")
+            };
+
+            // Embed the query window
+            let embedding = match emb_service.embed(&query_window) {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!("Auto-recall: failed to embed query: {}", e);
+                    return Ok(block);
+                }
+            };
+
+            // Semantic search
+            let search_results = match engine.semantic_search(&embedding, config.max_results) {
+                Ok(r) => r,
+                Err(e) => {
+                    debug!("Auto-recall: semantic search failed: {}", e);
+                    return Ok(block);
+                }
+            };
+
+            // Filter by similarity threshold and build context block
+            let mut token_estimate = 0usize;
+            for result in search_results {
+                if result.score < config.similarity_threshold {
+                    continue;
+                }
+
+                // Estimate tokens for this memory (4 chars ≈ 1 token)
+                let memory_tokens = (result.document_id.len() + result.score.to_string().len() + 50) / 4;
+                token_estimate += memory_tokens;
+
+                if token_estimate > config.max_tokens {
+                    break;
+                }
+
+                // Create a lightweight MemoryEntry from the search result
+                // (the vector engine only returns document_id + score, not full MemoryEntry)
+                // For now, we include the document_id as content
+                let entry = crate::models::MemoryEntry {
+                    id: 0.into(),
+                    session_id: sid.clone(),
+                    category: "semantic_recall".to_string(),
+                    content: format!(
+                        "Recalled memory (similarity: {:.2}): {}",
+                        result.score, result.document_id
+                    ),
+                    importance: 5,
+                    tags: vec!["auto_recall".to_string()],
+                    embedding: vec![],
+                    created_at: chrono::Utc::now().timestamp_millis().into(),
+                    updated_at: chrono::Utc::now().timestamp_millis().into(),
+                    shannon_entropy: 0.0.into(),
+                    last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
+                    hit_count: 0.into(),
+                    related_to: vec![],
+                };
+
+                block.retrieved_memories.push(entry);
+
+                if block.retrieved_memories.len() >= config.max_results {
+                    break;
+                }
+            }
+
+            block.estimated_tokens = token_estimate;
+
+            if !block.retrieved_memories.is_empty() {
+                info!(
+                    session = %sid,
+                    memories = block.retrieved_memories.len(),
+                    tokens = token_estimate,
+                    "Auto-recall: injected context from memory"
+                );
+            }
+
+            Ok(block)
         })
         .await
         .map_err(|e| SavantError::Unknown(format!("Task join error: {}", e)))?

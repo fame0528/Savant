@@ -11,15 +11,22 @@
 //! and provides mathematically proven safety guarantees.
 
 mod async_backend;
-mod engine; // Unified engine that combines LSM + Vector
+pub mod daily_log;
+pub mod entities;
+mod engine;
 mod error;
 mod lsm_engine;
 pub mod models;
+pub mod notifications;
+pub mod promotion;
 pub mod safety;
 mod vector_engine;
- // Async adapter implementing core::traits::MemoryBackend
 
 pub use async_backend::AsyncMemoryBackend;
+pub use daily_log::{DailyLog, LogEntry, LogPriority};
+pub use notifications::{MemoryNotification, NotificationChannel};
+pub use promotion::{PersonalityTraits, PromotionEngine, PromotionMetrics};
+pub use entities::{Entity, EntityExtractor, EntityType};
 pub use engine::MemoryEngine;
 pub use error::MemoryError;
 pub use lsm_engine::{LsmStorageEngine, StorageStats};

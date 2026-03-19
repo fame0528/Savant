@@ -7244,6 +7244,7 @@ dependencies = [
  "rkyv",
  "ruvector-core",
  "savant_core",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",

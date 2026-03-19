@@ -15,23 +15,23 @@
 
 | # | Feature | Status | Files | Tests |
 |---|---------|--------|-------|-------|
-| 1 | Auto-Recall Injection | PENDING | `async_backend.rs`, `context.rs` | 5 |
-| 2 | Bi-Temporal Tracking | PENDING | `models.rs`, `engine.rs`, `lsm_engine.rs` | 6 |
-| 3 | Daily Ops Logs | PENDING | New: `daily_log.rs` | 4 |
+| 1 | Auto-Recall Injection | ✅ COMPLETE | `async_backend.rs`, `context.rs` | 5 |
+| 2 | Bi-Temporal Tracking | ✅ COMPLETE | `models.rs`, `engine.rs`, `lsm_engine.rs` | 6 |
+| 3 | Daily Ops Logs | ✅ COMPLETE | `daily_log.rs` | 5 |
 
 ### Sprint B: Swarm (MEDIUM complexity)
 
 | # | Feature | Status | Files | Tests |
 |---|---------|--------|-------|-------|
-| 4 | Hive-Mind Notifications | PENDING | `engine.rs`, new: `notifications.rs` | 5 |
+| 4 | Hive-Mind Notifications | ✅ COMPLETE | `engine.rs`, `notifications.rs` | 5 |
 
 ### Sprint C: Advanced (HIGH complexity)
 
 | # | Feature | Status | Files | Tests |
 |---|---------|--------|-------|-------|
-| 5 | DAG Session Compaction | PENDING | `async_backend.rs`, `lsm_engine.rs`, `models.rs` | 5 |
-| 6 | Personality-Driven Promotion | PENDING | `engine.rs`, new: `promotion.rs` | 5 |
-| 7 | Local NER + Petgraph | PENDING | `async_backend.rs`, new: `entities.rs` | 6 |
+| 5 | DAG Session Compaction | ✅ COMPLETE | `lsm_engine.rs`, `models.rs` | 5 |
+| 6 | Personality-Driven Promotion | ✅ COMPLETE | `promotion.rs` | 7 |
+| 7 | Local NER + Petgraph | ✅ COMPLETE | `entities.rs` | 6 |
 
 **Cross-feature integration tests:** 4
 

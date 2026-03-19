@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 use crate::error::MemoryError;
 use crate::lsm_engine::{LsmConfig, LsmStorageEngine};
 use crate::models::{AgentMessage, MemoryEntry};
-// use crate::safety;
+use crate::notifications::{MemoryNotification, NotificationChannel};
 use crate::vector_engine::{SemanticVectorEngine, VectorConfig};
 
 /// The unified memory engine for Savant.
@@ -18,6 +18,7 @@ use crate::vector_engine::{SemanticVectorEngine, VectorConfig};
 /// This is the primary interface to the memory subsystem. It combines:
 /// - LSM-based transcript persistence (Fjall)
 /// - SIMD-accelerated semantic search (ruvector-core)
+/// - Hive-mind notifications (cross-agent knowledge awareness)
 /// - Formal safety verification (Kani)
 ///
 /// # Architecture
@@ -30,6 +31,7 @@ use crate::vector_engine::{SemanticVectorEngine, VectorConfig};
 pub struct MemoryEngine {
     lsm: Arc<LsmStorageEngine>,
     vector: Arc<SemanticVectorEngine>,
+    notifications: NotificationChannel,
 }
 
 /// 🧬 OMEGA-VIII: Memory Layer Definition
@@ -78,10 +80,14 @@ impl MemoryEngine {
         #[cfg(debug_assertions)]
         {
             info!("Running memory safety self-tests...");
-            safety::verify_memory_safety();
+            crate::safety::verify_memory_safety();
         }
 
-        Ok(Arc::new(Self { lsm, vector }))
+        Ok(Arc::new(Self {
+            lsm,
+            vector,
+            notifications: NotificationChannel::default(),
+        }))
     }
 
     /// Convenience: create with default configuration.
@@ -161,6 +167,20 @@ impl MemoryEngine {
                 );
             }
             return Err(e);
+        }
+
+        // 🐝 Hive-Mind Notification: broadcast high-importance discoveries
+        if entry.importance >= 7 {
+            let notification = MemoryNotification {
+                notification_id: uuid::Uuid::new_v4().to_string(),
+                source_session: entry.session_id.clone(),
+                memory_id: entry.id.to_native(),
+                domain_tags: entry.tags.clone(),
+                importance: entry.importance,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+                content_preview: entry.content.chars().take(200).collect(),
+            };
+            self.notifications.notify(notification);
         }
 
         debug!(
@@ -272,6 +292,53 @@ impl MemoryEngine {
         self.vector.recall(query_embedding, top_k, None)
     }
 
+    /// Semantic search with bi-temporal filtering — only returns active facts.
+    ///
+    /// This joins VectorEngine results with TemporalEntry, filtering out
+    /// facts that have been invalidated (valid_to is not None).
+    /// Facts without temporal metadata are treated as active (backward compatible).
+    pub fn semantic_search_temporal(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
+        // Get more results than needed to account for filtering
+        let raw_results = self.vector.recall(query_embedding, top_k * 2, None)?;
+
+        let mut filtered = Vec::new();
+        for result in raw_results {
+            // Try to parse the document_id as a memory ID for temporal lookup
+            if let Ok(memory_id) = result.document_id.parse::<u64>() {
+                match self.lsm.get_temporal_metadata(memory_id) {
+                    Ok(Some(temporal)) => {
+                        // Only include active facts
+                        if temporal.is_active() {
+                            filtered.push(result);
+                        }
+                    }
+                    Ok(None) => {
+                        // No temporal data → treat as active (backward compatible)
+                        filtered.push(result);
+                    }
+                    Err(e) => {
+                        // Error looking up temporal → include with warning
+                        tracing::debug!("Temporal lookup failed for {}: {}", memory_id, e);
+                        filtered.push(result);
+                    }
+                }
+            } else {
+                // Can't parse as ID → include as-is
+                filtered.push(result);
+            }
+
+            if filtered.len() >= top_k {
+                break;
+            }
+        }
+
+        Ok(filtered)
+    }
+
     /// Deletes a session and all its associated memories.
     ///
     /// This permanently removes:
@@ -337,6 +404,18 @@ impl MemoryEngine {
             crate::safety::verify_memory_safety();
         }
         Ok(())
+    }
+
+    /// Subscribes to hive-mind notifications for high-importance memory discoveries.
+    pub fn subscribe_notifications(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<crate::notifications::MemoryNotification> {
+        self.notifications.subscribe()
+    }
+
+    /// Returns the number of active notification subscribers.
+    pub fn notification_subscriber_count(&self) -> usize {
+        self.notifications.subscriber_count()
     }
 
     // --- 🧬 OMEGA-VIII: Layered Accessors ---

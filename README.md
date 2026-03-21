@@ -29,6 +29,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 - **Config Auto-Reload** — Live configuration updates via file watcher
 
 ---
+
 <div align="center">
 
 ## Architecture
@@ -36,6 +37,25 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 <img src="img/architecture.png" alt="Savant Architecture v1.5.0" width="850" />
 
 </div>
+
+---
+
+<div align="center">
+
+## Distributed Memory Substrate
+
+<img src="img/memory_engine.png" alt="Savant Hybrid Memory Engine" width="850" />
+
+</div>
+
+Savant utilizes an OMEGA-grade **Hybrid Memory Engine** that unifies three distinct data layers into a single, high-performance substrate for swarm-wide memory sharing at scale:
+
+- **Relational SQL Layer (SQLite WAL)**: Handles structured metadata, agent relationships, and transactional mission logs with ACID compliance.
+- **Unstructured LSM Layer (Fjall)**: A high-throughput Log-Structured Merge-tree for rapid ingestion of raw telemetry and internal agent reflections.
+- **Spatial Vector Layer (rkyv)**: Ultra-fast, zero-copy serialization of vector embeddings for real-time semantic search and long-term memory consolidation.
+
+**Swarm-Wide Sharing**: Every agent in the swarm shares a unified memory bus, allowing for cross-agent learning, collective intelligence synthesis, and zero-latency context inheritance.
+
 ---
 
 ## Security Model

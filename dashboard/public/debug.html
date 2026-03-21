@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Savant Debug Console</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0a0a0a;
+      color: #00d4ff;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      overflow: hidden;
+    }
+    #container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #header {
+      background: #111;
+      padding: 8px 16px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #title {
+      font-weight: bold;
+      color: #00d4ff;
+    }
+    #stats {
+      font-size: 11px;
+      color: #aaa;
+    }
+    #logs {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-entry {
+      margin-bottom: 2px;
+      line-height: 1.3;
+    }
+    .timestamp {
+      color: #666;
+    }
+    .level-info { color: #00d4ff; }
+    .level-error { color: #ff4444; }
+    .level-warn { color: #ffaa00; }
+    .event-gateway { color: #44ff44; }
+    .event-chat { color: #ff44ff; }
+    .event-discovery { color: #ffff44; }
+    #toggle {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #222;
+      color: #00d4ff;
+      border: 1px solid #444;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 11px;
+    }
+    #toggle:hover {
+      background: #333;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="header">
+      <span id="title">🛠️ SAVANT DEBUG CONSOLE</span>
+      <span id="stats">Waiting for events...</span>
+    </div>
+    <div id="logs"></div>
+  </div>
+
+  <script>
+    const logs = document.getElementById('logs');
+    const stats = document.getElementById('stats');
+    let entryCount = 0;
+    const MAX_ENTRIES = 5000;
+
+    function addLog(message, className = '') {
+      const now = new Date();
+      const timestamp = now.toISOString().substr(11, 12);
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + className;
+      entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${escapeHtml(message)}`;
+      logs.appendChild(entry);
+      entryCount++;
+      if (entryCount > MAX_ENTRIES) {
+        logs.removeChild(logs.firstChild);
+        entryCount--;
+      }
+      logs.scrollTop = logs.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Listen for system logs from Tauri
+    if (window.__TAURI__) {
+      console.log("🔧 Debug console: Tauri detected, setting up listeners");
+      tauri.listen('system-log-event', (event) => {
+        const msg = event.payload;
+        addLog(msg, 'level-info');
+      });
+      tauri.listen('gateway-event', (event) => {
+        try {
+          const payload = event.payload;
+          let type = 'unknown';
+          if (typeof payload === 'string' && payload.startsWith('EVENT:')) {
+            const json = JSON.parse(payload.substring(6));
+            type = json.event_type;
+          }
+          const className = 'event-' + type.replace('.', '-');
+          addLog(`GATEWAY: ${payload.substring(0, 300)}`, className);
+        } catch (e) {
+          addLog('GATEWAY: ' + event.payload, 'event-gateway');
+        }
+      });
+    } else {
+      addLog('⚠️ Not running in Tauri mode. This window only works with the Tauri app.', 'level-warn');
+    }
+
+    // Update stats periodically
+    setInterval(() => {
+      stats.textContent = `Entries: ${entryCount} | ${new Date().toLocaleTimeString()}`;
+    }, 5000);
+  </script>
+</body>
+</html>

@@ -33,11 +33,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 ## Architecture
 
-│  Agent   │ │ Cognitive │ │  Memory  │ │    Skills        │
-│  Swarm   │ │  Engine   │ │  Engine  │ │  Security Gate   │
-│  (ECHO)  │ │ (Synth)   │ │  (VHSS)  │ │  ClawHub/Docker  │
-└──────────┘ └───────────┘ └──────────┘ └──────────────────┘
-```
+<img src="img/architecture.png" alt="Savant Architecture v1.5.0" width="850" />
 
 </div>
 ---
@@ -47,7 +43,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 Savant implements a **mandatory security gate** for all skills. Every skill must pass through the security scanner before execution. The user is always sovereign — no hard blocks, but increasing click friction based on risk:
 
 | Risk Level | Clicks Required | Behavior |
-|:-----------|:---------------:|:---------|
+| :--- | :---: | :--- |
 | **Clean** | 0 | Auto-proceed, no prompts |
 | **Low** | 0 | Proceed with notification |
 | **Medium** | 1 | Acknowledge findings |
@@ -118,6 +114,7 @@ The gateway starts on `ws://127.0.0.1:3000/ws` and the dashboard at `http://loca
 ### 3. Configuration
 
 **Secrets** go in `.env` (never committed):
+
 ```env
 # OpenRouter API Key (or your preferred provider)
 OR_MASTER_KEY=sk-or-v1-...
@@ -127,6 +124,7 @@ SAVANT_DEV_MODE=1
 ```
 
 **Settings** go in `config/savant.toml` (committed):
+
 ```toml
 [ai]
 provider = "openrouter"
@@ -198,7 +196,7 @@ Instructions and implementation details...
 ## Crate Map
 
 | Crate | Purpose |
-|:------|:--------|
+| :--- | :--- |
 | `savant_core` | Shared types, config, error handling, traits, Fjall DB |
 | `savant_gateway` | Axum WebSocket server, authentication, skill control, config watcher |
 | `savant_agent` | Agent lifecycle, swarm coordination, 15 LLM providers |
@@ -220,7 +218,7 @@ Instructions and implementation details...
 
 ## Project Structure
 
-```
+```text
 Savant/
 ├── Cargo.toml              # Workspace root (wasmtime 36)
 ├── start.bat               # Smart launcher (incremental builds)

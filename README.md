@@ -103,6 +103,24 @@ Savant implements a **mandatory security gate** for all skills. Every skill must
 
 ---
 
+## Substrate Observability
+
+<div align="center">
+
+<img src="img/savant.png" alt="Savant Logo" width="100" />
+
+<img src="img/dashboard.png" alt="Savant Real-Time Dashboard" width="850" />
+
+</div>
+
+Savant features a high-fidelity **Observability Dashboard** built with Next.js and Tauri. It provides real-time telemetry from the Axum gateway, strategic synthesis visualization, and direct monitoring of the Hybrid Memory Engine.
+
+- **Real-Time Swarm Telemetry**: Live WebSocket streaming of agent thoughts, actions, and circuit-breaker status.
+- **Strategic Synthesis Graph**: Interactive node-and-edge visualization of goal decomposition and multi-agent coordination.
+- **Substrate Health**: Performance metrics for the Fjall LSM-tree, SQLite relational layer, and vector embedding latency.
+
+---
+
 ## Quick Start
 
 ### Prerequisites

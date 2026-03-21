@@ -4,10 +4,12 @@
   <p><strong>One Mind. A Thousand Faces.</strong></p>
   <p>A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with OMEGA-VIII certification, mandatory security scanning, and real-time substrate observability.</p>
 
-  [![Rust](https://img.shields.io/badge/Rust-2021-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-  [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
-  [![Wasmtime](https://img.shields.io/badge/Wasmtime-36-000000?style=for-the-badge)](https://wasmtime.dev/)
-  [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+  [![Rust](https://img.shields.io/badge/Rust-2021-%23000000?style=for-the-badge&logo=rust&logoColor=%2300fbff)](https://www.rust-lang.org/)
+  [![Next.js](https://img.shields.io/badge/Next.js-16-%23000000?style=for-the-badge&logo=nextdotjs&logoColor=%2300fbff)](https://nextjs.org/)
+  [![Tauri](https://img.shields.io/badge/Tauri-2.0-%23000000?style=for-the-badge&logo=tauri&logoColor=%2300fbff)](https://tauri.app/)
+  [![Axum](https://img.shields.io/badge/Axum-0.7-%23000000?style=for-the-badge&logo=rust&logoColor=%2300fbff)](https://github.com/tokio-rs/axum)
+  [![Ollama](https://img.shields.io/badge/Ollama-Native-%23000000?style=for-the-badge&logo=ollama&logoColor=%2300fbff)](https://ollama.com/)
+  [![License](https://img.shields.io/badge/License-Proprietary-%23000000?style=for-the-badge&logo=github&logoColor=%2300fbff)](LICENSE)
 </div>
 
 ---

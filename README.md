@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD033 -->
 <div align="center">
 
 <img src="img/savant.png" alt="Savant Logo" width="180" />

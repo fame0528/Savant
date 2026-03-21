@@ -12,8 +12,10 @@
 
 mod async_backend;
 pub mod daily_log;
+pub mod distillation;
 pub mod entities;
 mod engine;
+pub mod arbiter;
 mod error;
 mod lsm_engine;
 pub mod models;

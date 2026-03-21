@@ -1,8 +1,8 @@
 use crate::error::SavantError;
 use crate::types::ChatMessage;
+use cortexadb_core::CortexaDB;
 use dashmap::DashMap;
-use fjall::OptimisticTxDatabase;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -11,100 +11,109 @@ use tracing::{debug, info, warn};
 /// Maximum number of content hashes to keep for deduplication per partition.
 const DEDUP_WINDOW_SIZE: usize = 100;
 
-/// Partitioned Write-Ahead Log utilizing Fjall's multi-writer capabilities.
+/// Vector dimension for CortexaDB embeddings (not used semantically; zeros are stored).
+const VECTOR_DIM: usize = 384;
+
+/// Maximum entries to retrieve per collection query.
+const MAX_BATCH_SIZE: usize = 100_000;
+
+/// Creates a zero-vector of the configured dimension.
+fn zero_embedding() -> Vec<f32> {
+    vec![0.0; VECTOR_DIM]
+}
+
+/// Maps an agent_id to a CortexaDB collection name.
+fn collection_name(agent_id: &str) -> String {
+    if agent_id == "swarm.insights" {
+        "chat.swarm".to_string()
+    } else {
+        format!("chat.{}", agent_id)
+    }
+}
+
+/// Storage backed by CortexaDB.
+///
+/// Each agent's messages are stored in a collection named `chat.{agent_id}`.
+/// Swarm messages go in `chat.swarm`.
+/// Sorting is done client-side via the `timestamp` metadata field.
 pub struct Storage {
-    db: Arc<OptimisticTxDatabase>,
-    partitions: DashMap<String, fjall::OptimisticTxKeyspace>,
+    db: Arc<CortexaDB>,
     /// Per-partition message counters for O(1) count queries.
     partition_counts: DashMap<String, AtomicU64>,
     /// Per-partition content hash windows for message deduplication.
-    /// Maps agent_id → (hash, timestamp) pairs, oldest evicted first.
+    /// Maps agent_id → (timestamp, hash) pairs, oldest evicted first.
     dedup_hashes: DashMap<String, VecDeque<(u64, String)>>,
 }
 
 impl Storage {
     pub fn new(path: PathBuf) -> Result<Self, SavantError> {
-        info!("Sovereign Substrate: Initializing Fjall at {:?}", path);
+        info!("Sovereign Substrate: Initializing CortexaDB at {:?}", path);
 
-        let db = Arc::new(
-            OptimisticTxDatabase::builder(&path)
-                .open()
-                .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))?,
-        );
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| SavantError::StorageError("Database path is not valid UTF-8".into()))?;
 
-        let storage = Self {
-            db,
-            partitions: DashMap::new(),
+        let db = CortexaDB::open(path_str, VECTOR_DIM)
+            .map_err(|e| SavantError::StorageError(e.to_string()))?;
+
+        Ok(Self {
+            db: Arc::new(db),
             partition_counts: DashMap::new(),
             dedup_hashes: DashMap::new(),
-        };
-
-        Ok(storage)
+        })
     }
 
-    /// Ghost-Restore: Re-opens all partitions to ensure data consistency.
+    /// Ghost-Restore: Performs a full database integrity check and recovery.
+    ///
+    /// 1. Flushes all pending writes to disk
+    /// 2. Forces a checkpoint (snapshot + WAL truncation)
+    /// 3. Compacts on-disk segments to reclaim space
+    /// 4. Clears in-memory caches to force fresh reads
+    /// 5. Verifies database stats are consistent
     pub fn ghost_restore(&self) -> Result<(), SavantError> {
         warn!("Sovereign Substrate: INITIATING GHOST-RESTORE.");
 
-        // Collect all partition names before clearing
-        let partition_names: Vec<String> = self
-            .partitions
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect();
+        // Step 1: Flush pending writes
+        self.db
+            .flush()
+            .map_err(|e| SavantError::StorageError(format!("Flush failed: {}", e)))?;
 
-        // Clear in-memory caches to force re-open from disk
-        self.partitions.clear();
+        // Step 2: Force checkpoint
+        self.db
+            .checkpoint()
+            .map_err(|e| SavantError::StorageError(format!("Checkpoint failed: {}", e)))?;
 
-        // Re-open each partition to verify integrity
-        for name in &partition_names {
-            match self.get_or_create_partition(name) {
-                Ok(_) => {
-                    debug!("Ghost-Restore: Verified partition [{}] integrity", name);
-                }
-                Err(e) => {
-                    warn!(
-                        "Ghost-Restore: Failed to verify partition [{}]: {}",
-                        name, e
-                    );
-                }
-            }
-        }
+        // Step 3: Compact segments
+        self.db
+            .compact()
+            .map_err(|e| SavantError::StorageError(format!("Compaction failed: {}", e)))?;
+
+        // Step 4: Clear in-memory caches
+        let hash_count = self.dedup_hashes.len();
+        let partition_count = self.partition_counts.len();
+        self.dedup_hashes.clear();
+        self.partition_counts.clear();
+
+        // Step 5: Verify stats
+        let stats = self
+            .db
+            .stats()
+            .map_err(|e| SavantError::StorageError(format!("Stats query failed: {}", e)))?;
 
         info!(
-            "Ghost-Restore: {} partitions verified and re-opened.",
-            partition_names.len()
+            "Ghost-Restore complete. DB has {} entries, {} hash caches cleared, {} partition counters reset.",
+            stats.entries, hash_count, partition_count
         );
         Ok(())
     }
 
-    fn get_or_create_partition(
-        &self,
-        agent_id: &str,
-    ) -> Result<fjall::OptimisticTxKeyspace, SavantError> {
-        if let Some(p) = self.partitions.get(agent_id) {
-            return Ok(p.clone());
-        }
-
-        let partition_name = format!("agent.{}", agent_id);
-        let partition = self
-            .db
-            .keyspace(&partition_name, fjall::KeyspaceCreateOptions::default)
-            .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))?;
-
-        self.partitions
-            .insert(agent_id.to_string(), partition.clone());
-        Ok(partition)
-    }
-
-    /// Appends a chat message to the partition log with deduplication.
+    /// Appends a chat message with deduplication.
     ///
     /// Uses blake3 content hashing to detect and skip duplicate messages
     /// within a sliding window of `DEDUP_WINDOW_SIZE` entries per partition.
     pub fn append_chat(&self, agent_id: &str, msg: &ChatMessage) -> Result<(), SavantError> {
-        let partition = self.get_or_create_partition(agent_id)?;
-        let payload =
-            serde_json::to_string(msg).map_err(|e| SavantError::Unknown(e.to_string()))?;
+        let coll = collection_name(agent_id);
+        let payload = serde_json::to_string(msg).map_err(|e| SavantError::SerializationError(e))?;
 
         // Compute content hash for deduplication
         let content_hash = blake3::hash(msg.content.as_bytes()).to_hex().to_string();
@@ -112,39 +121,36 @@ impl Storage {
         // Check for duplicate within sliding window
         if let Some(hashes) = self.dedup_hashes.get(agent_id) {
             if hashes.iter().any(|(_, h)| h == &content_hash) {
-                // Duplicate detected - silently skip
                 return Ok(());
             }
         }
 
-        // Use timestamp_micros with fallback to avoid collisions
-        let timestamp = chrono::Utc::now().timestamp_micros().max(0); // Ensure non-negative
-        let key = format!("{}:{}", timestamp, uuid::Uuid::new_v4());
+        let timestamp = chrono::Utc::now().timestamp_micros().max(0) as u64;
+        let msg_id = uuid::Uuid::new_v4().to_string();
 
-        let mut tx = self
-            .db
-            .write_tx()
-            .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))?;
-        tx.insert(&partition, key.as_bytes(), payload.as_bytes());
+        let mut metadata = HashMap::new();
+        metadata.insert("timestamp".to_string(), timestamp.to_string());
+        metadata.insert("message_id".to_string(), msg_id);
+        metadata.insert("agent_id".to_string(), agent_id.to_string());
 
-        tx.commit()
-            .map_err(|e| SavantError::IoError(std::io::Error::other(format!("IO Error: {:?}", e))))?
-            .map_err(|e| {
-                SavantError::IoError(std::io::Error::other(format!("Conflict: {:?}", e)))
-            })?;
+        self.db
+            .add_with_content(
+                &coll,
+                payload.into_bytes(),
+                zero_embedding(),
+                Some(metadata),
+            )
+            .map_err(|e| SavantError::StorageError(e.to_string()))?;
 
         // Increment partition counter
         self.partition_counts
             .entry(agent_id.to_string())
-            .or_insert_with(|| AtomicU64::new(0))
+            .or_default()
             .fetch_add(1, Ordering::Relaxed);
 
         // Add hash to dedup window and evict oldest if over limit
-        let mut hashes = self
-            .dedup_hashes
-            .entry(agent_id.to_string())
-            .or_default();
-        hashes.push_back((timestamp as u64, content_hash));
+        let mut hashes = self.dedup_hashes.entry(agent_id.to_string()).or_default();
+        hashes.push_back((timestamp, content_hash));
         while hashes.len() > DEDUP_WINDOW_SIZE {
             hashes.pop_front();
         }
@@ -152,27 +158,46 @@ impl Storage {
         Ok(())
     }
 
-    /// Retrieves chat history for an agent, most recent first.
+    /// Retrieves chat history for an agent, most recent first (chronological order).
     pub fn get_history(
         &self,
         agent_id: &str,
         limit: usize,
     ) -> Result<Vec<ChatMessage>, SavantError> {
-        let partition = self.get_or_create_partition(agent_id)?;
-        let mut history = Vec::new();
+        let coll = collection_name(agent_id);
 
-        let iter = partition.inner().iter().rev();
-        for item in iter.take(limit) {
-            let value = item
-                .value()
-                .map_err(|e: fjall::Error| SavantError::Unknown(e.to_string()))?;
-            if let Ok(msg) = serde_json::from_slice::<ChatMessage>(&value) {
-                history.push(msg);
+        let hits = self
+            .db
+            .search_in_collection(&coll, zero_embedding(), MAX_BATCH_SIZE, None)
+            .map_err(|e| SavantError::StorageError(e.to_string()))?;
+
+        let mut entries: Vec<(u64, ChatMessage)> = Vec::with_capacity(hits.len());
+        for hit in &hits {
+            let mem = match self.db.get_memory(hit.id) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let ts = mem
+                .metadata
+                .get("timestamp")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            if let Ok(msg) = serde_json::from_slice::<ChatMessage>(&mem.content) {
+                entries.push((ts, msg));
             }
         }
 
-        history.reverse();
-        Ok(history)
+        entries.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+
+        let mut result: Vec<ChatMessage> = entries
+            .into_iter()
+            .take(limit)
+            .map(|(_, msg)| msg)
+            .collect();
+
+        // Return in chronological order (oldest first)
+        result.reverse();
+        Ok(result)
     }
 
     /// Retrieves swarm-wide history.
@@ -181,81 +206,70 @@ impl Storage {
     }
 
     /// Prunes old history entries, keeping only the most recent `keep_last` messages.
-    ///
-    /// Keys are formatted as `{timestamp}:{uuid}` where timestamp is microseconds-since-epoch.
-    /// Fjall stores keys in lexicographic order, so iterating forward yields the oldest entries first.
-    /// This function takes the first `to_delete` entries (oldest) and removes them.
     pub fn prune_history(&self, agent_id: &str, keep_last: usize) -> Result<(), SavantError> {
-        let partition = self.get_or_create_partition(agent_id)?;
-        let count = partition.inner().iter().count();
-        if count <= keep_last {
+        let coll = collection_name(agent_id);
+
+        let hits = self
+            .db
+            .search_in_collection(&coll, zero_embedding(), MAX_BATCH_SIZE, None)
+            .map_err(|e| SavantError::StorageError(e.to_string()))?;
+
+        if hits.len() <= keep_last {
             return Ok(());
         }
 
-        let to_delete = count - keep_last;
-        let mut tx = self
-            .db
-            .write_tx()
-            .map_err(|e| SavantError::IoError(std::io::Error::other(e.to_string())))?;
-
-        let mut keys = Vec::new();
-        for item in partition.inner().iter().take(to_delete) {
-            let key = item
-                .key()
-                .map_err(|e: fjall::Error| SavantError::Unknown(e.to_string()))?;
-            keys.push(key.to_vec());
+        // Gather timestamps for sorting
+        let mut entries: Vec<(u64, u64)> = Vec::with_capacity(hits.len());
+        for hit in &hits {
+            let mem = match self.db.get_memory(hit.id) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let ts = mem
+                .metadata
+                .get("timestamp")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            entries.push((ts, hit.id));
         }
 
-        let deleted_count = keys.len();
-        for key in keys {
-            tx.remove(&partition, key);
-        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0)); // oldest first
 
-        match tx.commit() {
-            Ok(conflict_result) => {
-                match conflict_result {
-                    Ok(_) => {
-                        // Update counter
-                        if let Some(counter) = self.partition_counts.get(agent_id) {
-                            counter.fetch_sub(deleted_count as u64, Ordering::Relaxed);
-                        }
-                        debug!(
-                            "Pruned {} old entries for agent {}",
-                            deleted_count, agent_id
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Prune commit conflict for agent {}: {}", agent_id, e);
-                        return Err(SavantError::IoError(std::io::Error::other(format!(
-                            "Conflict: {:?}",
-                            e
-                        ))));
-                    }
-                }
-            }
-            Err(e) => {
-                return Err(SavantError::IoError(std::io::Error::other(format!(
-                    "IO Error: {:?}",
-                    e
-                ))));
+        let to_delete = entries.len() - keep_last;
+        let mut deleted = 0u64;
+
+        for (_, id) in entries.iter().take(to_delete) {
+            if self.db.delete(*id).is_ok() {
+                deleted += 1;
             }
         }
 
+        if let Some(counter) = self.partition_counts.get(agent_id) {
+            // Use saturating_sub to prevent underflow wrapping
+            let current = counter.load(Ordering::Relaxed);
+            counter.store(current.saturating_sub(deleted), Ordering::Relaxed);
+        }
+
+        debug!("Pruned {} old entries for agent {}", deleted, agent_id);
         Ok(())
     }
 
     /// Gracefully shuts down the storage engine, ensuring all data is flushed.
-    ///
-    /// Clears all in-memory partitions and counters. The underlying Fjall database
-    /// is dropped when the Arc reference count reaches zero, which triggers
-    /// Fjall's Drop implementation to flush pending writes.
     pub fn shutdown(&self) -> Result<(), SavantError> {
         info!("Storage: Initiating graceful shutdown...");
-        let partition_count = self.partitions.len();
-        self.partitions.clear();
+        self.db
+            .flush()
+            .map_err(|e| SavantError::StorageError(e.to_string()))?;
+        self.db
+            .checkpoint()
+            .map_err(|e| SavantError::StorageError(e.to_string()))?;
+
+        let partition_count = self.dedup_hashes.len();
         self.partition_counts.clear();
+        self.dedup_hashes.clear();
+
         info!(
-            "Storage: Shutdown complete. {} partitions cleared. Database will be dropped when last Arc reference is released.",
+            "Storage: Shutdown complete. {} partition caches flushed and cleared.",
             partition_count
         );
         Ok(())

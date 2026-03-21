@@ -1,5 +1,3 @@
-pub mod audio;
+pub mod prompts;
 pub mod heartbeat;
-
-pub use audio::VoicePulse;
 pub use heartbeat::HeartbeatPulse;

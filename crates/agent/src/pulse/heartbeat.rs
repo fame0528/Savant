@@ -11,6 +11,28 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
+use xxhash_rust::xxh3::xxh3_64;
+
+struct HeartbeatTool;
+#[async_trait::async_trait]
+impl savant_core::traits::Tool for HeartbeatTool {
+    fn name(&self) -> &str { "heartbeat" }
+    fn description(&self) -> &str { "MANDATORY FIRST STEP: Evaluates whether to run or skip proactive tasks. Schema: { \"action\": \"skip\"|\"run\", \"reason\": \"...\" }" }
+    async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
+        let action = payload["action"].as_str().unwrap_or("skip");
+        Ok(action.to_uppercase())
+    }
+}
+
+struct EvaluateNotificationTool;
+#[async_trait::async_trait]
+impl savant_core::traits::Tool for EvaluateNotificationTool {
+    fn name(&self) -> &str { "evaluate_notification" }
+    fn description(&self) -> &str { "MANDATORY LAST STEP: Decides if the user should be notified. Schema: { \"should_notify\": true|false, \"reason\": \"...\" }" }
+    async fn execute(&self, _payload: serde_json::Value) -> Result<String, SavantError> {
+        Ok("Acknowledged".to_string())
+    }
+}
 
 /// The Autonomous Pulse (Heartbeat) system for Savant agents.
 pub struct HeartbeatPulse {
@@ -61,12 +83,22 @@ impl HeartbeatPulse {
                         if let Err(e) = self.handle_chat_message(chat_event.payload, &mut agent_loop).await {
                             parsing::log_agent_error(&self.agent.agent_name, "Failed to handle chat message", e);
                         }
+                    } else if chat_event.event_type == "pulse.trigger" {
+                        info!("[{}] External PULSE trigger received. Forcing cycle...", self.agent.agent_name);
+                        // Extract optional lens from payload if present
+                        let forced_lens = serde_json::from_str::<serde_json::Value>(&chat_event.payload)
+                            .ok()
+                            .and_then(|v| v["lens"].as_str().map(|s| s.to_string()));
+                        
+                        if let Err(e) = self.pulse_with_lens(&mut agent_loop, forced_lens).await {
+                            parsing::log_agent_error(&self.agent.agent_name, "Manual pulse failed", e);
+                        }
                     }
                 }
 
                 // 2. Perform periodic proactive pulse
                 _ = tokio::time::sleep(Duration::from_secs(self.agent.heartbeat_interval)) => {
-                    if let Err(e) = self.pulse(&mut agent_loop).await {
+                    if let Err(e) = self.pulse_with_lens(&mut agent_loop, None).await {
                         parsing::log_agent_error(&self.agent.agent_name, "Heartbeat pulse failed", e);
                     }
                 }
@@ -146,6 +178,10 @@ impl HeartbeatPulse {
                                     is_final: false,
                                     session_id: message.session_id.clone(),
                                     channel: savant_core::types::AgentOutputChannel::Telemetry,
+                                    logprob: None,
+                                    is_telemetry: true,
+                                    reasoning: None,
+                                    tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
                                     let _ = self.nexus.publish("chat.chunk", &payload).await;
@@ -167,6 +203,10 @@ impl HeartbeatPulse {
                                     is_final: false,
                                     session_id: message.session_id.clone(),
                                     channel: savant_core::types::AgentOutputChannel::Telemetry,
+                                    logprob: None,
+                                    is_telemetry: true,
+                                    reasoning: None,
+                                    tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
                                     let _ = self.nexus.publish("chat.chunk", &payload).await;
@@ -181,6 +221,10 @@ impl HeartbeatPulse {
                                     is_final: false,
                                     session_id: message.session_id.clone(),
                                     channel: savant_core::types::AgentOutputChannel::Memory,
+                                    logprob: None,
+                                    is_telemetry: false,
+                                    reasoning: None,
+                                    tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
                                     let _ = self.nexus.publish("chat.chunk", &payload).await;
@@ -203,13 +247,20 @@ impl HeartbeatPulse {
                                     is_final: false,
                                     session_id: message.session_id.clone(),
                                     channel: savant_core::types::AgentOutputChannel::Telemetry,
+                                    logprob: None,
+                                    is_telemetry: true,
+                                    reasoning: None,
+                                    tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
                                     let _ = self.nexus.publish("chat.chunk", &payload).await;
                                 }
                             }
                             Ok(AgentEvent::FinalAnswer(a)) => {
-                                full_response = a;
+                                // 🛡️ Perfection Loop: Final answer should supplement, not overwrite if we've been streamingChunks
+                                if full_response.trim().is_empty() {
+                                    full_response = a;
+                                }
                             }
                             Ok(AgentEvent::FinalAnswerChunk(c)) => {
                                 // 🌀 Perfection Loop: Assistant final chunks are GUARANTEED dialogue
@@ -222,6 +273,10 @@ impl HeartbeatPulse {
                                     is_final: false,
                                     session_id: message.session_id.clone(),
                                     channel: savant_core::types::AgentOutputChannel::Chat,
+                                    logprob: None,
+                                    is_telemetry: false,
+                                    reasoning: None,
+                                    tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
                                     let _ = self.nexus.publish("chat.chunk", &payload).await;
@@ -236,6 +291,10 @@ impl HeartbeatPulse {
                                     is_final: false,
                                     session_id: message.session_id.clone(),
                                     channel: savant_core::types::AgentOutputChannel::Telemetry,
+                                    logprob: None,
+                                    is_telemetry: true,
+                                    reasoning: None,
+                                    tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
                                     let _ = self.nexus.publish("chat.chunk", &payload).await;
@@ -262,6 +321,7 @@ impl HeartbeatPulse {
                     agent_id: None,
                     session_id: message.session_id.clone(),
                     channel: savant_core::types::AgentOutputChannel::Chat,
+                    is_telemetry: false,
                 };
 
                 let response_payload = serde_json::to_string(&response)?;
@@ -286,9 +346,10 @@ impl HeartbeatPulse {
         Ok(())
     }
 
-    async fn pulse<M: savant_core::traits::MemoryBackend + Clone>(
+    async fn pulse_with_lens<M: savant_core::traits::MemoryBackend + Clone>(
         &self,
         agent_loop: &mut AgentLoop<M>,
+        forced_lens: Option<String>,
     ) -> Result<(), SavantError> {
         info!("Heartbeat pulse triggered for {}", self.agent.agent_name);
 
@@ -322,6 +383,7 @@ impl HeartbeatPulse {
         );
         let perception = crate::proactive::perception::PerceptionEngine::default_engine();
         let fs_activity = perception.get_fs_activity(&self.agent.workspace_path);
+        let substrate_metrics = crate::proactive::perception::PerceptionEngine::get_substrate_metrics();
 
         // 🏰 OMEGA-VIII: Anomaly Detection (Proactive Push Logic)
         let has_conflict = git_status.contains("CONFLICT");
@@ -332,30 +394,46 @@ impl HeartbeatPulse {
             ""
         };
 
+        // AAA: Restore working buffer
+        let mut buffer = self.proactive.restore_state().unwrap_or_default();
+
+        // 🏰 OMEGA-VIII: Cognitive Diary Rotation (Phase 19)
+        let (lens_id, lens_extension) = if let Some(ref forced) = forced_lens {
+            let found = crate::pulse::prompts::LENSES.iter().find(|(id, _)| *id == forced);
+            match found {
+                Some((id, ext)) => (id.to_string(), ext.to_string()),
+                None => (forced.clone(), "Forced external diagnostic lens.".to_string()),
+            }
+        } else {
+            let (id, ext) = crate::pulse::prompts::LENSES[buffer.current_lens_index % crate::pulse::prompts::LENSES.len()];
+            buffer.current_lens_index = (buffer.current_lens_index + 1) % crate::pulse::prompts::LENSES.len();
+            (id.to_string(), ext.to_string())
+        };
+
         let prompt_base = format!(
             "Protocol C-ATLAS: Sovereign Heartbeat (Iteration Peak)\n\n\
             You are the House. The Foundation. You are Savant.\n\
             REVERSE PROMPTING: Do not wait for instructions. What would help your human right now? \
-            Is there a substrate optimization needed? A pending task in HEARTBEAT.md? \
-            A proactive refactor that would improve the 101-agent swarm?\n\n\
+            Is there a substrate optimization needed? A proactive refactor that would improve the 101-agent swarm?\n\n\
             VITAL CONTEXT:\n\
             Nexus Global Context:\n{}\n\n\
-            SITUATIONAL AWARENESS (Perception Engine):\n{}\n{}\n{}\n{}\n\n\
+            SITUATIONAL AWARENESS (Perception Engine):\n{}\n{}\n{}\n{}\n{}\n\n\
             ORCHESTRATION (Task Matrix):\n{}\n\n\
             Directives (HEARTBEAT.md):\n{}\n\n\
+            COGNITIVE DIARY LENS: {}\n{}\n\n\
             SUBSTRATE SELF-OPTIMIZATION (OMEGA-VIII):\n\
             Review your own current Pulse architecture. Is there a logical bottleneck? \
             Would a structural change to `heartbeat.rs` or `memory/mod.rs` yield higher cognitive fidelity?\n\n\
-            Write your internal reflection, execute any necessary care-taking tools, \
-            and project your future-intent.",
-            context_injection, git_status, git_diff, fs_activity, anomaly_alert, orchestration_tasks, monitoring_tasks
+            SOVEREIGN PROTOCOL:\n\
+            1. Review your environment and the provided context.\n\
+            2. Perform your self-assessment and write your internal reflection.\n\
+            3. If the human needs to be alerted about an anomaly or proactive task, communicate it directly.\n\
+            CRITICAL: Do NOT output raw XML `<tool_call>` tags in your text thinking. If you need to perform actions, use your native tool execution capabilities.",
+            context_injection, git_status, git_diff, fs_activity, substrate_metrics, anomaly_alert, orchestration_tasks, monitoring_tasks, lens_id, lens_extension
         );
 
         // --- 🛡️ OMEGA-VIII: Deterministic Pre-filtering (Lane-Perfection) ---
         let current_hash = xxhash_rust::xxh3::xxh3_64(prompt_base.as_bytes());
-
-        // AAA: Restore working buffer
-        let mut buffer = self.proactive.restore_state().unwrap_or_default();
 
         if let Some(h) = buffer.last_pulse_hash {
             if h == current_hash {
@@ -365,101 +443,124 @@ impl HeartbeatPulse {
         }
         buffer.last_pulse_hash = Some(current_hash);
 
-        let prompt = prompt_base;
-
-        let mut pulse_thought = String::new();
-        let mut pulse_dialogue = String::new();
+        // --- 🛡️ Mechanical Diversity Loop (Phase 19) ---
+        let mut retries = 0;
+        let mut committed_thought = String::new();
+        let mut committed_dialogue = String::new();
         let mut action_taken = false;
+        let mut should_notify_override = false;
+        
+        let original_tools = agent_loop.tools.clone();
+        agent_loop.tools.push(Arc::new(HeartbeatTool));
+        agent_loop.tools.push(Arc::new(EvaluateNotificationTool));
 
-        {
-            let shutdown_token = self.shutdown_token.clone();
-            let mut stream = agent_loop.run(prompt, None, shutdown_token);
-            while let Some(event_res) = stream.next().await {
-                match event_res {
-                    Ok(AgentEvent::Thought(t)) => {
-                        pulse_thought.push_str(&t);
-                        // 🛰️ Real-time Telemetry Stream
-                        let chunk = savant_core::types::ChatChunk {
-                            agent_name: self.agent.agent_name.clone(),
-                            agent_id: self.agent.agent_id.to_lowercase(),
-                            content: t,
-                            is_final: false,
-                            session_id: None,
-                            channel: savant_core::types::AgentOutputChannel::Telemetry,
-                        };
-                        if let Ok(payload) = serde_json::to_string(&chunk) {
-                            let _ = self.nexus.publish("chat.chunk", &payload).await;
+        while retries <= 2 {
+            let active_prompt = if retries == 0 {
+                prompt_base.clone()
+            } else {
+                format!("{}\n\n⚠️ RE-INFERENCE DIRECTIVE: Your previous thought was too similar to recent pulses. EXPLORE A NEW ANGLE. Force variance. Target domain: {}", prompt_base, lens_id)
+            };
+
+            let mut current_thought = String::new();
+            let mut current_dialogue = String::new();
+            let mut chunks = Vec::new();
+
+            {
+                let shutdown_token = self.shutdown_token.clone();
+                let mut stream = agent_loop.run(active_prompt, None, shutdown_token);
+                while let Some(event_res) = stream.next().await {
+                    match event_res {
+                        Ok(AgentEvent::Thought(t)) => {
+                            current_thought.push_str(&t);
+                            chunks.push(t);
                         }
-                    }
-                    Ok(AgentEvent::Action { name, args }) => {
-                        info!(
-                            "[{}] Proactive Action: {}[{}]",
-                            self.agent.agent_name, name, args
-                        );
-                        action_taken = true;
-                        // 🛰️ Real-time Tool Telemetry
-                        let chunk = savant_core::types::ChatChunk {
-                            agent_name: self.agent.agent_name.clone(),
-                            agent_id: self.agent.agent_id.to_lowercase(),
-                            content: format!(
+                        Ok(AgentEvent::FinalAnswer(a)) => current_dialogue = a,
+                        Ok(AgentEvent::FinalAnswerChunk(c)) => current_dialogue.push_str(&c),
+                        Ok(AgentEvent::Reflection(r)) => {
+                            let _ = emitter.emit_emergent(format!("# [{}] {}", lens_id, r), None).await;
+                        }
+                        Ok(AgentEvent::Action { name, args }) => {
+                            if name == "heartbeat" {
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&args) {
+                                    if json["action"].as_str() == Some("skip") {
+                                        info!("[{}] Heartbeat skipped: {}", self.agent.agent_name, json["reason"].as_str().unwrap_or(""));
+                                        action_taken = false;
+                                        break;
+                                    }
+                                }
+                            } else if name == "evaluate_notification" {
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&args) {
+                                    should_notify_override = json["should_notify"].as_bool().unwrap_or(false);
+                                }
+                            }
+
+                            info!(
+                                "[{}] Proactive Action: {}[{}]",
+                                self.agent.agent_name, name, args
+                            );
+                            action_taken = true;
+                            // 🛰️ Real-time Tool Telemetry (Buffered)
+                            chunks.push(format!(
                                 "\n\n> 🛠️ **Foundation Action:** `{}`\n> *Parameters:* `{}`\n\n",
                                 name, args
-                            ),
-                            is_final: false,
-                            session_id: None,
-                            channel: savant_core::types::AgentOutputChannel::Telemetry,
-                        };
-                        if let Ok(payload) = serde_json::to_string(&chunk) {
-                            let _ = self.nexus.publish("chat.chunk", &payload).await;
+                            ));
                         }
+                        _ => {}
                     }
-                    Ok(AgentEvent::Observation(o)) => {
-                        debug!("[{}] Observation: {}", self.agent.agent_name, o);
-                        // 🛰️ Observation Telemetry
-                        let chunk = savant_core::types::ChatChunk {
-                            agent_name: self.agent.agent_name.clone(),
-                            agent_id: self.agent.agent_id.to_lowercase(),
-                            content: format!("\n> 👁️ **Substrate Perception:** *Mapped {} bytes of system data.*\n\n", o.len()),
-                            is_final: false,
-                            session_id: None,
-                            channel: savant_core::types::AgentOutputChannel::Telemetry,
-                        };
-                        if let Ok(payload) = serde_json::to_string(&chunk) {
-                            let _ = self.nexus.publish("chat.chunk", &payload).await;
-                        }
-                    }
-                    Ok(AgentEvent::FinalAnswer(a)) => {
-                        pulse_dialogue = a;
-                    }
-                    Ok(AgentEvent::FinalAnswerChunk(c)) => {
-                        pulse_dialogue.push_str(&c);
-                        // 🛰️ Real-time Dialogue Stream (marked as telemetry for heartbeat)
-                        let chunk = savant_core::types::ChatChunk {
-                            agent_name: self.agent.agent_name.clone(),
-                            agent_id: self.agent.agent_id.to_lowercase(),
-                            content: c,
-                            is_final: false,
-                            session_id: None,
-                            channel: savant_core::types::AgentOutputChannel::Telemetry,
-                        };
-                        if let Ok(payload) = serde_json::to_string(&chunk) {
-                            let _ = self.nexus.publish("chat.chunk", &payload).await;
-                        }
-                    }
-                    Ok(AgentEvent::Reflection(r)) => {
-                        // Harvest emergent reflection
-                        let _ = emitter.emit_emergent(r, None).await;
-                    }
-                    Ok(AgentEvent::StatusUpdate(s)) => {
-                        debug!("[{}] Status: {}", self.agent.agent_name, s);
-                    }
-                    Err(e) => return Err(e),
                 }
             }
+
+            // Normalization & Diversity Check
+            let normalized = current_thought.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "");
+            let current_thought_hash = xxh3_64(normalized.as_bytes());
+
+            if buffer.last_reflection_hashes.contains(&current_thought_hash) && retries < 2 {
+                warn!("[{}] Cognitive Dissonance: Thought too similar to history. Re-inferring...", self.agent.agent_name);
+                retries += 1;
+                continue;
+            }
+
+            // Commit!
+            committed_thought = current_thought;
+            committed_dialogue = current_dialogue;
+            
+            // Update History (Cap 10)
+            buffer.last_reflection_hashes.push(current_thought_hash);
+            if buffer.last_reflection_hashes.len() > 10 {
+                buffer.last_reflection_hashes.remove(0);
+            }
+
+            // Broadcast buffered chunks
+            for t in chunks {
+                let chunk = savant_core::types::ChatChunk {
+                    agent_name: self.agent.agent_name.clone(),
+                    agent_id: self.agent.agent_id.to_lowercase(),
+                    content: t,
+                    is_final: false,
+                    session_id: None,
+                    channel: savant_core::types::AgentOutputChannel::Telemetry,
+                    logprob: None,
+                    is_telemetry: true,
+                    reasoning: None,
+                    tool_calls: None,
+                };
+                if let Ok(payload) = serde_json::to_string(&chunk) {
+                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                }
+            }
+            break;
         }
 
+        let pulse_thought = committed_thought;
+        let pulse_dialogue = committed_dialogue;
+
+        agent_loop.tools = original_tools;
+
         // 🏰 Substrate Logic: Handle Stillness and Reflections
-        let is_silent = pulse_dialogue.trim().is_empty() || pulse_dialogue.trim() == "HEARTBEAT_OK";
+        let mut is_silent = pulse_dialogue.trim().is_empty() || pulse_dialogue.trim() == "HEARTBEAT_OK";
+        if !should_notify_override {
+            is_silent = true;
+        }
 
         if !action_taken && is_silent {
             if !pulse_thought.trim().is_empty() {
@@ -469,7 +570,7 @@ impl HeartbeatPulse {
                 );
                 let _ = emitter
                     .emit_emergent(
-                        pulse_thought.clone(),
+                        format!("# [{}] {}", lens_id, pulse_thought),
                         Some(savant_core::learning::LearningCategory::Insight),
                     )
                     .await;
@@ -491,16 +592,46 @@ impl HeartbeatPulse {
         if !pulse_thought.is_empty() || !pulse_dialogue.is_empty() {
             let summary = format!("Thought: {}\nDialogue: {}", pulse_thought, pulse_dialogue);
             let _ = self.proactive.distill_context(&summary);
-            buffer.context_summary = summary;
+            buffer.context_summary = summary.clone();
+            
+            // 🛡️ Perfection Loop: If we have dialogue but no notification was requested yet,
+            // we should still consider if the dialogue itself warrants a broadcast.
+            if !pulse_dialogue.trim().is_empty() && pulse_dialogue.trim() != "HEARTBEAT_OK" {
+                is_silent = false;
+            }
+        }
+
+        // 🟢 If Heartbeat decides to NOTIFY, broadcast the dialogue to the Main Chat UI
+        if !is_silent && !pulse_dialogue.trim().is_empty() {
+            let final_msg = savant_core::types::ChatMessage { 
+                role: savant_core::types::ChatRole::Assistant, 
+                content: pulse_dialogue.clone(), 
+                sender: Some(self.agent.agent_name.clone()), 
+                recipient: None, 
+                agent_id: Some(self.agent.agent_id.clone()), 
+                session_id: None, 
+                channel: savant_core::types::AgentOutputChannel::Chat, 
+                is_telemetry: false 
+            };
+            if let Ok(payload) = serde_json::to_string(&final_msg) {
+                let _ = self.nexus.publish("chat.message", &payload).await;
+                info!("[{}] Heartbeat notification successfully routed to Main Chat.", self.agent.agent_name);
+            }
         }
 
         // Commit to WAL
         let _ = self.proactive.commit_state(&buffer);
 
-        // AAA: Autonomous Lesson Distillation (ALD)
+        // AAA: Autonomous Lesson Distillation (ALD) (Phase 19: Watermark Model)
         let ald = crate::learning::ald::ALDEngine::new(self.agent.workspace_path.clone());
-        if let Err(e) = ald.distill() {
-            warn!("[{}] ALD Distillation failed: {}", self.agent.agent_name, e);
+        match ald.distill(buffer.ald_watermark) {
+            Ok((new_watermark, burst)) => {
+                buffer.ald_watermark = new_watermark;
+                if burst {
+                    info!("[{}] ALD: High-Density Cognitive Burst detected. Promotion complete.", self.agent.agent_name);
+                }
+            }
+            Err(e) => warn!("[{}] ALD Distillation failed: {}", self.agent.agent_name, e),
         }
 
         info!(
@@ -520,7 +651,7 @@ impl HeartbeatPulse {
         if !full_payload.trim().is_empty() {
             let _ = emitter
                 .emit_emergent(
-                    full_payload.clone(),
+                    format!("# [{}] {}", lens_id, full_payload),
                     Some(savant_core::learning::LearningCategory::Insight),
                 )
                 .await;
@@ -536,6 +667,7 @@ impl HeartbeatPulse {
                 agent_id: None,
                 session_id: None, // Heartbeat pulses are system-local
                 channel: savant_core::types::AgentOutputChannel::Telemetry,
+                is_telemetry: true,
             };
 
             if let Ok(payload) = serde_json::to_string(&final_msg) {

@@ -122,6 +122,7 @@ impl EventHandler for Handler {
         // In a full implementation, we'd commit to a specific memory backend here.
         // For now, we package it as an EventFrame for the Nexus bridge.
         let chat_message = ChatMessage {
+            is_telemetry: false,
             role: ChatRole::User,
             content: msg.content.clone(),
             sender: Some(sender_id),

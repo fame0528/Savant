@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 /// The Emergent Learning Emitter.
-/// 
+///
 /// This component is responsible for harvesting cognitive insights from agent
 /// traces and formalizing them into the structured LEARNINGS.jsonl dataset.
 pub struct LearningEmitter<M: MemoryBackend + Clone> {
@@ -26,8 +26,8 @@ impl<M: MemoryBackend + Clone> LearningEmitter<M> {
     }
 
     /// Evaluates and emits an emergent learning entry.
-    /// 
-    /// This performs signal-to-noise filtering based on significance and 
+    ///
+    /// This performs signal-to-noise filtering based on significance and
     /// repetitive content detection.
     pub async fn emit_emergent(
         &self,
@@ -36,16 +36,21 @@ impl<M: MemoryBackend + Clone> LearningEmitter<M> {
     ) -> Result<(), SavantError> {
         // 1. Initial Signal Processing
         let significance = self.calculate_significance(&content);
-        
-        // 2. Filter Noise: Only capture signals with significance > 4 
+
+        // 2. Filter Noise: Only capture signals with significance > 4
         // OR explicit category (which implies agent intentionality)
+        // AAA: Variance Penalty (Phase 19) - If significance is borderline, we filter more strictly.
         if significance <= 4 && suggested_category.is_none() {
-            debug!("Discarding low-signal learning (significance {}): {}", significance, content);
+            debug!(
+                "Discarding low-signal learning (significance {}): {}",
+                significance, content
+            );
             return Ok(());
         }
 
         // 3. Categorize (Heuristic)
-        let category = suggested_category.unwrap_or_else(|| self.heuristic_categorization(&content));
+        let category =
+            suggested_category.unwrap_or_else(|| self.heuristic_categorization(&content));
 
         // 4. Construct entry
         let learning = EmergentLearning::new(
@@ -59,18 +64,24 @@ impl<M: MemoryBackend + Clone> LearningEmitter<M> {
         // We bypass the chat-centric 'store' if possible or ensure it doesn't leak to historical chat lanes.
         // For WAL integrity, we ensure this is recorded as a Learning event, not a chat message.
         let msg = savant_core::types::ChatMessage {
+            is_telemetry: false,
             role: savant_core::types::ChatRole::Assistant,
             content: content.clone(),
             sender: Some(self.agent_id.clone()),
             recipient: None,
             agent_id: None,
-            session_id: Some(savant_core::types::SessionId(format!("learning:{}", self.agent_id))),
+            session_id: Some(savant_core::types::SessionId(format!(
+                "learning:{}",
+                self.agent_id
+            ))),
             channel: savant_core::types::AgentOutputChannel::Memory,
         };
 
         // AAA Enhancement: Mark message as technical to prevent historical lane pollution
         // In this architecture, the MemoryBackend will handle the partition based on the JSON content.
-        self.memory.store(&format!("learning.{}", self.agent_id), &msg).await?;
+        self.memory
+            .store(&format!("learning.{}", self.agent_id), &msg)
+            .await?;
 
         // 6. Broadcast: Bridge to the global Nexus so UI can display real-time insights
         if let Ok(payload) = serde_json::to_string(&learning) {
@@ -90,9 +101,14 @@ impl<M: MemoryBackend + Clone> LearningEmitter<M> {
     /// Heuristic to determine the category of an unstructured learning blob.
     fn heuristic_categorization(&self, content: &str) -> LearningCategory {
         let text = content.to_lowercase();
-        if text.contains("protocol") || text.contains("discipline") || text.contains("instruction") {
+        if text.contains("protocol") || text.contains("discipline") || text.contains("instruction")
+        {
             LearningCategory::Protocol
-        } else if text.contains("error") || text.contains("misstep") || text.contains("fail") || text.contains("correction") {
+        } else if text.contains("error")
+            || text.contains("misstep")
+            || text.contains("fail")
+            || text.contains("correction")
+        {
             LearningCategory::Error
         } else {
             LearningCategory::Insight
@@ -102,12 +118,24 @@ impl<M: MemoryBackend + Clone> LearningEmitter<M> {
     /// Basic significance calculation based on length and key complexity markers.
     fn calculate_significance(&self, content: &str) -> u8 {
         let mut score = 3u8; // Baseline
-        
-        if content.len() > 100 { score += 1; }
-        if content.len() > 300 { score += 2; }
-        
+
+        if content.len() > 100 {
+            score += 1;
+        }
+        if content.len() > 300 {
+            score += 2;
+        }
+
         // Check for technical complexity markers
-        let markers = ["refactor", "latency", "concurrency", "optimization", "bottleneck", "divergence", "integrity"];
+        let markers = [
+            "refactor",
+            "latency",
+            "concurrency",
+            "optimization",
+            "bottleneck",
+            "divergence",
+            "integrity",
+        ];
         for marker in markers {
             if content.to_lowercase().contains(marker) {
                 score += 1;

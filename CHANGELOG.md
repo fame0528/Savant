@@ -7,9 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.5.0] - 2026-03-21
 
-_No unreleased changes._
+**Architectural Metamorphosis. OMEGA-VIII Certification. 80% Code Re-Birth.**
+
+This release marks a massive stabilization of the Savant substrate after a comprehensive architectural overhaul. The entire agentic core, memory system, and heartbeat protocol have been elevated to AAA standards.
+
+### Added
+- **10-Lens Cognitive Diary**: High-fidelity diagnostic rotation with 10 distinct lenses (`INFRASTRUCTURE` to `EMPIRE`).
+- **Substrate Telemetry**: Multi-crate RAM usage and system metrics injection into heartbeat pulses.
+- **Savant-CLI Diagnostics**: New `heartbeat` (--pulse, --lens) and `state` (--inspect) subcommands.
+- **Ollama Native Support**: Integrated `qwen3-embedding` and `qwen3-vl` for sovereign local intelligence.
+- **Structured Archiving**: New top-level `archives/` hierarchy for historical project preservation.
+
+### Changed
+- **Memory Engine Evolution**: Transitioned to the OMEGA-grade hybrid storage engine (SQLite + LSM + Vectors).
+- **Sovereign Context**: Standardized proactive state filenames (`DEV-SESSION-STATE.md`, `CONTEXT.md`).
+- **Performance**: Sub-millisecond latency for inter-crate communication via Nexus Bridge.
+
+### Fixed
+- **Recursive Chaos Correction**: Resolved all architectural debt introduced during the "rogue agent" incident.
+- **Build Stability**: Zero-error compilation verified across the 16-crate workspace.
+
+---
+
+### Added
+- **AI Fine-Tuning Dashboard**: New UI for tuning conversational weights (`temperature`, `top_p`, `penalties`) with real-time feedback.
+- **Dynamic Parameter Descriptors**: UI now pulls min/max/descriptions directly from `savant-core` via the Gateway, ensuring perfect engine alignment.
+- **Swarm-Wide Telemetry**: Dashboard reflections now announce configuration updates and 'Guardian' clamping events.
+- **System Demeanor Presets**: "Deep Observer", "Creative Spark", and "Rapid Solver" presets.
+- **Stillness & Presence Toggle**: Auto-optimizes penalties for deep relational observation.
+- **Persistence Recovery**: "Reset to Defaults" feature in Gateway and Dashboard UI.
+- **Atomic Config Writes**: Hardened `Config::save` with temp-file + rename pattern in `savant-core`.
+
+### Fixed
+- **Gateway Intelligence**: Refactored `settings_post_handler` to batch configuration updates and expose dynamic descriptors.
+- **Guardian Validation**: Server-side range checking and clamping for all AI parameters.
+- **SPA Resilience**: Navigation to Fine-Tuning maintains WebSocket persistence with 'Retry' recovery.
 
 ---
 

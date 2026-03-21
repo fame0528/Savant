@@ -35,6 +35,10 @@ impl Tool for SovereignShell {
          Use this for building, testing, and system maintenance."
     }
 
+    fn domain(&self) -> savant_core::traits::ToolDomain {
+        savant_core::traits::ToolDomain::Container
+    }
+
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {
         let command = payload["command"].as_str().ok_or_else(|| {
             SavantError::Unknown("Missing 'command' field in shell payload".to_string())

@@ -1,28 +1,45 @@
-use savant_core::error::SavantError;
-use tracing::{info, warn};
 use crate::react::AgentLoop;
+use savant_core::error::SavantError;
 use savant_core::traits::MemoryBackend;
+use tracing::{info, warn};
 
 impl<M: MemoryBackend> AgentLoop<M> {
     /// Verifies if the current agent has the required security token to execute a specific tool.
     pub(crate) fn verify_tool_access(&self, tool_name: &str) -> Result<(), SavantError> {
-        info!("Security Enclave: Verifying access for tool [{}] for agent [{}]", tool_name, self.agent_id);
-        
+        info!(
+            "Security Enclave: Verifying access for tool [{}] for agent [{}]",
+            tool_name, self.agent_id
+        );
+
         // 🛡️ AAA Logic: If security is enabled (token present), enforce it.
         if let Some(token) = &self.security_token {
             if !token.assignee_matches(self.agent_id_hash) {
-                warn!("CCT VIOLATION: Token assignee mismatch for agent [{}]", self.agent_id);
-                return Err(SavantError::AuthError("Security token binding failed: ID mismatch".into()));
+                warn!(
+                    "CCT VIOLATION: Token assignee mismatch for agent [{}]",
+                    self.agent_id
+                );
+                return Err(SavantError::AuthError(
+                    "Security token binding failed: ID mismatch".into(),
+                ));
             }
 
             let resource = format!("savant://tools/{}", tool_name);
             if !token.verify_capability(&resource, "execute") {
-                warn!("CCT VIOLATION: Permitted action 'execute' denied for resource [{}]", resource);
-                return Err(SavantError::AuthError(format!("Capability denied for tool: {}", tool_name)));
+                warn!(
+                    "CCT VIOLATION: Permitted action 'execute' denied for resource [{}]",
+                    resource
+                );
+                return Err(SavantError::AuthError(format!(
+                    "Capability denied for tool: {}",
+                    tool_name
+                )));
             }
             info!("Security Enclave: Access GRANTED for tool [{}]", tool_name);
         } else {
-            warn!("SECURITY WARNING: Agent [{}] executing tool [{}] without a CCT.", self.agent_id, tool_name);
+            warn!(
+                "SECURITY WARNING: Agent [{}] executing tool [{}] without a CCT.",
+                self.agent_id, tool_name
+            );
         }
         Ok(())
     }
@@ -31,9 +48,15 @@ impl<M: MemoryBackend> AgentLoop<M> {
         // CRITICAL: Full cryptographic verification via SecurityAuthority when available
         if let (Some(token), Some(authority)) = (&self.security_token, &self.security_authority) {
             let resource = format!("savant://tools/{}", name);
-            authority.verify_token_and_action(token, self.agent_id_hash, &resource, "execute")
-                .map_err(|e| SavantError::AuthError(format!("CCT Crypto Verification Failed: {}", e)))?;
-            info!("Security Enclave: Full crypto verification GRANTED for tool [{}]", name);
+            authority
+                .verify_token_and_action(token, self.agent_id_hash, &resource, "execute")
+                .map_err(|e| {
+                    SavantError::AuthError(format!("CCT Crypto Verification Failed: {}", e))
+                })?;
+            info!(
+                "Security Enclave: Full crypto verification GRANTED for tool [{}]",
+                name
+            );
         } else {
             // Fallback: lightweight assignee + capability check
             self.verify_tool_access(name)?;
@@ -43,7 +66,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
             if tool.name().to_lowercase() == name.to_lowercase() {
                 let payload = serde_json::from_str(args)
                     .unwrap_or_else(|_| serde_json::json!({ "payload": args }));
-                return self.hyper_causal.execute_speculative(tool.clone(), payload).await;
+                return self
+                    .hyper_causal
+                    .execute_speculative(tool.clone(), payload)
+                    .await;
             }
         }
 
@@ -51,11 +77,15 @@ impl<M: MemoryBackend> AgentLoop<M> {
             if let Some(capability) = registry.get_tool(name) {
                 match host.execute_tool(&capability.module, args).await {
                     Ok(res) => {
-                        if let Some(metrics) = &self.echo_metrics { metrics.record_outcome(true); }
+                        if let Some(metrics) = &self.echo_metrics {
+                            metrics.record_outcome(true);
+                        }
                         return Ok(res);
                     }
                     Err(e) => {
-                        if let Some(metrics) = &self.echo_metrics { metrics.record_outcome(false); }
+                        if let Some(metrics) = &self.echo_metrics {
+                            metrics.record_outcome(false);
+                        }
                         return Err(SavantError::Unknown(e.to_string()));
                     }
                 }
@@ -71,13 +101,19 @@ impl<M: MemoryBackend> AgentLoop<M> {
         tool_name: &str,
         error: SavantError,
     ) -> Result<String, SavantError> {
-        info!("[{}] HEURISTIC: Triggering resolution path for tool [{}] failure: {:?}", self.agent_id, tool_name, error);
+        info!(
+            "[{}] HEURISTIC: Triggering resolution path for tool [{}] failure: {:?}",
+            self.agent_id, tool_name, error
+        );
         self.heuristic.failures += 1;
 
         match self.heuristic.failures {
             1 => {
                 // Path 1: Contextual Expansion
-                info!("[{}] HEURISTIC: Path 1 - Contextual Expansion triggered.", self.agent_id);
+                info!(
+                    "[{}] HEURISTIC: Path 1 - Contextual Expansion triggered.",
+                    self.agent_id
+                );
                 Ok("Recovery hint: Try to re-read the documentation for the tool and verify arguments.".to_string())
             }
             2 => {
@@ -93,8 +129,14 @@ impl<M: MemoryBackend> AgentLoop<M> {
             }
             _ => {
                 // Path 3: Architectural Pivot
-                warn!("[{}] HEURISTIC: Maximum retries reached. Failing session.", self.agent_id);
-                Err(SavantError::HeuristicFailure(format!("Recursive failure loop detected for tool: {}", tool_name)))
+                warn!(
+                    "[{}] HEURISTIC: Maximum retries reached. Failing session.",
+                    self.agent_id
+                );
+                Err(SavantError::HeuristicFailure(format!(
+                    "Recursive failure loop detected for tool: {}",
+                    tool_name
+                )))
             }
         }
     }

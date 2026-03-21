@@ -21,6 +21,7 @@ fn bench_storage_append() {
     let start = Instant::now();
     for i in 0..1000 {
         let msg = ChatMessage {
+            is_telemetry: false,
             role: ChatRole::User,
             content: format!("Benchmark message {} with padding to simulate realistic content size for performance testing", i),
             sender: Some("bench".to_string()),
@@ -61,6 +62,7 @@ fn bench_storage_retrieve() {
     // Insert 500 messages
     for i in 0..500 {
         let msg = ChatMessage {
+            is_telemetry: false,
             role: ChatRole::User,
             content: format!("Message {}", i),
             sender: Some("bench".to_string()),

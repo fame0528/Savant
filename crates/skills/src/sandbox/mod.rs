@@ -54,6 +54,10 @@ impl SandboxDispatcher {
                     }
                 }
             }
+            ExecutionMode::Reference => Box::new(FallbackExecutor {
+                error: "ExecutionMode::Reference is documentation-only and cannot be executed"
+                    .to_string(),
+            }),
         }
     }
 }

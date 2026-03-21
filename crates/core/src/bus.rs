@@ -1,7 +1,26 @@
 use crate::types::EventFrame;
 use moka::sync::Cache;
+use std::sync::OnceLock;
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, warn};
+
+/// Global debug log channel for capturing tracing output.
+/// The sender is initialized once at startup; the receiver is used by the gateway
+/// to forward log messages to WebSocket clients.
+static DEBUG_LOG_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
+
+/// Returns a reference to the global debug log sender, initializing it on first call.
+pub fn debug_log_sender() -> &'static broadcast::Sender<String> {
+    DEBUG_LOG_TX.get_or_init(|| {
+        let (tx, _) = broadcast::channel(1024);
+        tx
+    })
+}
+
+/// Subscribe to the global debug log channel.
+pub fn subscribe_debug_logs() -> broadcast::Receiver<String> {
+    debug_log_sender().subscribe()
+}
 
 /// Maximum number of entries in the shared memory before eviction.
 const MAX_SHARED_MEMORY_ENTRIES: u64 = 10_000;

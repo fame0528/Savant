@@ -3,12 +3,8 @@
   "version": "0.0.01",
   "description": "Savant - One Mind. A Thousand Faces. Autonomous agent swarm orchestrator",
   "scripts": {
-    "start": "node start.js",
-    "start:gateway": "cargo run --release --bin savant_cli",
-    "start:dashboard": "cd dashboard && npm run dev",
-    "build": "cargo build --release && cd dashboard && npm run build",
-    "dev": "node start.js --dev",
-    "stop": "node stop.js",
+    "dev": "cargo tauri dev",
+    "build": "cargo tauri build",
     "test": "cargo test --workspace",
     "clean": "cargo clean && cd dashboard && npm run clean"
   },

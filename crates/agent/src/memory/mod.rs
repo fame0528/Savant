@@ -9,7 +9,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{info, instrument};
 
 /// A decorator for `MemoryBackend` that adds file-based logging for agent self-improvement.
-/// 
+///
 /// This implements the "Perfection Loop" requirements by ensuring that every learning
 /// and reflection is also captured in human-readable Markdown files in the agent's workspace.
 #[derive(Clone)]
@@ -27,35 +27,47 @@ impl FileLoggingMemoryBackend {
         }
     }
 
-    /// Records a new learning or correction to LEARNINGS.jsonl.
+    /// Records a new learning or correction to LEARNINGS.md (free-form).
+    ///
+    /// Writes in the original free-form markdown format, preserving Savant's
+    /// internal monologue without constraining it to JSONL structure.
     #[instrument(skip(self), fields(agent_id))]
-    pub async fn record_learning(&self, agent_id: &str, learning_text: &str) -> Result<(), SavantError> {
-        let path = self.workspace_path.join("LEARNINGS.jsonl");
-        
-        // Try to parse as structured EmergentLearning, fallback to unstructured wrapper
-        let entry_json = if let Ok(mut entry) = serde_json::from_str::<savant_core::learning::EmergentLearning>(learning_text) {
-            // Ensure agent_id is consistent
-            entry.agent_id = agent_id.to_string();
-            serde_json::to_string(&entry).unwrap_or_else(|_| learning_text.to_string())
+    pub async fn record_learning(
+        &self,
+        agent_id: &str,
+        learning_text: &str,
+    ) -> Result<(), SavantError> {
+        let md_path = self.workspace_path.join("LEARNINGS.md");
+
+        // Get current UTC timestamp
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.9f UTC");
+
+        // AAA: Extract Lens Tag into Header (Phase 19)
+        // If content starts with "# [TAG]", we extract it and put it in the header.
+        let (tag, final_text) = if learning_text.starts_with("# [") {
+            if let Some(end_idx) = learning_text.find("]") {
+                let tag = &learning_text[3..end_idx];
+                let rest = &learning_text[end_idx + 1..].trim();
+                (format!(" [{}]", tag), rest.to_string())
+            } else {
+                (String::new(), learning_text.to_string())
+            }
         } else {
-            let entry = savant_core::learning::EmergentLearning::new(
-                agent_id.to_string(),
-                savant_core::learning::LearningCategory::Insight,
-                learning_text.to_string(),
-                5, // Default significance for legacy calls
-            );
-            serde_json::to_string(&entry).unwrap_or_else(|_| learning_text.to_string())
+            (String::new(), learning_text.to_string())
         };
+
+        // Write in free-form markdown format
+        let entry = format!("\n\n### Learning ({}){}\n{}\n", timestamp, tag, final_text);
 
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)
+            .open(&md_path)
             .await?;
 
-        file.write_all(format!("{}\n", entry_json).as_bytes()).await?;
-        
-        info!("Recorded structured learning for agent {}", agent_id);
+        file.write_all(entry.as_bytes()).await?;
+
+        info!("Recorded free-form learning{} for agent {}", tag, agent_id);
         Ok(())
     }
 
@@ -79,9 +91,21 @@ impl FileLoggingMemoryBackend {
             .await?;
 
         file.write_all(content.as_bytes()).await?;
-        
+
         info!("Recorded reflection for agent {}", agent_id);
         Ok(())
+    }
+
+    /// Parses LEARNINGS.md into JSONL format for dashboard display.
+    /// This can be called manually to refresh the reflections panel.
+    pub async fn parse_learnings(&self, agent_id: &str) -> Result<usize, SavantError> {
+        let parser = crate::learning::LearningsParser::new(self.workspace_path.clone());
+        let count = parser.parse_and_convert(agent_id)?;
+        info!(
+            "[{}] Manually parsed {} learning entries from LEARNINGS.md",
+            agent_id, count
+        );
+        Ok(count)
     }
 }
 
@@ -109,28 +133,70 @@ impl MemoryBackend for FileLoggingMemoryBackend {
         // 1. First delegate to inner backend for LSM compaction/optimization
         self.inner.consolidate(agent_id).await?;
 
-        // 2. Perform file-based archive if LEARNINGS.jsonl gets too large
+        // 2. Parse new LEARNINGS.md entries into JSONL (for dashboard display)
+        let parser = crate::learning::LearningsParser::new(self.workspace_path.clone());
+        match parser.parse_and_convert(agent_id) {
+            Ok(count) => {
+                if count > 0 {
+                    info!(
+                        "[{}] Converted {} new learning entries from LEARNINGS.md → JSONL",
+                        agent_id, count
+                    );
+                    // 2.5. Store parsed entries in swarm.insights for dashboard API
+                    let learnings_path = self.workspace_path.join("LEARNINGS.jsonl");
+                    if let Ok(content) = std::fs::read_to_string(&learnings_path) {
+                        for line in content.lines() {
+                            if let Ok(entry) = serde_json::from_str::<
+                                savant_core::learning::EmergentLearning,
+                            >(line)
+                            {
+                                // Check if already in swarm.insights by looking for this timestamp
+                                let msg = savant_core::types::ChatMessage {
+                                    is_telemetry: false,
+                                    role: savant_core::types::ChatRole::Assistant,
+                                    content: entry.content.clone(),
+                                    sender: Some(entry.agent_id.clone()),
+                                    recipient: None,
+                                    agent_id: None,
+                                    session_id: Some(savant_core::types::SessionId(
+                                        "learning.swarm".to_string(),
+                                    )),
+                                    channel: savant_core::types::AgentOutputChannel::Memory,
+                                };
+                                let _ = self.inner.store("swarm.insights", &msg).await;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[{}] Failed to parse LEARNINGS.md: {}", agent_id, e);
+            }
+        }
+
+        // 3. Archive old JSONL if too large
         let learnings_path = self.workspace_path.join("LEARNINGS.jsonl");
         let history_path = self.workspace_path.join("HISTORY.jsonl");
 
         if let Ok(metadata) = fs::metadata(&learnings_path).await {
-            if metadata.len() > 100_000 { // Increased limit for JSONL
+            if metadata.len() > 500_000 {
+                // Archive at 500KB
                 info!(
                     "[{}] Consolidating memory: LEARNINGS.jsonl is too large ({} bytes). Archiving...",
                     agent_id,
                     metadata.len()
                 );
                 let content = fs::read_to_string(&learnings_path).await?;
-                let mut archive = fs::OpenOptions::new()
+                let mut file = fs::OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(&history_path)
                     .await?;
-                
-                archive.write_all(content.as_bytes()).await?;
+                file.write_all(content.as_bytes()).await?;
                 fs::write(&learnings_path, "").await?; // Reset JSONL
             }
         }
+
         Ok(())
     }
 }

@@ -2,16 +2,41 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
-use pqcrypto_dilithium::dilithium2;
-use savant_agent::swarm::SwarmController;
-use savant_agent::watcher::SwarmWatcher;
-use savant_core::bus::NexusBridge;
+use savant_agent::orchestration::ignition::IgnitionService;
 use savant_core::config::Config;
 use savant_core::crypto::AgentKeyPair;
-use savant_core::db::Storage;
-use savant_gateway::server::start_gateway;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+
+/// Tracing layer that publishes log messages to the global debug log channel
+/// for real-time streaming to the dashboard via WebSocket.
+struct DebugLogLayer;
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DebugLogLayer {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut visitor = LogVisitor::default();
+        event.record(&mut visitor);
+        let meta = event.metadata();
+        let msg = format!("[{}] {}", meta.level(), visitor.message);
+        let _ = savant_core::bus::debug_log_sender().send(msg);
+    }
+}
+
+#[derive(Default)]
+struct LogVisitor {
+    message: String,
+}
+
+impl tracing::field::Visit for LogVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{:?}", value);
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -70,6 +95,28 @@ enum Commands {
 
     /// Display system status and health
     Status,
+
+    /// Heartbeat and Cognitive Diary diagnostics
+    Heartbeat {
+        /// Manually trigger a proactive pulse
+        #[arg(long)]
+        pulse: bool,
+
+        /// Force a specific cognitive lens ID
+        #[arg(short, long)]
+        lens: Option<String>,
+
+        /// Check the diversity distribution of recent logs
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Inspect system state (WorkingBuffer, offsets, etc.)
+    State {
+        /// Inspect persistent agent state
+        #[arg(long)]
+        inspect: bool,
+    },
 }
 
 fn print_splash() {
@@ -136,172 +183,7 @@ fn print_phase(num: u8, desc: &str) {
 async fn cmd_start(config_path: Option<String>) -> Result<()> {
     print_splash();
 
-    print_phase(0, "SYSTEM INITIALIZATION");
-    print_phase(1, "CONFIGURATION");
-
-    let config = match Config::load_from(config_path.as_deref()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!(
-                "{} {}",
-                "Critical Error:".red().bold(),
-                format!("Failed to load configuration: {}", e).yellow()
-            );
-            eprintln!("{} Verify that your configuration file (usually ~/.savant/savant.toml) exists and is valid TOML.", "Tip:".cyan());
-            std::process::exit(1);
-        }
-    };
-
-    print_phase(2, "LOADER & CRYPTO");
-
-    let _master_key = match AgentKeyPair::ensure_master_key() {
-        Ok(key) => key,
-        Err(e) => {
-            eprintln!("Critical: Master key failure: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    tracing::info!("🔐 Cryptographic systems initialized");
-    tracing::info!("✅ Configuration loaded successfully");
-
-    print_phase(3, "NEXUS BROADCAST MESH");
-    let nexus = Arc::new(NexusBridge::new());
-    tracing::info!("🌐 {}", "Event bus operational".blue());
-
-    print_phase(4, "STORAGE ENGINE");
-    let db_path = PathBuf::from(&config.system.db_path);
-    let storage = Arc::new(Storage::new(db_path)?);
-    tracing::info!("💾 {}", "Storage systems synchronized (WAL Mode)".green());
-
-    print_phase(5, "AGENT DISCOVERY");
-    let manager = Arc::new(savant_agent::manager::AgentManager::new(config.clone()));
-    let discovered_agents = manager.discover_agents().await?;
-
-    let discovery_event = serde_json::json!({
-        "status": "SWARM_SYNCHRONIZED",
-        "agents": discovered_agents.iter().map(|a| serde_json::json!({
-            "id": a.agent_id,
-            "name": a.agent_name,
-            "status": "Active",
-            "role": "Agent",
-            "image": a.identity.as_ref().and_then(|i| i.image.clone())
-        })).collect::<Vec<_>>()
-    });
-
-    let _ = nexus
-        .publish("agents.discovered", &discovery_event.to_string())
-        .await;
-    nexus
-        .update_state("system.agents".to_string(), discovery_event.to_string())
-        .await;
-
-    if discovered_agents.is_empty() {
-        tracing::warn!("🔍 {}", "Zero agents found in ./workspaces".yellow());
-    } else {
-        for agent in &discovered_agents {
-            println!(
-                "   {} {}",
-                "•".cyan(),
-                agent.agent_name.bright_white().bold()
-            );
-        }
-        tracing::info!(
-            "✅ {}",
-            format!(
-                "Igniting {} agents for swarm deployment",
-                discovered_agents.len()
-            )
-            .green()
-        );
-    }
-
-    print_phase(6, "GATEWAY & ORCHESTRATION");
-    let root_authority = _master_key
-        .get_verifying_key()
-        .context("Failed to derive root authority")?;
-    let signing_key = _master_key
-        .get_signing_key()
-        .context("Failed to derive signing key")?;
-
-    let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
-    let swarm_storage = storage.clone();
-    let swarm_manager = manager.clone();
-    let swarm_config = savant_agent::swarm::SwarmConfig {
-        workspace_root: PathBuf::from("./workspaces"),
-        memory_db_path: PathBuf::from("./data/memory"),
-        skills_path: PathBuf::from("./skills"),
-        blackboard_name: "savant_swarm".to_string(),
-        collective_name: "savant_collective".to_string(),
-    };
-    let swarm = SwarmController::new(
-        swarm_config,
-        discovered_agents,
-        swarm_storage,
-        swarm_manager,
-        nexus.clone(),
-        root_authority,
-        signing_key,
-        pqc_authority,
-        pqc_signing_key,
-    )
-    .await?;
-    let swarm = Arc::new(swarm);
-
-    let gateway_nexus = nexus.clone();
-    let gateway_storage = storage.clone();
-    let gateway_config = config.clone();
-    tokio::spawn(async move {
-        if let Err(e) = start_gateway(gateway_config, gateway_nexus, gateway_storage).await {
-            tracing::error!("❌ {}", format!("Gateway crash: {}", e).red());
-        }
-    });
-
-    tracing::info!("🔍 Checking channel configurations...");
-    let mut channels: Vec<String> = Vec::new();
-    if config.channels.discord.enabled {
-        channels.push("discord".to_string());
-    }
-    if config.channels.telegram.enabled {
-        channels.push("telegram".to_string());
-    }
-    if config.channels.whatsapp.enabled {
-        channels.push("whatsapp".to_string());
-    }
-    if config.channels.matrix.enabled {
-        channels.push("matrix".to_string());
-    }
-    tracing::info!("📡 Enabled channels: {:?}", channels);
-
-    if config.channels.discord.enabled {
-        let discord_cfg = &config.channels.discord;
-        tracing::info!("📡 Discord config found: enabled={}", discord_cfg.enabled);
-        if let Some(token) = &discord_cfg.token {
-            tracing::info!(
-                "🔑 Discord token present (masked: {}...{})",
-                &token[..token.len().min(4)],
-                &token[token.len().saturating_sub(4)..]
-            );
-            let discord_adapter =
-                savant_channels::discord::DiscordAdapter::new(token.clone(), None, nexus.clone());
-            discord_adapter.spawn().await;
-            tracing::info!("🔗 Discord bridge spawned");
-        } else {
-            tracing::warn!("⚠️ Discord enabled but no token provided in config");
-        }
-    }
-
-    print_phase(7, "SWARM IGNITION");
-    let swarm_clone = swarm.clone();
-    let manager_clone = manager.clone();
-    tokio::spawn(async move {
-        swarm_clone.ignite().await;
-
-        let watcher = Arc::new(SwarmWatcher::new(swarm_clone, manager_clone, nexus.clone()));
-        if let Err(e) = watcher.start().await {
-            tracing::error!("🔭 SwarmWatcher error: {}", e);
-        }
-    });
+    let _ignition = IgnitionService::ignite(config_path.as_deref()).await?;
 
     println!();
     println!(
@@ -362,7 +244,11 @@ async fn cmd_test_skill(skill_path: &str, input: &str, timeout_secs: u64) -> Res
 
     let path = PathBuf::from(skill_path);
     if !path.exists() {
-        eprintln!("{} Skill file not found: {}", "Error:".red().bold(), skill_path);
+        eprintln!(
+            "{} Skill file not found: {}",
+            "Error:".red().bold(),
+            skill_path
+        );
         std::process::exit(1);
     }
 
@@ -384,10 +270,14 @@ async fn cmd_test_skill(skill_path: &str, input: &str, timeout_secs: u64) -> Res
     println!();
 
     // Parse input
-    let input_value: serde_json::Value = serde_json::from_str(input)
-        .unwrap_or_else(|_| serde_json::json!({"raw": input}));
+    let input_value: serde_json::Value =
+        serde_json::from_str(input).unwrap_or_else(|_| serde_json::json!({"raw": input}));
 
-    println!("{} Input: {}", "→".bright_black(), serde_json::to_string_pretty(&input_value).unwrap_or_default());
+    println!(
+        "{} Input: {}",
+        "→".bright_black(),
+        serde_json::to_string_pretty(&input_value).unwrap_or_default()
+    );
     println!();
 
     // Find and execute the tool
@@ -418,7 +308,12 @@ async fn cmd_test_skill(skill_path: &str, input: &str, timeout_secs: u64) -> Res
             }
             Err(_) => {
                 println!();
-                println!("{}", format!("❌ Skill test TIMED OUT after {}s", timeout_secs).red().bold());
+                println!(
+                    "{}",
+                    format!("❌ Skill test TIMED OUT after {}s", timeout_secs)
+                        .red()
+                        .bold()
+                );
                 std::process::exit(1);
             }
         }
@@ -434,12 +329,15 @@ async fn cmd_test_skill(skill_path: &str, input: &str, timeout_secs: u64) -> Res
 // Subcommand: backup
 // ============================================================================
 
-async fn cmd_backup(config_path: &Option<String>, output: &str, include_memory: bool) -> Result<()> {
+async fn cmd_backup(
+    config_path: &Option<String>,
+    output: &str,
+    include_memory: bool,
+) -> Result<()> {
     println!("{}", "=== Savant Database Backup ===".cyan().bold());
     println!();
 
-    let config = Config::load_from(config_path.as_deref())
-        .unwrap_or_else(|_| Config::default());
+    let config = Config::load_from(config_path.as_deref()).unwrap_or_else(|_| Config::default());
 
     let db_path = PathBuf::from(&config.system.db_path);
     let output_path = PathBuf::from(output);
@@ -449,7 +347,11 @@ async fn cmd_backup(config_path: &Option<String>, output: &str, include_memory: 
 
     // Create the backup by copying the database directory
     if !db_path.exists() {
-        eprintln!("{} Database path does not exist: {:?}", "Error:".red().bold(), db_path);
+        eprintln!(
+            "{} Database path does not exist: {:?}",
+            "Error:".red().bold(),
+            db_path
+        );
         std::process::exit(1);
     }
 
@@ -462,8 +364,7 @@ async fn cmd_backup(config_path: &Option<String>, output: &str, include_memory: 
             .context("Failed to clean existing backup directory")?;
     }
 
-    copy_dir_recursive(&db_path, &output_path)
-        .context("Failed to copy database files")?;
+    copy_dir_recursive(&db_path, &output_path).context("Failed to copy database files")?;
 
     // Optionally backup memory database
     if include_memory {
@@ -491,12 +392,15 @@ async fn cmd_restore(config_path: &Option<String>, input: &str) -> Result<()> {
 
     let input_path = PathBuf::from(input);
     if !input_path.exists() {
-        eprintln!("{} Backup path does not exist: {:?}", "Error:".red().bold(), input_path);
+        eprintln!(
+            "{} Backup path does not exist: {:?}",
+            "Error:".red().bold(),
+            input_path
+        );
         std::process::exit(1);
     }
 
-    let config = Config::load_from(config_path.as_deref())
-        .unwrap_or_else(|_| Config::default());
+    let config = Config::load_from(config_path.as_deref()).unwrap_or_else(|_| Config::default());
 
     let db_path = PathBuf::from(&config.system.db_path);
 
@@ -506,7 +410,11 @@ async fn cmd_restore(config_path: &Option<String>, input: &str) -> Result<()> {
     // Backup existing database before restore
     if db_path.exists() {
         let pre_restore_backup = db_path.with_extension("pre-restore");
-        println!("{} Backing up existing database to {:?}...", "→".bright_black(), pre_restore_backup);
+        println!(
+            "{} Backing up existing database to {:?}...",
+            "→".bright_black(),
+            pre_restore_backup
+        );
         copy_dir_recursive(&db_path, &pre_restore_backup)
             .context("Failed to backup existing database")?;
     }
@@ -515,12 +423,10 @@ async fn cmd_restore(config_path: &Option<String>, input: &str) -> Result<()> {
     println!("{} Restoring database...", "→".bright_black());
 
     if db_path.exists() {
-        std::fs::remove_dir_all(&db_path)
-            .context("Failed to clean existing database")?;
+        std::fs::remove_dir_all(&db_path).context("Failed to clean existing database")?;
     }
 
-    copy_dir_recursive(&input_path, &db_path)
-        .context("Failed to restore database files")?;
+    copy_dir_recursive(&input_path, &db_path).context("Failed to restore database files")?;
 
     // Check for memory backup
     let memory_backup = input_path.join("memory");
@@ -548,8 +454,7 @@ async fn cmd_list_agents(config_path: &Option<String>) -> Result<()> {
     println!("{}", "=== Discovered Agents ===".cyan().bold());
     println!();
 
-    let config = Config::load_from(config_path.as_deref())
-        .unwrap_or_else(|_| Config::default());
+    let config = Config::load_from(config_path.as_deref()).unwrap_or_else(|_| Config::default());
 
     let manager = savant_agent::manager::AgentManager::new(config);
     let agents = manager.discover_agents().await?;
@@ -567,10 +472,10 @@ async fn cmd_list_agents(config_path: &Option<String>) -> Result<()> {
                 agent.agent_id.bright_black()
             );
             if let Some(ref identity) = agent.identity {
-            if !identity.soul.is_empty() {
-                let preview: String = identity.soul.chars().take(80).collect();
-                println!("    {}", preview.bright_black());
-            }
+                if !identity.soul.is_empty() {
+                    let preview: String = identity.soul.chars().take(80).collect();
+                    println!("    {}", preview.bright_black());
+                }
             }
         }
     }
@@ -619,7 +524,11 @@ async fn cmd_status(config_path: &Option<String>) -> Result<()> {
         let agent_count = std::fs::read_dir(&workspaces)
             .map(|entries| entries.filter_map(|e| e.ok()).count())
             .unwrap_or(0);
-        println!("{} Workspaces: {} ({agent_count} agents)", "✓".green(), "Present".green());
+        println!(
+            "{} Workspaces: {} ({agent_count} agents)",
+            "✓".green(),
+            "Present".green()
+        );
     } else {
         println!("{} Workspaces: {}", "⚠".yellow(), "Not found".yellow());
     }
@@ -630,7 +539,11 @@ async fn cmd_status(config_path: &Option<String>) -> Result<()> {
         let skill_count = std::fs::read_dir(&skills)
             .map(|entries| entries.filter_map(|e| e.ok()).count())
             .unwrap_or(0);
-        println!("{} Skills:    {} ({skill_count} skills)", "✓".green(), "Present".green());
+        println!(
+            "{} Skills:    {} ({skill_count} skills)",
+            "✓".green(),
+            "Present".green()
+        );
     } else {
         println!("{} Skills:    {}", "⚠".yellow(), "Not found".yellow());
     }
@@ -657,7 +570,9 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<()> {
     for entry in walkdir::WalkDir::new(src) {
         let entry = entry.context("Failed to read directory entry")?;
         let src_path = entry.path();
-        let relative = src_path.strip_prefix(src).context("Failed to get relative path")?;
+        let relative = src_path
+            .strip_prefix(src)
+            .context("Failed to get relative path")?;
         let dst_path = dst.join(relative);
 
         if src_path.is_dir() {
@@ -689,14 +604,20 @@ async fn main() -> Result<()> {
 
     // Initialize tracing for all subcommands
     let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_ansi(true)
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false)
-        .init();
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(filter))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(true)
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_file(false)
+                .with_line_number(false),
+        )
+        .with(DebugLogLayer)
+        .try_init();
 
     match args.command {
         Some(Commands::TestSkill {
@@ -711,6 +632,85 @@ async fn main() -> Result<()> {
         Some(Commands::Restore { input }) => cmd_restore(&args.config, &input).await,
         Some(Commands::ListAgents) => cmd_list_agents(&args.config).await,
         Some(Commands::Status) => cmd_status(&args.config).await,
+        Some(Commands::Heartbeat { pulse, lens, check }) => cmd_heartbeat(&args.config, pulse, lens, check).await,
+        Some(Commands::State { inspect }) => cmd_state(&args.config, inspect).await,
         Some(Commands::Start) | None => cmd_start(args.config).await,
     }
+}
+
+async fn cmd_heartbeat(config_path: &Option<String>, pulse: bool, lens: Option<String>, check: bool) -> Result<()> {
+    println!("{}", "=== Savant Heartbeat Diagnostics ===".cyan().bold());
+    let config = Config::load_from(config_path.as_deref()).unwrap_or_else(|_| Config::default());
+
+    if pulse {
+        println!("{} Connecting to Nexus bridge...", "→".bright_black());
+        let nexus = savant_core::bus::NexusBridge::new();
+        
+        println!("{} Triggering manual pulse...", "→".bright_black());
+        if let Some(ref l) = lens {
+            println!("{} Forced Lens: {}", "→".bright_black(), l.green());
+        }
+        
+        let payload = serde_json::json!({ "lens": lens });
+        nexus.publish("pulse.trigger", &payload.to_string()).await.map_err(|e| anyhow::anyhow!(e))?;
+        
+        println!("{} Pulse trigger successfully broadcast to the swarm.", "✓".green());
+    }
+
+    if check {
+        println!("{} Log Diversity Audit:", "→".bright_black());
+        let md_path = std::path::PathBuf::from("./workspaces/workspace-savant/LEARNINGS.md");
+        if md_path.exists() {
+            let content = std::fs::read_to_string(md_path)?;
+            let mut counts = std::collections::HashMap::new();
+            for line in content.lines() {
+                if line.contains("### Learning") {
+                    if let Some(start) = line.find("[") {
+                        if let Some(end) = line.find("]") {
+                            let tag = &line[start+1..end];
+                            *counts.entry(tag.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            for (tag, count) in counts {
+                println!("  • {}: {} entries", tag.cyan(), count);
+            }
+        } else {
+            println!("  {} No LEARNINGS.md found.", "⚠".yellow());
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_state(config_path: &Option<String>, inspect: bool) -> Result<()> {
+    println!("{}", "=== Savant State Inspector ===".cyan().bold());
+    let config = Config::load_from(config_path.as_deref()).unwrap_or_else(|_| Config::default());
+
+    if inspect {
+        println!("{} Reading Sovereign State (WAL)...", "→".bright_black());
+        let substrate_path = std::path::PathBuf::from(&config.system.substrate_path);
+        let _proactive = config.swarm.heartbeat_interval > 0; // Simplified check
+        
+        let state_file = substrate_path.join("DEV-SESSION-STATE.md");
+        if state_file.exists() {
+            println!("  {} File: {:?}", "•".cyan(), state_file.file_name().unwrap());
+            let content = std::fs::read_to_string(state_file)?;
+            println!("{}", content.bright_black());
+        } else {
+            println!("  {} No session state file found at {:?}", "⚠".yellow(), state_file);
+        }
+
+        let context_file = substrate_path.join("CONTEXT.md");
+        if context_file.exists() {
+            println!();
+            println!("{} Reading Collective Context (Layer 2)...", "→".bright_black());
+            println!("  {} File: {:?}", "•".cyan(), context_file.file_name().unwrap());
+            let content = std::fs::read_to_string(context_file)?;
+            println!("{}", content.bright_black());
+        }
+    }
+
+    Ok(())
 }

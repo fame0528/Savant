@@ -11,6 +11,7 @@
 
 pub mod continuation;
 pub mod handoff;
+pub mod ignition;
 pub mod tasks;
 pub mod dag;
 pub mod synthesis;
@@ -103,6 +104,7 @@ impl Orchestrator {
         identity: String,
         blackboard: Arc<SwarmBlackboard>,
         orchestrator_config: OrchestratorConfig,
+        substrate_prompt: String,
     ) -> Result<Self, OrchestratorError> {
         let agent_id = config.agent_id.clone();
         let session_id = config
@@ -120,6 +122,7 @@ impl Orchestrator {
                 soul: identity,
                 ..Default::default()
             },
+            substrate_prompt,
         );
 
         // Initialize token budget (shared with memory manager)

@@ -71,6 +71,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
     ) -> Pin<Box<dyn Stream<Item = Result<SpeculativeEvent, SavantError>> + Send + 'a>> {
         // Build initial history with user input
         let history = vec![ChatMessage {
+            is_telemetry: false,
             role: ChatRole::User,
             content: input.to_string(),
             sender: None,
@@ -162,6 +163,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                 // Store final answer in memory
                 let final_msg = ChatMessage {
+                    is_telemetry: false,
                     role: ChatRole::Assistant,
                     content: final_reflection.clone(),
                     sender: Some(self.agent_id.clone()),

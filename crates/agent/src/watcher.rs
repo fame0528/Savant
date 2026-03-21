@@ -39,7 +39,7 @@ impl SwarmWatcher {
             },
         )?;
 
-        let workspaces = std::env::current_dir()?.join("workspaces");
+        let workspaces = self.manager._config.project_root.join("workspaces");
         if !workspaces.exists() {
             let _ = std::fs::create_dir_all(&workspaces);
         }

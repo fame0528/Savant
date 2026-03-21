@@ -33,6 +33,7 @@ impl LlmProvider for MockLlmProvider {
             is_final: true,
             session_id: None,
             channel: AgentOutputChannel::Chat,
+            logprob: None,
         };
         Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
     }

@@ -4,9 +4,8 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-savant_core = { path = "../core" }
-savant_skills = { path = "../skills" }
-savant_agent = { path = "../agent" }
+savant_core = { workspace = true }
+savant_skills = { workspace = true }
 axum = { version = "0.7", features = ["ws", "macros"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-tungstenite = "0.21"

@@ -15,6 +15,9 @@ pub struct WorkingBuffer {
     pub recent_corrections: Vec<String>,
     pub agent_preferences: std::collections::HashMap<String, String>,
     pub last_pulse_hash: Option<u64>,
+    pub current_lens_index: usize,
+    pub last_reflection_hashes: Vec<u64>,
+    pub ald_watermark: u64,
 }
 
 pub struct ProactivePartner {

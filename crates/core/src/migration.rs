@@ -60,6 +60,7 @@ impl From<LegacyMessage> for ChatMessage {
         };
 
         ChatMessage {
+            is_telemetry: false,
             role,
             content: legacy.content,
             sender: Some(legacy.sender),

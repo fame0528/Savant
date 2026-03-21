@@ -5,10 +5,10 @@ use axum::{
         ws::{Message, WebSocket},
         Path, State, WebSocketUpgrade,
     },
-    http::header,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Router,
+    Json, Router,
 };
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
@@ -56,6 +56,12 @@ pub async fn start_gateway(
     let app = Router::new()
         .route("/ws", get(websocket_handler))
         .route("/api/agents/:name/image", get(agent_image_handler))
+        .route(
+            "/api/settings",
+            get(settings_get_handler).post(settings_post_handler),
+        )
+        .route("/api/settings/reset", get(settings_reset_handler).post(settings_reset_handler))
+        .route("/api/models", get(models_get_handler))
         .route("/live", get(|| async { "OK" }))
         .route("/ready", get(|| async { "OK" }))
         .with_state(state);
@@ -185,6 +191,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                 "chat.message" | "chat.chunk" => {
                     // Protocol is already standardized at the Agent layer
                 }
+                t if t.starts_with("system.") => {
+                    // System-wide configuration or status updates
+                }
                 t if t.starts_with("session.") => {
                     let parts: Vec<&str> = t.split('.').collect();
                     outbound_event.event_type = parts.get(2).unwrap_or(&"response").to_string();
@@ -213,6 +222,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                     &outbound_event.payload,
                 ) {
                     let msg = savant_core::types::ChatMessage {
+                        is_telemetry: false,
                         role: savant_core::types::ChatRole::System,
                         content: format!("Insight: {}", learning.content),
                         sender: Some("ALD".to_string()),
@@ -235,6 +245,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                 }
             };
             let _ = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await;
+        }
+    });
+
+    // 5b. Debug Log Forwarding Task — streams tracing output to dashboard
+    let out_tx = outgoing_tx.clone();
+    let mut debug_log_task = tokio::spawn(async move {
+        let mut log_rx = savant_core::bus::subscribe_debug_logs();
+        while let Ok(log_msg) = log_rx.recv().await {
+            let event = savant_core::types::EventFrame {
+                event_type: "debug.log".to_string(),
+                payload: serde_json::json!({ "message": log_msg }).to_string(),
+            };
+            if let Ok(msg) = serde_json::to_string(&event) {
+                let _ = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await;
+            }
         }
     });
 
@@ -280,6 +305,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     tokio::select! {
         _ = (&mut lane_fwd_task) => {},
         _ = (&mut telemetry_task) => {},
+        _ = (&mut debug_log_task) => {},
         _ = (&mut send_task) => {},
         _ = (&mut recv_task) => {},
     }
@@ -287,6 +313,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     // 9. Cleanup
     lane_fwd_task.abort();
     telemetry_task.abort();
+    debug_log_task.abort();
     send_task.abort();
     recv_task.abort();
     state.sessions.remove(&session_id);
@@ -336,7 +363,7 @@ async fn agent_image_handler(
         }
     }
 
-    let workspaces_dir = std::path::PathBuf::from(&state.config.system.agents_path);
+    let workspaces_dir = state.config.resolve_path(&state.config.system.agents_path);
     let workspace_path = workspaces_dir.join(format!("workspace-{}", name_lower));
     let candidates = ["avatar.png", "avatar.jpg", "avatar.jpeg", "agentimg.png"];
 
@@ -397,6 +424,203 @@ async fn agent_image_handler(
                 .body(axum::body::Body::empty())
                 .unwrap()
         })
+}
+
+/// GET /api/settings - Returns current system settings
+async fn settings_get_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let config = &state.config;
+    let agents_dir = std::path::PathBuf::from(&config.system.agents_path);
+
+    // Find first agent's model config
+    let mut chat_model = String::new();
+    let embedding_model =
+        std::env::var("OLLAMA_EMBED_MODEL").unwrap_or_else(|_| "qwen3-embedding:4b".to_string());
+    let vision_model =
+        std::env::var("OLLAMA_VISION_MODEL").unwrap_or_else(|_| "qwen3-vl".to_string());
+
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            let agent_json = entry.path().join("agent.json");
+            if agent_json.exists() {
+                if let Ok(content) = std::fs::read_to_string(&agent_json) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                        chat_model = json["model"].as_str().unwrap_or("").to_string();
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    let ollama_url =
+        std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
+
+    let settings = serde_json::json!({
+        "chat_model": chat_model,
+        "embedding_model": embedding_model,
+        "vision_model": vision_model,
+        "ollama_url": ollama_url,
+        "gateway_port": config.server.port,
+        "agents_path": config.system.agents_path,
+        "db_path": config.system.db_path,
+        "temperature": config.ai.temperature,
+        "top_p": config.ai.top_p,
+        "frequency_penalty": config.ai.frequency_penalty,
+        "presence_penalty": config.ai.presence_penalty,
+    });
+
+    Json(settings)
+}
+
+/// POST /api/settings - Updates system settings
+#[derive(serde::Deserialize)]
+struct SettingsUpdate {
+    #[serde(default)]
+    chat_model: Option<String>,
+    #[serde(default)]
+    vision_model: Option<String>,
+    #[serde(default)]
+    temperature: Option<f32>,
+    #[serde(default)]
+    top_p: Option<f32>,
+    #[serde(default)]
+    frequency_penalty: Option<f32>,
+    #[serde(default)]
+    presence_penalty: Option<f32>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    ollama_url: Option<String>,
+}
+
+async fn settings_post_handler(
+    State(state): State<Arc<GatewayState>>,
+    Json(update): Json<SettingsUpdate>,
+) -> impl IntoResponse {
+    let mut config = match savant_core::config::Config::load() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": e.to_string()}))).into_response(),
+    };
+
+    // 1. Update Chat Model (Agent-specific)
+    if let Some(model) = update.chat_model {
+        let agents_dir = std::path::PathBuf::from(&state.config.system.agents_path);
+        if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+            for entry in entries.flatten() {
+                let agent_json = entry.path().join("agent.json");
+                if agent_json.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&agent_json) {
+                        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            json["model"] = serde_json::Value::String(model.clone());
+                            if let Ok(updated) = serde_json::to_string_pretty(&json) {
+                                let _ = std::fs::write(&agent_json, updated);
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // 2. AAA Validation & Range Clamping (Guardian Layer)
+    let mut changed = false;
+    let mut validation_notes = Vec::new();
+
+    if let Some(v) = update.vision_model { 
+        config.ai.manifestation_model = Some(v); 
+        changed = true; 
+    }
+
+    if let Some(v) = update.temperature {
+        let clamped = v.clamp(0.0, 2.0);
+        if (clamped - v).abs() > f32::EPSILON {
+            validation_notes.push(format!("Temperature clamped from {} to {}", v, clamped));
+        }
+        config.ai.temperature = clamped;
+        changed = true;
+    }
+
+    if let Some(v) = update.top_p {
+        let clamped = v.clamp(0.0, 1.0);
+        if (clamped - v).abs() > f32::EPSILON {
+            validation_notes.push(format!("Top P clamped from {} to {}", v, clamped));
+        }
+        config.ai.top_p = clamped;
+        changed = true;
+    }
+
+    if let Some(v) = update.frequency_penalty {
+        let clamped = v.clamp(-2.0, 2.0);
+        if (clamped - v).abs() > f32::EPSILON {
+            validation_notes.push(format!("Frequency Penalty clamped from {} to {}", v, clamped));
+        }
+        config.ai.frequency_penalty = clamped;
+        changed = true;
+    }
+
+    if let Some(v) = update.presence_penalty {
+        let clamped = v.clamp(-2.0, 2.0);
+        if (clamped - v).abs() > f32::EPSILON {
+            validation_notes.push(format!("Presence Penalty clamped from {} to {}", v, clamped));
+        }
+        config.ai.presence_penalty = clamped;
+        changed = true;
+    }
+
+    if changed {
+        let config_path = savant_core::config::Config::primary_config_path();
+        if let Err(e) = config.save(&config_path) {
+            tracing::error!("❌ Failed to save config: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": e.to_string()}))).into_response();
+        }
+        
+        // Notify the Swarm via Nexus
+        let _ = state.nexus.publish("system.config.updated", &serde_json::json!({
+            "section": "ai",
+            "notes": validation_notes
+        }).to_string()).await;
+    }
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "notes": validation_notes
+    })).into_response()
+}
+
+/// Restores AI configuration to system defaults
+async fn settings_reset_handler(
+    State(state): State<Arc<GatewayState>>,
+) -> impl IntoResponse {
+    let mut config = match savant_core::config::Config::load() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": e.to_string()}))).into_response(),
+    };
+
+    // Apply defaults from savant_core::config::AiConfig::default()
+    config.ai = savant_core::config::AiConfig::default();
+
+    let config_path = savant_core::config::Config::primary_config_path();
+    if let Err(e) = config.save(&config_path) {
+        tracing::error!("❌ Failed to reset config: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": e.to_string()}))).into_response();
+    }
+
+    // Notify the Swarm
+    let _ = state.nexus.publish("system.config.reset", &serde_json::json!({"section": "ai"}).to_string()).await;
+
+    Json(serde_json::json!({"status": "ok", "message": "Settings restored to system defaults"})).into_response()
+}
+
+/// Returns the list of available models and parameter descriptors
+async fn models_get_handler() -> impl IntoResponse {
+    let parameter_descriptors = savant_core::types::LlmParams::get_parameter_descriptors();
+    
+    // For now, we return the descriptors. We could also include the provider list 
+    // but the Tuning page primarily needs the descriptors.
+    Json(serde_json::json!({
+        "status": "ok",
+        "parameter_descriptors": parameter_descriptors
+    })).into_response()
 }
 
 #[cfg(test)]

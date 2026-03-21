@@ -1,4 +1,4 @@
-use crate::config::ProactiveConfig;
+use crate::config::{ProactiveConfig, AiConfig};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -190,6 +190,18 @@ pub struct ChatMessage {
     pub session_id: Option<SessionId>, // AAA: Unified Context Harmony Anchor
     #[serde(default)]
     pub channel: AgentOutputChannel, // AAA: Consolidated Lane Isolation
+    /// Marks non-dialogue messages (heartbeat reflections, system telemetry)
+    /// that should go to the insights panel instead of the main chat.
+    #[serde(default)]
+    pub is_telemetry: bool,
+}
+
+/// Native provider tool call structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 /// A streaming chunk of a chat message
@@ -203,6 +215,18 @@ pub struct ChatChunk {
     pub session_id: Option<SessionId>,
     #[serde(default)]
     pub channel: AgentOutputChannel,
+    /// AAA: Shannon Entropy Logprob (Truth Verification)
+    #[serde(default)]
+    pub logprob: Option<f32>,
+    /// Marks non-dialogue chunks (thoughts, telemetry) for dashboard routing
+    #[serde(default)]
+    pub is_telemetry: bool,
+    /// Reasoning/thinking content from models that return it in a separate field
+    #[serde(default)]
+    pub reasoning: Option<String>,
+    /// Native tool calls provided out-of-band
+    #[serde(default)]
+    pub tool_calls: Option<Vec<ProviderToolCall>>,
 }
 
 /// Strict Output Channels for Sovereign Lane Isolation
@@ -251,6 +275,7 @@ pub struct AgentIdentity {
     pub expertise: Vec<String>,
     pub ethics: Option<String>,
     pub image: Option<String>, // Base64 or URL to agentimg.png
+    pub internal_settings: Option<std::collections::HashMap<String, String>>, // Dynamic session/agent settings
 }
 
 /// Agent Configuration
@@ -301,9 +326,17 @@ pub struct LlmParams {
     #[serde(default = "LlmParams::default_max_tokens")]
     pub max_tokens: u32,
 
+    /// Request logprobs for entropy calculation
+    #[serde(default)]
+    pub logprobs: bool,
+
     /// Stop sequences
     #[serde(default)]
     pub stop: Vec<String>,
+
+    /// AAA: JWT Secret for knowledge signing (Entropy-Arbiter)
+    #[serde(default)]
+    pub jwt_secret: Option<String>,
 }
 
 impl LlmParams {
@@ -311,28 +344,46 @@ impl LlmParams {
         0.7
     }
     fn default_top_p() -> f32 {
-        1.0
+        0.9
     }
     fn default_frequency_penalty() -> f32 {
-        0.0
+        0.2
     }
     fn default_presence_penalty() -> f32 {
-        0.0
+        0.1
     }
     fn default_max_tokens() -> u32 {
-        4096
+        256000
     }
 }
 
 impl Default for LlmParams {
     fn default() -> Self {
         Self {
-            temperature: 0.7,
-            top_p: 1.0,
-            frequency_penalty: 0.0,
-            presence_penalty: 0.0,
-            max_tokens: 4096,
+            temperature: Self::default_temperature(),
+            top_p: Self::default_top_p(),
+            frequency_penalty: Self::default_frequency_penalty(),
+            presence_penalty: Self::default_presence_penalty(),
+            max_tokens: Self::default_max_tokens(),
+            logprobs: false,
             stop: Vec::new(),
+            jwt_secret: None,
+        }
+    }
+}
+
+impl LlmParams {
+    /// Creates LLM parameters from a global AI configuration.
+    pub fn from_config(config: &AiConfig) -> Self {
+        Self {
+            temperature: config.temperature,
+            top_p: config.top_p,
+            frequency_penalty: config.frequency_penalty,
+            presence_penalty: config.presence_penalty,
+            max_tokens: config.max_tokens,
+            logprobs: false,
+            stop: Vec::new(),
+            jwt_secret: None,
         }
     }
 }
@@ -478,7 +529,16 @@ impl LlmParams {
 /// On-disk config file format for per-agent settings
 /// This is what users edit in agent.config.json
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentFileConfig {
+    /// Optional legacy agent ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
+    /// Optional legacy agent name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+
     /// Override the model (e.g., "anthropic/claude-3-opus", "openai/gpt-4o")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -521,8 +581,7 @@ impl AgentFileConfig {
     pub fn load(workspace_path: &std::path::Path) -> Result<Self, serde_json::Error> {
         let config_path = workspace_path.join("agent.config.json");
         if config_path.exists() {
-            let content =
-                std::fs::read_to_string(&config_path).map_err(serde_json::Error::io)?;
+            let content = std::fs::read_to_string(&config_path).map_err(serde_json::Error::io)?;
             serde_json::from_str(&content)
         } else {
             Ok(Self::default())
@@ -538,6 +597,12 @@ impl AgentFileConfig {
 
     /// Apply file config on top of base AgentConfig
     pub fn apply_to(&self, base: &mut AgentConfig) {
+        if let Some(ref id) = self.agent_id {
+            base.agent_id = id.clone();
+        }
+        if let Some(ref name) = self.agent_name {
+            base.agent_name = name.clone();
+        }
         if let Some(ref model) = self.model {
             base.model = Some(model.clone());
         }
@@ -627,6 +692,8 @@ pub enum ExecutionMode {
     LegacyNative(String),
     /// Docker container execution with full isolation
     DockerContainer(String),
+    /// Loaded as context, not executed
+    Reference,
 }
 
 /// Explicit permission declarations to prevent silent data exfiltration
@@ -743,6 +810,7 @@ mod tests {
     #[test]
     fn chat_message_defaults() {
         let msg = ChatMessage {
+            is_telemetry: false,
             role: ChatRole::User,
             content: "hi".into(),
             sender: None,
@@ -760,6 +828,7 @@ mod tests {
     #[test]
     fn chat_message_roundtrip() {
         let msg = ChatMessage {
+            is_telemetry: false,
             role: ChatRole::Assistant,
             content: "Response".into(),
             sender: Some("agent-1".into()),

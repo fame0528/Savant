@@ -173,6 +173,7 @@ impl AgentMessage {
             MessageRole::Tool => ChatRole::Assistant,
         };
         ChatMessage {
+            is_telemetry: false,
             role,
             content: self.content.clone(),
             sender: None,
@@ -352,10 +353,7 @@ impl ContextCacheBlock {
         }
 
         let mut block = String::from("<context_cache>\n");
-        block.push_str(&format!(
-            "Relevant memories for: {}\n\n",
-            self.query_intent
-        ));
+        block.push_str(&format!("Relevant memories for: {}\n\n", self.query_intent));
 
         for (i, memory) in self.retrieved_memories.iter().enumerate() {
             block.push_str(&format!(

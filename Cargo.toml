@@ -13,6 +13,7 @@ members = [
     "crates/memory", "crates/panopticon",
     "crates/security",
     "crates/echo",
+    "crates/desktop/src-tauri",
 ]
 resolver = "2"
 
@@ -32,7 +33,7 @@ rusqlite = { version = "0.38.0", features = ["chrono"] }
 futures = "0.3"
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws", "macros"] }
-fjall = "3.1.0"
+cortexadb-core = { path = "lib/cortexadb/crates/cortexadb-core" }
 rkyv = { version = "0.8.15", features = ["bytecheck", "little_endian", "unaligned"] }
 ruvector-core = "2.0.5"
 bytecheck = "0.8.0"
@@ -46,6 +47,11 @@ savant_echo = { path = "crates/echo" }
 savant_cognitive = { path = "crates/cognitive" }
 savant_ipc = { path = "crates/ipc" }
 savant_agent = { path = "crates/agent" }
+savant_mcp = { path = "crates/mcp" }
+savant_security = { path = "crates/security" }
+savant_channels = { path = "crates/channels" }
+savant_canvas = { path = "crates/canvas" }
+savant_panopticon = { path = "crates/panopticon" }
 dashmap = "6.1.0"
 libc = "0.2"
 num_cpus = "1.16"

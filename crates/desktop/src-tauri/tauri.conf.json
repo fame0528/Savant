@@ -1,0 +1,53 @@
+{
+  "build": {
+    "beforeDevCommand": "npm --prefix C:/Users/spenc/dev/Savant/dashboard run dev",
+    "beforeBuildCommand": "set TAURI_BUILD=1 && npm --prefix C:/Users/spenc/dev/Savant/dashboard run build",
+    "devPath": "http://localhost:3000",
+    "distDir": "../../../dashboard/out"
+  },
+  "package": {
+    "productName": "Savant",
+    "version": "0.0.1"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": true
+    },
+    "bundle": {
+      "active": true,
+      "category": "DeveloperTool",
+      "copyright": "2026 Savant",
+      "externalBin": [],
+      "icon": [
+        "icons/32x32.png",
+        "icons/64x64.png",
+        "icons/128x128@2x.png",
+        "icons/icon.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "identifier": "com.savant.app",
+      "longDescription": "Autonomous Agent Swarm Orchestrator with memory layer and local embeddings.",
+      "resources": [],
+      "shortDescription": "Savant AI Assistant",
+      "targets": "all"
+    },
+    "security": {
+      "csp": null
+    },
+    "systemTray": {
+      "iconPath": "icons/icon.ico",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": false
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "height": 800,
+        "resizable": true,
+        "title": "Savant Swarm Dashboard",
+        "width": 1200
+      }
+    ]
+  }
+}

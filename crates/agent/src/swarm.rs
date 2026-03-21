@@ -14,8 +14,10 @@ use reqwest::Client;
 use savant_core::bus::NexusBridge;
 use savant_core::db::Storage;
 use savant_core::error::SavantError;
-use savant_core::traits::{LlmProvider, MemoryBackend, Tool};
+use savant_core::traits::{EmbeddingProvider, LlmProvider, MemoryBackend, Tool, VisionProvider};
 use savant_core::types::{AgentConfig, ModelProvider};
+use savant_core::utils::ollama_embeddings::create_embedding_service;
+use savant_core::utils::ollama_vision::create_vision_service;
 use savant_core::utils::parsing;
 use savant_ipc::{CollectiveBlackboard, SwarmBlackboard};
 use savant_memory::{AsyncMemoryBackend, MemoryEngine};
@@ -69,6 +71,8 @@ pub struct SwarmController {
     handles: Mutex<HashMap<String, (JoinHandle<()>, CancellationToken)>>,
     tools: Arc<HashMap<String, Arc<dyn Tool>>>,
     engine: Arc<MemoryEngine>,
+    embedding_service: Option<Arc<dyn EmbeddingProvider>>,
+    vision_service: Option<Arc<dyn VisionProvider>>,
     #[allow(dead_code)]
     blackboard: Arc<SwarmBlackboard>,
     root_authority: ed25519_dalek::VerifyingKey,
@@ -111,6 +115,33 @@ impl SwarmController {
         let engine = MemoryEngine::with_defaults(&config.memory_db_path).map_err(|e| {
             savant_core::error::SavantError::Unknown(format!("Failed to init memory engine: {}", e))
         })?;
+
+        // 2.5. Initialize Embedding Service (Ollama qwen3-embedding:4b, fastembed fallback)
+        let embedding_service = match create_embedding_service().await {
+            Ok(svc) => {
+                tracing::info!("Embedding service initialized ({} dims)", svc.dimensions());
+                Some(Arc::from(svc))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to init embedding service: {}. Semantic search disabled.",
+                    e
+                );
+                None
+            }
+        };
+
+        // 2.6. Initialize Vision Service (Ollama qwen3-vl)
+        let vision_service = match create_vision_service().await {
+            Some(svc) => {
+                tracing::info!("Vision service initialized (qwen3-vl)");
+                Some(Arc::from(svc))
+            }
+            None => {
+                tracing::warn!("Vision service unavailable. Image understanding disabled.");
+                None
+            }
+        };
 
         // 3. Initialize Shared Blackboard (Zero-Copy IPC)
         let blackboard = Arc::new(SwarmBlackboard::new(&config.blackboard_name).map_err(|e| {
@@ -159,6 +190,8 @@ impl SwarmController {
             handles: Mutex::new(HashMap::new()),
             tools,
             engine,
+            embedding_service,
+            vision_service,
             blackboard,
             root_authority,
             signing_key,
@@ -207,6 +240,8 @@ impl SwarmController {
         let client = self.client.clone();
         let tools = self.tools.clone();
         let engine = Arc::clone(&self.engine);
+        let embedding_service = self.embedding_service.clone();
+        let vision_service = self.vision_service.clone();
         let root_authority = self.root_authority; // VerifyingKey is Copy, so this is a copy.
         let signing_key = self.signing_key.clone();
         let pqc_authority = self.pqc_authority;
@@ -229,29 +264,28 @@ impl SwarmController {
 
         let handle = tokio::spawn(async move {
             let mut agent_cfg = agent_cfg;
-            // Automated .env sync logic
+            // Master key resolution - reads from process env, not agent config
             if agent_cfg.api_key.is_none() {
-                if let Some(master_key) = agent_cfg.env_vars.get("OR_MASTER_KEY") {
-                    let env_path = agent_cfg.workspace_path.join(".env");
+                if let Ok(master_key) = std::env::var("OR_MASTER_KEY") {
+                    tracing::info!(
+                        "[{}] OR_MASTER_KEY found, creating derivative key",
+                        agent_name
+                    );
                     match OpenRouterMgmt::new(master_key.clone())
                         .create_key(&agent_name)
                         .await
                     {
                         Ok(derivative_key) => {
-                            let _ = std::fs::write(
-                                &env_path,
-                                format!("OPENROUTER_API_KEY={}\n", derivative_key),
-                            );
+                            tracing::info!("[{}] Derivative key created successfully", agent_name);
                             agent_cfg.api_key = Some(derivative_key);
                         }
-                        Err(_) => {
-                            let _ = std::fs::write(
-                                &env_path,
-                                format!("OPENROUTER_API_KEY={}\n", master_key),
-                            );
+                        Err(e) => {
+                            tracing::error!("[{}] Key creation failed: {}", agent_name, e);
                             agent_cfg.api_key = Some(master_key.clone());
                         }
                     }
+                } else {
+                    tracing::warn!("[{}] OR_MASTER_KEY not found in environment", agent_name);
                 }
             }
 
@@ -452,7 +486,11 @@ impl SwarmController {
                 .collect();
 
             // Create async memory backend from the shared engine
-            let inner_backend = Arc::new(AsyncMemoryBackend::new(engine));
+            let inner_backend = if let Some(ref emb) = embedding_service {
+                Arc::new(AsyncMemoryBackend::with_embeddings(engine, emb.clone()))
+            } else {
+                Arc::new(AsyncMemoryBackend::new(engine))
+            };
 
             // Wrap in FileLoggingMemoryBackend to fulfill Perfection Loop requirements
             let memory_backend: Arc<dyn MemoryBackend> =
@@ -472,11 +510,12 @@ impl SwarmController {
             )));
 
             // 🌌 Universal Autonomy Protocol: All agents are granted Foundation Sovereignty
-            agent_tools.push(Arc::new(crate::tools::FoundationTool::new()));
-            agent_tools.push(Arc::new(crate::tools::FileMoveTool));
-            agent_tools.push(Arc::new(crate::tools::FileDeleteTool));
-            agent_tools.push(Arc::new(crate::tools::FileAtomicEditTool));
-            agent_tools.push(Arc::new(crate::tools::FileCreateTool));
+            agent_tools.push(Arc::new(crate::tools::FoundationTool::new(agent_cfg.workspace_path.clone())));
+            agent_tools.push(Arc::new(crate::tools::FileMoveTool::new(agent_cfg.workspace_path.clone())));
+            agent_tools.push(Arc::new(crate::tools::FileDeleteTool::new(agent_cfg.workspace_path.clone())));
+            agent_tools.push(Arc::new(crate::tools::FileAtomicEditTool::new(agent_cfg.workspace_path.clone())));
+            agent_tools.push(Arc::new(crate::tools::FileCreateTool::new(agent_cfg.workspace_path.clone())));
+            agent_tools.push(Arc::new(crate::tools::SettingsTool::new()));
             agent_tools.push(Arc::new(crate::tools::SovereignShell::new()));
             agent_tools.push(Arc::new(crate::tools::TaskMatrixTool::new(
                 agent_cfg.workspace_path.clone(),
@@ -535,10 +574,17 @@ impl SwarmController {
                 memory_backend,
                 agent_tools,
                 agent_cfg.identity.clone().unwrap_or_default(),
+                agent_cfg.system_prompt.clone(),
             )
             .with_echo(echo_registry, echo_metrics, echo_host)
             .with_collective(collective, agent_index)
             .with_plugins(plugin_host, Vec::new(), token);
+
+            let agent_loop = if let Some(vision) = vision_service {
+                agent_loop.with_vision(vision)
+            } else {
+                agent_loop
+            };
 
             tracing::info!("Agent {} background pulse ignited.", agent_cfg.agent_name);
 
@@ -593,4 +639,9 @@ impl SwarmController {
     pub fn nexus(&self) -> Arc<NexusBridge> {
         self.nexus.clone()
     }
+
+    pub async fn active_agents_count(&self) -> usize {
+        self.handles.lock().await.len()
+    }
 }
+// force recompile

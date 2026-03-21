@@ -1,60 +1,70 @@
-# Savant Session Summary — 2026-03-19
+# Savant Session Summary — 2026-03-20
 
-## Mission: Implement All 7 Memory System Features
+## Mission: Fix Dashboard, Agent Discovery, and Diary System
 
-### Status: ✅ ALL 7 FEATURES COMPLETE — 389 TESTS PASSING
+### Status: 🔧 IN PROGRESS — BUILD COMPILES, RUNTIME CONFLICT
 
 ---
 
 ## What Was Implemented
 
-### Sprint A: Quick Wins
-1. **Auto-Recall Injection** — `auto_recall()` in AsyncMemoryBackend, ContextCacheBlock with `<context_cache>` injection in ContextAssembler
-2. **Bi-Temporal Tracking** — `TemporalMetadata` struct (separate Fjall keyspace), `semantic_search_temporal()` filtering active facts
-3. **Daily Ops Logs** — `DailyLog` with append/read/rotate, markdown format, 500 token cap
+### 1. Agent Discovery Fix
+- Updated `workspaces/workspace-savant/agent.json` with proper agent_name
+- Agent now displays as "Savant" in dashboard sidebar
 
-### Sprint B: Swarm
-4. **Hive-Mind Notifications** — `NotificationChannel` with `tokio::sync::broadcast`, triggers on `index_memory()` when importance >= 7
+### 2. Universal Diary System
+- Added "Private Diary System" to AGENTS.md template
+- Added "19. PRIVATE DIARY SYSTEM" to SOUL.md template
+- Updated scaffold_workspace to include diary system for ALL new agents
+- Diary system is now universal for 100+ agent scalability
 
-### Sprint C: Advanced
-5. **DAG Session Compaction** — `DagNode` struct, `dag_nodes` keyspace, `store/load/fetch_message_by_id()` for reversible compaction
-6. **Personality-Driven Promotion** — `PromotionEngine` with OCEAN trait scalars, scoring algorithm, promote/archive decisions
-7. **Entity Extraction** — Rule-based `EntityExtractor` with 5 entity types (project, service, credential, file, config)
+### 3. Free-Form Reflections
+- Changed record_learning() to write to LEARNINGS.md (free-form)
+- Previously wrote to JSONL (structured, constrained writing)
+- Preserves authentic internal monologue and emergent behavior
+- Format: `### Learning (TIMESTAMP)\n[free-form content]`
 
-### New Test Count
-- **59 memory tests** (up from 42)
-- **389 total workspace tests** (up from 370+)
+### 4. LEARNINGS.md Parser
+- Created parser module to convert LEARNINGS.md → JSONL
+- Enables dashboard display without constraining agent's writing
+- Integrated into memory consolidation process
+- Archives old JSONL when >500KB
 
----
-
-## Files Created
-- `crates/memory/src/daily_log.rs` — 185 lines, 5 tests
-- `crates/memory/src/notifications.rs` — 130 lines, 5 tests
-- `crates/memory/src/promotion.rs` — 195 lines, 7 tests
-- `crates/memory/src/entities.rs` — 175 lines, 6 tests
-
-## Files Modified
-- `crates/memory/src/models.rs` — Added AutoRecallConfig, ContextCacheBlock, TemporalMetadata, DagNode
-- `crates/memory/src/lsm_engine.rs` — Added temporal_ks, dag_ks, temporal methods, DAG methods, fetch_message_by_id()
-- `crates/memory/src/engine.rs` — Added NotificationChannel, subscribe_notifications(), semantic_search_temporal()
-- `crates/memory/src/async_backend.rs` — Added auto_recall() method
-- `crates/agent/src/context.rs` — Added with_auto_recall() injection
-- `crates/memory/src/lib.rs` — 4 new modules exported
+### 5. Dashboard Fixes (from previous session)
+- Fixed OpenRouter key exchange (/api/v1/keys endpoint)
+- Updated soul manifest template to match SOUL.md structure
+- Fixed editor CSS for scrolling
+- Updated config to stepfun/step-3.5-flash:free
 
 ---
 
-## Git
-- Commit: `cc412a8`
-- 14 files changed, +1611 / -13 lines
-- Pushed: ✅
+## Build Status
+
+**Rust Compilation:** ✅ SUCCESS (no errors, only warnings)
+**Tauri Launch:** ❌ WebView2 resource conflict
+
+Error: `0x800700AA - The requested resource is in use`
+
+**Fix Required:**
+1. Close existing Tauri app windows
+2. Kill running savant-desktop.exe processes
+3. Restart: `cd crates/desktop/src-tauri && cargo tauri dev`
 
 ---
 
-## What's Next
-- Gap analysis features (Voice Interface, Easter eggs) — deferred
-- Dashboard integration for new memory features (auto-recall status, entity browser)
-- Performance tuning (batch embeddings, Fjall cache config)
+## Pending Work
+
+- [ ] Test dashboard connection
+- [ ] Verify agent discovery
+- [ ] Verify diary system
+- [ ] Fix webview conflict
+- [ ] Update IMPLEMENTATION-TRACKER.md
 
 ---
 
-*Session: 2026-03-19. Research → Plan → Perfection Loop (5 iterations) → Implement → 389 tests passing.*
+## Notes
+
+- User going to bed
+- No git push without permission
+- All changes local only
+- Build compiles successfully

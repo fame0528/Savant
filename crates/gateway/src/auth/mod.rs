@@ -412,6 +412,7 @@ mod tests {
         // Test with ChatMessage payload
         let payload =
             savant_core::types::RequestPayload::ChatMessage(savant_core::types::ChatMessage {
+                is_telemetry: false,
                 role: savant_core::types::ChatRole::User,
                 content: "hello".to_string(),
                 sender: None,

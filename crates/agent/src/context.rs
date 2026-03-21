@@ -6,16 +6,23 @@ pub struct ContextAssembler {
     identity: AgentIdentity,
     budget: TokenBudget,
     skills_list: Option<String>,
+    substrate_prompt: String,
     auto_recall_block: Option<String>,
 }
 
 impl ContextAssembler {
     /// Creates a new ContextAssembler.
-    pub fn new(identity: AgentIdentity, budget: TokenBudget, skills_list: Option<String>) -> Self {
+    pub fn new(
+        identity: AgentIdentity,
+        budget: TokenBudget,
+        skills_list: Option<String>,
+        substrate_prompt: String,
+    ) -> Self {
         Self {
             identity,
             budget,
             skills_list,
+            substrate_prompt,
             auto_recall_block: None,
         }
     }
@@ -30,12 +37,11 @@ impl ContextAssembler {
     pub fn assemble_system_prompt(&self) -> String {
         let mut prompt = String::new();
 
-        // Operational Preamble: Establish agent role and capabilities
-        prompt.push_str("You are the SAVANT agent, a Rust-native autonomous assistant. \
-            You have access to tools for filesystem operations (read, write, move, delete), \
-            shell commands, and memory management. Use these tools to accomplish tasks. \
-            When a user requests an action, use the appropriate tool with the correct format. \
-            Always prefer using tools over refusing tasks within your capability scope.\n\n");
+        // 0. Substrate Operational Directive (The House Rules)
+        prompt.push_str(&format!(
+            "SUBSTRATE OPERATIONAL DIRECTIVE:\n{}\n\n",
+            self.substrate_prompt
+        ));
 
         // 1. Identity & Vibe (IDENTITY.md)
         if let Some(metadata) = &self.identity.metadata {
@@ -68,6 +74,23 @@ impl ContextAssembler {
             prompt.push_str(&format!("ETHICS & CONSTRAINTS:\n{}\n\n", ethics));
         }
 
+        // 4.5. Coding skills are hot-loaded on demand, not embedded in system prompt
+
+        // 4.6. Universal Perfection Loop (Toggleable via Settings)
+        let perfection_enabled = self
+            .identity
+            .internal_settings
+            .as_ref()
+            .and_then(|m| m.get("perfection_loop"))
+            .map(|v| v != "false")
+            .unwrap_or(true); // Default to true
+
+        if perfection_enabled {
+            prompt.push_str("AUTONOMOUS PERFECTION LOOP (ACTIVE):\n");
+            prompt.push_str(crate::prompts::PERFECTION_LOOP);
+            prompt.push_str("\n\n");
+        }
+
         prompt.push_str(&format!(
             "OPERATIONAL LIMITS:\n- Token Budget: {} / {}\n\n",
             self.budget.used, self.budget.limit
@@ -79,9 +102,13 @@ impl ContextAssembler {
             prompt.push_str("To call a tool, use this exact format in your response:\n");
             prompt.push_str("Action: tool_name{\"key\": \"value\"}\n\n");
             prompt.push_str("Examples:\n");
-            prompt.push_str("  Action: foundation{\"action\": \"read\", \"path\": \"src/main.rs\"}\n");
+            prompt.push_str(
+                "  Action: foundation{\"action\": \"read\", \"path\": \"src/main.rs\"}\n",
+            );
             prompt.push_str("  Action: foundation{\"action\": \"ls\", \"path\": \".\"}\n");
-            prompt.push_str("  Action: file_create{\"path\": \"new_file.txt\", \"content\": \"Hello world\"}\n");
+            prompt.push_str(
+                "  Action: file_create{\"path\": \"new_file.txt\", \"content\": \"Hello world\"}\n",
+            );
             prompt.push_str("  Action: file_move{\"from\": \"old.txt\", \"to\": \"new.txt\"}\n");
             prompt.push_str("  Action: file_delete{\"path\": \"tmp/old.log\"}\n");
             prompt.push_str("  Action: file_atomic_edit{\"path\": \"src/lib.rs\", \"replacements\": [{\"target\": \"old\", \"value\": \"new}]}\n");
@@ -97,7 +124,9 @@ impl ContextAssembler {
         }
 
         // 5. Global Constraints
-        prompt.push_str("CRITICAL: YOUR RESPONSE MUST BE IN ENGLISH ONLY. DO NOT USE ANY OTHER LANGUAGE.\n\n");
+        prompt.push_str(
+            "CRITICAL: YOUR RESPONSE MUST BE IN ENGLISH ONLY. DO NOT USE ANY OTHER LANGUAGE.\n\n",
+        );
 
         prompt
     }
@@ -107,6 +136,7 @@ impl ContextAssembler {
         let mut messages = Vec::new();
 
         messages.push(ChatMessage {
+            is_telemetry: false,
             role: ChatRole::System,
             content: self.assemble_system_prompt(),
             sender: Some("SYSTEM".to_string()),
@@ -119,8 +149,9 @@ impl ContextAssembler {
         for msg in history {
             // AAA: Channel Isolation - filter to only feed primary dialogue or relevant context
             // Recall Protection avoids feeding background telemetry or noise into the context window.
-            if msg.channel == savant_core::types::AgentOutputChannel::Chat || 
-               msg.channel == savant_core::types::AgentOutputChannel::Memory {
+            if msg.channel == savant_core::types::AgentOutputChannel::Chat
+                || msg.channel == savant_core::types::AgentOutputChannel::Memory
+            {
                 messages.push(msg);
             }
         }
@@ -148,7 +179,7 @@ mod tests {
             image: None,
         };
         let budget = TokenBudget::new(100);
-        let assembler = ContextAssembler::new(identity, budget, None);
+        let assembler = ContextAssembler::new(identity, budget, None, "House Rules.".to_string());
         let prompt = assembler.assemble_system_prompt();
 
         assert!(prompt.contains("Vibe check."));

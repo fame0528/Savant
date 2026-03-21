@@ -27,6 +27,30 @@ pub trait LlmProvider: Send + Sync {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>;
 }
 
+/// OMEGA-VIII: Semantic Embedding Provider Trait
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    /// Generates an embedding vector for the given text.
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError>;
+
+    /// Generates embeddings for multiple texts in a single batch.
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SavantError>;
+
+    /// Dimensionality of the produced embeddings.
+    fn dimensions(&self) -> usize;
+}
+
+/// Vision Model Provider Trait
+#[async_trait]
+pub trait VisionProvider: Send + Sync {
+    /// Describe an image given its base64-encoded data and a prompt.
+    async fn describe_image(&self, image_base64: &str, prompt: &str)
+        -> Result<String, SavantError>;
+
+    /// Check if the vision model is available.
+    async fn is_available(&self) -> bool;
+}
+
 /// Memory Backend Trait (LSM-tree / Vector / KV)
 #[async_trait]
 pub trait MemoryBackend: Send + Sync {
@@ -65,6 +89,12 @@ impl<M: MemoryBackend + ?Sized> MemoryBackend for std::sync::Arc<M> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolDomain {
+    Orchestrator,
+    Container,
+}
+
 /// Tool/Capability Trait (OpenClaw/ZeroClaw compatible)
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -79,13 +109,18 @@ pub trait Tool: Send + Sync {
         crate::types::CapabilityGrants::default()
     }
 
+    /// Primary domain this tool operates in.
+    fn domain(&self) -> ToolDomain {
+        ToolDomain::Orchestrator
+    }
+
     /// Execute the tool with a JSON payload.
     async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError>;
 }
 
 /// OMEGA-VII: Symbolic Browser Projection Trait
-/// 
-/// Decouples browser interaction from mutable state, allowing for 
+///
+/// Decouples browser interaction from mutable state, allowing for
 /// Intent-Substrate Coherence (ISC) verification.
 #[async_trait]
 pub trait SymbolicBrowser: Send + Sync {
@@ -94,10 +129,10 @@ pub trait SymbolicBrowser: Send + Sync {
 
     /// Proves that a browser action matches the intended cognitive outcome.
     async fn prove_intent_coherence(
-        &self, 
-        action: &str, 
-        selector: &str, 
-        intent_matrix: serde_json::Value
+        &self,
+        action: &str,
+        selector: &str,
+        intent_matrix: serde_json::Value,
     ) -> Result<bool, SavantError>;
 
     /// Executes the action on the substrate only after verification.

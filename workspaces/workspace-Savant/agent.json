@@ -1,5 +1,18 @@
 {
-  "agent_id": "7f40e1c7-604c-441b-a1b4-55d0a96da63a",
-  "created_at": 1773402450,
-  "note": "DO NOT DELETE: This file ensures your agent identity remains stable even if you rename the folder."
+  "agent_id": "savant",
+  "agent_name": "Savant",
+  "model_provider": "openrouter",
+  "model": "stepfun/step-3.5-flash:free",
+  "llm_params": {
+    "temperature": 0.7,
+    "top_p": 1.0,
+    "frequency_penalty": 0.0,
+    "presence_penalty": 0.0,
+    "max_tokens": 4096,
+    "logprobs": false,
+    "stop": [],
+    "jwt_secret": null
+  },
+  "heartbeat_interval": 60,
+  "allowed_skills": []
 }

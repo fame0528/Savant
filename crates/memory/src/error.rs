@@ -3,14 +3,13 @@
 //! All errors from the memory layer are funneled through this module
 //! to provide structured, actionable error information.
 
-use fjall::Error as FjallError;
 use ruvector_core::error::RuvectorError;
 use thiserror::Error;
 
 /// Unified error type for all memory operations.
 ///
 /// This enum covers failures from:
-/// - Fjall LSM-tree operations
+/// - CortexaDB storage operations
 /// - ruvector-core vector indexing
 /// - rkyv serialization/deserialization
 /// - Configuration and validation
@@ -58,10 +57,6 @@ pub enum MemoryError {
     /// Operation is not supported in the current configuration
     #[error("Unsupported operation: {0}")]
     Unsupported(String),
-
-    /// Underlying Fjall error
-    #[error("Fjall error: {0}")]
-    Fjall(#[from] FjallError),
 
     /// General I/O error
     #[error("I/O error: {0}")]

@@ -114,4 +114,30 @@ impl PerceptionEngine {
             )
         }
     }
+
+    /// OMEGA-VIII: High-Fidelity Substrate Metrics (Phase 5)
+    pub fn get_substrate_metrics() -> String {
+        #[cfg(target_os = "windows")]
+        {
+            let output = Command::new("powershell")
+                .args(["-NoProfile", "-Command", "Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | ConvertTo-Json"])
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                        let free = v["FreePhysicalMemory"].as_u64().unwrap_or(0) / 1024; // KB to MB
+                        let total = v["TotalVisibleMemorySize"].as_u64().unwrap_or(0) / 1024; // KB to MB
+                        let used = total.saturating_sub(free);
+                        let usage_pct = if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 };
+                        return format!("Substrate Metrics (OS):\n- Memory: {}MB / {}MB ({:.1}%)", used, total, usage_pct);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        "Substrate metrics (OS) unavailable.".to_string()
+    }
 }

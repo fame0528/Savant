@@ -119,7 +119,7 @@ timeout /t 1 /nobreak >nul
 set /a WAIT_COUNT=%WAIT_COUNT%+1
 
 REM Try to hit the health endpoint
-curl -s -o nul -w "%%{http_code}" http://localhost:3000/live 2>nul | findstr "200" >nul
+curl -s -o nul -w "%%{http_code}" http://localhost:8080/live 2>nul | findstr "200" >nul
 if %errorlevel% equ 0 (
     set GATEWAY_READY=1
     echo Gateway is ready after %WAIT_COUNT% seconds
@@ -150,7 +150,7 @@ echo.
 echo Savant System is now running!
 echo.
 echo Dashboard:     http://localhost:3000
-echo Gateway:       ws://localhost:3000
+echo Gateway:       ws://localhost:8080/ws
 echo Logs:          .\logs\
 echo.
 echo Press any key to stop all services...

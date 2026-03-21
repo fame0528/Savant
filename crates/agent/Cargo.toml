@@ -4,14 +4,15 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-savant_core = { path = "../core" }
-savant_skills = { path = "../skills" }
-savant_mcp = { path = "../mcp" }
-savant_ipc = { path = "../ipc" }
-savant_cognitive = { path = "../cognitive" }
-savant_memory = { path = "../memory" }
-savant_security = { path = "../security" }
-savant_echo = { path = "../echo" }
+savant_core = { workspace = true }
+savant_skills = { workspace = true }
+savant_mcp = { workspace = true }
+savant_ipc = { workspace = true }
+savant_cognitive = { workspace = true }
+savant_memory = { workspace = true }
+savant_security = { workspace = true }
+savant_echo = { workspace = true }
+savant_gateway = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 zstd = "0.13"

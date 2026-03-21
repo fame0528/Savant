@@ -1,5 +1,7 @@
 pub mod embeddings;
 pub mod io;
+pub mod ollama_embeddings;
+pub mod ollama_vision;
 pub mod parsing;
 
 /// Token count utility.
@@ -7,7 +9,9 @@ pub mod parsing;
 /// Returns the number of tokens in a string using tiktoken cl100k_base encoding.
 /// Falls back to a word/character heuristic if tiktoken initialization fails.
 pub fn token_count(text: &str) -> usize {
-    if text.is_empty() { return 0; }
+    if text.is_empty() {
+        return 0;
+    }
 
     // Try tiktoken first (accurate BPE encoding)
     if let Ok(bpe) = tiktoken_rs::cl100k_base() {

@@ -31,6 +31,9 @@ impl LlmProvider for AmbiguousLlm {
             is_final: true,
             session_id: None,
             channel: AgentOutputChannel::Chat,
+            logprob: None,
+            is_telemetry: false,
+            reasoning: None,
         };
         Ok(Box::pin(futures::stream::iter(vec![Ok(chunk)])))
     }

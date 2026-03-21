@@ -1,8 +1,8 @@
 <div align="center">
   <img src="img/savant.png" alt="Savant Logo" width="180" />
-  <h1>SAVANT</h1>
+  <h1>SAVANT v1.5.0</h1>
   <p><strong>One Mind. A Thousand Faces.</strong></p>
-  <p>A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with OpenClaw skill compatibility, mandatory security scanning, and real-time dashboard observability.</p>
+  <p>A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with OMEGA-VIII certification, mandatory security scanning, and real-time substrate observability.</p>
 
   [![Rust](https://img.shields.io/badge/Rust-2021-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
   [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
@@ -227,6 +227,8 @@ Instructions and implementation details...
 | `savant_cli` | CLI entry point with --config and --keygen |
 | `savant_security` | CCT token verification, PQC signatures |
 | `savant_panopticon` | Monitoring and telemetry |
+| `savant_desktop` | Tauri-based desktop companion |
+| `savant_test_suite` | Global integration and heuristic testing |
 
 ---
 

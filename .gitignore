@@ -25,6 +25,21 @@ data/
 *.log
 *.txt
 *.tmp
+*.py
+
+# AI session exports
+session-ses_*.md
+help-*session*.md
+after-rebuild-*.md
+session_log_*.md
+
+# Build output dumps
+cargo_check*.txt
+cargo_log*.txt
+check_output*.txt
+clippy_results.json
+ollama_list.txt
+nul
 
 # Exclude generated binaries and symbols
 *.exe
@@ -40,6 +55,8 @@ data/
 .env.development.local
 .env.test.local
 .env.production.local
+**/.env
+workspaces/*/.env
 
 # IDEs
 .vscode/

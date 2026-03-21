@@ -55,10 +55,14 @@ where
 {
     Box::pin(stream! {
         let mut stream = stream;
+        let mut chunk_count = 0u32;
+        let mut tool_calls_map = std::collections::HashMap::<u64, savant_core::types::ProviderToolCall>::new();
+
         while let Some(chunk_res) = stream.next().await {
             match chunk_res {
                 Ok(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
+                    tracing::debug!("[{}] OpenRouter stream chunk ({} bytes): {}", agent_id, bytes.len(), text.chars().take(200).collect::<String>());
                     for line in text.lines() {
                         let line = line.trim();
                         if line.is_empty() { continue; }
@@ -66,9 +70,79 @@ where
                             if data == "[DONE]" { break; }
 
                             if let Ok(json) = serde_json::from_str::<Value>(data) {
-                                if let Some(content) = json["choices"][0]["delta"]["content"].as_str() {
-                                    // Filter noise
+                                let choice = &json["choices"][0];
+                                let logprob = choice["logprobs"]["content"][0]["logprob"].as_f64().map(|f| f as f32);
+
+                                // Extract reasoning/thinking from provider-level fields (2026 standard)
+                                let reasoning = choice["delta"]["reasoning"].as_str()
+                                    .or_else(|| choice["delta"]["reasoning_content"].as_str())
+                                    .map(|s| s.to_string());
+
+                                if let Some(reasoning_text) = reasoning {
+                                    if !reasoning_text.trim().is_empty() {
+                                        chunk_count += 1;
+                                        yield Ok(ChatChunk {
+                                            agent_name: agent_name.clone(),
+                                            agent_id: agent_id.clone(),
+                                            content: String::new(),
+                                            is_final: false,
+                                            session_id: None,
+                                            channel: savant_core::types::AgentOutputChannel::Chat,
+                                            logprob,
+                                            is_telemetry: true,
+                                            reasoning: Some(reasoning_text),
+                                            tool_calls: None,
+                                        });
+                                    }
+                                }
+
+                                // Handle tool calls accumulation
+                                if let Some(tool_calls_array) = choice["delta"]["tool_calls"].as_array() {
+                                    for tc in tool_calls_array {
+                                        if let Some(index) = tc["index"].as_u64() {
+                                            let entry = tool_calls_map.entry(index).or_insert_with(|| savant_core::types::ProviderToolCall {
+                                                id: tc["id"].as_str().unwrap_or("").to_string(),
+                                                name: "".to_string(),
+                                                arguments: "".to_string(),
+                                            });
+                                            if let Some(function) = tc.get("function") {
+                                                if let Some(name) = function["name"].as_str() {
+                                                    entry.name.push_str(name);
+                                                }
+                                                if let Some(args) = function["arguments"].as_str() {
+                                                    entry.arguments.push_str(args);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Check finish_reason
+                                if let Some(finish_reason) = choice["finish_reason"].as_str() {
+                                    if finish_reason == "tool_calls" {
+                                        let calls: Vec<_> = tool_calls_map.into_values().collect();
+                                        if !calls.is_empty() {
+                                            chunk_count += 1;
+                                            yield Ok(ChatChunk {
+                                                agent_name: agent_name.clone(),
+                                                agent_id: agent_id.clone(),
+                                                content: String::new(),
+                                                is_final: false,
+                                                session_id: None,
+                                                channel: savant_core::types::AgentOutputChannel::Chat,
+                                                logprob: None,
+                                                is_telemetry: false,
+                                                reasoning: None,
+                                                tool_calls: Some(calls),
+                                            });
+                                        }
+                                        tool_calls_map = std::collections::HashMap::new();
+                                    }
+                                }
+
+                                if let Some(content) = choice["delta"]["content"].as_str() {
                                     if !content.contains("OPENROUTER PROCESSING") {
+                                        chunk_count += 1;
                                         yield Ok(ChatChunk {
                                             agent_name: agent_name.clone(),
                                             agent_id: agent_id.clone(),
@@ -76,16 +150,26 @@ where
                                             is_final: false,
                                             session_id: None,
                                             channel: savant_core::types::AgentOutputChannel::Chat,
+                                            logprob,
+                                            is_telemetry: false,
+                                            reasoning: None,
+                                            tool_calls: None,
                                         });
                                     }
                                 }
+                            } else {
+                                tracing::warn!("[{}] Failed to parse OpenRouter SSE data: {}", agent_id, data.chars().take(200).collect::<String>());
                             }
                         }
                     }
                 }
-                Err(e) => yield Err(e),
+                Err(e) => {
+                    tracing::error!("[{}] OpenRouter stream error: {}", agent_id, e);
+                    yield Err(e);
+                }
             }
         }
+        tracing::info!("[{}] OpenRouter stream complete, yielded {} chunks", agent_id, chunk_count);
         yield Ok(ChatChunk {
             agent_name: agent_name.clone(),
             agent_id: agent_id.clone(),
@@ -93,6 +177,10 @@ where
             is_final: true,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
+            logprob: None,
+            is_telemetry: false,
+            reasoning: None,
+            tool_calls: None,
         });
     })
 }
@@ -122,10 +210,10 @@ impl LlmProvider for OpenAiProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.0),
-                "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.2),
+                "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.1),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -202,6 +290,11 @@ where
 {
     Box::pin(stream! {
         let mut stream = stream;
+        let mut tool_calls = Vec::new();
+        let mut current_tool_id = String::new();
+        let mut current_tool_name = String::new();
+        let mut current_tool_args = String::new();
+
         while let Some(chunk_res) = stream.next().await {
             match chunk_res {
                 Ok(bytes) => {
@@ -211,19 +304,74 @@ where
                         if line.is_empty() { continue; }
                         if let Some(data) = line.strip_prefix("data: ") {
                             if let Ok(json) = serde_json::from_str::<Value>(data) {
-                                // Anthropic format uses "type": "content_block_delta" for content
-                                if json["type"] == "content_block_delta" {
-                                    if let Some(content) = json["delta"]["text"].as_str() {
+                                if json["type"] == "content_block_start" {
+                                    if let Some(block) = json.get("content_block") {
+                                        if block["type"] == "tool_use" {
+                                            current_tool_id = block["id"].as_str().unwrap_or("").to_string();
+                                            current_tool_name = block["name"].as_str().unwrap_or("").to_string();
+                                            current_tool_args = String::new();
+                                        }
+                                    }
+                                } else if json["type"] == "content_block_delta" {
+                                    if json["delta"]["type"] == "thinking_delta" {
+                                        if let Some(thinking) = json["delta"]["thinking"].as_str() {
+                                            yield Ok(ChatChunk {
+                                                agent_name: agent_name.clone(),
+                                                agent_id: agent_id.clone(),
+                                                content: String::new(),
+                                                is_final: false,
+                                                session_id: None,
+                                                channel: savant_core::types::AgentOutputChannel::Chat,
+                                                logprob: None,
+                                                is_telemetry: true,
+                                                reasoning: Some(thinking.to_string()),
+                                                tool_calls: None,
+                                            });
+                                        }
+                                    } else if json["delta"]["type"] == "text_delta" {
+                                        if let Some(content) = json["delta"]["text"].as_str() {
+                                            yield Ok(ChatChunk {
+                                                agent_name: agent_name.clone(),
+                                                agent_id: agent_id.clone(),
+                                                content: content.to_string(),
+                                                is_final: false,
+                                                session_id: None,
+                                                channel: savant_core::types::AgentOutputChannel::Chat,
+                                                logprob: None,
+                                                is_telemetry: false,
+                                                reasoning: None,
+                                                tool_calls: None,
+                                            });
+                                        }
+                                    } else if json["delta"]["type"] == "input_json_delta" {
+                                        if let Some(partial) = json["delta"]["partial_json"].as_str() {
+                                            current_tool_args.push_str(partial);
+                                        }
+                                    }
+                                } else if json["type"] == "content_block_stop" {
+                                    if !current_tool_name.is_empty() {
+                                        tool_calls.push(savant_core::types::ProviderToolCall {
+                                            id: current_tool_id.clone(),
+                                            name: current_tool_name.clone(),
+                                            arguments: current_tool_args.clone(),
+                                        });
+                                        current_tool_name.clear();
+                                    }
+                                } else if json["type"] == "message_stop" {
+                                    if !tool_calls.is_empty() {
                                         yield Ok(ChatChunk {
                                             agent_name: agent_name.clone(),
                                             agent_id: agent_id.clone(),
-                                            content: content.to_string(),
+                                            content: String::new(),
                                             is_final: false,
                                             session_id: None,
                                             channel: savant_core::types::AgentOutputChannel::Chat,
+                                            logprob: None,
+                                            is_telemetry: false,
+                                            reasoning: None,
+                                            tool_calls: Some(std::mem::take(&mut tool_calls)),
                                         });
                                     }
-                                } else if json["type"] == "message_stop" {
                                     break;
                                 }
                             }
@@ -240,6 +388,10 @@ where
             is_final: true,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
+            logprob: None,
+            is_telemetry: false,
+            reasoning: None,
+            tool_calls: None,
         });
     })
 }
@@ -269,9 +421,9 @@ impl LlmProvider for AnthropicProvider {
                 "model": self.model,
                 "messages": messages,
                 "stream": true,
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
             }))
             .send()
             .await
@@ -330,15 +482,64 @@ impl LlmProvider for OllamaProvider {
                     Ok(bytes) => {
                         let text = String::from_utf8_lossy(&bytes);
                         if let Ok(json) = serde_json::from_str::<Value>(&text) {
+                            // Ollama thinking support (2026 standard)
+                            if let Some(thinking) = json["message"]["thinking"].as_str() {
+                                if !thinking.trim().is_empty() {
+                                    yield Ok(ChatChunk {
+                                        agent_name: agent_name.clone(),
+                                        agent_id: agent_id.clone(),
+                                        content: String::new(),
+                                        is_final: false,
+                                        session_id: None,
+                                        channel: savant_core::types::AgentOutputChannel::Chat,
+                                        logprob: None,
+                                        is_telemetry: true,
+                                        reasoning: Some(thinking.to_string()),
+                                        tool_calls: None,
+                                    });
+                                }
+                            }
                             if let Some(content) = json["message"]["content"].as_str() {
-                                yield Ok(ChatChunk {
-                                    agent_name: agent_name.clone(),
-                                    agent_id: agent_id.clone(),
-                                    content: content.to_string(),
-                                    is_final: false,
-                                    session_id: None,
-                                    channel: savant_core::types::AgentOutputChannel::Chat,
-                                });
+                                if !content.is_empty() {
+                                    yield Ok(ChatChunk {
+                                        agent_name: agent_name.clone(),
+                                        agent_id: agent_id.clone(),
+                                        content: content.to_string(),
+                                        is_final: false,
+                                        session_id: None,
+                                        channel: savant_core::types::AgentOutputChannel::Chat,
+                                        logprob: None,
+                                        is_telemetry: false,
+                                        reasoning: None,
+                                        tool_calls: None,
+                                    });
+                                }
+                            }
+                            if let Some(tool_calls_json) = json["message"]["tool_calls"].as_array() {
+                                let mut calls = Vec::new();
+                                for call in tool_calls_json {
+                                    if let Some(function) = call.get("function") {
+                                        calls.push(savant_core::types::ProviderToolCall {
+                                            id: "".to_string(),
+                                            name: function["name"].as_str().unwrap_or("").to_string(),
+                                            arguments: function["arguments"].to_string(),
+                                        });
+                                    }
+                                }
+                                if !calls.is_empty() {
+                                    yield Ok(ChatChunk {
+                                        agent_name: agent_name.clone(),
+                                        agent_id: agent_id.clone(),
+                                        content: String::new(),
+                                        is_final: false,
+                                        session_id: None,
+                                        channel: savant_core::types::AgentOutputChannel::Chat,
+                                        logprob: None,
+                                        is_telemetry: false,
+                                        reasoning: None,
+                                        tool_calls: Some(calls),
+                                    });
+                                }
                             }
                         }
                     }
@@ -352,6 +553,10 @@ impl LlmProvider for OllamaProvider {
                 is_final: true,
                 session_id: None,
                 channel: savant_core::types::AgentOutputChannel::Chat,
+                logprob: None,
+                is_telemetry: false,
+                reasoning: None,
+                tool_calls: None,
             });
         }))
     }
@@ -382,10 +587,10 @@ impl LlmProvider for GroqProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.0),
-                "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.2),
+                "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.1),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -449,8 +654,8 @@ impl LlmProvider for GoogleProvider {
                 "contents": contents,
                 "generationConfig": {
                     "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                    "topP": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                    "maxOutputTokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                    "topP": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                    "maxOutputTokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
                 }
             }))
             .send()
@@ -506,6 +711,10 @@ where
                                                     is_final: false,
                                                     session_id: None,
                                                     channel: savant_core::types::AgentOutputChannel::Chat,
+                                                    logprob: None,
+                                                    is_telemetry: false,
+                                                    reasoning: None,
+                                                    tool_calls: None,
                                                 });
                                             }
                                         }
@@ -529,6 +738,10 @@ where
             is_final: true,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
+            logprob: None,
+            is_telemetry: false,
+            reasoning: None,
+            tool_calls: None,
         });
     })
 }
@@ -559,8 +772,8 @@ impl LlmProvider for MistralProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -604,8 +817,8 @@ impl LlmProvider for TogetherProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -649,8 +862,8 @@ impl LlmProvider for DeepseekProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -729,9 +942,9 @@ impl LlmProvider for CohereProvider {
                 "message": message,
                 "chat_history": chat_history,
                 "stream": true,
-                "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.3),
-                "p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.75),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
+                "p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -778,6 +991,10 @@ where
                                         is_final: false,
                                         session_id: None,
                                         channel: savant_core::types::AgentOutputChannel::Chat,
+                                        logprob: None,
+                                        is_telemetry: false,
+                                        reasoning: None,
+                                        tool_calls: None,
                                     });
                                 }
                                 if json.get("is_finished").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -801,6 +1018,10 @@ where
             is_final: true,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
+            logprob: None,
+            is_telemetry: false,
+            reasoning: None,
+            tool_calls: None,
         });
     })
 }
@@ -839,10 +1060,10 @@ impl LlmProvider for AzureProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.0),
-                "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.2),
+                "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.1),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -886,7 +1107,10 @@ impl LlmProvider for XaiProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.2),
+                "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.1),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -930,8 +1154,8 @@ impl LlmProvider for FireworksProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await
@@ -975,8 +1199,8 @@ impl LlmProvider for NovitaProvider {
                 "messages": messages,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
             }))
             .send()
             .await

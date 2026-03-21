@@ -22,6 +22,7 @@
 ### 2.1 Storage Backends
 
 **Fjall LSM-tree** (embedded, local-first, no server):
+
 ```
 ./data/memory/          ← Fjall LSM tree (transcripts + metadata)
 ./data/memory/vectors/  ← Vector engine (Fjall-backed, 384-dim)
@@ -32,6 +33,7 @@
 ### 2.2 Core Data Structures
 
 **AgentMessage** (transcript unit, stored via rkyv zero-copy):
+
 ```rust
 pub struct AgentMessage {
     pub id: String,                          // UUID v4
@@ -47,6 +49,7 @@ pub struct AgentMessage {
 ```
 
 **MemoryEntry** (semantic index unit):
+
 ```rust
 pub struct MemoryEntry {
     pub id: rend::u64_le,                    // Unique memory ID
@@ -66,6 +69,7 @@ pub struct MemoryEntry {
 ```
 
 **Memory layers already defined in engine.rs:**
+
 ```rust
 pub enum MemoryLayer {
     Episodic,    // L0: High-frequency transient logs
@@ -139,19 +143,17 @@ pub struct TokenBudget {
 
 ## 3. Swarm Architecture
 
-```
+```text
 workspaces/
-├── substrate/
-│   ├── agent.json          ← System-level config
-│   └── .env                ← API keys (Management key)
-├── agents/
-│   ├── agent-alpha/
-│   │   ├── SOUL.md         ← Personality (MBTI, OCEAN, core laws)
-│   │   ├── AGENTS.md       ← Operating instructions
-│   │   └── .env            ← Agent-specific keys (optional)
-│   └── agent-beta/
-│       └── ...
-└── workspace-Savant/       ← System agent workspace
+├── workspace-savant/       ← The System Agent workspace
+│   ├── SOUL.md             ← Personality (MBTI, OCEAN, core laws)
+│   ├── AGENTS.md           ← Operating instructions
+│   ├── IDENTITY.md         ← Identity card
+│   ├── LEARNINGS.md        ← Agent knowledge store
+│   └── agent.json          ← Agent-specific config
+├── workspace-alpha/        ← Future agent workspace
+│   └── ...
+└── workspace-{agentName}/  ← Swarm scales horizontally by adding folders
 ```
 
 **Memory sharing model:**
@@ -201,9 +203,9 @@ workspaces/
 
 ### Gap 2: Bi-Temporal Tracking
 
-**Current state:** MemoryEntry has `created_at` and `updated_at` but no concept of "when this fact became true in reality" vs "when it was recorded."
+**Current state:** MemoryEntry has `created_at` and `updated_at`. We *recently added* `TemporalMetadata` (with `valid_from`, `valid_to`, and `superseded_by`) in `models.rs`, but we lack a comprehensive automated ingestion pipeline to utilize it properly.
 
-**Example failure:** User says "budget is $500" then later "$2000." Both facts exist without resolution. Agent doesn't know which is current.
+**Example failure:** User says "budget is $500" then later "$2000." Both facts exist. Agent struggles to map this to the unpopulated temporal metadata.
 
 **What we want:**
 - `valid_from`: When the fact became true in the real world
@@ -272,7 +274,7 @@ workspaces/
 
 ### Gap 8: Contradiction Resolution
 
-**Current state:** No mechanism to detect or resolve contradictory facts.
+**Current state:** We have a preliminary contradiction pipeline via `superseded_by` in `TemporalMetadata`, but no reliable, automated mechanism to detect or resolve contradictory facts during writes.
 
 **Example failures:**
 1. User says "use port 3000" then later "switch to port 8080." Both stored. Agent doesn't know which is current.
@@ -360,7 +362,7 @@ These are real problems we've encountered that the research should address:
 | Memory search latency | <100ms | ~50ms (local FastEmbed) |
 | Context injection overhead | <200ms | Not implemented |
 | Storage per message | <1KB | ~500 bytes (rkyv) |
-| Vector index memory | <100MB for 10K entries | ~15MB (384 * 4 bytes * 10K) |
+| Vector index memory | <100MB for 10K entries | ~15MB (384 *4 bytes* 10K) |
 | Compaction time | <500ms for 500 messages | ~200ms (measured) |
 | Embedding generation | <50ms per text | ~30ms (FastEmbed local) |
 | Total memory footprint | <500MB | ~50MB (current) |
@@ -406,7 +408,7 @@ These are the exact functions that would need modification:
 
 Please structure your response as:
 
-### For each gap:
+### For each gap
 1. **Recommended approach** (with 2-3 alternatives and trade-offs)
 2. **Data structures** (Rust structs with field types)
 3. **Integration with existing code** (which functions to modify)
@@ -414,7 +416,7 @@ Please structure your response as:
 5. **Failure modes** (what goes wrong, how to handle)
 6. **Implementation priority** (1-10, where 1 = most impactful)
 
-### Overall:
+### Overall
 1. **Recommended implementation order** (sequence of features)
 2. **Complexity summary** (simple/medium/high per feature)
 3. **Dependencies** (which features depend on others)
@@ -427,7 +429,8 @@ Please structure your response as:
 
 Each Savant agent has a **SOUL.md** that defines its personality, knowledge boundaries, and operating principles. This interacts with memory in specific ways:
 
-### SOUL.md Structure (18 sections):
+### SOUL.md Structure (18 sections)
+
 ```
 1. Systemic Core & Origin (designation, version, role, core directive)
 2. Psychological Matrix (MBTI type, OCEAN Big Five traits, moral compass)
@@ -453,21 +456,22 @@ Each Savant agent has a **SOUL.md** that defines its personality, knowledge boun
 
 **Research question:** Should the SOUL.md personality traits influence memory storage (e.g., importance weighting, categorization)? Or should memory be personality-agnostic?
 
-### Agent Workspace Isolation:
-```
-workspaces/agents/agent-alpha/
-├── SOUL.md           ← Personality (affects reasoning, NOT memory access)
-├── AGENTS.md         ← Operating instructions
-├── IDENTITY.md       ← Identity card
-├── .env              ← Agent-specific API keys (optional)
-├── memory/           ← Agent-specific memory (per-session)
-│   └── 2026-03-19/   ← Daily logs (proposed)
-└── projects/         ← Agent's working files
+### Agent Workspace Isolation
+
+```text
+workspaces/
+├── workspace-savant/     ← The System Agent Workspace
+│   ├── SOUL.md           ← Personality (affects reasoning, NOT memory access)
+│   ├── AGENTS.md         ← Operating instructions
+│   ├── IDENTITY.md       ← Identity card
+│   ├── .env              ← Agent-specific API keys (optional)
+│   └── projects/         ← Agent's working files
+└── workspace-{agentName}/ ← Swarm expands by cloning this structure for new agents
 ```
 
 **Memory sharing model:**
 - `./data/memory/` (Fjall) → Global semantic index (all agents share)
-- `workspaces/agents/<name>/` → Agent-specific context (NOT shared)
+- `workspaces/workspace-{agentName}/` → Agent-specific context (NOT shared)
 - The swarm coordinator can query global memory across all agents
 
 ---
@@ -501,6 +505,7 @@ The current Fjall storage uses these partitions:
 - Batch embedding: `embed_batch()` processes multiple texts in one inference call
 
 **Embedding flow:**
+
 ```
 Input text (e.g., "Deploy the API to production")
     ↓
@@ -541,39 +546,38 @@ async fn consolidate(&self, agent_id: &str) -> Result<(), SavantError> {
 ```
 
 **Limitations of current consolidation:**
-1. Summary is lossy (creates one text block from all old messages)
-2. No way to expand back to original messages (they're deleted)
+1. Summary creation can be lossy if not tuned correctly.
+2. We recently added `DagNode` to allow expanding back to raw messages, but the UI and deep retrieval layers don't use it yet.
 3. No importance weighting (all messages treated equally)
-4. No preservation of critical debugging context
+4. Preservation of critical debugging context requires explicit DAG parsing.
 5. Fixed threshold (50 messages) regardless of content
 
-**Research question:** How do you make compaction reversible? DAG-based approach? Keep raw messages in archive layer?
+**Research question:** How do we optimize our new DAG-based approach to seamlessly fold into an Archival Memory layer without burdening the LLM?
 
 ---
 
 ## 17. Additional Research Questions
 
-### On Architecture:
+### On Architecture
 1. Should auto-recall be a separate crate or integrated into the memory crate?
 2. What's the right crate boundary for memory subsystem components?
 3. How do you test memory systems? What are the critical test cases?
 
-### On Performance:
-4. What's the real-world latency of FastEmbed inference for single queries?
-5. How does Fjall LSM performance degrade as data grows? At what point do you need to shard?
-6. What's the memory overhead of maintaining a 384-dim vector index for 100K entries?
+### On Performance
+1. What's the real-world latency of FastEmbed inference for single queries?
+2. How does Fjall LSM performance degrade as data grows? At what point do you need to shard?
+3. What's the memory overhead of maintaining a 384-dim vector index for 100K entries?
 
-### On Correctness:
-7. How do you verify that memory operations are actually durable after a crash?
-8. What are the consistency guarantees when multiple agents write simultaneously?
-9. How do you detect and repair corruption in the vector index?
+### On Correctness
+1. How do you verify that memory operations are actually durable after a crash?
+2. What are the consistency guarantees when multiple agents write simultaneously?
+3. How do you detect and repair corruption in the vector index?
 
-### On UX:
-10. How should the dashboard display memory state to users? (memory browser, search, stats)
-11. How do you let users see what the agent "remembers" about them?
-12. How do you let users correct or delete memories they don't want stored?
+### On UX
+1. How should the dashboard display memory state to users? (memory browser, search, stats)
+2. How do you let users see what the agent "remembers" about them?
+3. How do you let users correct or delete memories they don't want stored?
 
 ---
 
 *Copy this entire document into Gemini 3 Pro Deep Research. Include all sections for maximum research depth.*
-

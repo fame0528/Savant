@@ -1,13 +1,13 @@
+use crate::react::{AgentEvent, AgentLoop};
+use futures::stream::{FuturesUnordered, Stream, StreamExt};
 use savant_core::error::SavantError;
 use savant_core::traits::MemoryBackend;
 use savant_core::types::{ChatMessage, ChatRole};
 use savant_core::utils::parsing;
-use std::pin::Pin;
 use std::collections::HashSet;
-use tracing::{debug, info, warn};
-use futures::stream::{Stream, StreamExt, FuturesUnordered};
+use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
-use crate::react::{AgentLoop, AgentEvent};
+use tracing::{debug, info, warn};
 
 impl<M: MemoryBackend> AgentLoop<M> {
     /// OMEGA-IX: Assembles cognitive context from episodic memory and workspace state.
@@ -17,7 +17,8 @@ impl<M: MemoryBackend> AgentLoop<M> {
         session_id: &Option<savant_core::types::SessionId>,
         history: &[ChatMessage],
     ) -> Result<Vec<ChatMessage>, SavantError> {
-        let effective_sid = session_id.as_ref()
+        let effective_sid = session_id
+            .as_ref()
             .map(|s| s.0.clone())
             .unwrap_or_else(|| self.agent_id.clone());
 
@@ -30,9 +31,19 @@ impl<M: MemoryBackend> AgentLoop<M> {
         if let Some(host) = &self.plugin_host {
             for plugin in &self.plugins {
                 let mut combined_prompt = String::new();
-                for msg in &messages { combined_prompt.push_str(&msg.content); }
+                for msg in &messages {
+                    combined_prompt.push_str(&msg.content);
+                }
 
-                if let Ok(res) = host.execute_before_llm_call(plugin, &combined_prompt, self.agent_id_hash, self.security_token.clone()).await {
+                if let Ok(res) = host
+                    .execute_before_llm_call(
+                        plugin,
+                        &combined_prompt,
+                        self.agent_id_hash,
+                        self.security_token.clone(),
+                    )
+                    .await
+                {
                     match res {
                         crate::plugins::wasm_host::exports::savant::agent_hooks::hooks::HookResult::Modified(new_prompt) => {
                             if let Some(last) = messages.last_mut() { last.content = new_prompt; }
@@ -55,6 +66,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
         shutdown_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<AgentEvent, SavantError>> + Send + '_>> {
         let mut history = vec![ChatMessage {
+            is_telemetry: false,
             role: ChatRole::User,
             content: user_input.clone(),
             sender: Some("USER".to_string()),
@@ -68,13 +80,14 @@ impl<M: MemoryBackend> AgentLoop<M> {
             use async_stream::stream;
             stream! {
                 let mut depth = 0;
-                const MAX_DEPTH: u32 = 8;
+                let mut seen_actions: HashSet<String> = HashSet::new();
+                let sid = session_id.as_ref().map(|s| s.0.clone()).unwrap_or_else(|| self.agent_id.clone());
 
-                while depth < MAX_DEPTH {
+                while depth < self.max_tool_iterations as u32 {
                     info!("[{}] Agent loop cycle start (depth={})", self.agent_id, depth);
-                    
+
                     let mut messages = self.assemble_context(&user_input, &session_id, &history).await?;
-                    
+
                     let complexity = (history.len() as f32 * 0.5) + (depth as f32);
                     let k = self.predictor.predict_optimal_k(complexity);
                     debug!("DSP Prediction: k={} for complexity={}", k, complexity);
@@ -114,32 +127,88 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     let mut clean_answer = String::new();
                     let mut llm_stream = response_stream;
                     let mut fragment_buffer = String::new();
-                    let mut in_thought = false;
-                    const THOUGHT_START: &str = "<thought>";
-                    const THOUGHT_END: &str = "</thought>";
+                    let mut in_hidden_tag = false;
+                    let mut hidden_tag_name = String::new();
+                    // All known thinking/reasoning tag formats across models
+                    const THOUGHT_TAGS: &[(&str, &str)] = &[
+                        ("<think>", "</think>"),
+                        ("<thinking>", "</thinking>"),
+                        ("<thought>", "</thought>"),
+                        ("<reasoning>", "</reasoning>"),
+                    ];
+                    // Tags that should be hidden from user output (tool calls, environment details, etc.)
+                    const HIDDEN_TAGS: &[&str] = &[
+                        "environment_details", "use_mcp_tool", "read_file", "write_to_file",
+                        "execute_command", "ask_followup_question", "attempt_completion",
+                        "search_files", "list_files", "replace_in_file",
+                        "browser_action", "mcp_response", "tool_result",
+                        // Savant tool tags
+                        "file_create", "file_move", "file_delete", "file_atomic_edit",
+                        "shell", "foundation", "memory_search", "memory_append",
+                        "web_search", "web_fetch", "task_matrix", "settings",
+                        "librarian", "web_projection", "tool_call", "final_answer",
+                    ];
 
                     while let Some(chunk_res) = llm_stream.next().await {
                         match chunk_res {
                             Ok(chunk) => {
+                                // Handle provider-level reasoning (2026 standard: delta.reasoning)
+                                if let Some(ref reasoning) = chunk.reasoning {
+                                    if !reasoning.trim().is_empty() {
+                                        full_trace.push_str(reasoning);
+                                        yield Ok(AgentEvent::Thought(reasoning.clone()));
+                                    }
+                                }
+
+                                if let Some(calls) = &chunk.tool_calls {
+                                    for call in calls {
+                                        let markup = format!("<tool_call>\n<name>{}</name>\n<arguments>{}</arguments>\n</tool_call>\n", call.name, call.arguments);
+                                        full_trace.push_str(&markup);
+                                    }
+                                }
+
                                 if !chunk.content.is_empty() {
                                     let content = chunk.content;
                                     full_trace.push_str(&content);
                                     fragment_buffer.push_str(&content);
 
                                     loop {
-                                        if !in_thought {
-                                            if let Some(pos) = fragment_buffer.find(THOUGHT_START) {
+                                        if !in_hidden_tag {
+                                            // Check for any thought/reasoning tag format
+                                            if let Some((pos, start_tag, end_tag)) = find_thought_tag(&fragment_buffer, THOUGHT_TAGS) {
                                                 let dialogue_part = &fragment_buffer[..pos];
                                                 if !dialogue_part.trim().is_empty() {
                                                     clean_answer.push_str(dialogue_part);
                                                     yield Ok(AgentEvent::FinalAnswerChunk(dialogue_part.to_string()));
                                                 }
-                                                fragment_buffer = fragment_buffer[pos + THOUGHT_START.len()..].to_string();
-                                                in_thought = true;
+                                                fragment_buffer = fragment_buffer[pos + start_tag.len()..].to_string();
+                                                in_hidden_tag = true;
+                                                hidden_tag_name = end_tag.to_string();
+                                            }
+                                            // Check for hidden tool tags
+                                            else if let Some((tag_start, tag_name)) = find_hidden_tag_start(&fragment_buffer, HIDDEN_TAGS) {
+                                                let dialogue_part = &fragment_buffer[..tag_start];
+                                                if !dialogue_part.trim().is_empty() {
+                                                    clean_answer.push_str(dialogue_part);
+                                                    yield Ok(AgentEvent::FinalAnswerChunk(dialogue_part.to_string()));
+                                                }
+                                                let end_tag = format!("</{}>", tag_name);
+                                                if let Some(end_pos) = fragment_buffer[tag_start..].find(&end_tag) {
+                                                    // Tag fully contained - push to full_trace for parsing, skip from user output
+                                                    let tag_content = &fragment_buffer[tag_start..tag_start + end_pos + end_tag.len()];
+                                                    full_trace.push_str(tag_content);
+                                                    fragment_buffer = fragment_buffer[tag_start + end_pos + end_tag.len()..].to_string();
+                                                    in_hidden_tag = false;
+                                                } else {
+                                                    // Tag continues past buffer - enter hidden mode, push opening to full_trace
+                                                    fragment_buffer = fragment_buffer[tag_start..].to_string();
+                                                    full_trace.push_str(&fragment_buffer);
+                                                    in_hidden_tag = true;
+                                                    hidden_tag_name = tag_name;
+                                                }
                                             } else {
-                                                let mut matched_len = 0;
-                                                for i in 1..THOUGHT_START.len() { if fragment_buffer.ends_with(&THOUGHT_START[..i]) { matched_len = i; } }
-                                                let safe_to_flush = fragment_buffer.len() - matched_len;
+                                                // No tag found - flush safe content
+                                                let safe_to_flush = find_safe_flush_length(&fragment_buffer, THOUGHT_TAGS, HIDDEN_TAGS);
                                                 if safe_to_flush > 0 {
                                                     let dialogue_chunk: String = fragment_buffer.drain(..safe_to_flush).collect();
                                                     clean_answer.push_str(&dialogue_chunk);
@@ -148,18 +217,26 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                 break;
                                             }
                                         } else {
-                                            if let Some(pos) = fragment_buffer.find(THOUGHT_END) {
-                                                let thought_part = &fragment_buffer[..pos];
-                                                if !thought_part.is_empty() { yield Ok(AgentEvent::Thought(thought_part.to_string())); }
-                                                fragment_buffer = fragment_buffer[pos + THOUGHT_END.len()..].to_string();
-                                                in_thought = false;
+                                            // Inside a hidden tag - look for closing tag
+                                            let end_tag = &hidden_tag_name;
+                                            if let Some(pos) = fragment_buffer.find(end_tag.as_str()) {
+                                                // Check if this is a thought tag (any of the known formats)
+                                                let is_thought = THOUGHT_TAGS.iter().any(|(_, et)| *et == end_tag);
+                                                if is_thought {
+                                                    let thought_part = &fragment_buffer[..pos];
+                                                    if !thought_part.is_empty() { yield Ok(AgentEvent::Thought(thought_part.to_string())); }
+                                                }
+                                                // Push closing tag to full_trace for action parsing
+                                                full_trace.push_str(&fragment_buffer[..pos + end_tag.len()]);
+                                                fragment_buffer = fragment_buffer[pos + end_tag.len()..].to_string();
+                                                in_hidden_tag = false;
+                                                hidden_tag_name.clear();
                                             } else {
-                                                let mut matched_len = 0;
-                                                for i in 1..THOUGHT_END.len() { if fragment_buffer.ends_with(&THOUGHT_END[..i]) { matched_len = i; } }
-                                                let safe_to_flush = fragment_buffer.len() - matched_len;
-                                                if safe_to_flush > 0 {
-                                                    let thought_chunk: String = fragment_buffer.drain(..safe_to_flush).collect();
-                                                    yield Ok(AgentEvent::Thought(thought_chunk));
+                                                // Still inside hidden tag - consume buffer but keep tail for partial match
+                                                let safe_len = fragment_buffer.len().saturating_sub(end_tag.len());
+                                                if safe_len > 0 {
+                                                    let consumed: String = fragment_buffer.drain(..safe_len).collect();
+                                                    full_trace.push_str(&consumed);
                                                 }
                                                 break;
                                             }
@@ -173,7 +250,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     }
 
                     if !fragment_buffer.is_empty() {
-                        if in_thought { yield Ok(AgentEvent::Thought(fragment_buffer)); }
+                        if in_hidden_tag { yield Ok(AgentEvent::Thought(fragment_buffer)); }
                         else if !fragment_buffer.trim().is_empty() {
                             clean_answer.push_str(&fragment_buffer);
                             yield Ok(AgentEvent::FinalAnswerChunk(fragment_buffer));
@@ -184,12 +261,12 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     if actions.is_empty() {
                         debug!("[{}] No actions parsed from trace (len={})", self.agent_id, full_trace.len());
                     }
-                    
+
                     // --- OMEGA: Autonomous Ambiguity Synthesis ---
                     if actions.is_empty() && (full_trace.contains("Action:") || full_trace.contains("thought")) {
                         warn!("[{}] Ambiguity detected: LLM suggested action but parser failed. Triggering Heuristic Synthesis.", self.agent_id);
                         yield Ok(AgentEvent::StatusUpdate("HEURISTIC_AMBIGUITY_DETECTED".to_string()));
-                        
+
                         // Heuristic: If we see a pattern like "Action: SomeTool(args)", try manually extraction
                         if let Some(start) = full_trace.find("Action:") {
                             let subset = &full_trace[start..];
@@ -245,8 +322,23 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                     let (idx, node) = pending_nodes.remove(i);
                                     let node_name = node.name.clone();
                                     let node_args = node.args.clone();
+
+                                    // Canonical dedup
+                                    let mut canonical_args = node_args.clone();
+                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&node_args) {
+                                        if let Ok(serialized) = serde_json::to_string(&val) {
+                                            canonical_args = serialized;
+                                        }
+                                    }
+                                    let sig = format!("{}:{}", node_name, canonical_args);
+                                    if seen_actions.contains(&sig) {
+                                        tracing::warn!("[{}] Skipping duplicate action: {}", self.agent_id, sig);
+                                        continue;
+                                    }
+                                    seen_actions.insert(sig);
+
                                     yield Ok(AgentEvent::Action { name: node_name.clone(), args: node_args.clone() });
-                                    
+
                                     let tools_inner = tools.clone();
                                     let hc_inner = hc.clone();
                                     let reg_inner = registry.clone();
@@ -258,7 +350,11 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                                     queue.push(async move {
                                         let mut result = Err(SavantError::Unknown(format!("Tool access denied or not found: {}", node_name_inner)));
-                                        let access_granted = if let Some(token) = &security_token_inner {
+                                        // Savant (the house) has unrestricted access - CCT is for sub-agents only
+                                        let is_savant = agent_id_inner.to_lowercase() == "savant";
+                                        let access_granted = if is_savant {
+                                            true
+                                        } else if let Some(token) = &security_token_inner {
                                             let resource = format!("savant://tools/{}", node_name_inner);
                                             token.assignee_matches(agent_id_hash) && token.verify_capability(&resource, "execute")
                                         } else { true };
@@ -307,20 +403,22 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                 }
                                             }
                                             yield Ok(AgentEvent::Observation(obs.clone()));
-                                            history.push(ChatMessage { role: ChatRole::User, content: format!("Observation ({}): {}", name, obs), sender: Some("SYSTEM".to_string()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Telemetry });
-                                            
+                                            let safe_obs = savant_core::utils::parsing::scrub_secrets(&obs);
+                                            let obs_msg = ChatMessage { role: ChatRole::User, content: format!("Observation ({}): {}", name, safe_obs), sender: Some("SYSTEM".to_string()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Telemetry, is_telemetry: false };
+                                            history.push(obs_msg);
+
                                             // Report success to collective blackboard
                                             if let Some(cb) = &self.collective_blackboard {
                                                 let pressure = history.len() as f32 / 100.0;
                                                 let _ = cb.update_agent_metrics(self.agent_index, true, pressure);
                                             }
-                                            
+
                                             completed_indices.insert(idx);
                                         }
-                                        Err(e) => { 
+                                        Err(e) => {
                                             // 🧬 OMEGA: Heuristic Fallback
                                             let resolution_name = name.clone();
-                                            
+
                                             // Report failure to collective blackboard
                                             if let Some(cb) = &self.collective_blackboard {
                                                 let pressure = history.len() as f32 / 100.0;
@@ -330,15 +428,17 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                             match self.handle_heuristic_resolution(&resolution_name, e).await {
                                                 Ok(hint) => {
                                                     yield Ok(AgentEvent::Observation(hint.clone()));
-                                                    history.push(ChatMessage { 
-                                                        role: ChatRole::User, 
-                                                        content: format!("Recovery Hint ({}): {}", resolution_name, hint), 
-                                                        sender: Some("SYSTEM".to_string()), 
-                                                        recipient: None, 
-                                                        agent_id: None, 
-                                                        session_id: session_id.clone(), 
-                                                        channel: savant_core::types::AgentOutputChannel::Telemetry 
-                                                    });
+                                                    let hint_msg = ChatMessage {
+                                                        is_telemetry: false,
+                                                        role: ChatRole::User,
+                                                        content: format!("Recovery Hint ({}): {}", resolution_name, hint),
+                                                        sender: Some("SYSTEM".to_string()),
+                                                        recipient: None,
+                                                        agent_id: None,
+                                                        session_id: session_id.clone(),
+                                                        channel: savant_core::types::AgentOutputChannel::Telemetry
+                                                    };
+                                                    history.push(hint_msg);
                                                 }
                                                 Err(fatal) => {
                                                     yield Err(fatal);
@@ -373,10 +473,8 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         }
 
                         yield Ok(AgentEvent::FinalAnswer(clean_answer.trim().to_string()));
-                        let reflection = self.generate_reflection(&history, &final_response).await?;
-                        
+
                         if let Some(collective) = &self.collective_blackboard {
-                            // Increment heuristic version and trigger swarm-wide metric aggregation
                             if let Ok(mut state) = collective.read_global_state() {
                                 state.heuristic_version = state.heuristic_version.wrapping_add(1);
                                 let _ = collective.publish_global_state(state);
@@ -384,14 +482,34 @@ impl<M: MemoryBackend> AgentLoop<M> {
                             }
                         }
 
-                        yield Ok(AgentEvent::Reflection(reflection.clone()));
-
-                        let final_msg = ChatMessage { role: ChatRole::Assistant, content: final_response, sender: Some(self.agent_id.clone()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Chat };
-                        let sid = session_id.as_ref().map(|s| s.0.clone()).unwrap_or_else(|| self.agent_id.clone());
-                        self.memory.store(&sid, &final_msg).await?;
+                        // Persist entire conversation turn to memory atomically
+                        for msg in &history {
+                            if let Err(e) = self.memory.store(&sid, msg).await {
+                                tracing::warn!("[{}] Failed to persist turn message to memory: {}", self.agent_id, e);
+                            }
+                        }
+                        let final_msg = ChatMessage { role: ChatRole::Assistant, content: final_response, sender: Some(self.agent_id.clone()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Chat, is_telemetry: false };
+                        if let Err(e) = self.memory.store(&sid, &final_msg).await {
+                            tracing::warn!("[{}] Failed to persist assistant response to memory: {}", self.agent_id, e);
+                        }
                         break;
                     }
                     depth += 1;
+                    if depth >= self.max_tool_iterations as u32 {
+                        let msg = format!("[SYSTEM] Maximum tool iterations ({}) reached to prevent runaway loops.", self.max_tool_iterations);
+                        yield Ok(AgentEvent::FinalAnswer(msg.clone()));
+                        // Persist entire turn even on max-iterations
+                        for msg in &history {
+                            if let Err(e) = self.memory.store(&sid, msg).await {
+                                tracing::warn!("[{}] Failed to persist turn message to memory: {}", self.agent_id, e);
+                            }
+                        }
+                        let final_msg = ChatMessage { role: ChatRole::Assistant, content: msg, sender: Some(self.agent_id.clone()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Chat, is_telemetry: false };
+                        if let Err(e) = self.memory.store(&sid, &final_msg).await {
+                            tracing::warn!("[{}] Failed to persist assistant response to memory: {}", self.agent_id, e);
+                        }
+                        break;
+                    }
                 }
             }
         })
@@ -404,6 +522,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
     ) -> Result<String, SavantError> {
         let mut ref_history = history.to_vec();
         ref_history.push(ChatMessage {
+            is_telemetry: false,
             role: ChatRole::Assistant,
             content: last_answer.to_string(),
             sender: Some(self.agent_id.clone()),
@@ -419,9 +538,97 @@ impl<M: MemoryBackend> AgentLoop<M> {
         while let Some(chunk_res) = stream.next().await {
             if let Ok(chunk) = chunk_res {
                 reflection.push_str(&chunk.content);
-                if chunk.is_final { break; }
+                if chunk.is_final {
+                    break;
+                }
             }
         }
         Ok(reflection)
     }
+}
+
+/// Find the start of a hidden tag in the buffer. Returns (position, tag_name) if found.
+/// Find the earliest thought/reasoning tag in the buffer.
+/// Returns (position, start_tag, end_tag) or None.
+fn find_thought_tag<'a>(
+    buffer: &str,
+    tags: &'a [(&str, &str)],
+) -> Option<(usize, &'a str, &'a str)> {
+    let mut earliest: Option<(usize, &'a str, &'a str)> = None;
+    for (start, end) in tags {
+        if let Some(pos) = buffer.find(start) {
+            if earliest.as_ref().map_or(true, |(ep, _, _)| pos < *ep) {
+                earliest = Some((pos, start, end));
+            }
+        }
+    }
+    earliest
+}
+
+fn find_hidden_tag_start(buffer: &str, hidden_tags: &[&str]) -> Option<(usize, String)> {
+    let mut earliest: Option<(usize, String)> = None;
+
+    // Check for exact named tags
+    for tag in hidden_tags {
+        let open = format!("<{}", tag);
+        if let Some(pos) = buffer.find(&open) {
+            let after = buffer[pos + open.len()..].chars().next();
+            if after.map_or(true, |c| c == '>' || c == ' ' || c == '/') {
+                if earliest.as_ref().map_or(true, |(ep, _)| pos < *ep) {
+                    earliest = Some((pos, tag.to_string()));
+                }
+            }
+        }
+    }
+
+    // Check for <function=...> tags (dynamic tag names like <function=file_atomic_edit>)
+    if let Some(pos) = buffer.find("<function=") {
+        if earliest.as_ref().map_or(true, |(ep, _)| pos < *ep) {
+            earliest = Some((pos, "function".to_string()));
+        }
+    }
+
+    // Check for <tool_call> tags
+    if let Some(pos) = buffer.find("<tool_call>") {
+        if earliest.as_ref().map_or(true, |(ep, _)| pos < *ep) {
+            earliest = Some((pos, "tool_call".to_string()));
+        }
+    }
+
+    earliest
+}
+
+/// Find how much of the buffer is safe to flush (no tag starting within it).
+fn find_safe_flush_length(
+    buffer: &str,
+    thought_tags: &[(&str, &str)],
+    hidden_tags: &[&str],
+) -> usize {
+    let mut min_pos = buffer.len();
+    // Check all thought tag prefixes
+    for (start_tag, _) in thought_tags {
+        for i in 1..start_tag.len() {
+            if buffer.ends_with(&start_tag[..i]) {
+                min_pos = min_pos.min(buffer.len() - i);
+            }
+        }
+    }
+    // Check hidden tags
+    for tag in hidden_tags {
+        let open = format!("<{}", tag);
+        for i in 1..open.len() {
+            if buffer.ends_with(&open[..i]) {
+                min_pos = min_pos.min(buffer.len() - i);
+            }
+        }
+    }
+    // Check function call prefixes
+    for prefix in &["<function=", "<tool_call>"] {
+        for i in 1..prefix.len() {
+            if buffer.ends_with(&prefix[..i]) {
+                min_pos = min_pos.min(buffer.len() - i);
+            }
+        }
+    }
+    min_pos
 }

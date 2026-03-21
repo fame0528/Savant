@@ -2,7 +2,9 @@
 name: hello-savant
 description: Example skill demonstrating Savant skill development. Greet users, format text, count words.
 version: "1.0.0"
-execution_mode: Wasm
+execution_mode:
+  type: WasmComponent
+  target: ""
 capabilities:
   network_access: false
   filesystem_access: false

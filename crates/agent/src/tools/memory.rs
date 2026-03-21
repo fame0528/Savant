@@ -35,6 +35,7 @@ impl Tool for MemoryAppendTool {
         })?;
 
         let msg = ChatMessage {
+            is_telemetry: false,
             role: ChatRole::Assistant,
             content: content.to_string(),
             sender: Some(self.agent_id.clone()),

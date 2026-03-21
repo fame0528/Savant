@@ -337,6 +337,7 @@ fn build_step(sub_task: &SubTask, step_index: usize, session_id: &str) -> Reques
     let payload = if let Some(ref tool_name) = sub_task.tool_name {
         // Tool execution step
         RequestPayload::ChatMessage(savant_core::types::ChatMessage {
+            is_telemetry: false,
             role: savant_core::types::ChatRole::Assistant,
             content: format!("Execute tool '{}': {}", tool_name, sub_task.description),
             sender: Some("synthesis_engine".to_string()),

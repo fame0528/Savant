@@ -1,4 +1,6 @@
 use crate::error::SavantError;
+use crate::traits::EmbeddingProvider;
+use async_trait::async_trait;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use lru::LruCache;
 use std::num::NonZeroUsize;
@@ -22,6 +24,21 @@ const CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(1000) {
 pub struct EmbeddingService {
     model: Mutex<TextEmbedding>,
     cache: Mutex<LruCache<String, Vec<f32>>>,
+}
+
+#[async_trait]
+impl EmbeddingProvider for EmbeddingService {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
+        self.embed_sync(text)
+    }
+
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SavantError> {
+        self.embed_batch_sync(texts)
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions()
+    }
 }
 
 impl EmbeddingService {
@@ -49,9 +66,9 @@ impl EmbeddingService {
 
     /// Generates an embedding for a single text, using cache if available.
     ///
-    /// This is a synchronous method. When calling from async code, wrap
-    /// in `tokio::task::spawn_blocking` to avoid blocking the async executor.
-    pub fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
+    /// This is a synchronous method. When calling from async code, use
+    /// `EmbeddingProvider::embed` or wrap this in `tokio::task::spawn_blocking`.
+    pub fn embed_sync(&self, text: &str) -> Result<Vec<f32>, SavantError> {
         // Check cache first
         {
             let mut cache = self
@@ -93,7 +110,7 @@ impl EmbeddingService {
     /// Batch processing is significantly faster than individual calls for
     /// large numbers of texts due to optimized matrix operations.
     /// Results are returned in the same order as the input texts.
-    pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SavantError> {
+    pub fn embed_batch_sync(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SavantError> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -140,7 +157,10 @@ impl EmbeddingService {
                 .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
 
             for (idx, embedding) in uncached_indices.iter().zip(batch_embeddings.iter()) {
-                cache.put(uncached_texts[*idx - uncached_indices[0]].clone(), embedding.clone());
+                cache.put(
+                    uncached_texts[*idx - uncached_indices[0]].clone(),
+                    embedding.clone(),
+                );
                 results[*idx] = Some(embedding.clone());
             }
         }

@@ -43,6 +43,15 @@ cargo test --all -- --nocapture
 - Write doc comments on all public functions
 - Keep functions focused — one function, one purpose
 
+## Savant Development Standards (v1.5.0)
+
+All contributions must adhere to the **OMEGA-VIII** certification standards:
+
+1.  **Zero Exceptions**: No `unwrap()`, `todo!()`, or `as any` allowed in production code. Use context-rich error handling.
+2.  **Mechanical Sympathy**: Optimize for sub-millisecond latency and zero-copy data transfer where possible.
+3.  **The Perfection Loop**: Every major feature must pass through the [Perfection Loop](docs/perfection_loop.md) protocol (Audit → Enhance → Validate → Certify).
+4.  **Security First**: All new skills must include an `SKILL.md` compliant with the security scanner's proactive checks.
+
 ## Project Structure
 
 ```

@@ -18,3 +18,4 @@ pub mod session;
 pub mod storage;
 pub mod types;
 pub mod utils;
+pub mod nlp;

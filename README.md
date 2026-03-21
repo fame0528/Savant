@@ -4,12 +4,7 @@
   <p><strong>One Mind. A Thousand Faces.</strong></p>
   <p>A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with OMEGA-VIII certification, mandatory security scanning, and real-time substrate observability.</p>
 
-  [![Rust](https://img.shields.io/badge/Rust-2021-%23000000?style=for-the-badge&logo=rust&logoColor=%2300fbff)](https://www.rust-lang.org/)
-  [![Next.js](https://img.shields.io/badge/Next.js-16-%23000000?style=for-the-badge&logo=nextdotjs&logoColor=%2300fbff)](https://nextjs.org/)
-  [![Tauri](https://img.shields.io/badge/Tauri-2.0-%23000000?style=for-the-badge&logo=tauri&logoColor=%2300fbff)](https://tauri.app/)
-  [![Axum](https://img.shields.io/badge/Axum-0.7-%23000000?style=for-the-badge&logo=rust&logoColor=%2300fbff)](https://github.com/tokio-rs/axum)
-  [![Ollama](https://img.shields.io/badge/Ollama-Native-%23000000?style=for-the-badge&logo=ollama&logoColor=%2300fbff)](https://ollama.com/)
-  [![License](https://img.shields.io/badge/License-Proprietary-%23000000?style=for-the-badge&logo=github&logoColor=%2300fbff)](LICENSE)
+  [![Rust](https://img.shields.io/badge/Rust-2021-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://www.rust-lang.org/) [![Next.js](https://img.shields.io/badge/Next.js-16-%23000000?style=flat-square&logo=nextdotjs&logoColor=%2300fbff)](https://nextjs.org/) [![Tauri](https://img.shields.io/badge/Tauri-2.0-%23000000?style=flat-square&logo=tauri&logoColor=%2300fbff)](https://tauri.app/) [![Axum](https://img.shields.io/badge/Axum-0.7-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://github.com/tokio-rs/axum) [![SQLite](https://img.shields.io/badge/SQLite-Hybrid-%23000000?style=flat-square&logo=sqlite&logoColor=%2300fbff)](https://sqlite.org/) [![Fjall](https://img.shields.io/badge/Fjall-LSM--Tree-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://github.com/fjall-rs/fjall) [![Ollama](https://img.shields.io/badge/Ollama-Native-%23000000?style=flat-square&logo=ollama&logoColor=%2300fbff)](https://ollama.com/) [![License](https://img.shields.io/badge/License-Proprietary-%23000000?style=flat-square&logo=github&logoColor=%2300fbff)](LICENSE)
 </div>
 
 ---

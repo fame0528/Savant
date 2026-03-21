@@ -33,22 +33,6 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Dashboard (Next.js)                      │
-│   WebSocket Client │ React Markdown │ Security UI            │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ ws://
-┌───────────────────────────▼─────────────────────────────────┐
-│                   Gateway (Axum)                             │
-│   WebSocket Handler │ Auth Middleware │ Skill Control        │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ NexusBridge
-┌───────────────────────────▼─────────────────────────────────┐
-│               Message Bus (Nexus Event Bus)                  │
-└───────┬───────────┬───────────┬───────────┬────────────────┘
-        │           │           │           │
-┌───────▼──┐ ┌──────▼────┐ ┌───▼──────┐ ┌──▼───────────────┐
 │  Agent   │ │ Cognitive │ │  Memory  │ │    Skills        │
 │  Swarm   │ │  Engine   │ │  Engine  │ │  Security Gate   │
 │  (ECHO)  │ │ (Synth)   │ │  (VHSS)  │ │  ClawHub/Docker  │

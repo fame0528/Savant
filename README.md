@@ -29,6 +29,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 - **Config Auto-Reload** — Live configuration updates via file watcher
 
 ---
+<div align="center">
 
 ## Architecture
 
@@ -54,6 +55,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 └──────────┘ └───────────┘ └──────────┘ └──────────────────┘
 ```
 
+</div>
 ---
 
 ## Security Model

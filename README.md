@@ -63,6 +63,14 @@ Savant utilizes an OMEGA-grade **Hybrid Memory Engine** that unifies three disti
 
 ## Security Model
 
+<div align="center">
+
+<img src="img/savant.png" alt="Savant Logo" width="100" />
+
+<img src="img/security_gate.png" alt="Savant Mandatory Security Gate" width="850" />
+
+</div>
+
 Savant implements a **mandatory security gate** for all skills. Every skill must pass through the security scanner before execution. The user is always sovereign — no hard blocks, but increasing click friction based on risk:
 
 | Risk Level | Clicks Required | Behavior |
@@ -169,6 +177,14 @@ Changes to `savant.toml` are applied automatically via file watcher.
 ---
 
 ## Skill Management
+
+<div align="center">
+
+<img src="img/savant.png" alt="Savant Logo" width="100" />
+
+<img src="img/skill_discovery.png" alt="Savant Sovereign Skill Discovery" width="850" />
+
+</div>
 
 ### Installing Skills from ClawHub
 

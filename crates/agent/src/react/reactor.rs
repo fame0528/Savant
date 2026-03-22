@@ -64,12 +64,34 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
         for tool in &self.tools {
             if tool.name().to_lowercase() == name.to_lowercase() {
-                let payload = serde_json::from_str(args)
+                let mut payload = serde_json::from_str(args)
                     .unwrap_or_else(|_| serde_json::json!({ "payload": args }));
-                return self
-                    .hyper_causal
-                    .execute_speculative(tool.clone(), payload)
-                    .await;
+
+                // Coerce arguments against tool's JSON Schema
+                let schema = tool.parameters_schema();
+                if schema.get("type").is_some() {
+                    payload = crate::tools::coercion::prepare_tool_params(&payload, &schema);
+                }
+
+                // Execute with timeout
+                let timeout_secs = tool.timeout_secs();
+                let max_output = tool.max_output_chars();
+                let tool_clone = tool.clone();
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(timeout_secs),
+                    self.hyper_causal.execute_speculative(tool_clone, payload),
+                )
+                .await;
+
+                return match result {
+                    Ok(inner_result) => {
+                        inner_result.map(|output| truncate_output(&output, max_output))
+                    }
+                    Err(_) => Err(SavantError::Unknown(format!(
+                        "Tool '{}' timed out after {} seconds",
+                        name, timeout_secs
+                    ))),
+                };
             }
         }
 
@@ -140,4 +162,19 @@ impl<M: MemoryBackend> AgentLoop<M> {
             }
         }
     }
+}
+
+/// Truncate tool output with head+tail preservation.
+fn truncate_output(output: &str, max_chars: usize) -> String {
+    if output.len() <= max_chars {
+        return output.to_string();
+    }
+    let head_size = (max_chars * 60) / 100;
+    let tail_size = (max_chars * 40) / 100;
+    format!(
+        "{}\n\n[... {} chars truncated ...]\n\n{}",
+        &output[..head_size],
+        output.len() - max_chars,
+        &output[output.len() - tail_size..]
+    )
 }

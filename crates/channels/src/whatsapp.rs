@@ -78,8 +78,14 @@ impl WhatsAppAdapter {
                 SavantError::Unknown(format!("Failed to spawn WhatsApp sidecar: {}", e))
             })?;
 
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| SavantError::Unknown("WhatsApp sidecar: stdin already taken".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| SavantError::Unknown("WhatsApp sidecar: stdout already taken".into()))?;
         let tx = self.events_tx.clone();
 
         {
@@ -177,7 +183,8 @@ impl ChannelAdapter for WhatsAppAdapter {
 
                     let mut lock = self.sidecar_stdin.lock().await;
                     if let Some(ref mut stdin) = *lock {
-                        let json = serde_json::to_string(&cmd).unwrap() + "\n";
+                        let json =
+                            serde_json::to_string(&cmd).unwrap_or_else(|_| "{}".to_string()) + "\n";
                         stdin.write_all(json.as_bytes()).await.map_err(|e| {
                             SavantError::Unknown(format!(
                                 "Failed to write to WhatsApp sidecar: {}",

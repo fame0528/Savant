@@ -111,7 +111,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     // (Simplified: in production, this should be integrated into context builder)
 
                     // LLM inference
-                    let response_stream = self.provider.stream_completion(messages).await;
+                    let response_stream = self.provider.stream_completion(messages, vec![]).await;
                     let mut full_text = String::new();
 
                     let mut llm_stream = match response_stream {

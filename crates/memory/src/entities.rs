@@ -245,7 +245,9 @@ mod tests {
         let entities = extractor.extract("Need to rotate the secret key for production.", "sess-1");
         assert!(!entities.is_empty());
         // "secret" matches Credential pattern
-        assert!(entities.iter().any(|e| e.entity_type == EntityType::Credential));
+        assert!(entities
+            .iter()
+            .any(|e| e.entity_type == EntityType::Credential));
     }
 
     #[test]

@@ -227,7 +227,9 @@ impl DiscordAdapter {
 
                                 if is_assistant || is_for_discord {
                                     let session_id = payload["session_id"].as_str().unwrap_or("");
-                                    if let Some(channel_id_str) = session_id.strip_prefix("discord:") {
+                                    if let Some(channel_id_str) =
+                                        session_id.strip_prefix("discord:")
+                                    {
                                         if let Ok(channel_id) = channel_id_str.parse::<u64>() {
                                             let content = payload["content"].as_str().unwrap_or("");
 

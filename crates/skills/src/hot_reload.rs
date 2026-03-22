@@ -129,10 +129,7 @@ mod tests {
     #[tokio::test]
     async fn test_hot_reload_creation() {
         let registry = Arc::new(Mutex::new(SkillRegistry::new()));
-        let watcher = SkillHotReload::new(
-            std::path::PathBuf::from("./skills"),
-            registry,
-        );
+        let watcher = SkillHotReload::new(std::path::PathBuf::from("./skills"), registry);
         assert!(!watcher.running.load(std::sync::atomic::Ordering::Relaxed));
     }
 }

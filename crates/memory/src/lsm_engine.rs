@@ -863,6 +863,189 @@ impl LsmStorageEngine {
         Ok(())
     }
 
+    // ========================================================================
+    // Session / Turn State Management
+    // ========================================================================
+
+    /// Saves or updates a session state in the "sessions" collection.
+    pub fn save_session_state(
+        &self,
+        state: &crate::models::SessionState,
+    ) -> Result<(), MemoryError> {
+        let bytes = rkyv::to_bytes::<RkyvError>(state)
+            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+        let key = crate::models::session_state_key(&state.session_id);
+
+        self.db
+            .add_with_content(
+                "sessions",
+                bytes.to_vec(),
+                zero_embedding(),
+                make_key_meta(&key),
+            )
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+
+        debug!("Saved session state for {}", state.session_id);
+        Ok(())
+    }
+
+    /// Loads a session state from the "sessions" collection.
+    /// Returns None if the session has no stored state.
+    pub fn get_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::models::SessionState>, MemoryError> {
+        let key = crate::models::session_state_key(session_id);
+        let filter = {
+            let mut m = HashMap::new();
+            m.insert("key".to_string(), key);
+            m
+        };
+
+        if let Ok(hits) =
+            self.db
+                .search_in_collection("sessions", zero_embedding(), 1, Some(filter))
+        {
+            if let Some(hit) = hits.first() {
+                if let Ok(memory) = self.db.get_memory(hit.id) {
+                    let archived = rkyv::access::<
+                        <crate::models::SessionState as rkyv::Archive>::Archived,
+                        rkyv::rancor::Error,
+                    >(&memory.content)
+                    .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+
+                    let state =
+                        rkyv::deserialize::<crate::models::SessionState, rkyv::rancor::Error>(
+                            archived,
+                        )
+                        .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+                    return Ok(Some(state));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Gets or creates a session state. If no state exists, creates a new one and persists it.
+    pub fn get_or_create_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::models::SessionState, MemoryError> {
+        if let Some(state) = self.get_session_state(session_id)? {
+            Ok(state)
+        } else {
+            let state = crate::models::SessionState::new(session_id);
+            self.save_session_state(&state)?;
+            Ok(state)
+        }
+    }
+
+    /// Returns the turn collection name for a session.
+    fn turn_collection(session_id: &str) -> String {
+        format!("turns.{}", session_id)
+    }
+
+    /// Saves a turn state to the "turns.{session_id}" collection.
+    pub fn save_turn_state(&self, turn: &crate::models::TurnState) -> Result<(), MemoryError> {
+        let bytes = rkyv::to_bytes::<RkyvError>(turn)
+            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+        let key = crate::models::turn_state_key(&turn.session_id, &turn.turn_id);
+        let collection = Self::turn_collection(&turn.session_id);
+
+        self.db
+            .add_with_content(
+                &collection,
+                bytes.to_vec(),
+                zero_embedding(),
+                make_key_meta(&key),
+            )
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+
+        debug!(
+            "Saved turn state {} for session {}",
+            turn.turn_id, turn.session_id
+        );
+        Ok(())
+    }
+
+    /// Loads a specific turn state by turn ID.
+    pub fn get_turn_state(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<crate::models::TurnState>, MemoryError> {
+        let key = crate::models::turn_state_key(session_id, turn_id);
+        let filter = {
+            let mut m = HashMap::new();
+            m.insert("key".to_string(), key);
+            m
+        };
+        let collection = Self::turn_collection(session_id);
+
+        if let Ok(hits) =
+            self.db
+                .search_in_collection(&collection, zero_embedding(), 1, Some(filter))
+        {
+            if let Some(hit) = hits.first() {
+                if let Ok(memory) = self.db.get_memory(hit.id) {
+                    let archived = rkyv::access::<
+                        <crate::models::TurnState as rkyv::Archive>::Archived,
+                        rkyv::rancor::Error,
+                    >(&memory.content)
+                    .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+
+                    let turn = rkyv::deserialize::<crate::models::TurnState, rkyv::rancor::Error>(
+                        archived,
+                    )
+                    .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+                    return Ok(Some(turn));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Fetches the most recent N turns for a session, ordered newest-first.
+    pub fn fetch_recent_turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::models::TurnState>, MemoryError> {
+        let collection = Self::turn_collection(session_id);
+        let mut turns = Vec::new();
+
+        if let Ok(hits) =
+            self.db
+                .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
+        {
+            for hit in hits {
+                if let Ok(memory) = self.db.get_memory(hit.id) {
+                    if memory.content.len() > 1024 * 1024 {
+                        continue;
+                    }
+                    if let Ok(archived) = rkyv::access::<
+                        <crate::models::TurnState as rkyv::Archive>::Archived,
+                        rkyv::rancor::Error,
+                    >(&memory.content)
+                    {
+                        if let Ok(turn) = rkyv::deserialize::<
+                            crate::models::TurnState,
+                            rkyv::rancor::Error,
+                        >(archived)
+                        {
+                            turns.push(turn);
+                        }
+                    }
+                }
+            }
+        }
+
+        turns.sort_by_key(|t| i64::from(t.started_at));
+        turns.reverse();
+        turns.truncate(limit);
+        Ok(turns)
+    }
+
     /// Flushes pending writes to disk.
     pub fn flush(&self) -> Result<(), MemoryError> {
         self.db

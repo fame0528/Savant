@@ -632,29 +632,42 @@ async fn main() -> Result<()> {
         Some(Commands::Restore { input }) => cmd_restore(&args.config, &input).await,
         Some(Commands::ListAgents) => cmd_list_agents(&args.config).await,
         Some(Commands::Status) => cmd_status(&args.config).await,
-        Some(Commands::Heartbeat { pulse, lens, check }) => cmd_heartbeat(&args.config, pulse, lens, check).await,
+        Some(Commands::Heartbeat { pulse, lens, check }) => {
+            cmd_heartbeat(&args.config, pulse, lens, check).await
+        }
         Some(Commands::State { inspect }) => cmd_state(&args.config, inspect).await,
         Some(Commands::Start) | None => cmd_start(args.config).await,
     }
 }
 
-async fn cmd_heartbeat(config_path: &Option<String>, pulse: bool, lens: Option<String>, check: bool) -> Result<()> {
+async fn cmd_heartbeat(
+    config_path: &Option<String>,
+    pulse: bool,
+    lens: Option<String>,
+    check: bool,
+) -> Result<()> {
     println!("{}", "=== Savant Heartbeat Diagnostics ===".cyan().bold());
     let config = Config::load_from(config_path.as_deref()).unwrap_or_else(|_| Config::default());
 
     if pulse {
         println!("{} Connecting to Nexus bridge...", "→".bright_black());
         let nexus = savant_core::bus::NexusBridge::new();
-        
+
         println!("{} Triggering manual pulse...", "→".bright_black());
         if let Some(ref l) = lens {
             println!("{} Forced Lens: {}", "→".bright_black(), l.green());
         }
-        
+
         let payload = serde_json::json!({ "lens": lens });
-        nexus.publish("pulse.trigger", &payload.to_string()).await.map_err(|e| anyhow::anyhow!(e))?;
-        
-        println!("{} Pulse trigger successfully broadcast to the swarm.", "✓".green());
+        nexus
+            .publish("pulse.trigger", &payload.to_string())
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+        println!(
+            "{} Pulse trigger successfully broadcast to the swarm.",
+            "✓".green()
+        );
     }
 
     if check {
@@ -667,7 +680,7 @@ async fn cmd_heartbeat(config_path: &Option<String>, pulse: bool, lens: Option<S
                 if line.contains("### Learning") {
                     if let Some(start) = line.find("[") {
                         if let Some(end) = line.find("]") {
-                            let tag = &line[start+1..end];
+                            let tag = &line[start + 1..end];
                             *counts.entry(tag.to_string()).or_insert(0) += 1;
                         }
                     }
@@ -692,21 +705,36 @@ async fn cmd_state(config_path: &Option<String>, inspect: bool) -> Result<()> {
         println!("{} Reading Sovereign State (WAL)...", "→".bright_black());
         let substrate_path = std::path::PathBuf::from(&config.system.substrate_path);
         let _proactive = config.swarm.heartbeat_interval > 0; // Simplified check
-        
+
         let state_file = substrate_path.join("DEV-SESSION-STATE.md");
         if state_file.exists() {
-            println!("  {} File: {:?}", "•".cyan(), state_file.file_name().unwrap());
+            println!(
+                "  {} File: {:?}",
+                "•".cyan(),
+                state_file.file_name().unwrap_or_default()
+            );
             let content = std::fs::read_to_string(state_file)?;
             println!("{}", content.bright_black());
         } else {
-            println!("  {} No session state file found at {:?}", "⚠".yellow(), state_file);
+            println!(
+                "  {} No session state file found at {:?}",
+                "⚠".yellow(),
+                state_file
+            );
         }
 
         let context_file = substrate_path.join("CONTEXT.md");
         if context_file.exists() {
             println!();
-            println!("{} Reading Collective Context (Layer 2)...", "→".bright_black());
-            println!("  {} File: {:?}", "•".cyan(), context_file.file_name().unwrap());
+            println!(
+                "{} Reading Collective Context (Layer 2)...",
+                "→".bright_black()
+            );
+            println!(
+                "  {} File: {:?}",
+                "•".cyan(),
+                context_file.file_name().unwrap()
+            );
             let content = std::fs::read_to_string(context_file)?;
             println!("{}", content.bright_black());
         }

@@ -2,13 +2,13 @@ use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
 use serde_json::Value;
-use tokio::process::Command;
 use std::process::Stdio;
+use tokio::process::Command;
 
 /// SovereignShell: High-Fidelity Terminal Actuator
-/// 
+///
 /// Unlike foundation.exec, SovereignShell is designed for complex, multi-stage
-/// operations where stdout/stderr capture and exit status are critical for 
+/// operations where stdout/stderr capture and exit status are critical for
 /// autonomous error recovery.
 pub struct SovereignShell;
 
@@ -31,12 +31,34 @@ impl Tool for SovereignShell {
     }
 
     fn description(&self) -> &str {
-        "High-fidelity terminal actuator. Support for complex command execution with full process capture. \
-         Use this for building, testing, and system maintenance."
+        "Execute shell commands. Use for building, testing, installing packages, git operations, and system tasks."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "Shell command to execute" },
+                "cwd": { "type": "string", "description": "Working directory (optional)" }
+            },
+            "required": ["command"]
+        })
+    }
+
+    fn requires_approval(&self) -> savant_core::traits::ApprovalRequirement {
+        savant_core::traits::ApprovalRequirement::Conditional
     }
 
     fn domain(&self) -> savant_core::traits::ToolDomain {
         savant_core::traits::ToolDomain::Container
+    }
+
+    fn max_output_chars(&self) -> usize {
+        10_000 // Shell output truncated to 10K chars (head+tail)
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        120 // Shell commands get 2 minutes
     }
 
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {
@@ -47,8 +69,14 @@ impl Tool for SovereignShell {
         // AAA: Sovereign Dialectic (Negotiated Consensus)
         // Detect destructive patterns
         let destructive_patterns = [
-            "rm -rf", "format", "mkfs", "dd if=", "os.remove", 
-            "git reset --hard", "git clean -fd", "shred"
+            "rm -rf",
+            "format",
+            "mkfs",
+            "dd if=",
+            "os.remove",
+            "git reset --hard",
+            "git clean -fd",
+            "shred",
         ];
 
         for pattern in destructive_patterns {
@@ -56,10 +84,10 @@ impl Tool for SovereignShell {
                 let proposal = match pattern {
                     "rm -rf" => "Consider using 'mv' to a temporary directory instead.",
                     "git reset --hard" => "Consider 'git stash' to preserve current changes.",
-                    _ => "Refine command to be non-destructive or request manual override."
+                    _ => "Refine command to be non-destructive or request manual override.",
                 };
                 return Err(SavantError::ConsensusVeto(format!(
-                    "Destructive command '{}' blocked by Sovereign Dialectic. Proposal: {}", 
+                    "Destructive command '{}' blocked by Sovereign Dialectic. Proposal: {}",
                     pattern, proposal
                 )));
             }

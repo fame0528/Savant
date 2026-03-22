@@ -86,6 +86,8 @@ pub struct SwarmController {
     collective_blackboard: Arc<CollectiveBlackboard>,
     agent_index_counter: AtomicU8,
     dead_agents: Mutex<Vec<String>>,
+    /// MCP server endpoints to connect on agent spawn
+    mcp_servers: Vec<savant_core::config::McpServerEntry>,
 }
 
 impl SwarmController {
@@ -100,6 +102,7 @@ impl SwarmController {
         signing_key: ed25519_dalek::SigningKey,
         pqc_authority: dilithium2::PublicKey,
         pqc_signing_key: dilithium2::SecretKey,
+        mcp_servers: Vec<savant_core::config::McpServerEntry>,
     ) -> Result<Self, savant_core::error::SavantError> {
         // 1. Discover all available tools (skills) once for the swarm
         let skill_path = config.skills_path.clone();
@@ -204,6 +207,7 @@ impl SwarmController {
             collective_blackboard,
             agent_index_counter: AtomicU8::new(1),
             dead_agents: Mutex::new(Vec::new()),
+            mcp_servers,
         })
     }
 
@@ -250,6 +254,7 @@ impl SwarmController {
         let echo_metrics = self.echo_metrics.clone();
         let echo_host = self.echo_host.clone();
         let collective = self.collective_blackboard.clone();
+        let mcp_servers = self.mcp_servers.clone();
 
         // Assign a unique index for consensus voting (sequential 1-128)
         let mut agent_index = self.agent_index_counter.fetch_add(1, Ordering::SeqCst);
@@ -510,17 +515,64 @@ impl SwarmController {
             )));
 
             // 🌌 Universal Autonomy Protocol: All agents are granted Foundation Sovereignty
-            agent_tools.push(Arc::new(crate::tools::FoundationTool::new(agent_cfg.workspace_path.clone())));
-            agent_tools.push(Arc::new(crate::tools::FileMoveTool::new(agent_cfg.workspace_path.clone())));
-            agent_tools.push(Arc::new(crate::tools::FileDeleteTool::new(agent_cfg.workspace_path.clone())));
-            agent_tools.push(Arc::new(crate::tools::FileAtomicEditTool::new(agent_cfg.workspace_path.clone())));
-            agent_tools.push(Arc::new(crate::tools::FileCreateTool::new(agent_cfg.workspace_path.clone())));
+            agent_tools.push(Arc::new(crate::tools::FoundationTool::new(
+                agent_cfg.workspace_path.clone(),
+            )));
+            agent_tools.push(Arc::new(crate::tools::FileMoveTool::new(
+                agent_cfg.workspace_path.clone(),
+            )));
+            agent_tools.push(Arc::new(crate::tools::FileDeleteTool::new(
+                agent_cfg.workspace_path.clone(),
+            )));
+            agent_tools.push(Arc::new(crate::tools::FileAtomicEditTool::new(
+                agent_cfg.workspace_path.clone(),
+            )));
+            agent_tools.push(Arc::new(crate::tools::FileCreateTool::new(
+                agent_cfg.workspace_path.clone(),
+            )));
             agent_tools.push(Arc::new(crate::tools::SettingsTool::new()));
             agent_tools.push(Arc::new(crate::tools::SovereignShell::new()));
             agent_tools.push(Arc::new(crate::tools::TaskMatrixTool::new(
                 agent_cfg.workspace_path.clone(),
                 agent_cfg.proactive.clone(),
             )));
+
+            // Discover and register MCP tools from configured servers
+            let mut mcp_discovery = savant_mcp::client::McpToolDiscovery::new();
+            for server in &mcp_servers {
+                let result = if let Some(ref auth_token) = server.auth_token {
+                    mcp_discovery
+                        .connect_server_with_auth(server.url.as_str(), auth_token.as_str())
+                        .await
+                } else {
+                    mcp_discovery.connect_server(server.url.as_str()).await
+                };
+                match result {
+                    Ok(count) => {
+                        tracing::info!(
+                            "[{}] Discovered {} MCP tools from {}",
+                            agent_name,
+                            count,
+                            server.name
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[{}] Failed to connect to MCP server {}: {}",
+                            agent_name,
+                            server.name,
+                            e
+                        );
+                    }
+                }
+            }
+            let mcp_tools = mcp_discovery.get_remote_tools();
+            tracing::info!(
+                "[{}] Total MCP tools available: {}",
+                agent_name,
+                mcp_tools.len()
+            );
+            agent_tools.extend(mcp_tools);
 
             // 5. Build Agent Loop with the async backend and secure WASM host
             // OMEGA-VIII: Issue a workspace-scoped CCT (Cognitive Capability Token)

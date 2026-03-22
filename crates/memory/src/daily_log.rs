@@ -107,12 +107,7 @@ impl DailyLog {
 
         // If file is new, write header
         if file.metadata()?.len() == 0 {
-            writeln!(
-                file,
-                "# {} — {}",
-                Self::today_date(),
-                self.agent_name
-            )?;
+            writeln!(file, "# {} — {}", Self::today_date(), self.agent_name)?;
             writeln!(file)?;
         }
 

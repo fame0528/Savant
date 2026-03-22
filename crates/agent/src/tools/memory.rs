@@ -5,7 +5,6 @@ use savant_core::types::{ChatMessage, ChatRole};
 use serde_json::Value;
 use std::sync::Arc;
 
-
 /// Tool for appending long-term observations to an agent's memory.
 /// Prevents raw file clobbering seen in legacy frameworks.
 pub struct MemoryAppendTool {
@@ -26,7 +25,17 @@ impl Tool for MemoryAppendTool {
     }
 
     fn description(&self) -> &str {
-        "Appends a key observation, thought, or learning to long-term memory. Use this to remember important project details outside the immediate chat context."
+        "Store a fact, observation, or learning in long-term memory for future reference."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "content": { "type": "string", "description": "The observation or fact to remember" }
+            },
+            "required": ["content"]
+        })
     }
 
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {
@@ -81,7 +90,17 @@ impl Tool for MemorySearchTool {
     }
 
     fn description(&self) -> &str {
-        "Performs a semantic search across all previous conversations and observations to find relevant context for the current task."
+        "Search past conversations and stored memories to find relevant context."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query to find relevant memories" }
+            },
+            "required": ["query"]
+        })
     }
 
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {

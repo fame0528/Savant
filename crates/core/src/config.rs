@@ -24,6 +24,7 @@ pub struct Config {
     pub wasm: WasmConfig,
     pub system: SystemConfig,
     pub telemetry: TelemetryConfig,
+    pub mcp: McpConfig,
     #[serde(skip)]
     pub project_root: PathBuf,
 }
@@ -41,6 +42,7 @@ impl Default for Config {
             wasm: WasmConfig::default(),
             system: SystemConfig::default(),
             telemetry: TelemetryConfig::default(),
+            mcp: McpConfig::default(),
             project_root: PathBuf::from("."),
         }
     }
@@ -129,6 +131,32 @@ pub struct TelemetryConfig {
     pub log_level: String,
     pub log_color: bool,
     pub enable_tracing: bool,
+}
+
+/// MCP (Model Context Protocol) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    /// List of MCP server endpoints to connect to on startup
+    pub servers: Vec<McpServerEntry>,
+}
+
+/// A single MCP server entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerEntry {
+    /// Human-readable name
+    pub name: String,
+    /// WebSocket URL (e.g., "ws://localhost:3001/mcp")
+    pub url: String,
+    /// Optional auth token
+    pub auth_token: Option<String>,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            servers: Vec::new(),
+        }
+    }
 }
 
 impl AiConfig {
@@ -416,7 +444,7 @@ impl Config {
         tmp_path.set_extension("toml.tmp");
 
         std::fs::write(&tmp_path, toml).map_err(SavantError::IoError)?;
-        
+
         // Rename is atomic on most systems
         std::fs::rename(&tmp_path, path).map_err(|e| {
             let _ = std::fs::remove_file(&tmp_path);

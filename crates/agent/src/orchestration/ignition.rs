@@ -1,16 +1,16 @@
-use std::sync::Arc;
 use anyhow::{Context, Result};
-use tracing::{info, warn, error};
 use pqcrypto_dilithium::dilithium2;
+use std::sync::Arc;
+use tracing::{error, info, warn};
 
+use crate::manager::AgentManager;
+use crate::swarm::{SwarmConfig, SwarmController};
+use crate::watcher::SwarmWatcher;
 use savant_core::bus::NexusBridge;
 use savant_core::config::Config;
 use savant_core::crypto::AgentKeyPair;
 use savant_core::db::Storage;
 use savant_gateway::server::start_gateway;
-use crate::manager::AgentManager;
-use crate::swarm::{SwarmController, SwarmConfig};
-use crate::watcher::SwarmWatcher;
 
 /// 🧬 Savant Ignition Outcome
 /// Holds the live handlers for the entire swarm ecosystem.
@@ -33,12 +33,19 @@ impl IgnitionService {
 
         // 1. Configuration
         let config = Config::load_from(config_path).context("Failed to load configuration")?;
-        info!("✅ Configuration substrate successfully initialized at {}", config.project_root.display());
+        info!(
+            "✅ Configuration substrate successfully initialized at {}",
+            config.project_root.display()
+        );
 
         // 2. Crypto
         let master_key = AgentKeyPair::ensure_master_key().context("Master key failure")?;
-        let root_authority = master_key.get_verifying_key().context("Failed to derive root authority")?;
-        let signing_key = master_key.get_signing_key().context("Failed to derive signing key")?;
+        let root_authority = master_key
+            .get_verifying_key()
+            .context("Failed to derive root authority")?;
+        let signing_key = master_key
+            .get_signing_key()
+            .context("Failed to derive signing key")?;
         let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
         info!("🔐 Cryptographic identity established");
 
@@ -54,13 +61,19 @@ impl IgnitionService {
         // 5. Agent Discovery
         let manager = Arc::new(AgentManager::new(config.clone()));
         info!("🔍 Starting agent discovery sequence...");
-        let discovered_agents = manager.discover_agents().await.context("Agent discovery failed")?;
-        
+        let discovered_agents = manager
+            .discover_agents()
+            .await
+            .context("Agent discovery failed")?;
+
         let mut agent_metadata = Vec::new();
         if discovered_agents.is_empty() {
             warn!("🔍 No agents found in workspace clusters. Check your workspaces directory.");
         } else {
-            info!("✅ Discovered {} agents for deployment", discovered_agents.len());
+            info!(
+                "✅ Discovered {} agents for deployment",
+                discovered_agents.len()
+            );
             for a in &discovered_agents {
                 info!("   - Agent: {} ({})", a.agent_name, a.agent_id);
                 agent_metadata.push(serde_json::json!({
@@ -78,10 +91,14 @@ impl IgnitionService {
             "status": "SWARM_IGNITED",
             "agents": agent_metadata
         });
-        
+
         // Populate system.agents in shared memory and publish event
-        nexus.update_state("system.agents".to_string(), discovery_event.to_string()).await;
-        let _ = nexus.publish("agents.discovered", &discovery_event.to_string()).await;
+        nexus
+            .update_state("system.agents".to_string(), discovery_event.to_string())
+            .await;
+        let _ = nexus
+            .publish("agents.discovered", &discovery_event.to_string())
+            .await;
 
         // 6. Swarm Controller
         let swarm_config = SwarmConfig {
@@ -102,8 +119,11 @@ impl IgnitionService {
             signing_key,
             pqc_authority,
             pqc_signing_key,
-        ).await.context("Swarm Controller ignition failed")?;
-        
+            config.mcp.servers.clone(),
+        )
+        .await
+        .context("Swarm Controller ignition failed")?;
+
         let swarm = Arc::new(swarm);
         info!("🚀 Swarm Controller online and synchronized");
 

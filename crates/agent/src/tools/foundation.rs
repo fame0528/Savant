@@ -11,21 +11,23 @@ use tracing::info;
 fn secure_resolve_path(workspace: &Path, target: &str) -> Result<PathBuf, SavantError> {
     let target_path = Path::new(target);
     let mut resolved = workspace.to_path_buf();
-    
+
     for component in target_path.components() {
         match component {
             std::path::Component::ParentDir => {
                 if resolved == workspace {
-                    return Err(SavantError::Unknown("Sandbox Escape Detected: Cannot navigate above workspace root.".into()));
+                    return Err(SavantError::Unknown(
+                        "Sandbox Escape Detected: Cannot navigate above workspace root.".into(),
+                    ));
                 }
                 resolved.pop();
             }
             std::path::Component::Normal(c) => resolved.push(c),
             // Ignore RootDir and Prefix to silently re-root absolute path attacks
-            _ => {} 
+            _ => {}
         }
     }
-    
+
     Ok(resolved)
 }
 
@@ -46,8 +48,23 @@ impl Tool for FileMoveTool {
         "file_move"
     }
     fn description(&self) -> &str {
-        "Moves or renames a file/directory. Governed by Swarm Consensus."
+        "Moves or renames a file or directory."
     }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "from": { "type": "string", "description": "Source path to move from" },
+                "to": { "type": "string", "description": "Destination path to move to" }
+            },
+            "required": ["from", "to"]
+        })
+    }
+
+    fn requires_approval(&self) -> savant_core::traits::ApprovalRequirement {
+        savant_core::traits::ApprovalRequirement::Conditional
+    }
+
     fn domain(&self) -> savant_core::traits::ToolDomain {
         savant_core::traits::ToolDomain::Container
     }
@@ -62,7 +79,10 @@ impl Tool for FileMoveTool {
         let from = secure_resolve_path(&self.workspace_dir, from_raw)?;
         let to = secure_resolve_path(&self.workspace_dir, to_raw)?;
 
-        info!("[WAL:ACTUATOR] Action: move, From: {:?}, To: {:?}", from, to);
+        info!(
+            "[WAL:ACTUATOR] Action: move, From: {:?}, To: {:?}",
+            from, to
+        );
         fs::rename(&from, &to)
             .await
             .map_err(|e| SavantError::Unknown(format!("Move failed: {}", e)))?;
@@ -87,29 +107,61 @@ impl Tool for FileDeleteTool {
         "file_delete"
     }
     fn description(&self) -> &str {
-        "Deletes a file or directory recursively. Governed by Swarm Consensus."
+        "Deletes a file or directory recursively."
     }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path to the file or directory to delete" }
+            },
+            "required": ["path"]
+        })
+    }
+
+    fn requires_approval(&self) -> savant_core::traits::ApprovalRequirement {
+        savant_core::traits::ApprovalRequirement::Always
+    }
+
     fn domain(&self) -> savant_core::traits::ToolDomain {
         savant_core::traits::ToolDomain::Container
     }
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {
-        let target_raw = payload["path"]
+        let path_str = payload["path"]
             .as_str()
-            .ok_or_else(|| SavantError::Unknown("Missing 'path' for delete".to_string()))?;
+            .ok_or_else(|| SavantError::Unknown("Missing 'path' parameter".into()))?;
+        let full_path = self.workspace_dir.join(path_str);
 
-        let path = secure_resolve_path(&self.workspace_dir, target_raw)?;
-
-        info!("[WAL:ACTUATOR] Action: delete, Path: {:?}", path);
-        if path.is_dir() {
-            fs::remove_dir_all(&path)
-                .await
-                .map_err(|e| SavantError::Unknown(format!("Recursive delete failed: {}", e)))?;
-        } else {
-            fs::remove_file(&path)
-                .await
-                .map_err(|e| SavantError::Unknown(format!("Delete failed: {}", e)))?;
+        // Security Check: Prevent path traversal attacks
+        if full_path.canonicalize().map_or(true, |p| {
+            !p.starts_with(self.workspace_dir.canonicalize().unwrap_or_default())
+        }) {
+            return Err(SavantError::Unknown("Path traversal detected".into()));
         }
-        Ok(format!("Successfully deleted {:?}.", path))
+
+        if !full_path.exists() {
+            return Ok(
+                "[AVX-IX] Operation complete. File not found. Universe integrity maintained."
+                    .to_string(),
+            );
+        }
+
+        if full_path.is_dir() {
+            std::fs::remove_dir_all(&full_path)?;
+        } else {
+            std::fs::remove_file(&full_path)?;
+        }
+
+        // AudioScape: Log the deletion event
+        info!(
+            "NVMe Actuator: Successfully deleted path [{}]",
+            full_path.display()
+        );
+
+        Ok(format!(
+            "🗑️ Sovereign Deletion Actuation complete: `{}` permanently erased from the substrate.",
+            path_str
+        ))
     }
 }
 
@@ -132,6 +184,32 @@ impl Tool for FileAtomicEditTool {
     fn description(&self) -> &str {
         "Applies multiple atomic replacements to a file with backup/rollback safety."
     }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path to the file to edit" },
+                "replacements": {
+                    "type": "array",
+                    "description": "Array of {target, value} replacements to apply",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": { "type": "string", "description": "Text to find" },
+                            "value": { "type": "string", "description": "Text to replace with" }
+                        },
+                        "required": ["target", "value"]
+                    }
+                }
+            },
+            "required": ["path", "replacements"]
+        })
+    }
+
+    fn requires_approval(&self) -> savant_core::traits::ApprovalRequirement {
+        savant_core::traits::ApprovalRequirement::Conditional
+    }
+
     fn domain(&self) -> savant_core::traits::ToolDomain {
         savant_core::traits::ToolDomain::Container
     }
@@ -226,6 +304,17 @@ impl Tool for FileCreateTool {
     fn description(&self) -> &str {
         "Creates a new file with content or a new directory."
     }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path where the file or directory should be created" },
+                "content": { "type": "string", "description": "Content to write to the file (optional, defaults to empty)" },
+                "directory": { "type": "boolean", "description": "Set to true to create a directory instead of a file" }
+            },
+            "required": ["path"]
+        })
+    }
     fn domain(&self) -> savant_core::traits::ToolDomain {
         savant_core::traits::ToolDomain::Container
     }
@@ -259,9 +348,9 @@ impl Tool for FileCreateTool {
             }
         }
 
-        fs::write(&path, content)
-            .await
-            .map_err(|e| SavantError::Unknown(format!("Failed to create file {:?}: {}", path, e)))?;
+        fs::write(&path, content).await.map_err(|e| {
+            SavantError::Unknown(format!("Failed to create file {:?}: {}", path, e))
+        })?;
 
         Ok(format!(
             "Successfully created file: {:?} ({} bytes)",
@@ -288,20 +377,40 @@ impl Tool for FoundationTool {
         "foundation"
     }
     fn description(&self) -> &str {
-        "General system foundation actuators."
+        "File system operations: read, write, list, create, mkdir."
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "description": "Action to perform", "enum": ["read", "write", "ls", "create", "mkdir"] },
+                "path": { "type": "string", "description": "File or directory path" },
+                "content": { "type": "string", "description": "Content for write/create actions" }
+            },
+            "required": ["action", "path"]
+        })
     }
     fn domain(&self) -> savant_core::traits::ToolDomain {
         savant_core::traits::ToolDomain::Container
     }
+
+    fn max_output_chars(&self) -> usize {
+        128_000 // File read can return large contents
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        30 // File ops are fast
+    }
+
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {
         let action = payload["action"].as_str().unwrap_or("");
-        
+
         // Fast path for resolving path securely once per action
         let target_raw = payload["path"]
             .as_str()
             .ok_or_else(|| SavantError::Unknown("Missing path".into()))?;
         let secure_path = secure_resolve_path(&self.workspace_dir, target_raw)?;
-        
+
         match action {
             "read" => {
                 match fs::read_to_string(&secure_path).await {

@@ -38,8 +38,8 @@ impl std::str::FromStr for LearningCategory {
 }
 
 /// A structured entry for the Emergent Learning Protocol.
-/// 
-/// This captures "subconscious" reflections and formalizes them into a 
+///
+/// This captures "subconscious" reflections and formalizes them into a
 /// queryable signal for swarm evolution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmergentLearning {
@@ -59,7 +59,12 @@ pub struct EmergentLearning {
 }
 
 impl EmergentLearning {
-    pub fn new(agent_id: String, category: LearningCategory, content: String, significance: u8) -> Self {
+    pub fn new(
+        agent_id: String,
+        category: LearningCategory,
+        content: String,
+        significance: u8,
+    ) -> Self {
         Self {
             timestamp: chrono::Utc::now().to_rfc3339(),
             agent_id,

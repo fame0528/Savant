@@ -1,74 +1,180 @@
+use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
-use savant_core::types::EventFrame;
-use matrix_sdk::{Client, config::SyncSettings};
+use savant_core::types::{ChatMessage, ChatRole, EventFrame};
 use std::sync::Arc;
-use tracing::{info, error, warn};
-use async_trait::async_trait;
+use std::time::Duration;
+use tracing::{info, warn};
 
-use crate::pool::InboxPool;
+/// Matrix channel configuration.
+#[derive(Debug, Clone)]
+pub struct MatrixConfig {
+    pub homeserver: String, // e.g. "https://matrix.org"
+    pub access_token: String,
+    pub user_id: String, // e.g. "@bot:matrix.org"
+    pub room_id: Option<String>,
+}
 
-/// MatrixAdapter provides an industrial-grade bridge to the Matrix network.
-/// Supports E2EE, multi-room orchestration, and swarm-wide event routing.
+/// Matrix channel adapter using Client-Server API via reqwest.
 pub struct MatrixAdapter {
-    client: Arc<Client>,
+    config: MatrixConfig,
+    http: reqwest::Client,
+    nexus: Arc<savant_core::bus::NexusBridge>,
 }
 
 impl MatrixAdapter {
-    /// Creates a new MatrixAdapter and starts the sync loop.
-    pub async fn new(homeserver: &str, access_token: &str, user_id: &str) -> Result<Self, SavantError> {
-        let client = Client::builder()
-            .homeserver_url(homeserver)
-            .build()
-            .await
-            .map_err(|e| SavantError::AuthError(format!("Matrix builder error: {}", e)))?;
-
-        let user_id = matrix_sdk::ruma::UserId::parse(user_id)
-            .map_err(|e| SavantError::AuthError(format!("Invalid UserID: {}", e)))?;
-
-        let session = matrix_sdk::Session {
-            access_token: access_token.to_string(),
-            refresh_token: None,
-            user_id,
-            device_id: "SAVANT-NODE".into(),
-        };
-
-        client.restore_session(session).await.map_err(|e| SavantError::AuthError(format!("Matrix session restoration failed: {}", e)))?;
-
-        let adapter = Self {
-            client: Arc::new(client),
-        };
-
-        Ok(adapter)
+    pub fn new(config: MatrixConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
+        Self {
+            config,
+            http: reqwest::Client::new(),
+            nexus,
+        }
     }
 
-    /// Starts the background sync loop for the Matrix client.
-    pub fn spawn_sync_worker(&self, pool: Arc<InboxPool>) {
-        let client = self.client.clone();
+    /// Sends a text message to a room.
+    async fn send_text(&self, room_id: &str, text: &str) -> Result<(), SavantError> {
+        let txn_id = chrono::Utc::now().timestamp_millis();
+        let resp = self
+            .http
+            .put(&format!(
+                "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
+                self.config.homeserver, room_id, txn_id
+            ))
+            .bearer_auth(&self.config.access_token)
+            .json(&serde_json::json!({
+                "msgtype": "m.text",
+                "body": text,
+            }))
+            .send()
+            .await
+            .map_err(|e| SavantError::Unknown(format!("Matrix send failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            warn!("[MATRIX] Send failed: {}", resp.status());
+        }
+        Ok(())
+    }
+
+    /// Long-polls for new messages via sync API.
+    async fn sync_once(&self, since: &str) -> Result<(serde_json::Value, String), SavantError> {
+        let mut url = format!("{}/_matrix/client/v3/sync", self.config.homeserver);
+        if !since.is_empty() {
+            url.push_str(&format!("?since={}&timeout=30000", since));
+        } else {
+            url.push_str("?timeout=30000");
+        }
+
+        let resp: serde_json::Value = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.config.access_token)
+            .send()
+            .await
+            .map_err(|e| SavantError::Unknown(format!("Matrix sync failed: {}", e)))?
+            .json()
+            .await
+            .map_err(|e| SavantError::Unknown(format!("Matrix sync parse failed: {}", e)))?;
+
+        let next_batch = resp["next_batch"].as_str().unwrap_or("").to_string();
+
+        Ok((resp, next_batch))
+    }
+
+    /// Extracts text messages from a sync response.
+    fn extract_messages(sync_resp: &serde_json::Value) -> Vec<(String, String, String)> {
+        let mut messages = Vec::new();
+
+        if let Some(rooms) = sync_resp["rooms"]["join"].as_object() {
+            for (room_id, room_data) in rooms {
+                if let Some(events) = room_data["timeline"]["events"].as_array() {
+                    for event in events {
+                        let sender = event["sender"].as_str().unwrap_or("");
+                        let msgtype = event["content"]["msgtype"].as_str().unwrap_or("");
+                        let body = event["content"]["body"].as_str().unwrap_or("");
+
+                        // Skip our own messages
+                        if msgtype == "m.text" && !body.is_empty() {
+                            messages.push((room_id.clone(), sender.to_string(), body.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+
+        messages
+    }
+
+    /// Spawns background sync + outbound handler.
+    pub fn spawn(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            info!("Matrix sync worker ignited.");
-            
-            // Add a message event handler
-            client.add_event_handler(move |ev: matrix_sdk::event_handler::Ctx<matrix_sdk::ruma::events::room::message::SyncRoomMessageEvent>| {
-                let pool = pool.clone();
-                async move {
-                    if let matrix_sdk::ruma::events::room::message::MessageType::Text(text) = &ev.content.msgtype {
-                        info!("Matrix message received ({}): {}", ev.sender, text.body);
-                        
-                        let event = EventFrame {
-                            event_type: "matrix_message".to_string(),
-                            payload: format!("{}: {}", ev.sender, text.body),
-                        };
-                        
-                        pool.submit_inbound(event).await;
+            info!("[MATRIX] Starting Matrix adapter");
+
+            let (mut event_rx, _) = self.nexus.subscribe().await;
+            let adapter = Arc::new(self);
+
+            // Outbound listener
+            let outbound = adapter.clone();
+            tokio::spawn(async move {
+                while let Ok(event) = event_rx.recv().await {
+                    if event.event_type == "chat.message" {
+                        if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
+                            let is_for = p["recipient"]
+                                .as_str()
+                                .map_or(false, |r| r.starts_with("matrix:"));
+                            let is_assistant = p["role"].as_str() == Some("Assistant");
+                            if is_assistant || is_for {
+                                let sid = p["session_id"].as_str().unwrap_or("");
+                                if let Some(room) = sid.strip_prefix("matrix:") {
+                                    let text = p["content"].as_str().unwrap_or("");
+                                    if let Err(e) = outbound.send_text(room, text).await {
+                                        warn!("[MATRIX] Send error: {}", e);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             });
 
-            if let Err(e) = client.sync(SyncSettings::default()).await {
-                error!("Matrix sync loop fatal error: {}", e);
+            // Sync loop
+            let mut since = String::new();
+            loop {
+                match adapter.sync_once(&since).await {
+                    Ok((resp, next_batch)) => {
+                        since = next_batch;
+
+                        // Skip our own messages using user_id
+                        let messages = Self::extract_messages(&resp);
+                        for (room_id, sender, body) in messages {
+                            if sender == adapter.config.user_id {
+                                continue; // Skip own messages
+                            }
+
+                            let sid = savant_core::session::SessionMapper::map("matrix", &room_id);
+                            let chat_msg = ChatMessage {
+                                is_telemetry: false,
+                                role: ChatRole::User,
+                                content: body,
+                                sender: Some(format!("matrix:{}", sender)),
+                                recipient: Some("savant".into()),
+                                agent_id: None,
+                                session_id: Some(sid),
+                                channel: savant_core::types::AgentOutputChannel::Chat,
+                            };
+                            let frame = EventFrame {
+                                event_type: "chat.message".into(),
+                                payload: serde_json::to_string(&chat_msg).unwrap_or_default(),
+                            };
+                            let _ = adapter.nexus.event_bus.send(frame);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("[MATRIX] Sync error: {}", e);
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                }
             }
-        });
+        })
     }
 }
 
@@ -77,44 +183,10 @@ impl ChannelAdapter for MatrixAdapter {
     fn name(&self) -> &str {
         "matrix"
     }
-
-    async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
-        info!("Matrix processing outbound event: {}", event.event_type);
-        
-        match event.event_type.as_str() {
-            "message.send" => {
-                let payload: serde_json::Value = serde_json::from_str(&event.payload)
-                    .map_err(|e| SavantError::InvalidInput(format!("Invalid Matrix payload: {}", e)))?;
-                
-                let room_id_str = payload.get("room_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| SavantError::InvalidInput("Missing room_id in Matrix payload".into()))?;
-                
-                let text = payload.get("text")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| SavantError::InvalidInput("Missing text in Matrix payload".into()))?;
-
-                let room_id = <&matrix_sdk::ruma::RoomId>::try_from(room_id_str)
-                    .map_err(|e| SavantError::InvalidInput(format!("Invalid Matrix RoomID: {}", e)))?;
-
-                if let Some(room) = self.client.get_room(room_id) {
-                    use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
-                    let content = RoomMessageEventContent::text_plain(text);
-                    room.send(content).await
-                        .map_err(|e| SavantError::Unknown(format!("Failed to send Matrix message: {}", e)))?;
-                    info!("Matrix message sent to {}", room_id_str);
-                } else {
-                    return Err(SavantError::Unknown(format!("Room not found or not joined: {}", room_id_str)));
-                }
-            }
-            _ => {
-                warn!("Matrix: Unhandled event type for send_event: {}", event.event_type);
-            }
-        }
+    async fn send_event(&self, _e: EventFrame) -> Result<(), SavantError> {
         Ok(())
     }
-
-    async fn handle_event(&self, event: EventFrame) -> Result<(), SavantError> {
-        self.send_event(event).await
+    async fn handle_event(&self, _e: EventFrame) -> Result<(), SavantError> {
+        Ok(())
     }
 }

@@ -130,8 +130,15 @@ impl PerceptionEngine {
                         let free = v["FreePhysicalMemory"].as_u64().unwrap_or(0) / 1024; // KB to MB
                         let total = v["TotalVisibleMemorySize"].as_u64().unwrap_or(0) / 1024; // KB to MB
                         let used = total.saturating_sub(free);
-                        let usage_pct = if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 };
-                        return format!("Substrate Metrics (OS):\n- Memory: {}MB / {}MB ({:.1}%)", used, total, usage_pct);
+                        let usage_pct = if total > 0 {
+                            (used as f64 / total as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+                        return format!(
+                            "Substrate Metrics (OS):\n- Memory: {}MB / {}MB ({:.1}%)",
+                            used, total, usage_pct
+                        );
                     }
                 }
                 _ => {}

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
 
+pub mod mcp;
 pub mod pairing;
 pub mod skills;
 
@@ -1102,7 +1103,10 @@ pub async fn handle_agent_config_get(
     // Resolve agent path
     let registry = savant_core::fs::registry::AgentRegistry::new(
         std::env::current_dir().unwrap_or_default(),
-        savant_core::config::Config::load().unwrap_or_default().ai.clone(),
+        savant_core::config::Config::load()
+            .unwrap_or_default()
+            .ai
+            .clone(),
         savant_core::config::AgentDefaults::default(),
     );
     let agent_path = registry
@@ -1138,7 +1142,10 @@ pub async fn handle_agent_config_set(
     // Resolve agent path
     let registry = savant_core::fs::registry::AgentRegistry::new(
         std::env::current_dir().unwrap_or_default(),
-        savant_core::config::Config::load().unwrap_or_default().ai.clone(),
+        savant_core::config::Config::load()
+            .unwrap_or_default()
+            .ai
+            .clone(),
         savant_core::config::AgentDefaults::default(),
     );
     let agent_path = registry

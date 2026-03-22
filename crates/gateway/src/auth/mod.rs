@@ -249,7 +249,10 @@ mod tests {
 
         let result = authenticate(&frame, None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Authentication failed"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Authentication failed"));
     }
 
     // ====================== EXTENDED TEST COVERAGE ======================

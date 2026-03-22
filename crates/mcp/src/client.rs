@@ -118,21 +118,23 @@ impl McpClient {
             Self::handle_incoming(read, responses).await;
         });
 
-        self.connection = Some(Arc::new(Mutex::new(McpConnection {
-            write,
-            next_id: 1,
-        })));
+        self.connection = Some(Arc::new(Mutex::new(McpConnection { write, next_id: 1 })));
         self.read_task = Some(read_task);
 
         // Perform initialize handshake
-        let init_result = self.send_request("initialize", Some(serde_json::json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {
-                "name": "Savant MCP Client",
-                "version": "2.0.0"
-            }
-        }))).await?;
+        let init_result = self
+            .send_request(
+                "initialize",
+                Some(serde_json::json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "Savant MCP Client",
+                        "version": "2.0.0"
+                    }
+                })),
+            )
+            .await?;
 
         info!("MCP server initialized: {:?}", init_result);
         Ok(())
@@ -156,22 +158,24 @@ impl McpClient {
             Self::handle_incoming(read, responses).await;
         });
 
-        self.connection = Some(Arc::new(Mutex::new(McpConnection {
-            write,
-            next_id: 1,
-        })));
+        self.connection = Some(Arc::new(Mutex::new(McpConnection { write, next_id: 1 })));
         self.read_task = Some(read_task);
 
         // Initialize with auth token
-        let init_result = self.send_request("initialize", Some(serde_json::json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {
-                "name": "Savant MCP Client",
-                "version": "2.0.0"
-            },
-            "auth_token": auth_token
-        }))).await?;
+        let init_result = self
+            .send_request(
+                "initialize",
+                Some(serde_json::json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "Savant MCP Client",
+                        "version": "2.0.0"
+                    },
+                    "auth_token": auth_token
+                })),
+            )
+            .await?;
 
         info!("MCP server initialized with auth: {:?}", init_result);
         Ok(())
@@ -261,7 +265,9 @@ impl McpClient {
                 // Channel closed - remove from pending
                 let mut pending = self.responses.lock().await;
                 pending.remove(&request_id);
-                Err(SavantError::Unknown("MCP response channel closed".to_string()))
+                Err(SavantError::Unknown(
+                    "MCP response channel closed".to_string(),
+                ))
             }
             Err(_) => {
                 // Timeout - remove from pending
@@ -401,16 +407,24 @@ pub struct McpRemoteTool {
     name: String,
     /// Tool description
     description: String,
+    /// JSON Schema from MCP server (inputSchema)
+    input_schema: Value,
     /// MCP client connection (shared)
     client: Arc<McpClient>,
 }
 
 impl McpRemoteTool {
     /// Creates a new remote tool wrapper.
-    pub fn new(name: String, description: String, client: Arc<McpClient>) -> Self {
+    pub fn new(
+        name: String,
+        description: String,
+        input_schema: Value,
+        client: Arc<McpClient>,
+    ) -> Self {
         Self {
             name,
             description,
+            input_schema,
             client,
         }
     }
@@ -424,6 +438,10 @@ impl Tool for McpRemoteTool {
 
     fn description(&self) -> &str {
         &self.description
+    }
+
+    fn parameters_schema(&self) -> Value {
+        self.input_schema.clone()
     }
 
     fn capabilities(&self) -> CapabilityGrants {
@@ -472,10 +490,8 @@ impl McpToolDiscovery {
 
         let client = Arc::new(client);
         for tool_info in tools {
-            self.discovered_tools.insert(
-                tool_info.name.clone(),
-                (server_url.to_string(), tool_info),
-            );
+            self.discovered_tools
+                .insert(tool_info.name.clone(), (server_url.to_string(), tool_info));
         }
 
         self.clients.insert(server_url.to_string(), client);
@@ -496,10 +512,8 @@ impl McpToolDiscovery {
 
         let client = Arc::new(client);
         for tool_info in tools {
-            self.discovered_tools.insert(
-                tool_info.name.clone(),
-                (server_url.to_string(), tool_info),
-            );
+            self.discovered_tools
+                .insert(tool_info.name.clone(), (server_url.to_string(), tool_info));
         }
 
         self.clients.insert(server_url.to_string(), client);
@@ -516,6 +530,7 @@ impl McpToolDiscovery {
                 let remote_tool = McpRemoteTool::new(
                     tool_info.name.clone(),
                     tool_info.description.clone(),
+                    tool_info.input_schema.clone(),
                     client.clone(),
                 );
                 tools.push(Arc::new(remote_tool));
@@ -532,9 +547,7 @@ impl McpToolDiscovery {
 
     /// Returns discovered tool info for a specific tool.
     pub fn get_tool_info(&self, tool_name: &str) -> Option<&McpToolInfo> {
-        self.discovered_tools
-            .get(tool_name)
-            .map(|(_, info)| info)
+        self.discovered_tools.get(tool_name).map(|(_, info)| info)
     }
 
     /// Lists all discovered tool names.
@@ -588,23 +601,18 @@ impl McpClientPool {
 
     /// Executes a tool by name, routing to the appropriate MCP server.
     pub async fn execute_tool(&self, tool_name: &str, args: &str) -> Result<String, SavantError> {
-        let args_value: Value = serde_json::from_str(args)
-            .unwrap_or_else(|_| serde_json::json!({"raw": args}));
+        let args_value: Value =
+            serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({"raw": args}));
 
         let discovery = self.discovery.lock().await;
         let (server_url, _) = discovery
             .discovered_tools
             .get(tool_name)
-            .ok_or_else(|| {
-                SavantError::Unknown(format!("MCP tool not found: {}", tool_name))
-            })?;
+            .ok_or_else(|| SavantError::Unknown(format!("MCP tool not found: {}", tool_name)))?;
 
-        let client = discovery
-            .clients
-            .get(server_url)
-            .ok_or_else(|| {
-                SavantError::Unknown(format!("MCP client not connected: {}", server_url))
-            })?;
+        let client = discovery.clients.get(server_url).ok_or_else(|| {
+            SavantError::Unknown(format!("MCP client not connected: {}", server_url))
+        })?;
 
         client.call_tool(tool_name, args_value).await
     }
@@ -677,10 +685,12 @@ mod tests {
         let tool = McpRemoteTool::new(
             "test-tool".to_string(),
             "Test description".to_string(),
+            serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
             client,
         );
         assert_eq!(tool.name(), "test-tool");
         assert_eq!(tool.description(), "Test description");
+        assert_eq!(tool.parameters_schema()["type"], "object");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
-  "name": "savant-system",
+  "name": "savant",
   "version": "0.0.01",
   "description": "Savant - One Mind. A Thousand Faces. Autonomous agent swarm orchestrator",
   "scripts": {
@@ -14,9 +14,11 @@
     "rust",
     "ai-agents",
     "llm",
-    "wasm"
+    "wasm",
+    "personal assistant",
+    "ai"
   ],
-  "author": "Spencer",
+  "author": "Spencer Howell",
   "private": true,
   "devDependencies": {
     "concurrently": "^8.2.2",

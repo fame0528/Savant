@@ -1,0 +1,4 @@
+# Savant Markdown Lint Ignore
+research/
+node_modules/
+CHANGELOG.md

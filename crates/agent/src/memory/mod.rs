@@ -199,4 +199,45 @@ impl MemoryBackend for FileLoggingMemoryBackend {
 
         Ok(())
     }
+
+    async fn get_or_create_session(
+        &self,
+        session_id: &str,
+    ) -> Result<savant_core::types::SessionState, SavantError> {
+        self.inner.get_or_create_session(session_id).await
+    }
+
+    async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<savant_core::types::SessionState>, SavantError> {
+        self.inner.get_session(session_id).await
+    }
+
+    async fn save_session(
+        &self,
+        state: &savant_core::types::SessionState,
+    ) -> Result<(), SavantError> {
+        self.inner.save_session(state).await
+    }
+
+    async fn save_turn(&self, turn: &savant_core::types::TurnState) -> Result<(), SavantError> {
+        self.inner.save_turn(turn).await
+    }
+
+    async fn get_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<savant_core::types::TurnState>, SavantError> {
+        self.inner.get_turn(session_id, turn_id).await
+    }
+
+    async fn fetch_recent_turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<savant_core::types::TurnState>, SavantError> {
+        self.inner.fetch_recent_turns(session_id, limit).await
+    }
 }

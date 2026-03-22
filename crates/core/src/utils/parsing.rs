@@ -11,7 +11,7 @@ pub fn bytes_to_string(bytes: &Bytes) -> String {
 pub fn scrub_secrets(text: &str) -> String {
     static SECRETS_RE: OnceLock<Regex> = OnceLock::new();
     let re = SECRETS_RE.get_or_init(|| {
-        Regex::new(r"sk-ant-[0-9a-zA-Z\-_]{40,}|sk-[0-9a-zA-Z\-_]{40,}|ghp_[0-9a-zA-Z]{36}|gho_[0-9a-zA-Z]{36}|glpat-[0-9a-zA-Z\-_]{20}|xox[baprs]-[0-9a-zA-Z\-]{10,}|Bearer\s+[0-9a-zA-Z\-_.]+|eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+").unwrap()
+        Regex::new(r"sk-ant-[0-9a-zA-Z\-_]{40,}|sk-[0-9a-zA-Z\-_]{40,}|ghp_[0-9a-zA-Z]{36}|gho_[0-9a-zA-Z]{36}|glpat-[0-9a-zA-Z\-_]{20}|xox[baprs]-[0-9a-zA-Z\-]{10,}|Bearer\s+[0-9a-zA-Z\-_.]+|eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+").expect("valid regex pattern")
     });
     re.replace_all(text, "[REDACTED]").to_string()
 }
@@ -20,7 +20,9 @@ pub fn scrub_secrets(text: &str) -> String {
 pub fn alias_tool_name(name: &str) -> &str {
     match name {
         "bash" | "sh" | "exec" | "command" | "cmd" => "shell",
-        "fileread" | "readfile" | "read_file" | "file" | "list_dir" | "glob" | "search_files" => "foundation",
+        "fileread" | "readfile" | "read_file" | "file" | "list_dir" | "glob" | "search_files" => {
+            "foundation"
+        }
         "filewrite" | "writefile" | "write_file" => "foundation",
         "fileedit" | "editfile" | "edit_file" | "replace_in_file" => "file_atomic_edit",
         "filemove" | "move" | "rename" => "file_move",
@@ -56,16 +58,32 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
     let mut actions: Vec<(String, String)> = Vec::new();
 
     // 1. Legacy/Standard Parser: Action: name[args]
-    let legacy_re = LEGACY_RE.get_or_init(|| Regex::new(r"Action:\s*(\w+)\[(.*?)\]").unwrap());
+    let legacy_re = LEGACY_RE
+        .get_or_init(|| Regex::new(r"Action:\s*(\w+)\[(.*?)\]").expect("valid regex pattern"));
     for cap in legacy_re.captures_iter(text) {
         actions.push((alias_tool_name(&cap[1]).to_string(), cap[2].to_string()));
     }
 
+    // 1b. JSON-format Parser: Action: name{"key": "value"}
+    if actions.is_empty() {
+        static JSON_ACTION_RE: OnceLock<Regex> = OnceLock::new();
+        let json_re = JSON_ACTION_RE
+            .get_or_init(|| Regex::new(r#"Action:\s*(\w+)(\{.*\})"#).expect("valid regex pattern"));
+        for cap in json_re.captures_iter(text) {
+            actions.push((alias_tool_name(&cap[1]).to_string(), cap[2].to_string()));
+        }
+    }
+
     // 2. Emergent Substrate Parser (XML-like): <tool_call><function=name>...
     if text.contains("<tool_call>") {
-        let tool_call_re = TOOL_CALL_RE.get_or_init(|| Regex::new(r"(?s)<tool_call>.*?</tool_call>").unwrap());
-        let fn_re = FN_RE.get_or_init(|| Regex::new(r"<function=([\w_]+)>").unwrap());
-        let param_re = PARAM_RE.get_or_init(|| Regex::new(r"(?s)<parameter=([\w_]+)>(.*?)</parameter>").unwrap());
+        let tool_call_re = TOOL_CALL_RE.get_or_init(|| {
+            Regex::new(r"(?s)<tool_call>.*?</tool_call>").expect("valid regex pattern")
+        });
+        let fn_re =
+            FN_RE.get_or_init(|| Regex::new(r"<function=([\w_]+)>").expect("valid regex pattern"));
+        let param_re = PARAM_RE.get_or_init(|| {
+            Regex::new(r"(?s)<parameter=([\w_]+)>(.*?)</parameter>").expect("valid regex pattern")
+        });
 
         for tc_match in tool_call_re.find_iter(text) {
             let tc_text = tc_match.as_str();
@@ -81,12 +99,17 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
                 actions.push((fn_name, args_json));
             } else {
                 // Check for generic native <name> / <arguments> format injected by OpenRouter
-                let name_re = regex::Regex::new(r"(?s)<name>\s*([^<]+)\s*</name>").unwrap();
-                let args_re = regex::Regex::new(r"(?s)<arguments>(.*?)</arguments>").unwrap();
-                if let (Some(name_cap), Some(args_cap)) = (name_re.captures(tc_text), args_re.captures(tc_text)) {
+                let name_re = regex::Regex::new(r"(?s)<name>\s*([^<]+)\s*</name>")
+                    .expect("valid regex pattern");
+                let args_re = regex::Regex::new(r"(?s)<arguments>(.*?)</arguments>")
+                    .expect("valid regex pattern");
+                if let (Some(name_cap), Some(args_cap)) =
+                    (name_re.captures(tc_text), args_re.captures(tc_text))
+                {
                     let fn_name = alias_tool_name(name_cap[1].trim()).to_string();
                     let args_str = args_cap[1].trim();
-                    let args = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+                    let args = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str)
+                    {
                         val.to_string()
                     } else {
                         serde_json::json!({ "payload": args_str }).to_string()
@@ -99,14 +122,23 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
 
     // 3. Format C - Attribute-style XML (<invoke name="x">)
     if text.contains("<invoke ") {
-        let invoke_re = INVOKE_RE.get_or_init(|| Regex::new(r#"(?s)<invoke\s+name=["']([^"']+)["']>(.*?)</invoke>"#).unwrap());
-        let param_re = INVOKE_PARAM_RE.get_or_init(|| Regex::new(r#"(?s)<parameter\s+name=["']([^"']+)["']\s+value=["']([^"']+)["']\s*/?>"#).unwrap());
+        let invoke_re = INVOKE_RE.get_or_init(|| {
+            Regex::new(r#"(?s)<invoke\s+name=["']([^"']+)["']>(.*?)</invoke>"#)
+                .expect("valid regex pattern")
+        });
+        let param_re = INVOKE_PARAM_RE.get_or_init(|| {
+            Regex::new(r#"(?s)<parameter\s+name=["']([^"']+)["']\s+value=["']([^"']+)["']\s*/?>"#)
+                .expect("valid regex pattern")
+        });
         for invoke_cap in invoke_re.captures_iter(text) {
             let fn_name = alias_tool_name(&invoke_cap[1]).to_string();
             let invoke_body = &invoke_cap[2];
             let mut params = serde_json::Map::new();
             for p_cap in param_re.captures_iter(invoke_body) {
-                params.insert(p_cap[1].to_string(), serde_json::Value::String(p_cap[2].to_string()));
+                params.insert(
+                    p_cap[1].to_string(),
+                    serde_json::Value::String(p_cap[2].to_string()),
+                );
             }
             actions.push((fn_name, serde_json::Value::Object(params).to_string()));
         }
@@ -114,13 +146,21 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
 
     // 4. Format D - <use_mcp_tool> XML
     if text.contains("<use_mcp_tool>") {
-        let use_mcp_re = USE_MCP_RE.get_or_init(|| Regex::new(r"(?s)<use_mcp_tool>.*?</use_mcp_tool>").unwrap());
-        let tool_name_re = MCP_TOOL_NAME_RE.get_or_init(|| Regex::new(r"<tool_name>([^<]+)</tool_name>").unwrap());
-        let args_re = MCP_ARGUMENTS_RE.get_or_init(|| Regex::new(r"(?s)<arguments>(.*?)</arguments>").unwrap());
+        let use_mcp_re = USE_MCP_RE.get_or_init(|| {
+            Regex::new(r"(?s)<use_mcp_tool>.*?</use_mcp_tool>").expect("valid regex pattern")
+        });
+        let tool_name_re = MCP_TOOL_NAME_RE.get_or_init(|| {
+            Regex::new(r"<tool_name>([^<]+)</tool_name>").expect("valid regex pattern")
+        });
+        let args_re = MCP_ARGUMENTS_RE.get_or_init(|| {
+            Regex::new(r"(?s)<arguments>(.*?)</arguments>").expect("valid regex pattern")
+        });
 
         for mcp_match in use_mcp_re.find_iter(text) {
             let mcp_text = mcp_match.as_str();
-            if let (Some(name_cap), Some(args_cap)) = (tool_name_re.captures(mcp_text), args_re.captures(mcp_text)) {
+            if let (Some(name_cap), Some(args_cap)) =
+                (tool_name_re.captures(mcp_text), args_re.captures(mcp_text))
+            {
                 let fn_name = alias_tool_name(name_cap[1].trim()).to_string();
                 let args_str = args_cap[1].trim();
                 let args = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
@@ -135,11 +175,19 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
 
     // 5. Format E - <function_call name="..." arguments="..."/>
     if text.contains("<function_call ") {
-        let fn_call_re = FN_CALL_RE.get_or_init(|| Regex::new(r#"(?s)<function_call\s+name=["']([^"']+)["']\s+arguments=["']([^"']+)["']\s*/?>"#).unwrap());
+        let fn_call_re = FN_CALL_RE.get_or_init(|| {
+            Regex::new(
+                r#"(?s)<function_call\s+name=["']([^"']+)["']\s+arguments=["']([^"']+)["']\s*/?>"#,
+            )
+            .expect("valid regex pattern")
+        });
         for cap in fn_call_re.captures_iter(text) {
             let fn_name = alias_tool_name(&cap[1]).to_string();
             // Try to parse arguments string which might have escaped quotes
-            let args_str = cap[2].replace("&quot;", "\"").replace("&apos;", "'").replace("&#34;", "\"");
+            let args_str = cap[2]
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replace("&#34;", "\"");
             actions.push((fn_name, args_str));
         }
     }

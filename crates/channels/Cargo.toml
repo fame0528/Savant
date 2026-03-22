@@ -15,4 +15,14 @@ bb8 = "0.8"
 futures = { workspace = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
 dashmap = "6.0"
-matrix-sdk = { version = "0.7", default-features = false, features = ["rustls-tls"] }
+reqwest = { workspace = true }
+imap = "2.4"
+native-tls = "0.2"
+lettre = { version = "0.11", features = ["smtp-transport", "native-tls", "builder"] }
+mailparse = "0.14"
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "0.26"
+chrono = "0.4"
+tokio-tungstenite = { version = "0.21", features = ["connect", "stream"] }
+tokio-native-tls = "0.3"

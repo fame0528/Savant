@@ -21,9 +21,10 @@ pub async fn execute_command(intent: &CommandIntent) -> Result<String, SavantErr
 
 async fn execute_agent_command(intent: &CommandIntent) -> Result<String, SavantError> {
     match intent.action.as_str() {
-        "list" => {
-            Ok("Use the agents sidebar to see all agents, or run `savant list-agents` from the CLI.".to_string())
-        }
+        "list" => Ok(
+            "Use the agents sidebar to see all agents, or run `savant list-agents` from the CLI."
+                .to_string(),
+        ),
         "restart" => {
             if let Some(agent) = &intent.target {
                 Ok(format!("Restart command queued for agent: {}. Note: Agent restart requires swarm controller integration.", agent))
@@ -42,14 +43,14 @@ async fn execute_channel_command(intent: &CommandIntent) -> Result<String, Savan
                 "Channel '{}' restart initiated. The channel will reconnect momentarily.",
                 channel
             )),
-            "stop" => Ok(format!(
-                "Channel '{}' has been disabled.",
-                channel
-            )),
+            "stop" => Ok(format!("Channel '{}' has been disabled.", channel)),
             _ => Ok(format!("Unknown channel action: {}", intent.action)),
         }
     } else {
-        Ok("Which channel would you like to manage? (discord, telegram, whatsapp, matrix)".to_string())
+        Ok(
+            "Which channel would you like to manage? (discord, telegram, whatsapp, matrix)"
+                .to_string(),
+        )
     }
 }
 

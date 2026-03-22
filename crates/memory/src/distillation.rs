@@ -1,14 +1,14 @@
-use std::sync::Arc;
-use tokio::time::{sleep, Duration};
-use tracing::{debug, info, warn, error};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::time::{sleep, Duration};
+use tracing::{debug, error, info, warn};
 
 use crate::engine::MemoryEnclave;
 use crate::models::{AgentMessage, MemoryEntry};
-use savant_core::traits::{LlmProvider, EmbeddingProvider};
-use savant_core::types::{ChatMessage, ChatRole};
 use futures::StreamExt;
+use savant_core::traits::{EmbeddingProvider, LlmProvider};
+use savant_core::types::{ChatMessage, ChatRole};
 
 /// Represents a distilled fact ready for public Hive-Mind access.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,18 +46,19 @@ pub fn spawn_distillation_pipeline(
         loop {
             // Wake every 5 minutes to scan for high-entropy local facts
             sleep(Duration::from_secs(300)).await;
-            
+
             debug!("Starting distillation sweep pass across Enclave...");
 
             let messages: Vec<AgentMessage> = enclave.lsm().iter_all_messages().collect();
-            
+
             for msg in messages {
                 if enclave.lsm().is_distilled(&msg.id) {
                     continue;
                 }
 
                 // Skip system messages or very short messages
-                if msg.content.len() < 20 || matches!(msg.role, crate::models::MessageRole::System) {
+                if msg.content.len() < 20 || matches!(msg.role, crate::models::MessageRole::System)
+                {
                     continue;
                 }
 
@@ -87,15 +88,20 @@ pub fn spawn_distillation_pipeline(
                             // Sign the triplet payload
                             if let Ok(_token) = encode(&Header::default(), &claims, &encoding_key) {
                                 let now_ms = chrono::Utc::now().timestamp_millis();
-                                
+
                                 // Generate a stable u64 ID from the source message UUID
                                 let mut s = std::collections::hash_map::DefaultHasher::new();
                                 use std::hash::Hasher;
                                 s.write(msg.id.as_bytes());
                                 let entry_id = s.finish();
 
-                                let content = format!("{} {} {}", claims.triplet.subject, claims.triplet.predicate, claims.triplet.object);
-                                
+                                let content = format!(
+                                    "{} {} {}",
+                                    claims.triplet.subject,
+                                    claims.triplet.predicate,
+                                    claims.triplet.object
+                                );
+
                                 // OMEGA-VIII: Generate semantic embedding if provider available
                                 let mut triplet_embedding = Vec::new();
                                 if let Some(ref provider) = embeddings {
@@ -114,15 +120,18 @@ pub fn spawn_distillation_pipeline(
                                     category: "distilled_triplet".to_string(),
                                     importance: (claims.triplet.confidence * 10.0) as u8,
                                     tags: vec!["hive-mind".to_string(), "shared".to_string()],
-                                    embedding: triplet_embedding, 
+                                    embedding: triplet_embedding,
                                     shannon_entropy: entropy.into(),
                                     last_accessed_at: now_ms.into(),
                                     hit_count: 0.into(),
                                     related_to: vec![],
                                 };
-                                
+
                                 if let Err(e) = collective.index_memory(entry).await {
-                                    error!("Failed to index distilled triplet into collective: {}", e);
+                                    error!(
+                                        "Failed to index distilled triplet into collective: {}",
+                                        e
+                                    );
                                 } else {
                                     // AAA: Production-grade SPO Indexing
                                     if let Err(e) = collective.lsm().insert_fact(
@@ -136,7 +145,7 @@ pub fn spawn_distillation_pipeline(
                                 }
                             }
                         }
-                        
+
                         // Mark as distilled only after successful processing
                         if let Err(e) = enclave.lsm().mark_distilled(&msg.id) {
                             error!("Failed to mark message as distilled: {}", e);
@@ -164,7 +173,10 @@ struct RawTriplet {
     confidence: f32,
 }
 
-async fn extract_triplets(llm: Arc<dyn LlmProvider>, content: &str) -> Result<Vec<RawTriplet>, String> {
+async fn extract_triplets(
+    llm: Arc<dyn LlmProvider>,
+    content: &str,
+) -> Result<Vec<RawTriplet>, String> {
     let prompt = format!(
         "Extract core semantic triplets (Subject-Predicate-Object) from the following text. \
         Provide raw factual assertions only. Return as JSON: {{ \"triplets\": [{{ \"subject\": \"...\", \"predicate\": \"...\", \"object\": \"...\", \"confidence\": 0.0 }}] }}\n\nText: {}",
@@ -191,7 +203,10 @@ async fn extract_triplets(llm: Arc<dyn LlmProvider>, content: &str) -> Result<Ve
         channel: savant_core::types::AgentOutputChannel::Chat,
     }];
 
-    let mut stream = llm.stream_completion(messages).await.map_err(|e| e.to_string())?;
+    let mut stream = llm
+        .stream_completion(messages, vec![])
+        .await
+        .map_err(|e| e.to_string())?;
     let mut full_content = String::new();
 
     while let Some(chunk_res) = stream.next().await {
@@ -208,7 +223,9 @@ async fn extract_triplets(llm: Arc<dyn LlmProvider>, content: &str) -> Result<Ve
 fn calculate_shannon_entropy(text: &str) -> f32 {
     let mut counts = std::collections::HashMap::new();
     let len = text.len() as f32;
-    if len == 0.0 { return 0.0; }
+    if len == 0.0 {
+        return 0.0;
+    }
 
     for c in text.chars() {
         *counts.entry(c).or_insert(0) += 1;

@@ -24,7 +24,7 @@ impl ALDEngine {
 
         let mut file = fs::File::open(&learnings_path)?;
         let file_len = file.metadata()?.len();
-        
+
         // Seek to watermark (with safety check)
         let actual_offset = if watermark > file_len {
             warn!("ALD: Watermark exceeds file length. Resetting to 0.");
@@ -48,8 +48,11 @@ impl ALDEngine {
         // skip(1) if we started from 0 (the first segment is usually preamble)
         let start_idx = if actual_offset == 0 { 1 } else { 0 };
         for block in blocks.iter().skip(start_idx) {
-            let is_strategic = block.contains("[STRATEGY]") || block.contains("[STRATEGIC]") || block.contains("Strategic Insight");
-            let is_engineering = block.contains("[ENGINEERING]") || block.contains("Protocol Precision");
+            let is_strategic = block.contains("[STRATEGY]")
+                || block.contains("[STRATEGIC]")
+                || block.contains("Strategic Insight");
+            let is_engineering =
+                block.contains("[ENGINEERING]") || block.contains("Protocol Precision");
 
             if is_strategic {
                 self.promote_to_soul(block)?;

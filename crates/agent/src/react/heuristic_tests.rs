@@ -19,6 +19,7 @@ impl LlmProvider for AmbiguousLlm {
     async fn stream_completion(
         &self,
         _messages: Vec<ChatMessage>,
+        _tools: Vec<serde_json::Value>,
     ) -> Result<
         Pin<Box<dyn Stream<Item = Result<savant_core::types::ChatChunk, SavantError>> + Send>>,
         SavantError,
@@ -34,6 +35,7 @@ impl LlmProvider for AmbiguousLlm {
             logprob: None,
             is_telemetry: false,
             reasoning: None,
+            tool_calls: None,
         };
         Ok(Box::pin(futures::stream::iter(vec![Ok(chunk)])))
     }
@@ -56,6 +58,49 @@ impl MemoryBackend for MockMemory {
     async fn consolidate(&self, _agent_id: &str) -> Result<(), SavantError> {
         Ok(())
     }
+    async fn get_or_create_session(
+        &self,
+        _session_id: &str,
+    ) -> Result<savant_core::types::SessionState, SavantError> {
+        Ok(savant_core::types::SessionState {
+            session_id: "mock".to_string(),
+            created_at: 0,
+            last_active: 0,
+            turn_count: 0,
+            active_turn_id: None,
+            auto_approved_tools: vec![],
+            denied_tools: vec![],
+        })
+    }
+    async fn get_session(
+        &self,
+        _session_id: &str,
+    ) -> Result<Option<savant_core::types::SessionState>, SavantError> {
+        Ok(None)
+    }
+    async fn save_session(
+        &self,
+        _state: &savant_core::types::SessionState,
+    ) -> Result<(), SavantError> {
+        Ok(())
+    }
+    async fn save_turn(&self, _turn: &savant_core::types::TurnState) -> Result<(), SavantError> {
+        Ok(())
+    }
+    async fn get_turn(
+        &self,
+        _session_id: &str,
+        _turn_id: &str,
+    ) -> Result<Option<savant_core::types::TurnState>, SavantError> {
+        Ok(None)
+    }
+    async fn fetch_recent_turns(
+        &self,
+        _session_id: &str,
+        _limit: usize,
+    ) -> Result<Vec<savant_core::types::TurnState>, SavantError> {
+        Ok(vec![])
+    }
 }
 
 #[tokio::test]
@@ -72,6 +117,7 @@ async fn test_autonomous_ambiguity_synthesis() {
         MockMemory,
         vec![], // No tools, but we want to see if it parses
         AgentIdentity::default(),
+        String::new(),
     );
 
     let mut stream = agent.run("start".into(), None, CancellationToken::new());
@@ -113,6 +159,7 @@ async fn test_checkpoint_creation() {
         MockMemory,
         vec![],
         AgentIdentity::default(),
+        String::new(),
     );
 
     assert!(agent.heuristic.last_stable_checkpoint.is_none());

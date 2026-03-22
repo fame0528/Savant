@@ -26,8 +26,9 @@ mod memory_stress_tests {
             let engine_clone = engine.clone();
             let sid = session_id.to_string();
             let handle = tokio::spawn(async move {
-                let msg = savant_memory::AgentMessage::user(&sid, &format!("Concurrent message {}", i));
-                engine_clone.append_message(&sid, &msg)
+                let msg =
+                    savant_memory::AgentMessage::user(&sid, &format!("Concurrent message {}", i));
+                engine_clone.append_message(&sid, &msg).await
             });
             handles.push(handle);
         }
@@ -72,7 +73,7 @@ mod memory_stress_tests {
                         &sid,
                         &format!("Session {} message {}", session_num, msg_num),
                     );
-                    engine_clone.append_message(&sid, &msg)
+                    engine_clone.append_message(&sid, &msg).await
                 });
                 handles.push(handle);
             }
@@ -115,7 +116,7 @@ mod memory_stress_tests {
                 session_id,
                 &format!("Performance test message {} with some content", i),
             );
-            engine.append_message(session_id, &msg).unwrap();
+            engine.append_message(session_id, &msg).await.unwrap();
         }
 
         let elapsed = start.elapsed();

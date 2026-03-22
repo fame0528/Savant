@@ -505,6 +505,185 @@ pub fn session_key(session_id: &str) -> String {
     format!("session:{}", session_id)
 }
 
+/// Session state persisted in the `sessions` collection of CortexaDB.
+///
+/// Tracks session metadata, thread management, and approval settings.
+/// Stored using rkyv zero-copy serialization for fast reads.
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+)]
+#[bytecheck(crate = bytecheck)]
+#[repr(C)]
+pub struct SessionState {
+    /// Unique session identifier (matches the transcript collection key)
+    pub session_id: String,
+    /// When this session was created (Unix ms)
+    pub created_at: rend::i64_le,
+    /// Last activity timestamp (Unix ms)
+    pub last_active: rend::i64_le,
+    /// Total turns completed in this session
+    pub turn_count: rend::u64_le,
+    /// Current turn ID (if a turn is in progress)
+    pub active_turn_id: Option<String>,
+    /// Tools auto-approved for this session (empty = use defaults)
+    pub auto_approved_tools: Vec<String>,
+    /// Tools explicitly denied for this session
+    pub denied_tools: Vec<String>,
+}
+
+impl SessionState {
+    /// Creates a new session state.
+    pub fn new(session_id: &str) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        Self {
+            session_id: session_id.to_string(),
+            created_at: now.into(),
+            last_active: now.into(),
+            turn_count: 0u64.into(),
+            active_turn_id: None,
+            auto_approved_tools: Vec::new(),
+            denied_tools: Vec::new(),
+        }
+    }
+
+    /// Marks the session as active (updates last_active timestamp).
+    pub fn touch(&mut self) {
+        self.last_active = chrono::Utc::now().timestamp_millis().into();
+    }
+
+    /// Starts a new turn, incrementing the turn counter.
+    pub fn begin_turn(&mut self, turn_id: &str) {
+        self.active_turn_id = Some(turn_id.to_string());
+        let current: u64 = self.turn_count.into();
+        self.turn_count = (current + 1).into();
+        self.touch();
+    }
+
+    /// Ends the current turn.
+    pub fn end_turn(&mut self) {
+        self.active_turn_id = None;
+        self.touch();
+    }
+}
+
+/// Turn state persisted in the `turns.{session_id}` collection of CortexaDB.
+///
+/// Tracks the lifecycle of a single user-request/agent-response cycle,
+/// including tool calls made during the turn.
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    bytecheck::CheckBytes,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+)]
+#[bytecheck(crate = bytecheck)]
+#[repr(C)]
+pub struct TurnState {
+    /// Unique turn identifier (UUID v4)
+    pub turn_id: String,
+    /// Session this turn belongs to
+    pub session_id: String,
+    /// Current lifecycle state
+    pub state: TurnPhase,
+    /// Tool names invoked during this turn
+    pub tool_calls_made: Vec<String>,
+    /// Timestamp when turn started (Unix ms)
+    pub started_at: rend::i64_le,
+    /// Timestamp when turn completed (Unix ms, 0 if still active)
+    pub completed_at: rend::i64_le,
+}
+
+/// Lifecycle phase of a turn.
+#[derive(
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    bytecheck::CheckBytes,
+    rkyv::Portable,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+)]
+#[bytecheck(crate = bytecheck)]
+#[repr(u8)]
+pub enum TurnPhase {
+    /// Turn is currently processing (LLM calls, tool execution)
+    Processing = 0,
+    /// Turn completed successfully
+    Completed = 1,
+    /// Turn failed (error in LLM call or tool execution)
+    Failed = 2,
+    /// Turn was interrupted by user or system
+    Interrupted = 3,
+    /// Turn is waiting for approval (tool requires human consent)
+    AwaitingApproval = 4,
+}
+
+impl TurnState {
+    /// Creates a new turn state.
+    pub fn new(turn_id: &str, session_id: &str) -> Self {
+        Self {
+            turn_id: turn_id.to_string(),
+            session_id: session_id.to_string(),
+            state: TurnPhase::Processing,
+            tool_calls_made: Vec::new(),
+            started_at: chrono::Utc::now().timestamp_millis().into(),
+            completed_at: 0i64.into(),
+        }
+    }
+
+    /// Records a tool call made during this turn.
+    pub fn record_tool_call(&mut self, tool_name: &str) {
+        self.tool_calls_made.push(tool_name.to_string());
+    }
+
+    /// Marks the turn as completed.
+    pub fn complete(&mut self) {
+        self.state = TurnPhase::Completed;
+        self.completed_at = chrono::Utc::now().timestamp_millis().into();
+    }
+
+    /// Marks the turn as failed.
+    pub fn fail(&mut self) {
+        self.state = TurnPhase::Failed;
+        self.completed_at = chrono::Utc::now().timestamp_millis().into();
+    }
+
+    /// Marks the turn as interrupted.
+    pub fn interrupt(&mut self) {
+        self.state = TurnPhase::Interrupted;
+        self.completed_at = chrono::Utc::now().timestamp_millis().into();
+    }
+}
+
+/// Generates a storage key for a session state entry.
+///
+/// Key format: `state:{session_id}`
+pub fn session_state_key(session_id: &str) -> String {
+    format!("state:{}", session_id)
+}
+
+/// Generates a storage key for a turn state entry.
+///
+/// Key format: `turn:{session_id}:{turn_id}`
+pub fn turn_state_key(session_id: &str, turn_id: &str) -> String {
+    format!("turn:{}:{}", session_id, turn_id)
+}
+
 /// Generates a storage key for an individual message.
 ///
 /// Key format: `session:{session_id}:{timestamp}:{id}`

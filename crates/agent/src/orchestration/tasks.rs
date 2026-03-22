@@ -1,10 +1,10 @@
 //! OMEGA-VIII: Task Matrix (Autonomous Orchestration)
-//! 
+//!
 //! Manages persistent, externalized work queues for proactive agents.
 
-use std::path::{Path, PathBuf};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TaskItem {
@@ -71,7 +71,7 @@ impl TaskMatrix {
             .create(true)
             .append(true)
             .open(&self.path)?;
-        
+
         use std::io::Write;
         file.write_all(line.as_bytes())
     }
@@ -79,7 +79,8 @@ impl TaskMatrix {
     /// Returns a formatted string of pending tasks for prompt injection.
     pub fn get_pending_summary(&self) -> String {
         let tasks = self.load_tasks();
-        let pending: Vec<String> = tasks.into_iter()
+        let pending: Vec<String> = tasks
+            .into_iter()
             .filter(|t| t.status == TaskStatus::Pending || t.status == TaskStatus::InProgress)
             .map(|t| format!("- {}", t.description))
             .collect();

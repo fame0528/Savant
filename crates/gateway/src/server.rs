@@ -49,7 +49,9 @@ pub async fn start_gateway(
         sessions: DashMap::new(),
         nexus,
         storage,
-        avatar_cache: TokioMutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())),
+        avatar_cache: TokioMutex::new(LruCache::new(
+            NonZeroUsize::new(100).expect("100 is non-zero"),
+        )),
         gateway_signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
     });
 
@@ -60,8 +62,35 @@ pub async fn start_gateway(
             "/api/settings",
             get(settings_get_handler).post(settings_post_handler),
         )
-        .route("/api/settings/reset", get(settings_reset_handler).post(settings_reset_handler))
+        .route(
+            "/api/settings/reset",
+            get(settings_reset_handler).post(settings_reset_handler),
+        )
         .route("/api/models", get(models_get_handler))
+        .route(
+            "/api/mcp/servers",
+            get(crate::handlers::mcp::list_servers_handler),
+        )
+        .route(
+            "/api/mcp/servers/install",
+            axum::routing::post(crate::handlers::mcp::install_server_handler),
+        )
+        .route(
+            "/api/mcp/servers/add",
+            axum::routing::post(crate::handlers::mcp::add_server_handler),
+        )
+        .route(
+            "/api/mcp/servers/remove",
+            axum::routing::post(crate::handlers::mcp::remove_server_handler),
+        )
+        .route(
+            "/api/mcp/servers/uninstall",
+            axum::routing::post(crate::handlers::mcp::uninstall_server_handler),
+        )
+        .route(
+            "/api/mcp/servers/info",
+            get(crate::handlers::mcp::server_info_handler),
+        )
         .route("/live", get(|| async { "OK" }))
         .route("/ready", get(|| async { "OK" }))
         .with_state(state);
@@ -338,7 +367,7 @@ async fn agent_image_handler(
                 Response::builder()
                     .status(500)
                     .body(axum::body::Body::empty())
-                    .unwrap()
+                    .expect("valid response builder")
             });
     }
 
@@ -358,7 +387,7 @@ async fn agent_image_handler(
                     Response::builder()
                         .status(500)
                         .body(axum::body::Body::empty())
-                        .unwrap()
+                        .expect("valid response builder")
                 });
         }
     }
@@ -394,7 +423,7 @@ async fn agent_image_handler(
                         Response::builder()
                             .status(500)
                             .body(axum::body::Body::empty())
-                            .unwrap()
+                            .expect("valid response builder")
                     });
             }
         }
@@ -422,7 +451,7 @@ async fn agent_image_handler(
             Response::builder()
                 .status(500)
                 .body(axum::body::Body::empty())
-                .unwrap()
+                .expect("valid response builder")
         })
 }
 
@@ -498,7 +527,13 @@ async fn settings_post_handler(
 ) -> impl IntoResponse {
     let mut config = match savant_core::config::Config::load() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": e.to_string()}))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"status": "error", "message": e.to_string()})),
+            )
+                .into_response()
+        }
     };
 
     // 1. Update Chat Model (Agent-specific)
@@ -526,9 +561,9 @@ async fn settings_post_handler(
     let mut changed = false;
     let mut validation_notes = Vec::new();
 
-    if let Some(v) = update.vision_model { 
-        config.ai.manifestation_model = Some(v); 
-        changed = true; 
+    if let Some(v) = update.vision_model {
+        config.ai.manifestation_model = Some(v);
+        changed = true;
     }
 
     if let Some(v) = update.temperature {
@@ -552,7 +587,10 @@ async fn settings_post_handler(
     if let Some(v) = update.frequency_penalty {
         let clamped = v.clamp(-2.0, 2.0);
         if (clamped - v).abs() > f32::EPSILON {
-            validation_notes.push(format!("Frequency Penalty clamped from {} to {}", v, clamped));
+            validation_notes.push(format!(
+                "Frequency Penalty clamped from {} to {}",
+                v, clamped
+            ));
         }
         config.ai.frequency_penalty = clamped;
         changed = true;
@@ -561,7 +599,10 @@ async fn settings_post_handler(
     if let Some(v) = update.presence_penalty {
         let clamped = v.clamp(-2.0, 2.0);
         if (clamped - v).abs() > f32::EPSILON {
-            validation_notes.push(format!("Presence Penalty clamped from {} to {}", v, clamped));
+            validation_notes.push(format!(
+                "Presence Penalty clamped from {} to {}",
+                v, clamped
+            ));
         }
         config.ai.presence_penalty = clamped;
         changed = true;
@@ -571,29 +612,45 @@ async fn settings_post_handler(
         let config_path = savant_core::config::Config::primary_config_path();
         if let Err(e) = config.save(&config_path) {
             tracing::error!("❌ Failed to save config: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": e.to_string()}))).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"status": "error", "message": e.to_string()})),
+            )
+                .into_response();
         }
-        
+
         // Notify the Swarm via Nexus
-        let _ = state.nexus.publish("system.config.updated", &serde_json::json!({
-            "section": "ai",
-            "notes": validation_notes
-        }).to_string()).await;
+        let _ = state
+            .nexus
+            .publish(
+                "system.config.updated",
+                &serde_json::json!({
+                    "section": "ai",
+                    "notes": validation_notes
+                })
+                .to_string(),
+            )
+            .await;
     }
 
     Json(serde_json::json!({
         "status": "ok",
         "notes": validation_notes
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// Restores AI configuration to system defaults
-async fn settings_reset_handler(
-    State(state): State<Arc<GatewayState>>,
-) -> impl IntoResponse {
+async fn settings_reset_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let mut config = match savant_core::config::Config::load() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": e.to_string()}))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"status": "error", "message": e.to_string()})),
+            )
+                .into_response()
+        }
     };
 
     // Apply defaults from savant_core::config::AiConfig::default()
@@ -602,25 +659,37 @@ async fn settings_reset_handler(
     let config_path = savant_core::config::Config::primary_config_path();
     if let Err(e) = config.save(&config_path) {
         tracing::error!("❌ Failed to reset config: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": e.to_string()}))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"status": "error", "message": e.to_string()})),
+        )
+            .into_response();
     }
 
     // Notify the Swarm
-    let _ = state.nexus.publish("system.config.reset", &serde_json::json!({"section": "ai"}).to_string()).await;
+    let _ = state
+        .nexus
+        .publish(
+            "system.config.reset",
+            &serde_json::json!({"section": "ai"}).to_string(),
+        )
+        .await;
 
-    Json(serde_json::json!({"status": "ok", "message": "Settings restored to system defaults"})).into_response()
+    Json(serde_json::json!({"status": "ok", "message": "Settings restored to system defaults"}))
+        .into_response()
 }
 
 /// Returns the list of available models and parameter descriptors
 async fn models_get_handler() -> impl IntoResponse {
     let parameter_descriptors = savant_core::types::LlmParams::get_parameter_descriptors();
-    
-    // For now, we return the descriptors. We could also include the provider list 
+
+    // For now, we return the descriptors. We could also include the provider list
     // but the Tuning page primarily needs the descriptors.
     Json(serde_json::json!({
         "status": "ok",
         "parameter_descriptors": parameter_descriptors
-    })).into_response()
+    }))
+    .into_response()
 }
 
 #[cfg(test)]

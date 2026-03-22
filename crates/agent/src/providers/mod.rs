@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+pub mod chain;
 pub mod mgmt;
 use async_stream::stream;
 use async_trait::async_trait;
@@ -199,6 +200,7 @@ impl LlmProvider for OpenAiProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -208,6 +210,7 @@ impl LlmProvider for OpenAiProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -245,6 +248,7 @@ impl LlmProvider for OpenRouterProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -256,6 +260,7 @@ impl LlmProvider for OpenRouterProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
@@ -410,6 +415,7 @@ impl LlmProvider for AnthropicProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -420,6 +426,7 @@ impl LlmProvider for AnthropicProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
@@ -454,6 +461,7 @@ impl LlmProvider for OllamaProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        _tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -576,6 +584,7 @@ impl LlmProvider for GroqProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -585,6 +594,7 @@ impl LlmProvider for GroqProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -627,6 +637,7 @@ impl LlmProvider for GoogleProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         // Convert messages to Gemini format
@@ -652,6 +663,7 @@ impl LlmProvider for GoogleProvider {
             .header("Content-Type", "application/json")
             .json(&json!({
                 "contents": contents,
+                "tools": tools,
                 "generationConfig": {
                     "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                     "topP": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -761,6 +773,7 @@ impl LlmProvider for MistralProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -770,6 +783,7 @@ impl LlmProvider for MistralProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -806,6 +820,7 @@ impl LlmProvider for TogetherProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -815,6 +830,7 @@ impl LlmProvider for TogetherProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -851,6 +867,7 @@ impl LlmProvider for DeepseekProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -860,6 +877,7 @@ impl LlmProvider for DeepseekProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -896,6 +914,7 @@ impl LlmProvider for CohereProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         // Convert to Cohere v2 chat format
@@ -941,6 +960,7 @@ impl LlmProvider for CohereProvider {
                 "model": self.model,
                 "message": message,
                 "chat_history": chat_history,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -1043,6 +1063,7 @@ impl LlmProvider for AzureProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let url = format!(
@@ -1058,6 +1079,7 @@ impl LlmProvider for AzureProvider {
             .header("api-key", &self.api_key)
             .json(&json!({
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -1096,6 +1118,7 @@ impl LlmProvider for XaiProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -1105,6 +1128,7 @@ impl LlmProvider for XaiProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -1143,6 +1167,7 @@ impl LlmProvider for FireworksProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -1152,6 +1177,7 @@ impl LlmProvider for FireworksProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -1188,6 +1214,7 @@ impl LlmProvider for NovitaProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let response = self
@@ -1197,6 +1224,7 @@ impl LlmProvider for NovitaProvider {
             .json(&json!({
                 "model": self.model,
                 "messages": messages,
+                "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
@@ -1249,13 +1277,18 @@ impl LlmProvider for RetryProvider {
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let mut attempts = 0;
         let mut last_error = SavantError::Unknown("Retry failed".to_string());
 
         while attempts < self.max_retries {
-            match self.inner.stream_completion(messages.clone()).await {
+            match self
+                .inner
+                .stream_completion(messages.clone(), tools.clone())
+                .await
+            {
                 Ok(stream) => return Ok(stream),
                 Err(e) => {
                     if !Self::is_retryable(&e) {

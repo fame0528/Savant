@@ -48,4 +48,152 @@ impl MemoryBackend for FjallMemoryBackend {
         info!("Consolidation requested for agent {}", agent_id);
         Ok(())
     }
+
+    async fn get_or_create_session(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::types::SessionState, SavantError> {
+        let state = self
+            .engine
+            .get_or_create_session_state(session_id)
+            .await
+            .map_err(|e| SavantError::Unknown(e.to_string()))?;
+
+        Ok(crate::types::SessionState {
+            session_id: state.session_id,
+            created_at: state.created_at.into(),
+            last_active: state.last_active.into(),
+            turn_count: state.turn_count.into(),
+            active_turn_id: state.active_turn_id,
+            auto_approved_tools: state.auto_approved_tools,
+            denied_tools: state.denied_tools,
+        })
+    }
+
+    async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::types::SessionState>, SavantError> {
+        match self
+            .engine
+            .get_session_state(session_id)
+            .map_err(|e| SavantError::Unknown(e.to_string()))?
+        {
+            Some(state) => Ok(Some(crate::types::SessionState {
+                session_id: state.session_id,
+                created_at: state.created_at.into(),
+                last_active: state.last_active.into(),
+                turn_count: state.turn_count.into(),
+                active_turn_id: state.active_turn_id,
+                auto_approved_tools: state.auto_approved_tools,
+                denied_tools: state.denied_tools,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    async fn save_session(&self, state: &crate::types::SessionState) -> Result<(), SavantError> {
+        let rkyv_state = savant_memory::SessionState {
+            session_id: state.session_id.clone(),
+            created_at: state.created_at.into(),
+            last_active: state.last_active.into(),
+            turn_count: state.turn_count.into(),
+            active_turn_id: state.active_turn_id.clone(),
+            auto_approved_tools: state.auto_approved_tools.clone(),
+            denied_tools: state.denied_tools.clone(),
+        };
+        self.engine
+            .save_session_state(&rkyv_state)
+            .await
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    async fn save_turn(&self, turn: &crate::types::TurnState) -> Result<(), SavantError> {
+        let phase = match turn.state {
+            crate::types::TurnPhase::Processing => savant_memory::TurnPhase::Processing,
+            crate::types::TurnPhase::Completed => savant_memory::TurnPhase::Completed,
+            crate::types::TurnPhase::Failed => savant_memory::TurnPhase::Failed,
+            crate::types::TurnPhase::Interrupted => savant_memory::TurnPhase::Interrupted,
+            crate::types::TurnPhase::AwaitingApproval => savant_memory::TurnPhase::AwaitingApproval,
+        };
+        let rkyv_turn = savant_memory::TurnState {
+            turn_id: turn.turn_id.clone(),
+            session_id: turn.session_id.clone(),
+            state: phase,
+            tool_calls_made: turn.tool_calls_made.clone(),
+            started_at: turn.started_at.into(),
+            completed_at: turn.completed_at.into(),
+        };
+        self.engine
+            .save_turn_state(&rkyv_turn)
+            .await
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    async fn get_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<crate::types::TurnState>, SavantError> {
+        match self
+            .engine
+            .get_turn_state(session_id, turn_id)
+            .map_err(|e| SavantError::Unknown(e.to_string()))?
+        {
+            Some(turn) => {
+                let phase = match turn.state {
+                    savant_memory::TurnPhase::Processing => crate::types::TurnPhase::Processing,
+                    savant_memory::TurnPhase::Completed => crate::types::TurnPhase::Completed,
+                    savant_memory::TurnPhase::Failed => crate::types::TurnPhase::Failed,
+                    savant_memory::TurnPhase::Interrupted => crate::types::TurnPhase::Interrupted,
+                    savant_memory::TurnPhase::AwaitingApproval => {
+                        crate::types::TurnPhase::AwaitingApproval
+                    }
+                };
+                Ok(Some(crate::types::TurnState {
+                    turn_id: turn.turn_id,
+                    session_id: turn.session_id,
+                    state: phase,
+                    tool_calls_made: turn.tool_calls_made,
+                    started_at: turn.started_at.into(),
+                    completed_at: turn.completed_at.into(),
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn fetch_recent_turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::types::TurnState>, SavantError> {
+        let turns = self
+            .engine
+            .fetch_recent_turns(session_id, limit)
+            .map_err(|e| SavantError::Unknown(e.to_string()))?;
+
+        Ok(turns
+            .into_iter()
+            .map(|t| {
+                let phase = match t.state {
+                    savant_memory::TurnPhase::Processing => crate::types::TurnPhase::Processing,
+                    savant_memory::TurnPhase::Completed => crate::types::TurnPhase::Completed,
+                    savant_memory::TurnPhase::Failed => crate::types::TurnPhase::Failed,
+                    savant_memory::TurnPhase::Interrupted => crate::types::TurnPhase::Interrupted,
+                    savant_memory::TurnPhase::AwaitingApproval => {
+                        crate::types::TurnPhase::AwaitingApproval
+                    }
+                };
+                crate::types::TurnState {
+                    turn_id: t.turn_id,
+                    session_id: t.session_id,
+                    state: phase,
+                    tool_calls_made: t.tool_calls_made,
+                    started_at: t.started_at.into(),
+                    completed_at: t.completed_at.into(),
+                }
+            })
+            .collect())
+    }
 }

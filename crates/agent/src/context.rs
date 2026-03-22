@@ -99,19 +99,19 @@ impl ContextAssembler {
         if let Some(skills) = &self.skills_list {
             prompt.push_str(&format!("AVAILABLE TOOLS:\n{}\n\n", skills));
             prompt.push_str("TOOL USAGE FORMAT:\n");
-            prompt.push_str("To call a tool, use this exact format in your response:\n");
+            prompt.push_str("Use the tool calling format provided by the API when available.\n");
+            prompt.push_str("As a fallback, you can also use this text format in your response:\n");
             prompt.push_str("Action: tool_name{\"key\": \"value\"}\n\n");
             prompt.push_str("Examples:\n");
             prompt.push_str(
                 "  Action: foundation{\"action\": \"read\", \"path\": \"src/main.rs\"}\n",
             );
-            prompt.push_str("  Action: foundation{\"action\": \"ls\", \"path\": \".\"}\n");
+            prompt.push_str("  Action: shell{\"command\": \"ls -la\"}\n");
             prompt.push_str(
                 "  Action: file_create{\"path\": \"new_file.txt\", \"content\": \"Hello world\"}\n",
             );
             prompt.push_str("  Action: file_move{\"from\": \"old.txt\", \"to\": \"new.txt\"}\n");
             prompt.push_str("  Action: file_delete{\"path\": \"tmp/old.log\"}\n");
-            prompt.push_str("  Action: file_atomic_edit{\"path\": \"src/lib.rs\", \"replacements\": [{\"target\": \"old\", \"value\": \"new}]}\n");
             prompt.push_str("  Action: shell{\"command\": \"cargo check\"}\n\n");
         }
 
@@ -177,6 +177,7 @@ mod tests {
             expertise: vec!["Rust".to_string()],
             ethics: None,
             image: None,
+            internal_settings: None,
         };
         let budget = TokenBudget::new(100);
         let assembler = ContextAssembler::new(identity, budget, None, "House Rules.".to_string());

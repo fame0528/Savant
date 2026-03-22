@@ -88,10 +88,7 @@ impl AgentKeyPair {
     }
 
     pub fn ensure_master_key() -> Result<Self, CryptoError> {
-        // Load environment variables from .env file
-        let _ = dotenvy::dotenv();
-
-        // First check environment variable
+        // Strategy 1: Environment variables
         if let Ok(secret_key) = std::env::var("SAVANT_MASTER_SECRET_KEY") {
             if let Ok(public_key) = std::env::var("SAVANT_MASTER_PUBLIC_KEY") {
                 let key_id =
@@ -107,27 +104,95 @@ impl AgentKeyPair {
             }
         }
 
-        // In production (non-test, non-dev mode), fail loudly
-        let is_dev_mode =
-            cfg!(test) || std::env::var("SAVANT_DEV_MODE").is_ok() || std::env::var("CI").is_ok();
-
-        if !is_dev_mode {
-            return Err(CryptoError::InvalidKeyFormat);
+        // Strategy 2: Load .env from current working directory
+        let _ = dotenvy::dotenv();
+        if let Ok(secret_key) = std::env::var("SAVANT_MASTER_SECRET_KEY") {
+            if let Ok(public_key) = std::env::var("SAVANT_MASTER_PUBLIC_KEY") {
+                let key_id =
+                    std::env::var("SAVANT_MASTER_KEY_ID").unwrap_or_else(|_| "cwd-key".to_string());
+                return Ok(AgentKeyPair {
+                    public_key,
+                    secret_key,
+                    key_id,
+                    created_at: chrono::Utc::now().timestamp(),
+                });
+            }
         }
 
-        // Fallback: Auto-generate keys for development/test only
-        tracing::warn!(
-            "⚠️  No master keys found in environment. Auto-generating for development..."
-        );
+        // Strategy 3: Load .env from exe directory (for installed apps)
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let env_path = exe_dir.join(".env");
+                if env_path.exists() {
+                    let _ = dotenvy::from_path(&env_path);
+                    if let Ok(secret_key) = std::env::var("SAVANT_MASTER_SECRET_KEY") {
+                        if let Ok(public_key) = std::env::var("SAVANT_MASTER_PUBLIC_KEY") {
+                            let key_id = std::env::var("SAVANT_MASTER_KEY_ID")
+                                .unwrap_or_else(|_| "exe-key".to_string());
+                            return Ok(AgentKeyPair {
+                                public_key,
+                                secret_key,
+                                key_id,
+                                created_at: chrono::Utc::now().timestamp(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Strategy 4: Load from persistent key file in config directory
+        if let Some(key_path) = Self::key_file_path() {
+            if key_path.exists() {
+                if let Ok(keypair) = Self::load_from_file(&key_path) {
+                    tracing::info!("✅ Loaded master key from {:?}", key_path);
+                    return Ok(keypair);
+                }
+            }
+        }
+
+        // Strategy 5: Auto-generate and persist to config directory
+        tracing::warn!("⚠️  No master key found. Auto-generating...");
         let generated_key = Self::generate()?;
         let key_id_short = &generated_key.key_id[..generated_key.key_id.len().min(8)];
-        tracing::info!("✅ Generated development master key: {}...", key_id_short);
-        tracing::warn!("⚠️  For production, set these environment variables:");
-        tracing::warn!("   SAVANT_MASTER_SECRET_KEY=<your-secret-key>");
-        tracing::warn!("   SAVANT_MASTER_PUBLIC_KEY=<your-public-key>");
-        tracing::warn!("   SAVANT_MASTER_KEY_ID={}...", key_id_short);
+        tracing::info!("✅ Generated master key: {}...", key_id_short);
+
+        // Persist to config directory so it survives restarts
+        if let Some(key_path) = Self::key_file_path() {
+            if let Some(parent) = key_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = generated_key.save_to_file(&key_path) {
+                tracing::warn!("⚠️  Failed to persist master key to {:?}: {}", key_path, e);
+            } else {
+                tracing::info!("✅ Master key persisted to {:?}", key_path);
+            }
+        }
 
         Ok(generated_key)
+    }
+
+    /// Returns the platform-appropriate path for the master key file.
+    /// Windows: %APPDATA%/savant/master_key.json
+    /// Unix: ~/.config/savant/master_key.json
+    fn key_file_path() -> Option<PathBuf> {
+        #[cfg(target_os = "windows")]
+        {
+            std::env::var("APPDATA").ok().map(|appdata| {
+                PathBuf::from(appdata)
+                    .join("savant")
+                    .join("master_key.json")
+            })
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::env::var("HOME").ok().map(|home| {
+                PathBuf::from(home)
+                    .join(".config")
+                    .join("savant")
+                    .join("master_key.json")
+            })
+        }
     }
 
     pub fn sign_message(&self, message: &str) -> Result<String, CryptoError> {

@@ -1,13 +1,13 @@
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 use crate::error::MemoryError;
 use crate::lsm_engine::{LsmConfig, LsmStorageEngine};
 use crate::models::{AgentMessage, MemoryEntry};
 use crate::notifications::NotificationChannel;
 use crate::vector_engine::{SemanticVectorEngine, VectorConfig};
-use savant_core::traits::{LlmProvider, EmbeddingProvider};
+use savant_core::traits::{EmbeddingProvider, LlmProvider};
 use savant_core::types::LlmParams;
 
 /// 🧬 OMEGA-VIII: Memory Layer Definition
@@ -93,7 +93,7 @@ impl MemoryEnclave {
 
     pub async fn index_memory(&self, mut entry: MemoryEntry) -> Result<(), MemoryError> {
         let _guard = self.write_lock.lock().await;
-        
+
         // OMEGA-VIII: Automatic Embedding Generation via Ollama
         if entry.embedding.is_empty() {
             if let Some(ref provider) = self.embedding_service {
@@ -170,13 +170,71 @@ impl MemoryEnclave {
     pub fn vector_count(&self) -> usize {
         self.vector.vector_count()
     }
-    
+
     pub fn lsm(&self) -> Arc<LsmStorageEngine> {
         Arc::clone(&self.lsm)
     }
-    
+
     pub fn vector(&self) -> Arc<SemanticVectorEngine> {
         Arc::clone(&self.vector)
+    }
+
+    // --- Session / Turn State ---
+
+    /// Saves or updates a session state (write-locked).
+    pub async fn save_session_state(
+        &self,
+        state: &crate::models::SessionState,
+    ) -> Result<(), MemoryError> {
+        let _guard = self.write_lock.lock().await;
+        self.lsm.save_session_state(state)
+    }
+
+    /// Loads a session state (no write lock needed for reads).
+    pub fn get_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::models::SessionState>, MemoryError> {
+        self.lsm.get_session_state(session_id)
+    }
+
+    /// Gets or creates a session state (write-locked if creating).
+    pub async fn get_or_create_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::models::SessionState, MemoryError> {
+        if let Some(state) = self.lsm.get_session_state(session_id)? {
+            return Ok(state);
+        }
+        let _guard = self.write_lock.lock().await;
+        self.lsm.get_or_create_session_state(session_id)
+    }
+
+    /// Saves a turn state (write-locked).
+    pub async fn save_turn_state(
+        &self,
+        turn: &crate::models::TurnState,
+    ) -> Result<(), MemoryError> {
+        let _guard = self.write_lock.lock().await;
+        self.lsm.save_turn_state(turn)
+    }
+
+    /// Loads a specific turn state (no write lock needed).
+    pub fn get_turn_state(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<crate::models::TurnState>, MemoryError> {
+        self.lsm.get_turn_state(session_id, turn_id)
+    }
+
+    /// Fetches the most recent N turns for a session.
+    pub fn fetch_recent_turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::models::TurnState>, MemoryError> {
+        self.lsm.fetch_recent_turns(session_id, limit)
     }
 }
 
@@ -213,7 +271,11 @@ impl MemoryEngine {
                 collective.clone(),
                 llm_provider,
                 config.embedding_service.clone(),
-                config.distill_params.unwrap_or_default().jwt_secret.unwrap_or_else(|| "default_secret".to_string()),
+                config
+                    .distill_params
+                    .unwrap_or_default()
+                    .jwt_secret
+                    .unwrap_or_else(|| "default_secret".to_string()),
             );
         }
 
@@ -245,35 +307,47 @@ impl MemoryEngine {
     pub fn notification_subscriber_count(&self) -> usize {
         self.notifications.subscriber_count()
     }
-    
+
     // --- Legacy facades bridging to Enclave to avoid downstream breakage during transition ---
-    
-    pub async fn append_message(&self, session_id: &str, message: &AgentMessage) -> Result<(), MemoryError> {
+
+    pub async fn append_message(
+        &self,
+        session_id: &str,
+        message: &AgentMessage,
+    ) -> Result<(), MemoryError> {
         self.enclave.append_message(session_id, message).await
     }
-    
+
     pub fn fetch_session_tail(&self, session_id: &str, limit: usize) -> Vec<AgentMessage> {
         self.enclave.fetch_session_tail(session_id, limit)
     }
-    
-    pub async fn atomic_compact(&self, session_id: &str, batch: Vec<AgentMessage>) -> Result<(), MemoryError> {
+
+    pub async fn atomic_compact(
+        &self,
+        session_id: &str,
+        batch: Vec<AgentMessage>,
+    ) -> Result<(), MemoryError> {
         self.enclave.atomic_compact(session_id, batch).await
     }
-    
+
     pub async fn index_memory(&self, entry: MemoryEntry) -> Result<(), MemoryError> {
         self.enclave.index_memory(entry).await
     }
-    
+
     pub fn cull_low_entropy_memories(&self, _threshold: f32) -> Result<usize, MemoryError> {
         Ok(0)
     }
-    
-    pub fn hydrate_session(&self, session_id: &str, limit: usize) -> Result<Vec<AgentMessage>, MemoryError> {
+
+    pub fn hydrate_session(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<AgentMessage>, MemoryError> {
         let mut messages = self.enclave.fetch_session_tail(session_id, limit);
         messages.reverse();
         Ok(messages)
     }
-    
+
     pub async fn delete_memory(&self, id: u64) -> Result<(), MemoryError> {
         self.enclave.delete_memory(id).await
     }
@@ -291,13 +365,60 @@ impl MemoryEngine {
         query_embedding: &[f32],
         top_k: usize,
     ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
-        self.enclave.semantic_search_temporal(query_embedding, top_k)
+        self.enclave
+            .semantic_search_temporal(query_embedding, top_k)
     }
 
     pub fn delete_session(&self, session_id: &str) -> Result<(), MemoryError> {
         self.enclave.lsm.delete_session(session_id)
     }
-    
+
+    // --- Session / Turn State Facades ---
+
+    pub async fn save_session_state(
+        &self,
+        state: &crate::models::SessionState,
+    ) -> Result<(), MemoryError> {
+        self.enclave.save_session_state(state).await
+    }
+
+    pub fn get_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::models::SessionState>, MemoryError> {
+        self.enclave.get_session_state(session_id)
+    }
+
+    pub async fn get_or_create_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::models::SessionState, MemoryError> {
+        self.enclave.get_or_create_session_state(session_id).await
+    }
+
+    pub async fn save_turn_state(
+        &self,
+        turn: &crate::models::TurnState,
+    ) -> Result<(), MemoryError> {
+        self.enclave.save_turn_state(turn).await
+    }
+
+    pub fn get_turn_state(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<crate::models::TurnState>, MemoryError> {
+        self.enclave.get_turn_state(session_id, turn_id)
+    }
+
+    pub fn fetch_recent_turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::models::TurnState>, MemoryError> {
+        self.enclave.fetch_recent_turns(session_id, limit)
+    }
+
     pub fn stats(&self) -> (crate::lsm_engine::StorageStats, usize) {
         let lsm_stats = self.enclave.lsm.stats().unwrap_or_default();
         let vector_count = self.enclave.vector_count();

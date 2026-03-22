@@ -83,10 +83,78 @@ impl<M: MemoryBackend> AgentLoop<M> {
                 let mut seen_actions: HashSet<String> = HashSet::new();
                 let sid = session_id.as_ref().map(|s| s.0.clone()).unwrap_or_else(|| self.agent_id.clone());
 
+                // === Session / Turn Initialization ===
+                let turn_id = uuid::Uuid::new_v4().to_string();
+
+                // Get or create session state
+                let mut session_state = match self.memory.get_or_create_session(&sid).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!("[{}] Failed to load session state: {}. Creating ephemeral.", self.agent_id, e);
+                        savant_core::types::SessionState {
+                            session_id: sid.clone(),
+                            created_at: chrono::Utc::now().timestamp_millis(),
+                            last_active: chrono::Utc::now().timestamp_millis(),
+                            turn_count: 0,
+                            active_turn_id: None,
+                            auto_approved_tools: vec![],
+                            denied_tools: vec![],
+                        }
+                    }
+                };
+
+                // Begin turn
+                session_state.active_turn_id = Some(turn_id.clone());
+                session_state.turn_count += 1;
+                session_state.last_active = chrono::Utc::now().timestamp_millis();
+                let _ = self.memory.save_session(&session_state).await;
+
+                let turn_state = savant_core::types::TurnState {
+                    turn_id: turn_id.clone(),
+                    session_id: sid.clone(),
+                    state: savant_core::types::TurnPhase::Processing,
+                    tool_calls_made: Vec::new(),
+                    started_at: chrono::Utc::now().timestamp_millis(),
+                    completed_at: 0,
+                };
+                let _ = self.memory.save_turn(&turn_state).await;
+
+                // Emit SessionStart event
+                yield Ok(AgentEvent::SessionStart {
+                    session_id: sid.clone(),
+                    turn_id: turn_id.clone(),
+                });
+
+                // Track tool calls made during this turn
+                let mut turn_tool_calls: Vec<String> = Vec::new();
+                let turn_failed = false;
+
                 while depth < self.max_tool_iterations as u32 {
                     info!("[{}] Agent loop cycle start (depth={})", self.agent_id, depth);
 
                     let mut messages = self.assemble_context(&user_input, &session_id, &history).await?;
+
+                    // === Context Compaction Check ===
+                    // Default context limit: 128K tokens (most modern models)
+                    let monitor = crate::react::compaction::ContextMonitor::new(128_000);
+                    if let Some(strategy) = monitor.suggest(&messages) {
+                        let usage = monitor.usage_ratio(&messages);
+                        info!(
+                            "[{}] Context at {:.0}% — applying {:?} compaction",
+                            self.agent_id,
+                            usage * 100.0,
+                            strategy
+                        );
+                        yield Ok(AgentEvent::StatusUpdate(
+                            format!("CONTEXT_COMPACTING: {:.0}% usage → {:?}", usage * 100.0, strategy)
+                        ));
+                        messages = crate::react::compaction::Compactor::compact(messages, strategy, 10);
+                        // Rebuild history from compacted messages (skip system prompt)
+                        history = messages.iter()
+                            .filter(|m| m.role != savant_core::types::ChatRole::System)
+                            .cloned()
+                            .collect();
+                    }
 
                     let complexity = (history.len() as f32 * 0.5) + (depth as f32);
                     let k = self.predictor.predict_optimal_k(complexity);
@@ -112,14 +180,29 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         }
                     }
 
-                    let response_stream = match self.provider.stream_completion(messages.clone()).await {
+                    // Build tool schemas for LLM API
+                    let tool_schemas: Vec<serde_json::Value> = self.tools.iter().map(|t| {
+                        serde_json::json!({
+                            "type": "function",
+                            "function": {
+                                "name": t.name(),
+                                "description": t.description(),
+                                "parameters": t.parameters_schema(),
+                            }
+                        })
+                    }).collect();
+
+                    let response_stream = match self.provider.stream_completion(messages.clone(), tool_schemas.clone()).await {
                         Ok(stream) => stream,
                         Err(e) => {
                             if let Some(fallback) = &self.fallback_provider {
                                 warn!("[{}] Primary provider failed: {}. Triggering OMEGA-VIII Fallback.", self.agent_id, e);
                                 yield Ok(AgentEvent::StatusUpdate("FALLBACK_PROVIDER_ACTIVATED".to_string()));
-                                fallback.stream_completion(messages).await?
-                            } else { yield Err(e); return; }
+                                fallback.stream_completion(messages, tool_schemas).await?
+                            } else {
+                                yield Err(e);
+                                return;
+                            }
                         }
                     };
 
@@ -147,6 +230,9 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         "shell", "foundation", "memory_search", "memory_append",
                         "web_search", "web_fetch", "task_matrix", "settings",
                         "librarian", "web_projection", "tool_call", "final_answer",
+                        // Generic tool/function tags
+                        "tool", "function", "parameter", "arguments", "name",
+                        "input", "output", "result", "response",
                     ];
 
                     while let Some(chunk_res) = llm_stream.next().await {
@@ -245,7 +331,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                 }
                                 if chunk.is_final { break; }
                             }
-                            Err(e) => { yield Err(e); return; }
+                            Err(e) => {
+                                yield Err(e);
+                                return;
+                            }
                         }
                     }
 
@@ -294,6 +383,28 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                     let mut actual_steps = 0;
 
+                    // === Self-Repair: Check for stuck agent ===
+                    let content_hash = xxhash_rust::xxh3::xxh3_64(full_trace.as_bytes());
+                    if self.self_repair.check_stuck(content_hash).await {
+                        warn!("[{}] Agent appears stuck — injecting recovery hint", self.agent_id);
+                        let hint = self.self_repair.recovery_hint().await;
+                        yield Ok(AgentEvent::StatusUpdate(format!("STUCK_DETECTED: {}", hint)));
+                        history.push(ChatMessage {
+                            is_telemetry: false,
+                            role: ChatRole::System,
+                            content: hint,
+                            sender: Some("SELF_REPAIR".to_string()),
+                            recipient: None,
+                            agent_id: None,
+                            session_id: session_id.clone(),
+                            channel: savant_core::types::AgentOutputChannel::Telemetry,
+                        });
+                        self.self_repair.reset_stuck().await;
+                    }
+
+                    // === Self-Repair: Get excluded tools ===
+                    let _excluded_tools = self.self_repair.get_excluded_tools().await;
+
                     if !actions.is_empty() {
                         // --- OMEGA: Transactional Checkpoint ---
                         // Save current history as a stable state before potential side-effects
@@ -313,6 +424,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         let security_token = self.security_token.clone();
                         let plugin_host = self.plugin_host.clone();
                         let plugins = self.plugins.clone();
+                        let self_repair = self.self_repair.clone();
 
                         while !pending_nodes.is_empty() || !queue.is_empty() {
                             let mut i = 0;
@@ -336,6 +448,9 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                         continue;
                                     }
                                     seen_actions.insert(sig);
+
+                                    // Track tool call for session turn state
+                                    turn_tool_calls.push(node_name.clone());
 
                                     yield Ok(AgentEvent::Action { name: node_name.clone(), args: node_args.clone() });
 
@@ -413,9 +528,15 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                 let _ = cb.update_agent_metrics(self.agent_index, true, pressure);
                                             }
 
+                                            // Self-Repair: Record tool success
+                                            self_repair.on_tool_result(&name, &Ok(obs.clone())).await;
+
                                             completed_indices.insert(idx);
                                         }
                                         Err(e) => {
+                                            // Self-Repair: Record tool failure
+                                            self_repair.on_tool_result(&name, &Err(SavantError::Unknown(format!("{}", e)))).await;
+
                                             // 🧬 OMEGA: Heuristic Fallback
                                             let resolution_name = name.clone();
 
@@ -511,6 +632,34 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         break;
                     }
                 }
+
+                // === Turn Finalization ===
+                let final_state = if turn_failed {
+                    savant_core::types::TurnPhase::Failed
+                } else {
+                    savant_core::types::TurnPhase::Completed
+                };
+
+                let final_turn = savant_core::types::TurnState {
+                    turn_id: turn_id.clone(),
+                    session_id: sid.clone(),
+                    state: final_state,
+                    tool_calls_made: turn_tool_calls.clone(),
+                    started_at: turn_state.started_at,
+                    completed_at: chrono::Utc::now().timestamp_millis(),
+                };
+                let _ = self.memory.save_turn(&final_turn).await;
+
+                session_state.active_turn_id = None;
+                session_state.last_active = chrono::Utc::now().timestamp_millis();
+                let _ = self.memory.save_session(&session_state).await;
+
+                yield Ok(AgentEvent::TurnEnd {
+                    session_id: sid.clone(),
+                    turn_id: turn_id.clone(),
+                    turn_count: session_state.turn_count,
+                    tool_calls: turn_tool_calls,
+                });
             }
         })
     }
@@ -533,7 +682,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
         });
 
         let messages = self.context.build_messages(ref_history);
-        let mut stream = self.provider.stream_completion(messages).await?;
+        let mut stream = self.provider.stream_completion(messages, vec![]).await?;
         let mut reflection = String::new();
         while let Some(chunk_res) = stream.next().await {
             if let Ok(chunk) = chunk_res {

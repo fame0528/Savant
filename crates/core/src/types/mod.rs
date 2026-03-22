@@ -1,9 +1,44 @@
-use crate::config::{ProactiveConfig, AiConfig};
+use crate::config::{AiConfig, ProactiveConfig};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(transparent)]
 pub struct SessionId(pub String);
+
+/// Lifecycle phase of a turn.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnPhase {
+    Processing,
+    Completed,
+    Failed,
+    Interrupted,
+    AwaitingApproval,
+}
+
+/// Session state — tracks metadata, turn count, and approval settings.
+/// Persisted in CortexaDB's "sessions" collection (rkyv) and exposed via serde for API/Wire.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionState {
+    pub session_id: String,
+    pub created_at: i64,
+    pub last_active: i64,
+    pub turn_count: u64,
+    pub active_turn_id: Option<String>,
+    pub auto_approved_tools: Vec<String>,
+    pub denied_tools: Vec<String>,
+}
+
+/// Turn state — tracks lifecycle of a single user/agent turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnState {
+    pub turn_id: String,
+    pub session_id: String,
+    pub state: TurnPhase,
+    pub tool_calls_made: Vec<String>,
+    pub started_at: i64,
+    pub completed_at: i64,
+}
 
 /// Device ID type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -284,8 +319,9 @@ pub struct AgentConfig {
     pub agent_id: String,
     pub agent_name: String,
     pub model_provider: ModelProvider,
-    // TODO: Use a Secret wrapper (e.g., secrecy::SecretString) in production
-    // to prevent accidental logging/serialization of the API key.
+    // API key is loaded from .env at runtime and used to create derivative keys.
+    // The master key is never stored — derivative keys are created per-session.
+    // See: OpenRouter key derivation in provider initialization.
     #[serde(skip_serializing)]
     pub api_key: Option<String>,
     pub env_vars: std::collections::HashMap<String, String>,

@@ -1,10 +1,10 @@
 use async_trait::async_trait;
+use savant_core::error::SavantError;
+use savant_core::traits::Tool;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use savant_core::traits::Tool;
-use savant_core::error::SavantError;
 
 /// Internal Settings Tool
 /// Allows the agent to read and modify its own internal configuration state (settings.json).
@@ -33,7 +33,7 @@ impl SettingsTool {
 
         let content = fs::read_to_string(&self.settings_path)
             .map_err(|e| format!("Failed to read settings: {}", e))?;
-        
+
         let settings: HashMap<String, String> = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse settings: {}", e))?;
 
@@ -43,7 +43,7 @@ impl SettingsTool {
     fn write_settings(&self, settings: &HashMap<String, String>) -> Result<(), String> {
         let content = serde_json::to_string_pretty(settings)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-        
+
         fs::write(&self.settings_path, content)
             .map_err(|e| format!("Failed to write settings: {}", e))?;
 
@@ -58,13 +58,27 @@ impl Tool for SettingsTool {
     }
 
     fn description(&self) -> &str {
-        "Read or modify internal agent settings (e.g., enabling/disabling the perfection_loop). Payload requires an 'action' key ('get', 'set', or 'list'). 'get'/'set' require a 'key'. 'set' requires a 'value'."
+        "Read or modify internal agent settings."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "description": "Action to perform", "enum": ["get", "set", "list"] },
+                "key": { "type": "string", "description": "Setting key (required for get/set)" },
+                "value": { "type": "string", "description": "Setting value (required for set)" }
+            },
+            "required": ["action"]
+        })
     }
 
     async fn execute(&self, input: Value) -> Result<String, SavantError> {
         let action = input.get("action").and_then(|v| v.as_str()).unwrap_or("");
 
-        let mut settings = self.read_settings().map_err(|e| SavantError::OperationFailed(e))?;
+        let mut settings = self
+            .read_settings()
+            .map_err(|e| SavantError::OperationFailed(e))?;
 
         match action {
             "list" => {
@@ -78,7 +92,10 @@ impl Tool for SettingsTool {
                 Ok(output)
             }
             "get" => {
-                let key = input.get("key").and_then(|v| v.as_str()).ok_or_else(|| SavantError::OperationFailed("Missing 'key'".into()))?;
+                let key = input
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| SavantError::OperationFailed("Missing 'key'".into()))?;
                 if let Some(val) = settings.get(key) {
                     Ok(format!("{} = {}", key, val))
                 } else {
@@ -86,15 +103,25 @@ impl Tool for SettingsTool {
                 }
             }
             "set" => {
-                let key = input.get("key").and_then(|v| v.as_str()).ok_or_else(|| SavantError::OperationFailed("Missing 'key'".into()))?;
-                let value = input.get("value").and_then(|v| v.as_str()).ok_or_else(|| SavantError::OperationFailed("Missing 'value'".into()))?;
-                
+                let key = input
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| SavantError::OperationFailed("Missing 'key'".into()))?;
+                let value = input
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| SavantError::OperationFailed("Missing 'value'".into()))?;
+
                 settings.insert(key.to_string(), value.to_string());
-                self.write_settings(&settings).map_err(|e| SavantError::OperationFailed(e))?;
-                
+                self.write_settings(&settings)
+                    .map_err(|e| SavantError::OperationFailed(e))?;
+
                 Ok(format!("Successfully updated setting: {} = {}", key, value))
             }
-            _ => Err(SavantError::OperationFailed(format!("Unknown action: {}", action)))
+            _ => Err(SavantError::OperationFailed(format!(
+                "Unknown action: {}",
+                action
+            ))),
         }
     }
 }

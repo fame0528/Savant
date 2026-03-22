@@ -16,10 +16,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonalityTraits {
     pub openness: f32,          // 0.0 - 1.0
-    pub conscientiousness: f32,  // 0.0 - 1.0
-    pub extraversion: f32,       // 0.0 - 1.0
-    pub agreeableness: f32,      // 0.0 - 1.0
-    pub neuroticism: f32,        // 0.0 - 1.0
+    pub conscientiousness: f32, // 0.0 - 1.0
+    pub extraversion: f32,      // 0.0 - 1.0
+    pub agreeableness: f32,     // 0.0 - 1.0
+    pub neuroticism: f32,       // 0.0 - 1.0
 }
 
 impl Default for PersonalityTraits {

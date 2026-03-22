@@ -8,8 +8,10 @@ use savant_echo::{ComponentMetrics, HotSwappableRegistry};
 use savant_ipc::CollectiveBlackboard;
 use std::sync::Arc;
 
+pub mod compaction;
 pub mod events;
 pub mod reactor;
+pub mod self_repair;
 pub mod stream;
 
 pub use events::AgentEvent;
@@ -52,39 +54,106 @@ pub struct LoopContext<'a, M: MemoryBackend> {
 pub trait LoopDelegate<M: MemoryBackend>: Send + Sync {
     async fn check_signals(&self) -> LoopSignal;
     async fn before_llm_call(&self, ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome>;
-    async fn call_llm(&self, ctx: &mut LoopContext<'_, M>) -> Result<ChatResponse, savant_core::error::SavantError>;
+    async fn call_llm(
+        &self,
+        ctx: &mut LoopContext<'_, M>,
+    ) -> Result<ChatResponse, savant_core::error::SavantError>;
     async fn handle_text_response(&self, text: &str, ctx: &mut LoopContext<'_, M>) -> TextAction;
-    async fn execute_tool_calls(&self, calls: Vec<savant_core::types::ProviderToolCall>, ctx: &mut LoopContext<'_, M>) -> Result<Option<LoopOutcome>, savant_core::error::SavantError>;
+    async fn execute_tool_calls(
+        &self,
+        calls: Vec<savant_core::types::ProviderToolCall>,
+        ctx: &mut LoopContext<'_, M>,
+    ) -> Result<Option<LoopOutcome>, savant_core::error::SavantError>;
 }
 
 pub struct ChatDelegate;
 #[async_trait::async_trait]
 impl<M: MemoryBackend> LoopDelegate<M> for ChatDelegate {
-    async fn check_signals(&self) -> LoopSignal { LoopSignal::Continue }
-    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> { None }
-    async fn call_llm(&self, _ctx: &mut LoopContext<'_, M>) -> Result<ChatResponse, savant_core::error::SavantError> { Ok(ChatResponse { content: String::new(), tool_calls: vec![] }) }
-    async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction { TextAction::ParseActions }
-    async fn execute_tool_calls(&self, _calls: Vec<savant_core::types::ProviderToolCall>, _ctx: &mut LoopContext<'_, M>) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> { Ok(None) }
+    async fn check_signals(&self) -> LoopSignal {
+        LoopSignal::Continue
+    }
+    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+        None
+    }
+    async fn call_llm(
+        &self,
+        _ctx: &mut LoopContext<'_, M>,
+    ) -> Result<ChatResponse, savant_core::error::SavantError> {
+        Ok(ChatResponse {
+            content: String::new(),
+            tool_calls: vec![],
+        })
+    }
+    async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction {
+        TextAction::ParseActions
+    }
+    async fn execute_tool_calls(
+        &self,
+        _calls: Vec<savant_core::types::ProviderToolCall>,
+        _ctx: &mut LoopContext<'_, M>,
+    ) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> {
+        Ok(None)
+    }
 }
 
 pub struct HeartbeatDelegate;
 #[async_trait::async_trait]
 impl<M: MemoryBackend> LoopDelegate<M> for HeartbeatDelegate {
-    async fn check_signals(&self) -> LoopSignal { LoopSignal::Continue }
-    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> { None }
-    async fn call_llm(&self, _ctx: &mut LoopContext<'_, M>) -> Result<ChatResponse, savant_core::error::SavantError> { Ok(ChatResponse { content: String::new(), tool_calls: vec![] }) }
-    async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction { TextAction::ParseActions }
-    async fn execute_tool_calls(&self, _calls: Vec<savant_core::types::ProviderToolCall>, _ctx: &mut LoopContext<'_, M>) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> { Ok(None) }
+    async fn check_signals(&self) -> LoopSignal {
+        LoopSignal::Continue
+    }
+    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+        None
+    }
+    async fn call_llm(
+        &self,
+        _ctx: &mut LoopContext<'_, M>,
+    ) -> Result<ChatResponse, savant_core::error::SavantError> {
+        Ok(ChatResponse {
+            content: String::new(),
+            tool_calls: vec![],
+        })
+    }
+    async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction {
+        TextAction::ParseActions
+    }
+    async fn execute_tool_calls(
+        &self,
+        _calls: Vec<savant_core::types::ProviderToolCall>,
+        _ctx: &mut LoopContext<'_, M>,
+    ) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> {
+        Ok(None)
+    }
 }
 
 pub struct SpeculativeDelegate;
 #[async_trait::async_trait]
 impl<M: MemoryBackend> LoopDelegate<M> for SpeculativeDelegate {
-    async fn check_signals(&self) -> LoopSignal { LoopSignal::Continue }
-    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> { None }
-    async fn call_llm(&self, _ctx: &mut LoopContext<'_, M>) -> Result<ChatResponse, savant_core::error::SavantError> { Ok(ChatResponse { content: String::new(), tool_calls: vec![] }) }
-    async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction { TextAction::ParseActions }
-    async fn execute_tool_calls(&self, _calls: Vec<savant_core::types::ProviderToolCall>, _ctx: &mut LoopContext<'_, M>) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> { Ok(None) }
+    async fn check_signals(&self) -> LoopSignal {
+        LoopSignal::Continue
+    }
+    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+        None
+    }
+    async fn call_llm(
+        &self,
+        _ctx: &mut LoopContext<'_, M>,
+    ) -> Result<ChatResponse, savant_core::error::SavantError> {
+        Ok(ChatResponse {
+            content: String::new(),
+            tool_calls: vec![],
+        })
+    }
+    async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction {
+        TextAction::ParseActions
+    }
+    async fn execute_tool_calls(
+        &self,
+        _calls: Vec<savant_core::types::ProviderToolCall>,
+        _ctx: &mut LoopContext<'_, M>,
+    ) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> {
+        Ok(None)
+    }
 }
 
 pub struct AgentLoop<M: MemoryBackend> {
@@ -110,6 +179,7 @@ pub struct AgentLoop<M: MemoryBackend> {
     pub(crate) max_tool_iterations: usize,
     pub(crate) heuristic: HeuristicState,
     pub(crate) vision_service: Option<Arc<dyn VisionProvider>>,
+    pub(crate) self_repair: crate::react::self_repair::SelfRepair,
 }
 
 impl<M: MemoryBackend> AgentLoop<M> {
@@ -161,6 +231,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             max_tool_iterations: 10,
             heuristic: HeuristicState::default(),
             vision_service: None,
+            self_repair: crate::react::self_repair::SelfRepair::with_defaults(),
         }
     }
 
@@ -265,6 +336,7 @@ mod tests {
         async fn stream_completion(
             &self,
             _messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
         ) -> Result<
             Pin<Box<dyn Stream<Item = Result<savant_core::types::ChatChunk, SavantError>> + Send>>,
             SavantError,
@@ -286,6 +358,7 @@ mod tests {
                 logprob: None,
                 is_telemetry: false,
                 reasoning: None,
+                tool_calls: None,
             };
             Ok(Box::pin(futures::stream::iter(vec![Ok(chunk)])))
         }
@@ -307,6 +380,52 @@ mod tests {
         }
         async fn consolidate(&self, _agent_id: &str) -> Result<(), SavantError> {
             Ok(())
+        }
+        async fn get_or_create_session(
+            &self,
+            _session_id: &str,
+        ) -> Result<savant_core::types::SessionState, SavantError> {
+            Ok(savant_core::types::SessionState {
+                session_id: "mock".to_string(),
+                created_at: 0,
+                last_active: 0,
+                turn_count: 0,
+                active_turn_id: None,
+                auto_approved_tools: vec![],
+                denied_tools: vec![],
+            })
+        }
+        async fn get_session(
+            &self,
+            _session_id: &str,
+        ) -> Result<Option<savant_core::types::SessionState>, SavantError> {
+            Ok(None)
+        }
+        async fn save_session(
+            &self,
+            _state: &savant_core::types::SessionState,
+        ) -> Result<(), SavantError> {
+            Ok(())
+        }
+        async fn save_turn(
+            &self,
+            _turn: &savant_core::types::TurnState,
+        ) -> Result<(), SavantError> {
+            Ok(())
+        }
+        async fn get_turn(
+            &self,
+            _session_id: &str,
+            _turn_id: &str,
+        ) -> Result<Option<savant_core::types::TurnState>, SavantError> {
+            Ok(None)
+        }
+        async fn fetch_recent_turns(
+            &self,
+            _session_id: &str,
+            _limit: usize,
+        ) -> Result<Vec<savant_core::types::TurnState>, SavantError> {
+            Ok(vec![])
         }
     }
 
@@ -335,6 +454,7 @@ mod tests {
             MockMemory,
             vec![tool1, tool2],
             AgentIdentity::default(),
+            String::new(),
         )
         .with_hyper_causal(crate::orchestration::branching::HyperCausalEngine::new(1));
 

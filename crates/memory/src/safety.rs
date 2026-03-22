@@ -21,8 +21,10 @@ mod verification {
         // The verification proof: access_unchecked must never panic
         // In rkyv 0.8, access requires CheckBytes but not Portable, and returns a Result.
         // We use rancor::Error as the error type.
-        let archived_msg = rkyv::access::<rkyv::Archived<AgentMessage>, rkyv::rancor::Error>(symbolic_bytes.as_slice())
-            .expect("Symbolic access failed");
+        let archived_msg = rkyv::access::<rkyv::Archived<AgentMessage>, rkyv::rancor::Error>(
+            symbolic_bytes.as_slice(),
+        )
+        .expect("Symbolic access failed");
 
         // Access fields to prove no out-of-bounds or alignment issues
         let _id = &archived_msg.id;

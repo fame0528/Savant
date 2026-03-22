@@ -69,3 +69,6 @@ workspaces/*/.env
 **/node_modules
 Savant.zip
 push-to-github.bat
+
+# Research & Competitors
+/research/

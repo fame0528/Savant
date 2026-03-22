@@ -127,7 +127,8 @@ impl FreeModelRouter {
                 name: FREE_ROUTER.to_string(),
                 display_name: "OpenRouter Free Router".to_string(),
                 tier: "free_router".to_string(),
-                description: "OpenRouter picks the best available free model automatically.".to_string(),
+                description: "OpenRouter picks the best available free model automatically."
+                    .to_string(),
             },
         ]
     }
@@ -212,7 +213,9 @@ mod tests {
     fn test_is_free_model() {
         assert!(FreeModelRouter::is_free_model("openrouter/hunter-alpha"));
         assert!(FreeModelRouter::is_free_model("openrouter/healer-alpha"));
-        assert!(FreeModelRouter::is_free_model("stepfun/step-3.5-flash:free"));
+        assert!(FreeModelRouter::is_free_model(
+            "stepfun/step-3.5-flash:free"
+        ));
         assert!(FreeModelRouter::is_free_model("openrouter/free"));
         assert!(!FreeModelRouter::is_free_model("anthropic/claude-opus"));
     }

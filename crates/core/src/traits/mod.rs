@@ -21,9 +21,11 @@ pub trait ChannelAdapter: Send + Sync {
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     /// Request a chat completion, returning a standardized stream of chunks.
+    /// The `tools` parameter provides JSON Schema tool definitions to the LLM API.
     async fn stream_completion(
         &self,
         messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>;
 }
 
@@ -67,6 +69,40 @@ pub trait MemoryBackend: Send + Sync {
 
     /// Finalize and optimize memory state.
     async fn consolidate(&self, agent_id: &str) -> Result<(), SavantError>;
+
+    // --- Session / Turn State ---
+
+    /// Gets or creates a session state. Creates a new one if none exists.
+    async fn get_or_create_session(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::types::SessionState, SavantError>;
+
+    /// Gets an existing session state. Returns None if no state stored.
+    async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::types::SessionState>, SavantError>;
+
+    /// Saves session state (creates or updates).
+    async fn save_session(&self, state: &crate::types::SessionState) -> Result<(), SavantError>;
+
+    /// Saves a turn state record.
+    async fn save_turn(&self, turn: &crate::types::TurnState) -> Result<(), SavantError>;
+
+    /// Gets a specific turn state. Returns None if not found.
+    async fn get_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<crate::types::TurnState>, SavantError>;
+
+    /// Fetches the most recent N turns for a session (newest first).
+    async fn fetch_recent_turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::types::TurnState>, SavantError>;
 }
 
 #[async_trait]
@@ -87,6 +123,44 @@ impl<M: MemoryBackend + ?Sized> MemoryBackend for std::sync::Arc<M> {
     async fn consolidate(&self, agent_id: &str) -> Result<(), SavantError> {
         self.as_ref().consolidate(agent_id).await
     }
+
+    async fn get_or_create_session(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::types::SessionState, SavantError> {
+        self.as_ref().get_or_create_session(session_id).await
+    }
+
+    async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::types::SessionState>, SavantError> {
+        self.as_ref().get_session(session_id).await
+    }
+
+    async fn save_session(&self, state: &crate::types::SessionState) -> Result<(), SavantError> {
+        self.as_ref().save_session(state).await
+    }
+
+    async fn save_turn(&self, turn: &crate::types::TurnState) -> Result<(), SavantError> {
+        self.as_ref().save_turn(turn).await
+    }
+
+    async fn get_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<crate::types::TurnState>, SavantError> {
+        self.as_ref().get_turn(session_id, turn_id).await
+    }
+
+    async fn fetch_recent_turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::types::TurnState>, SavantError> {
+        self.as_ref().fetch_recent_turns(session_id, limit).await
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +169,18 @@ pub enum ToolDomain {
     Container,
 }
 
-/// Tool/Capability Trait (OpenClaw/ZeroClaw compatible)
+/// Approval requirement for tool execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalRequirement {
+    /// Never needs approval — execute immediately
+    Never,
+    /// Needs approval unless explicitly auto-approved by session
+    Conditional,
+    /// Always needs approval — human must consent
+    Always,
+}
+
+/// Tool/Capability Trait (OpenClaw/ZeroClaw/IronClaw compatible)
 #[async_trait]
 pub trait Tool: Send + Sync {
     /// Tool name.
@@ -103,6 +188,23 @@ pub trait Tool: Send + Sync {
 
     /// Detailed description for LLM guidance.
     fn description(&self) -> &str;
+
+    /// JSON Schema describing the tool's parameters.
+    /// This is sent to the LLM API as the tool's `parameters` field.
+    /// Default: empty object (no parameters).
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        })
+    }
+
+    /// Whether this tool requires human approval before execution.
+    /// Default: Never (most tools execute immediately).
+    fn requires_approval(&self) -> ApprovalRequirement {
+        ApprovalRequirement::Never
+    }
 
     /// Explicit capabilities granted to this tool.
     fn capabilities(&self) -> crate::types::CapabilityGrants {
@@ -112,6 +214,18 @@ pub trait Tool: Send + Sync {
     /// Primary domain this tool operates in.
     fn domain(&self) -> ToolDomain {
         ToolDomain::Orchestrator
+    }
+
+    /// Maximum characters in tool output before truncation.
+    /// Default: 16,000. Override for tools with large outputs.
+    fn max_output_chars(&self) -> usize {
+        16_000
+    }
+
+    /// Execution timeout in seconds.
+    /// Default: 60. Override for tools that need more time.
+    fn timeout_secs(&self) -> u64 {
+        60
     }
 
     /// Execute the tool with a JSON payload.

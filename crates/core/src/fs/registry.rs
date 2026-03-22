@@ -12,7 +12,11 @@ pub struct AgentRegistry {
 }
 
 impl AgentRegistry {
-    pub fn new(base_path: PathBuf, ai_config: crate::config::AiConfig, defaults: crate::config::AgentDefaults) -> Self {
+    pub fn new(
+        base_path: PathBuf,
+        ai_config: crate::config::AiConfig,
+        defaults: crate::config::AgentDefaults,
+    ) -> Self {
         Self {
             base_path,
             ai_config,

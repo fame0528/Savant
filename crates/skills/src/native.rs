@@ -221,16 +221,9 @@ impl savant_core::traits::Tool for FileSystemSkill {
                     .map_err(SavantError::IoError)?;
 
                 let mut result = Vec::new();
-                while let Some(entry) = entries
-                    .next_entry()
-                    .await
-                    .map_err(SavantError::IoError)?
-                {
+                while let Some(entry) = entries.next_entry().await.map_err(SavantError::IoError)? {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    let metadata = entry
-                        .metadata()
-                        .await
-                        .map_err(SavantError::IoError)?;
+                    let metadata = entry.metadata().await.map_err(SavantError::IoError)?;
 
                     let entry_type = if metadata.is_dir() { "dir" } else { "file" };
                     result.push(format!("{} [{}]", name, entry_type));

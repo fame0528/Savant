@@ -9,35 +9,35 @@
 //! It replaces OpenClaw's deep TypeScript promise chains and JSON serialization
 //! with a high-performance, zero-copy architecture.
 
-pub mod continuation;
-pub mod handoff;
-pub mod ignition;
-pub mod tasks;
-pub mod dag;
-pub mod synthesis;
 pub mod branching;
+pub mod continuation;
+pub mod dag;
+pub mod handoff;
 #[cfg(test)]
 mod handoff_tests;
+pub mod ignition;
+pub mod synthesis;
+pub mod tasks;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
+use ed25519_dalek::SigningKey;
+use pqcrypto_dilithium::dilithium2;
 use savant_core::traits::{MemoryBackend, Tool};
 use savant_core::types::{AgentConfig, AgentIdentity};
 use savant_ipc::{hash_session_id, SwarmBlackboard, SwarmSharedContext};
-use ed25519_dalek::SigningKey;
-use pqcrypto_dilithium::dilithium2;
 // Omitted imports for cleaner orchestration substrate
 use xxhash_rust;
 
 use super::budget::TokenBudget;
 use super::providers::RetryProvider;
 use super::react::AgentLoop;
+use crate::orchestration::continuation::{ContinuationConfig, ContinuationEngine};
 use futures::StreamExt;
 use savant_cognitive::{DspConfig, DspPredictor};
-use crate::orchestration::continuation::{ContinuationConfig, ContinuationEngine};
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -129,8 +129,9 @@ impl Orchestrator {
         let token_budget = Arc::new(RwLock::new(TokenBudget::new(100_000)));
 
         // Initialize DSP predictor for dynamic speculation
-        let dsp_predictor = DspPredictor::new(orchestrator_config.dsp_config)
-            .map_err(|e| OrchestratorError::LlmError(format!("Invalid DSP configuration: {}", e)))?;
+        let dsp_predictor = DspPredictor::new(orchestrator_config.dsp_config).map_err(|e| {
+            OrchestratorError::LlmError(format!("Invalid DSP configuration: {}", e))
+        })?;
 
         // Initialize continuation engine (anti-dwindle)
         let continuation_engine = ContinuationEngine::new(orchestrator_config.continuation_config);
@@ -415,7 +416,10 @@ impl Orchestrator {
 
                     // Execute subagent task (in a full implementation, this would
                     // create a proper agent loop and execute the task)
-                    debug!("Subagent {} starting task: {}", subagent_id_cloned, task_desc_cloned); // Use cloned ID and task
+                    debug!(
+                        "Subagent {} starting task: {}",
+                        subagent_id_cloned, task_desc_cloned
+                    ); // Use cloned ID and task
                 }
                 Err(e) => {
                     error!(
@@ -438,7 +442,8 @@ impl Orchestrator {
             "read",
             3600, // 1 hour TTL
             subagent_id.as_bytes(),
-        ).map_err(|e| OrchestratorError::SecurityError(e.to_string()))?;
+        )
+        .map_err(|e| OrchestratorError::SecurityError(e.to_string()))?;
 
         info!(
             subagent_id = %subagent_id,

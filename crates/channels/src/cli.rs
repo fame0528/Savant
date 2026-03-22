@@ -1,7 +1,7 @@
+use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
 use savant_core::types::EventFrame;
-use async_trait::async_trait;
 
 pub struct CliAdapter;
 

@@ -2,7 +2,7 @@ use savant_agent::tools::foundation::*;
 use savant_core::traits::Tool;
 use serde_json::json;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -21,8 +21,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Inscription Proof (Creation)
     println!("Step 1: Inscription via FileAtomicEditTool...");
     fs::write(&target_file, "INITIALIZING SUBSTRATE...\n")?;
-    
-    let edit_tool = FileAtomicEditTool;
+
+    let edit_tool = FileAtomicEditTool::new(PathBuf::from(sandbox));
     let edit_payload = json!({
         "path": target_file,
         "replacements": [
@@ -32,19 +32,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         ]
     });
-    
+
     let result = edit_tool.execute(edit_payload).await?;
     println!("   Result: {}", result);
 
     // 2. Translocation Proof (Move)
     println!("\nStep 2: Translocation via FileMoveTool...");
-    let move_tool = FileMoveTool;
+    let move_tool = FileMoveTool::new(PathBuf::from(sandbox));
     let final_path = format!("{}/certified_soul.txt", archive_dir);
     let move_payload = json!({
         "from": target_file,
         "to": final_path
     });
-    
+
     let result = move_tool.execute(move_payload).await?;
     println!("   Result: {}", result);
 
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "from": final_path,
         "to": core_test_path
     });
-    
+
     let result = move_tool.execute(system_move_payload).await?;
     println!("   Result: {}", result);
 

@@ -270,7 +270,11 @@ impl SemanticVectorEngine {
         }
 
         // Validate magic bytes
-        let magic: [u8; 8] = data[0..8].try_into().unwrap();
+        let magic: [u8; 8] = data[0..8].try_into().map_err(|_| {
+            MemoryError::SerializationFailed(
+                "Invalid persistence file: too short for magic bytes".into(),
+            )
+        })?;
         if magic != *PERSIST_MAGIC {
             return Err(MemoryError::SerializationFailed(format!(
                 "Invalid persistence file format (magic: {:?})",

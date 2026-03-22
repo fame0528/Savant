@@ -3,11 +3,13 @@
 
 <img src="img/savant.png" alt="Savant Logo" width="180" />
 
-# SAVANT v1.5.0
+# SAVANT v1.6.0
 
 **One Mind. A Thousand Faces.**
 
 A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with OMEGA-VIII certification, mandatory security scanning, and real-time substrate observability.
+
+**OMEGA-VIII Certified:** 111/111 CRITICAL production violations eliminated. Zero `.unwrap()` in production code. Zero `panic!`. Zero stubs.
 
 [![Rust](https://img.shields.io/badge/Rust-2021-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://www.rust-lang.org/)[![Next.js](https://img.shields.io/badge/Next.js-16-%23000000?style=flat-square&logo=nextdotjs&logoColor=%2300fbff)](https://nextjs.org/)[![Tauri](https://img.shields.io/badge/Tauri-2.0-%23000000?style=flat-square&logo=tauri&logoColor=%2300fbff)](https://tauri.app/)[![Axum](https://img.shields.io/badge/Axum-0.7-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://github.com/tokio-rs/axum/)[![SQLite](https://img.shields.io/badge/SQLite-Hybrid-%23000000?style=flat-square&logo=sqlite&logoColor=%2300fbff)](https://sqlite.org/)[![Fjall](https://img.shields.io/badge/Fjall-LSM--Tree-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://github.com/fjall-rs/fjall)[![Ollama](https://img.shields.io/badge/Ollama-Native-%23000000?style=flat-square&logo=ollama&logoColor=%2300fbff)](https://ollama.com/)[![License](https://img.shields.io/badge/License-Proprietary-%23000000?style=flat-square&logo=github&logoColor=%2300fbff)](LICENSE)
 
@@ -21,6 +23,14 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 - **Swarm Orchestration** — Spawn, coordinate, and manage hundreds of concurrent AI agents from a unified control plane
 - **15 AI Providers** — OpenRouter, OpenAI, Anthropic, Google, Mistral, Groq, Deepseek, Cohere, Together, Azure, xAI, Fireworks, Novita, Ollama, LmStudio
+- **Provider Chain** — Error classification, exponential cooldown, circuit breaker, and response cache for resilient LLM access
+- **Session Management** — Thread/turn tracking with CortexaDB persistence, session restore on restart
+- **Context Compaction** — 3-strategy compaction (archive/summarize/truncate) prevents context overflow on long conversations
+- **Approval Gating** — Destructive tools require human consent before execution
+- **Tool Coercion** — Automatic argument correction against JSON Schema, two-tier validation
+- **25 Channels** — Discord, Telegram, WhatsApp, Slack, Email, Signal, IRC, Matrix, Feishu, DingTalk, WeCom, LINE, Google Chat, Teams, Mattermost, Webhook, WhatsApp Business, Bluesky, Reddit, Nostr, Twitch, Notion, Voice, X
+- **MCP Integration** — Model Context Protocol tools discovered at startup, schemas sent to LLM API, tools available as native. Configurable via `[mcp]` in savant.toml
+- **Smithery CLI** — Install MCP servers from Smithery marketplace via dashboard, auto-config in savant.toml
 - **OpenClaw Skill Compatibility** — Install skills from ClawHub with automatic OpenClaw `SKILL.md` format parsing
 - **Mandatory Security Scanning** — Every skill is scanned before execution; user sovereignty with click-based approval (0-3 clicks based on risk)
 - **Real-Time Dashboard** — A Next.js observability dashboard with live WebSocket streaming, message history, cognitive insights, and soul manifestation

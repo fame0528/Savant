@@ -9,3 +9,4 @@ pub mod handlers;
 pub mod lanes;
 pub mod persistence;
 pub mod server;
+pub mod smithery;

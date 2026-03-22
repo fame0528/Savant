@@ -19,7 +19,7 @@ async fn test_lsm_message_append_and_retrieve() {
     let session = "test-session";
     for i in 0..10 {
         let msg = savant_memory::AgentMessage::user(session, &format!("Test message {}", i));
-        engine.append_message(session, &msg).unwrap();
+        engine.append_message(session, &msg).await.unwrap();
     }
 
     let retrieved = engine.fetch_session_tail(session, 100);
@@ -43,7 +43,7 @@ async fn test_lsm_message_ordering() {
 
     for i in 0..20 {
         let msg = savant_memory::AgentMessage::user(session, &format!("Message {}", i));
-        engine.append_message(session, &msg).unwrap();
+        engine.append_message(session, &msg).await.unwrap();
         // Small delay to ensure timestamp ordering
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -78,12 +78,12 @@ async fn test_lsm_atomic_compact() {
     // Insert 100 messages
     for i in 0..100 {
         let msg = savant_memory::AgentMessage::user(session, &format!("Message {}", i));
-        engine.append_message(session, &msg).unwrap();
+        engine.append_message(session, &msg).await.unwrap();
     }
 
     // Compact to keep only last 20
     let compact_batch: Vec<_> = engine.fetch_session_tail(session, 20);
-    engine.atomic_compact(session, compact_batch).unwrap();
+    engine.atomic_compact(session, compact_batch).await.unwrap();
 
     // After compaction, should only have the compacted messages
     let after = engine.fetch_session_tail(session, 200);
@@ -111,7 +111,7 @@ async fn test_lsm_delete_session() {
 
     for i in 0..50 {
         let msg = savant_memory::AgentMessage::user(session, &format!("Message {}", i));
-        engine.append_message(session, &msg).unwrap();
+        engine.append_message(session, &msg).await.unwrap();
     }
 
     assert_eq!(engine.fetch_session_tail(session, 200).len(), 50);
@@ -139,7 +139,7 @@ async fn test_lsm_limit_retrieval() {
     let session = "limit-test";
     for i in 0..200 {
         let msg = savant_memory::AgentMessage::user(session, &format!("Message {}", i));
-        engine.append_message(session, &msg).unwrap();
+        engine.append_message(session, &msg).await.unwrap();
     }
 
     let tail_10 = engine.fetch_session_tail(session, 10);
@@ -172,7 +172,7 @@ async fn test_lsm_high_throughput() {
                 i
             ),
         );
-        engine.append_message("rapid-session", &msg).unwrap();
+        engine.append_message("rapid-session", &msg).await.unwrap();
     }
     let elapsed = start.elapsed();
 

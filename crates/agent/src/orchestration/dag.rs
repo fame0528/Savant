@@ -1,4 +1,4 @@
-use std::collections::{HashSet};
+use std::collections::HashSet;
 
 /// A node in the speculative execution trajectory.
 #[derive(Debug, Clone)]
@@ -9,8 +9,8 @@ pub struct SpeculativeNode {
 }
 
 /// A DAG representing a speculative execution plan.
-/// 
-/// Allows the agent to propose multiple actions that can be executed 
+///
+/// Allows the agent to propose multiple actions that can be executed
 /// together if their dependencies are met.
 #[derive(Debug, Clone, Default)]
 pub struct SpeculativeDag {
@@ -42,9 +42,9 @@ impl SpeculativeDag {
     }
 
     /// Partitions the DAG into parallel execution lanes.
-    /// 
-    /// Returns a list of "Lanes", where each lane contains indices of nodes 
-    /// that can be executed concurrently because all their dependencies 
+    ///
+    /// Returns a list of "Lanes", where each lane contains indices of nodes
+    /// that can be executed concurrently because all their dependencies
     /// were satisfied by previous lanes.
     pub fn partition_lanes(&self) -> Vec<Vec<usize>> {
         let mut planes = Vec::new();
@@ -78,8 +78,8 @@ impl SpeculativeDag {
 }
 
 /// Parses a list of actions into a simple sequential DAG.
-/// 
-/// In future iterations, this will use LLM markers or structural 
+///
+/// In future iterations, this will use LLM markers or structural
 /// analysis to detect independent parallel actions.
 pub fn parse_sequential_dag(actions: Vec<(String, String)>) -> SpeculativeDag {
     let mut dag = SpeculativeDag::new();

@@ -9,7 +9,100 @@
 
 ### Added
 
-#### 2026-03-20: Post-Rollback Recovery & Ollama Integration
+#### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
+
+**Source:** Ultimate Sovereign Audit — 6 competitors, ~1,000,000 LOC scanned, ~200 features catalogued
+**Method:** Perfection Loop (per feature), Development Workflow (dev/DEVELOPMENT-WORKFLOW.md)
+**Result:** 5 features, ~2,110 LOC, 20+ files modified, 5 new files, 0 compilation errors
+
+**Feature 1: Session/Thread/Turn Model (~600 LOC)**
+- rkyv-serialized `SessionState` and `TurnState` in `memory/src/models.rs`
+- `TurnPhase` enum: Processing, Completed, Failed, Interrupted, AwaitingApproval
+- `LsmStorageEngine` 6 new methods for session/turn CRUD
+- `MemoryEnclave` write-locked session operations
+- `MemoryBackend` trait extended with 6 methods (all implementors updated)
+- Agent loop: session init, turn tracking, tool call recording, turn finalization
+- `AgentEvent::SessionStart` and `AgentEvent::TurnEnd` events
+- Files: `memory/src/models.rs`, `memory/src/lsm_engine.rs`, `memory/src/engine.rs`, `memory/src/async_backend.rs`, `memory/src/lib.rs`, `core/src/types/mod.rs`, `core/src/traits/mod.rs`, `core/src/memory/mod.rs`, `agent/src/memory/mod.rs`, `agent/src/react/stream.rs`, `agent/src/react/events.rs`, `agent/src/react/heuristic_tests.rs`, `agent/src/react/mod.rs`
+
+**Feature 2: Provider Chain (~410 LOC)**
+- New file: `providers/chain.rs` with 4 components
+- Error Classifier: 7 categories (Auth, RateLimit, Billing, Timeout, Format, Overloaded, Transient)
+- Cooldown Tracker: exponential backoff (standard: 1min * 5^n, billing: 5h * 2^n)
+- Circuit Breaker: Closed/Open/HalfOpen with configurable thresholds
+- Response Cache: SHA-256 keyed, LRU eviction, TTL-based, tool calls excluded
+- `ProviderChain` implements `LlmProvider` with all 4 layers
+- Added `sha2 = "0.10"` dependency
+- Files: `providers/chain.rs` (NEW), `providers/mod.rs`, `agent/Cargo.toml`
+
+**Feature 3: Context Compaction (~350 LOC)**
+- New file: `react/compaction.rs`
+- `ContextMonitor`: usage ratio calculation, strategy selection (3 tiers)
+- `Compactor`: truncate, partition, compact with system message injection
+- Token estimation: word count * 1.3 + 4 overhead
+- Integration: pre-LLM-call check in agent loop
+- Files: `react/compaction.rs` (NEW), `react/mod.rs`, `react/stream.rs`
+
+**Feature 4: Approval Gating (~100 LOC)**
+- `ApprovalRequirement` enum on `Tool` trait: Never/Conditional/Always
+- `requires_approval()` method with default Never
+- Tool-level overrides: SovereignShell (Conditional), FileDelete (Always), FileMove (Conditional), FileAtomicEdit (Conditional)
+- Foundation for future approval flow with user consent
+- Files: `core/src/traits/mod.rs`, `tools/foundation.rs`, `tools/shell.rs`
+
+**Feature 5: Tool Coercion + Schema Validation (~650 LOC)**
+- New file: `tools/coercion.rs` — recursive argument coercion against JSON Schema
+- Empty string → null, string → typed coercion, $ref resolution, oneOf/anyOf discriminators
+- New file: `tools/schema_validator.rs` — strict (CI) + lenient (runtime) validation
+- Integration: coercion in reactor.rs before tool execution
+- Fixed pre-existing bugs in FileDeleteTool (base_path → workspace_dir, SavantError::Validation/Security → Unknown)
+- Files: `tools/coercion.rs` (NEW), `tools/schema_validator.rs` (NEW), `tools/mod.rs`, `react/reactor.rs`
+
+#### 2026-03-21: Tool System v2 (Prior Session)
+- Tools sent to LLM API with `parameters_schema()` on Tool trait
+- LlmProvider trait extended with `tools` parameter
+- All 14 providers updated to send tools to API
+- 5-format parser + JSON curly-brace Action parser
+- HIDDEN_TAGS expanded for tool tag filtering
+- System prompt updated with native function calling preference
+
+#### 2026-03-21: Ultimate Sovereign Audit
+- 6 exhaustive competitor scans: IronClaw (50 features), NanoBot (30+), NanoClaw (15+), OpenClaw (35+), PicoClaw (30+), ZeroClaw (40+)
+- ~200 total features catalogued with file:line citations
+- `dev/Master-Gap-Analysis.md` — full parity matrix
+- `dev/fids/FID-20260321-SUPREME-AUDIT-SUBTASK-*.md` — 6 exhaustive FIDs
+
+#### 2026-03-22: Smithery CLI + Dashboard (~650 LOC)
+- `gateway/src/smithery.rs` — SmitheryManager wraps @smithery/cli (install/list/uninstall/info)
+- `gateway/src/handlers/mcp.rs` — 6 REST endpoints for MCP management
+- `dashboard/src/app/mcp/page.tsx` — MCP management UI (server list, add, install from Smithery)
+- `core/src/config.rs` — McpConfig + McpServerEntry structs, `[mcp]` config section
+- Config auto-updates on install/uninstall
+
+#### 2026-03-22: Channel Expansion (25 channels built)
+- 25 channels: Slack, Email, Signal, IRC, Feishu, DingTalk, WeCom, LINE, Google Chat, Teams, Mattermost, Matrix, Generic Webhook, WhatsApp Business, Bluesky, Reddit, Nostr, Twitch, Notion, Voice, X + 4 existing (Discord, Telegram, WhatsApp, CLI)
+- All use same pattern: ChannelAdapter trait + spawn() + NexusBridge integration
+- HTTP/API channels: Slack, Email, Feishu, DingTalk, WeCom, LINE, Google Chat, Teams, Mattermost, Webhook, WhatsApp Business, Bluesky, Reddit, Notion
+- Protocol channels: Signal (SSE to signal-cli), IRC (TCP+TLS), Matrix (REST API), Nostr (WebSocket), Twitch (IRC), Voice (edge-tts/whisper), X (Twitter API v2)
+- Dependencies added: imap, native-tls, lettre, mailparse, tokio-rustls, rustls, webpki-roots, chrono, tokio-tungstenite, tokio-native-tls
+- Files: 25 new .rs files in crates/channels/src/
+
+#### 2026-03-21: MCP Agent Loop Integration
+
+**Perfection Loop: 2 iterations. Gap: MCP client existed but never wired into agent loop.**
+
+- `McpConfig` + `McpServerEntry` in `core/src/config.rs` — `[mcp]` config section
+- `Config.mcp` field with `servers: Vec<McpServerEntry>`
+- `SwarmController.mcp_servers` — threaded through `new()` → `spawn_agent()`
+- MCP discovery in `spawn_agent()`: connects to all configured servers, calls `discover_tools()`, appends to `agent_tools`
+- `McpRemoteTool` fix: `input_schema` now passed through constructor + `parameters_schema()` implemented
+- `McpToolDiscovery::get_remote_tools()` output flows into agent tool list
+- ignition.rs passes `config.mcp.servers.clone()` to SwarmController
+- Files: `core/src/config.rs`, `agent/src/swarm.rs`, `mcp/src/client.rs`, `agent/src/orchestration/ignition.rs`, `agent/tests/production.rs`
+
+#### 2026-03-21: FID — MCP + Next 6 Features
+
+- `dev/fids/FID-20260321-MCP-INTEGRATION-PLUS-NEXT-5.md` — MCP integration + Smithery + Self-Repair + Hooks + Truncation + Mount Security
 
 **Core Recovery (19 fixes):**
 - Dashboard WebSocket URLs fixed (port 3000→8080)

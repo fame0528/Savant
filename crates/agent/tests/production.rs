@@ -24,6 +24,7 @@ impl LlmProvider for MockLlmProvider {
     async fn stream_completion(
         &self,
         _messages: Vec<ChatMessage>,
+        _tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
         let chunk = ChatChunk {
@@ -34,6 +35,9 @@ impl LlmProvider for MockLlmProvider {
             session_id: None,
             channel: AgentOutputChannel::Chat,
             logprob: None,
+            is_telemetry: false,
+            reasoning: None,
+            tool_calls: None,
         };
         Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
     }
@@ -110,6 +114,7 @@ async fn test_production_swarm_initialization_50_agents() {
         signing_key,
         pqc_authority,
         pqc_signing_key,
+        vec![], // No MCP servers in test
     )
     .await
     .expect("Failed to create SwarmController");
@@ -180,6 +185,7 @@ async fn test_agent_panic_recovery_logic() {
         signing_key,
         pqc_authority,
         pqc_signing_key,
+        vec![], // No MCP servers in test
     )
     .await
     .unwrap();
@@ -257,6 +263,7 @@ async fn test_500_agent_initialization_scaling() {
         signing_key,
         pqc_authority,
         pqc_signing_key,
+        vec![], // No MCP servers in test
     )
     .await
     .expect("Failed to create Scale Controller");

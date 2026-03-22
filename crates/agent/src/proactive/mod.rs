@@ -1,9 +1,9 @@
 pub mod perception;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use std::fs;
 use std::path::PathBuf;
-use serde::{Serialize, Deserialize};
 use tracing::debug;
-use serde_json;
 
 /// Protocol C-ATLAS: Proactive Session-State WAL
 /// Ensures zero-latency recovery of agent decisions and preferences.
@@ -48,12 +48,14 @@ impl ProactivePartner {
             return Ok(WorkingBuffer::default());
         }
         let content = fs::read_to_string(&self.state_path)?;
-        
+
         // AAA: Robust JSON extraction from Markdown-wrapped WAL
-        let json_start = content.find('{').ok_or("Invalid WAL: No JSON start found")?;
+        let json_start = content
+            .find('{')
+            .ok_or("Invalid WAL: No JSON start found")?;
         let json_end = content.rfind('}').ok_or("Invalid WAL: No JSON end found")?;
         let json_str = &content[json_start..=json_end];
-        
+
         let buffer: WorkingBuffer = serde_json::from_str(json_str)?;
         Ok(buffer)
     }

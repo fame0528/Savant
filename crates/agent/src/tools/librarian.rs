@@ -103,8 +103,17 @@ impl Tool for LibrarianTool {
     }
 
     fn description(&self) -> &str {
-        "Queries the substrate's skill library for relevant tools based on intent. \
-         Use this when you need additional capabilities not currently in your prompt."
+        "Search the skill library for relevant tools based on intent."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "intent": { "type": "string", "description": "What you want to accomplish" }
+            },
+            "required": ["intent"]
+        })
     }
 
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {

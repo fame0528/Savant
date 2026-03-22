@@ -67,8 +67,7 @@ pub struct LambdaConfig {
 impl Default for LambdaConfig {
     fn default() -> Self {
         Self {
-            region: std::env::var("AWS_REGION")
-                .unwrap_or_else(|_| "us-east-1".to_string()),
+            region: std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
             function_name: std::env::var("SAVANT_LAMBDA_FUNCTION")
                 .unwrap_or_else(|_| "savant-skill".to_string()),
             timeout_secs: LAMBDA_DEFAULT_TIMEOUT_SECS,
@@ -167,9 +166,7 @@ impl LambdaSkillExecutor {
             .body(payload_str)
             .send()
             .await
-            .map_err(|e| {
-                SavantError::Unknown(format!("Lambda invocation failed: {}", e))
-            })?;
+            .map_err(|e| SavantError::Unknown(format!("Lambda invocation failed: {}", e)))?;
 
         let status = response.status();
         let body = response

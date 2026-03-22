@@ -100,15 +100,9 @@ impl EnsembleRouter {
     /// Selects the best model based on strategy and attempt number.
     pub fn select_model(&self, attempt: u32) -> Option<&EnsembleProvider> {
         match self.strategy {
-            EnsembleStrategy::Fallback => {
-                self.providers.get(attempt as usize)
-            }
-            EnsembleStrategy::BestOfN => {
-                self.providers.get(attempt as usize)
-            }
-            EnsembleStrategy::Consensus => {
-                self.providers.first()
-            }
+            EnsembleStrategy::Fallback => self.providers.get(attempt as usize),
+            EnsembleStrategy::BestOfN => self.providers.get(attempt as usize),
+            EnsembleStrategy::Consensus => self.providers.first(),
         }
     }
 
@@ -198,13 +192,22 @@ mod tests {
         assert_eq!(router.strategy(), &EnsembleStrategy::Fallback);
 
         // First provider should be hunter-alpha
-        assert_eq!(router.select_model(0).unwrap().model, "openrouter/hunter-alpha");
+        assert_eq!(
+            router.select_model(0).unwrap().model,
+            "openrouter/hunter-alpha"
+        );
 
         // Second should be healer-alpha
-        assert_eq!(router.select_model(1).unwrap().model, "openrouter/healer-alpha");
+        assert_eq!(
+            router.select_model(1).unwrap().model,
+            "openrouter/healer-alpha"
+        );
 
         // Third should be stepfun
-        assert_eq!(router.select_model(2).unwrap().model, "stepfun/step-3.5-flash:free");
+        assert_eq!(
+            router.select_model(2).unwrap().model,
+            "stepfun/step-3.5-flash:free"
+        );
 
         // Fourth should be free router
         assert_eq!(router.select_model(3).unwrap().model, "openrouter/free");
@@ -229,7 +232,8 @@ mod tests {
         let response = ProviderResponse {
             provider: "test".to_string(),
             model: "test".to_string(),
-            content: "Here is a detailed explanation with code:\n```rust\nfn main() {}\n```".to_string(),
+            content: "Here is a detailed explanation with code:\n```rust\nfn main() {}\n```"
+                .to_string(),
             latency_ms: 1000,
             token_count: 50,
         };

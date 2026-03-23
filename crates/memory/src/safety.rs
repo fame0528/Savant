@@ -34,8 +34,5 @@ mod verification {
     }
 }
 
-/// Runs all memory safety verifications.
-#[allow(dead_code)]
-pub fn verify_memory_safety() {
-    // Kani proofs are disabled in standard builds to avoid unresolved crate errors
-}
+// Kani proofs run via `cargo kani` — they are gated behind #[cfg(kani)]
+// and do not need a wrapper function in production code.

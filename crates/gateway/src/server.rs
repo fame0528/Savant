@@ -97,8 +97,14 @@ pub async fn start_gateway(
             "/api/mcp/servers/info",
             get(crate::handlers::mcp::server_info_handler),
         )
-        .route("/live", get(|| async { "OK" }))
-        .route("/ready", get(|| async { "OK" }))
+        .route(
+            "/live",
+            get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
+        )
+        .route(
+            "/ready",
+            get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
+        )
         .route(
             "/api/setup/check",
             get(crate::handlers::setup::setup_check_handler),
@@ -186,7 +192,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     };
     let _ = sender.send(Message::Text(format!("EVENT:{}", msg))).await;
     tracing::info!(
-        "🚀 Sovereign Ignition: Hydrated sidebar for session {}",
+        "Sovereign Ignition: Hydrated sidebar for session {}",
         session_id.0
     );
 
@@ -642,7 +648,7 @@ async fn settings_post_handler(
     if changed {
         let config_path = savant_core::config::Config::primary_config_path();
         if let Err(e) = config.save(&config_path) {
-            tracing::error!("❌ Failed to save config: {}", e);
+            tracing::error!("Failed to save config: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"status": "error", "message": e.to_string()})),
@@ -681,7 +687,7 @@ async fn settings_reset_handler(State(state): State<Arc<GatewayState>>) -> impl 
 
     let config_path = savant_core::config::Config::primary_config_path();
     if let Err(e) = config.save(&config_path) {
-        tracing::error!("❌ Failed to reset config: {}", e);
+        tracing::error!("Failed to reset config: {}", e);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"status": "error", "message": e.to_string()})),

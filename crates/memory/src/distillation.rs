@@ -1,4 +1,3 @@
-use jsonwebtoken::{encode, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -37,11 +36,10 @@ pub fn spawn_distillation_pipeline(
     collective: Arc<MemoryEnclave>,
     llm: Arc<dyn LlmProvider>,
     embeddings: Option<Arc<dyn EmbeddingProvider>>,
-    jwt_secret: String,
+    _jwt_secret: String,
 ) {
     tokio::spawn(async move {
-        info!("🧬 OMEGA-VIII: Enclave -> Collective Distillation Pipeline Online");
-        let encoding_key = EncodingKey::from_secret(jwt_secret.as_bytes());
+        info!("Enclave -> Collective Distillation Pipeline Online");
 
         loop {
             // Wake every 5 minutes to scan for high-entropy local facts
@@ -85,64 +83,58 @@ pub fn spawn_distillation_pipeline(
                                 triplet: distilled,
                             };
 
-                            // Sign the triplet payload
-                            if let Ok(_token) = encode(&Header::default(), &claims, &encoding_key) {
-                                let now_ms = chrono::Utc::now().timestamp_millis();
+                            let now_ms = chrono::Utc::now().timestamp_millis();
 
-                                // Generate a stable u64 ID from the source message UUID
-                                // blake3 is deterministic across Rust versions (unlike DefaultHasher)
-                                let hash = blake3::hash(msg.id.as_bytes());
-                                let bytes = hash.as_bytes();
-                                let entry_id =
-                                    u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]));
+                            // Generate a stable u64 ID from the source message UUID
+                            // blake3 is deterministic across Rust versions (unlike DefaultHasher)
+                            let hash = blake3::hash(msg.id.as_bytes());
+                            let bytes = hash.as_bytes();
+                            let entry_id =
+                                u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]));
 
-                                let content = format!(
-                                    "{} {} {}",
-                                    claims.triplet.subject,
-                                    claims.triplet.predicate,
-                                    claims.triplet.object
-                                );
+                            let content = format!(
+                                "{} {} {}",
+                                claims.triplet.subject,
+                                claims.triplet.predicate,
+                                claims.triplet.object
+                            );
 
-                                // OMEGA-VIII: Generate semantic embedding if provider available
-                                let mut triplet_embedding = Vec::new();
-                                if let Some(ref provider) = embeddings {
-                                    if let Ok(vec) = provider.embed(&content).await {
-                                        triplet_embedding = vec;
-                                    }
+                            // OMEGA-VIII: Generate semantic embedding if provider available
+                            let mut triplet_embedding = Vec::new();
+                            if let Some(ref provider) = embeddings {
+                                if let Ok(vec) = provider.embed(&content).await {
+                                    triplet_embedding = vec;
                                 }
+                            }
 
-                                // Index into Collective as a new MemoryEntry
-                                let entry = MemoryEntry {
-                                    id: entry_id.into(),
-                                    session_id: msg.session_id.clone(),
-                                    created_at: now_ms.into(),
-                                    updated_at: now_ms.into(),
-                                    content,
-                                    category: "distilled_triplet".to_string(),
-                                    importance: (claims.triplet.confidence * 10.0) as u8,
-                                    tags: vec!["hive-mind".to_string(), "shared".to_string()],
-                                    embedding: triplet_embedding,
-                                    shannon_entropy: entropy.into(),
-                                    last_accessed_at: now_ms.into(),
-                                    hit_count: 0.into(),
-                                    related_to: vec![],
-                                };
+                            // Index into Collective as a new MemoryEntry
+                            let entry = MemoryEntry {
+                                id: entry_id.into(),
+                                session_id: msg.session_id.clone(),
+                                created_at: now_ms.into(),
+                                updated_at: now_ms.into(),
+                                content,
+                                category: "distilled_triplet".to_string(),
+                                importance: (claims.triplet.confidence * 10.0) as u8,
+                                tags: vec!["hive-mind".to_string(), "shared".to_string()],
+                                embedding: triplet_embedding,
+                                shannon_entropy: entropy.into(),
+                                last_accessed_at: now_ms.into(),
+                                hit_count: 0.into(),
+                                related_to: vec![],
+                            };
 
-                                if let Err(e) = collective.index_memory(entry).await {
-                                    error!(
-                                        "Failed to index distilled triplet into collective: {}",
-                                        e
-                                    );
-                                } else {
-                                    // AAA: Production-grade SPO Indexing
-                                    if let Err(e) = collective.lsm().insert_fact(
-                                        &claims.triplet.subject,
-                                        &claims.triplet.predicate,
-                                        &claims.triplet.object,
-                                        entry_id,
-                                    ) {
-                                        error!("Failed to insert fact into SPO index: {}", e);
-                                    }
+                            if let Err(e) = collective.index_memory(entry).await {
+                                error!("Failed to index distilled triplet into collective: {}", e);
+                            } else {
+                                // AAA: Production-grade SPO Indexing
+                                if let Err(e) = collective.lsm().insert_fact(
+                                    &claims.triplet.subject,
+                                    &claims.triplet.predicate,
+                                    &claims.triplet.object,
+                                    entry_id,
+                                ) {
+                                    error!("Failed to insert fact into SPO index: {}", e);
                                 }
                             }
                         }

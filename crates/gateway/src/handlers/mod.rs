@@ -45,7 +45,7 @@ pub async fn handle_message(
 
             // Persist message FIRST (data safety — append before pruning)
             if let Err(e) = state.storage.append_chat(&partition, &message) {
-                tracing::error!("❌ Failed to persist chat message to {}: {}", partition, e);
+                tracing::error!("Failed to persist chat message to {}: {}", partition, e);
             }
 
             // Prune AFTER successful append to prevent data loss
@@ -53,7 +53,7 @@ pub async fn handle_message(
 
             // Route message to appropriate agent through Nexus
             if let Err(e) = route_chat_message(message, &state.nexus).await {
-                tracing::error!("❌ Failed to route chat message: {}", e);
+                tracing::error!("Failed to route chat message: {}", e);
 
                 let error_response = ChatMessage {
                     is_telemetry: false,
@@ -75,7 +75,7 @@ pub async fn handle_message(
                 savant_core::types::ControlFrame::HistoryRequest { lane_id, limit } => {
                     let normalized_lane = lane_id.to_lowercase().trim().to_string();
                     tracing::info!(
-                        "📜 History request for normalized lane: {} (limit: {})",
+                        "History request for normalized lane: {} (limit: {})",
                         normalized_lane,
                         limit
                     );
@@ -97,12 +97,12 @@ pub async fn handle_message(
                             .await;
                         }
                         Err(e) => {
-                            tracing::error!("❌ Failed to retrieve history for {}: {}", lane_id, e);
+                            tracing::error!("Failed to retrieve history for {}: {}", lane_id, e);
                         }
                     }
                 }
                 savant_core::types::ControlFrame::InitialSync => {
-                    tracing::info!("🔄 Initial sync requested. Hydrating sidebar.");
+                    tracing::info!("Initial sync requested. Hydrating sidebar.");
                     let nexus = state.nexus.clone();
                     tokio::spawn(async move {
                         if let Some(agents_json) = nexus.shared_memory.get("system.agents") {
@@ -112,7 +112,7 @@ pub async fn handle_message(
                 }
                 savant_core::types::ControlFrame::SoulManifest { prompt, name } => {
                     tracing::info!(
-                        "🎨 Soul manifestation requested: {} (Named: {:?})",
+                        "Soul manifestation requested: {} (Named: {:?})",
                         prompt,
                         name
                     );
@@ -148,7 +148,7 @@ pub async fn handle_message(
                         )
                         .await
                         {
-                            tracing::error!("❌ Manifestation failed: {}", e);
+                            tracing::error!("Manifestation failed: {}", e);
                         }
                     });
                 }
@@ -165,7 +165,7 @@ pub async fn handle_message(
                         Ok(Some(path)) => {
                             let soul_path = path.join("SOUL.md");
                             if let Err(e) = std::fs::write(&soul_path, content) {
-                                tracing::error!("❌ Failed to write SOUL.md: {}", e);
+                                tracing::error!("Failed to write SOUL.md: {}", e);
                             } else {
                                 tracing::info!(
                                     "✅ SOUL.md updated for {}. Hot-reload triggering.",
@@ -199,7 +199,7 @@ pub async fn handle_message(
                                     )
                                     .await;
                                 }
-                                Err(e) => tracing::error!("❌ Failed to scaffold workspace: {}", e),
+                                Err(e) => tracing::error!("Failed to scaffold workspace: {}", e),
                             }
                         }
                     }
@@ -214,7 +214,7 @@ pub async fn handle_message(
                     );
 
                     for plan in agents {
-                        tracing::info!("🚀 Deploying agent: {}", plan.name);
+                        tracing::info!("Deploying agent: {}", plan.name);
                         match registry.scaffold_workspace(
                             &plan.name,
                             &plan.soul,
@@ -224,7 +224,7 @@ pub async fn handle_message(
                                 tracing::info!("✅ Agent birthed: {}", config.agent_name);
                             }
                             Err(e) => {
-                                tracing::error!("❌ Failed to birth agent {}: {}", plan.name, e);
+                                tracing::error!("Failed to birth agent {}: {}", plan.name, e);
                             }
                         }
                     }
@@ -352,7 +352,15 @@ pub async fn handle_message(
                     let _ = send_control_response(
                         "NL_COMMAND_RESULT",
                         serde_json::json!({
-                            "category": format!("{:?}", intent.category),
+                            "category": match intent.category {
+                                savant_core::nlp::CommandCategory::AgentManagement => "agent_management",
+                                savant_core::nlp::CommandCategory::ChannelControl => "channel_control",
+                                savant_core::nlp::CommandCategory::ModelSwitch => "model_switch",
+                                savant_core::nlp::CommandCategory::Diagnostics => "diagnostics",
+                                savant_core::nlp::CommandCategory::Status => "status",
+                                savant_core::nlp::CommandCategory::Help => "help",
+                                savant_core::nlp::CommandCategory::Unknown => "unknown",
+                            },
                             "action": intent.action,
                             "target": intent.target,
                             "confidence": intent.confidence,
@@ -462,7 +470,7 @@ async fn resolve_openrouter_key() -> String {
     // --- Path 1: Master key exchange ---
     if let Ok(master_key) = std::env::var("OR_MASTER_KEY") {
         if !master_key.trim().is_empty() {
-            tracing::info!("🔑 Master key detected — exchanging for regular OpenRouter key...");
+            tracing::info!("Master key detected — exchanging for regular OpenRouter key...");
 
             let exchange_result = client
                 .post("https://openrouter.ai/api/v1/keys")
@@ -492,11 +500,11 @@ async fn resolve_openrouter_key() -> String {
                                 let _ = RESOLVED_OPENROUTER_KEY.set(regular_key.clone());
                                 return regular_key;
                             } else {
-                                tracing::error!("❌ /keys response missing key field: {:?}", json);
+                                tracing::error!("/keys response missing key field: {:?}", json);
                             }
                         }
                         Err(e) => {
-                            tracing::error!("❌ Failed to parse /keys response: {}", e);
+                            tracing::error!("Failed to parse /keys response: {}", e);
                         }
                     }
                 }
@@ -504,13 +512,13 @@ async fn resolve_openrouter_key() -> String {
                     let status = resp.status();
                     let body = resp.text().await.unwrap_or_default();
                     tracing::error!(
-                        "❌ /keys returned {}: {}",
+                        "/keys returned {}: {}",
                         status,
                         body.chars().take(300).collect::<String>()
                     );
                 }
                 Err(e) => {
-                    tracing::error!("❌ /keys request failed: {}", e);
+                    tracing::error!("/keys request failed: {}", e);
                 }
             }
         }
@@ -519,7 +527,7 @@ async fn resolve_openrouter_key() -> String {
     // --- Path 2: Regular API key from env ---
     if let Ok(regular_key) = std::env::var("OPENROUTER_API_KEY") {
         if !regular_key.trim().is_empty() {
-            tracing::info!("🔑 Using OPENROUTER_API_KEY from environment.");
+            tracing::info!("Using OPENROUTER_API_KEY from environment.");
             // Cache so the check doesn't repeat.
             let _ = RESOLVED_OPENROUTER_KEY.set(regular_key.clone());
             return regular_key;
@@ -527,7 +535,7 @@ async fn resolve_openrouter_key() -> String {
     }
 
     // --- Path 3: No key available ---
-    tracing::warn!("⚠️ No OpenRouter API key found. Soul generation will use template fallback.");
+    tracing::warn!("No OpenRouter API key found. Soul generation will use template fallback.");
     String::new()
 }
 
@@ -542,10 +550,10 @@ async fn resolve_provider_config(provider: &str) -> (String, String) {
         "kilo" => {
             let key = std::env::var("KILO_API_KEY").unwrap_or_default();
             if key.is_empty() {
-                tracing::warn!("⚠️ Kilo provider selected but KILO_API_KEY not set.");
+                tracing::warn!("Kilo provider selected but KILO_API_KEY not set.");
                 return (String::new(), String::new());
             }
-            tracing::info!("🔑 Using Kilo Gateway API.");
+            tracing::info!("Using Kilo Gateway API.");
             (key, "https://api.kilo.ai/api/gateway".to_string())
         }
         "openrouter" | _ => {
@@ -731,7 +739,7 @@ CRITICAL REQUIREMENTS:
                             .await;
                         }
                         Err(e) => {
-                            tracing::error!("❌ Failed to parse OpenRouter response: {}", e);
+                            tracing::error!("Failed to parse OpenRouter response: {}", e);
                             send_manifest_error(
                                 &format!("Failed to parse AI response: {}", e),
                                 session_id,
@@ -743,7 +751,7 @@ CRITICAL REQUIREMENTS:
                 } else {
                     let status = resp.status();
                     let error_body = resp.text().await.unwrap_or_default();
-                    tracing::error!("❌ OpenRouter API error {}: {}", status, error_body);
+                    tracing::error!("OpenRouter API error {}: {}", status, error_body);
                     send_manifest_error(
                         &format!("OpenRouter API error: {}", status),
                         session_id,
@@ -753,13 +761,13 @@ CRITICAL REQUIREMENTS:
                 }
             }
             Err(e) => {
-                tracing::error!("❌ OpenRouter request failed: {}", e);
+                tracing::error!("OpenRouter request failed: {}", e);
                 send_manifest_error(&format!("Network error: {}", e), session_id, nexus).await;
             }
         }
     } else {
         // Fallback: generate a template-based soul when no API key is available.
-        tracing::warn!("⚠️ No OpenRouter key — generating template soul");
+        tracing::warn!("No OpenRouter key — generating template soul");
         let template_soul = generate_template_soul(&prompt, name.as_deref());
 
         let draft_payload = serde_json::json!({

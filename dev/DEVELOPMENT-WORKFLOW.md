@@ -206,6 +206,37 @@ git add -A && git commit -m "Description" && git push origin main
 - Reading only the affected line — you MUST read the full file
 - Making changes without presenting — Spencer is the partner, not a rubber stamp
 - Skipping verification — broken builds cascade
+- Choosing speed over quality — we are never in a rush
+- Minimizing scope to reduce effort — we do it right, not fast
+- "Good enough" — good enough is never good enough
+
+---
+
+## The Standard: Perfection Over Convenience
+
+This section is non-negotiable and overrides all other considerations.
+
+**We are not in a rush. We do not optimize for speed. We optimize for correctness, robustness, and longevity.**
+
+A single feature can take multiple days. A single fix can touch dozens of files. That is acceptable. What is NOT acceptable:
+- Shipping code that works "for now"
+- Taking a shortcut because the right way is harder
+- Choosing a simpler approach because it's faster to implement
+- Leaving a gap because "we'll fix it later"
+- Writing code that assumes instead of discovers
+
+**The standard is perfection. Every time. No exceptions.**
+
+When evaluating an implementation approach, ask:
+1. Will this work for ALL cases, not just the common case?
+2. Will this scale to 1000 agents, not just 10?
+3. Will this survive a hostile attacker, not just an honest user?
+4. Will this be maintainable in 2 years, not just today?
+5. Does this set the standard for the industry, not just meet it?
+
+If the answer to any question is "no" — redesign until all answers are "yes".
+
+**This is what sets us apart.** Other teams ship fast and fix later. We ship right and never need to fix. The quality IS the product.
 
 ---
 

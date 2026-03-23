@@ -26,3 +26,5 @@ webpki-roots = "0.26"
 chrono = "0.4"
 tokio-tungstenite = { version = "0.21", features = ["connect", "stream"] }
 tokio-native-tls = "0.3"
+nostr-sdk = "0.44"
+tokio-util = "0.7"

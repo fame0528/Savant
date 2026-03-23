@@ -33,7 +33,7 @@ impl XAdapter {
     async fn post_tweet(&self, text: &str) -> Result<(), SavantError> {
         let resp = self
             .http
-            .post("https://api.twitter.com/2/tweets")
+            .post("https://api.x.com/2/tweets")
             .bearer_auth(&self.config.bearer_token)
             .json(&serde_json::json!({"text": text}))
             .send()
@@ -46,39 +46,75 @@ impl XAdapter {
         Ok(())
     }
 
-    /// Fetches recent DMs.
+    /// Fetches recent DM events via Twitter API v2.
+    /// GET /2/dm_events — returns all DM events for the authenticated user.
     async fn fetch_dms(&self) -> Result<Vec<serde_json::Value>, SavantError> {
-        let resp: serde_json::Value = self
+        let resp = self
             .http
-            .get("https://api.twitter.com/2/dm_conversations/with/messages")
+            .get("https://api.x.com/2/dm_events")
             .bearer_auth(&self.config.bearer_token)
+            .query(&[("dm_event_type", "MessageCreate"), ("max_results", "25")])
             .send()
             .await
-            .map_err(|e| SavantError::Unknown(format!("X DM fetch failed: {}", e)))?
+            .map_err(|e| SavantError::Unknown(format!("X DM fetch failed: {}", e)))?;
+
+        // Handle rate limiting
+        if resp.status() == 429 {
+            let reset = resp
+                .headers()
+                .get("x-rate-limit-reset")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(60);
+            warn!("[X] Rate limited. Reset in {}s", reset);
+            tokio::time::sleep(Duration::from_secs(reset)).await;
+            return Ok(vec![]);
+        }
+
+        let data: serde_json::Value = resp
             .json()
             .await
             .map_err(|e| SavantError::Unknown(format!("X DM parse failed: {}", e)))?;
 
-        Ok(resp["data"].as_array().cloned().unwrap_or_default())
+        Ok(data["data"].as_array().cloned().unwrap_or_default())
     }
 
-    /// Sends a DM.
+    /// Sends a DM to a participant via Twitter API v2.
+    /// POST /2/dm_conversations/with/{participant_id}/messages
     async fn send_dm(&self, recipient_id: &str, text: &str) -> Result<(), SavantError> {
+        let url = format!(
+            "https://api.x.com/2/dm_conversations/with/{}/messages",
+            recipient_id
+        );
         let resp = self
             .http
-            .post("https://api.twitter.com/2/dm_conversations/with/messages")
+            .post(&url)
             .bearer_auth(&self.config.bearer_token)
-            .json(&serde_json::json!({
-                "event": { "type": "message_create",
-                    "message_create": { "target": { "recipient_id": recipient_id },
-                        "message_data": { "text": text } } }
-            }))
+            .json(&serde_json::json!({ "text": text }))
             .send()
             .await
             .map_err(|e| SavantError::Unknown(format!("X DM send failed: {}", e)))?;
 
+        if resp.status() == 429 {
+            let reset = resp
+                .headers()
+                .get("x-rate-limit-reset")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(60);
+            warn!("[X] Rate limited on DM send. Reset in {}s", reset);
+            tokio::time::sleep(Duration::from_secs(reset)).await;
+            return Err(SavantError::Unknown("X DM send rate limited".to_string()));
+        }
+
         if !resp.status().is_success() {
-            warn!("[X] DM send failed: {}", resp.status());
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            warn!("[X] DM send failed: {} — {}", status, body);
+            return Err(SavantError::Unknown(format!(
+                "X DM send failed: {}",
+                status
+            )));
         }
         Ok(())
     }

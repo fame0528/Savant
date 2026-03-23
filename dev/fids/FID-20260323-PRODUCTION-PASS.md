@@ -191,18 +191,64 @@ Rollback → Agent loop message history, full_trace accumulation, heuristic stat
 
 ### Phase 6: Stub Implementation (ALL decided IMPLEMENT)
 
-All stubs decided for implementation per Phase 0. Approaches informed by 17 competitor scans.
+All stubs decided for implementation per Phase 0. Approaches informed by 17 competitor scans + deep OpenClaw study.
 
-| # | Severity | Issue | File | Approach (Competitor-Informed) |
-|---|----------|-------|------|------|
-| 6.1 | HIGH | Nostr unsigned events | `channels/nostr.rs` | Use `nostr-sdk` crate (like ZeroClaw). Dual-protocol NIP-04+NIP-17 with per-sender protocol tracking. |
-| 6.2 | HIGH | X/Twitter invalid endpoints | `channels/x.rs` | Fix DM endpoints to valid Twitter API v2 paths: `POST /2/dm_conversations/with/{participant_id}/messages` |
-| 6.3 | HIGH | Feishu empty container_id | `channels/feishu.rs` | Fix polling: pass actual container_id from event headers. Add exponential backoff (1s→60s max, reset on success). |
-| 6.4 | MEDIUM | Web tool stubs | `agent/tools/web.rs` | 3-tier: HTTP fetch with `scraper` crate DOM→Markdown (like ZeptoClaw) → Readability-like extraction → CDP fallback. SSRF at every layer with DNS pinning + IPv6 checks. |
-| 6.5 | MEDIUM | Web projection stub | `agent/tools/web_projection.rs` | Content-root detection (main→article→[role=main]→body, like ZeptoClaw). SHA256 boundary markers for external content (like OpenFang). Skip-elements list (script/style/nav/footer/header/aside/iframe/svg/form). |
-| 6.6 | MEDIUM | PromotionEngine unused | `memory/promotion.rs` | Confidence decay (like OpenFang: `confidence *= 0.9` per cycle, floor at 0.1). Salience scoring (like MemU: `similarity * log(reinforcement+1) * recency_decay`). Integrate with memory engine's periodic hygiene task. |
-| 6.7 | HIGH | Consolidation placeholder | `memory/async_backend.rs:239` | LLM-based summarization with forced tool-call output (like NanoBot). 3-tier urgency: Normal (summarize, keep 10) → Emergency (summarize, keep 5) → Critical (truncate, keep 3). Graceful degradation: raw archive on LLM failure. |
-| 6.8 | CRITICAL | JWT secret default | `memory/engine.rs:290` | Error on missing jwt_secret: skip distillation pipeline with `tracing::warn`. No default secret. |
+**6.1: Nostr Adapter** (informed by ZeroClaw `nostr-sdk` + OpenClaw circuit breaker + health scoring)
+- File: `channels/nostr.rs`
+- Use `nostr-sdk` crate: event signing via `EventBuilder`, keypair via `Keys::from_sk_str()`
+- Dual-protocol: NIP-04 encrypted DMs (kind:4) + NIP-17 private DMs (kind:14)
+- Per-relay circuit breaker (closed/open/half-open with reset window)
+- Relay health scoring: success rate + latency composite
+- Exponential backoff reconnection with jitter (OpenClaw pattern — prevent thundering herd)
+
+**6.2: X/Twitter Adapter** (informed by OpenFang curl-based API v2 + endpoint catalog)
+- File: `channels/x.rs`
+- Fix DM endpoint: `POST https://api.twitter.com/2/dm_conversations/with/{participant_id}/messages`
+- Fix timeline: `GET https://api.twitter.com/2/users/{user_id}/tweets`
+- OAuth2 bearer token from config `x.bearer_token`
+- Rate limit handling: respect `x-rate-limit-reset` header, exponential backoff
+
+**6.3: Feishu Adapter** (informed by ZeptoClaw protobuf WS + token caching)
+- File: `channels/feishu.rs`
+- Extract actual `container_id` from Feishu event headers (`X-Lark-Request-Data`)
+- Token caching with proactive refresh (fetch new token 5 min before expiry)
+- Exponential backoff on poll errors (1s → 2s → 4s → ... → 60s max, reset on success)
+
+**6.4: Web Tool** (informed by OpenClaw ref-based DOM + ZeptoClaw `scraper` crate + OpenFang SSRF)
+- File: `agent/tools/web.rs`
+- 3-tier architecture:
+  1. HTTP fetch + `scraper` crate DOM→Markdown (static pages, fast)
+  2. Readability extraction (article content, like OpenFang)
+  3. CDP headless browser fallback (JS-heavy pages, like OpenClaw)
+- SSRF protection: DNS resolution + private IP blocking + cloud metadata endpoint blocking
+- Content-root detection: `<main>` → `<article>` → `[role=main]` → `<body>` (ZeptoClaw pattern)
+- Skip-elements list: script, style, noscript, nav, footer, header, aside, iframe, svg, form, input, button, select, textarea
+- Ref-based element addressing for interactive operations (OpenClaw pattern)
+
+**6.5: Web Projection** (informed by OpenFang SHA256 boundaries + ZeptoClaw DOM conversion)
+- File: `agent/tools/web_projection.rs`
+- Content-root detection with priority chain
+- SHA256-derived boundary markers for external content injection prevention
+- Deterministic content-addressed markers (same content → same marker)
+- Configurable skip-elements list
+
+**6.6: PromotionEngine** (informed by MemU salience formula + MicroClaw confidence archiving)
+- File: `memory/promotion.rs`
+- Salience formula: `similarity * log(reinforcement_count + 1) * exp(-0.693 * days_ago / half_life)`
+- Content-hash dedup: `sha256(type:normalized_content)` with reinforcement on duplicate
+- Confidence decay: `confidence *= 0.9` per cycle, floor at 0.1 (OpenFang pattern)
+- Stale memory archival: soft-delete where `confidence < 0.35 AND last_seen_at < (now - 30 days)` (MicroClaw pattern)
+- Integrate with memory engine's periodic hygiene task
+
+**6.7: Consolidation** (inforced by NanoBot tool-call + EverMemOS threshold compaction + MemU hash dedup)
+- File: `memory/async_backend.rs:239`
+- LLM-based summarization with forced tool-call output (structured, NanoBot pattern)
+- 3-tier urgency: Normal (summarize, keep 10) → Emergency (summarize, keep 5) → Critical (truncate, keep 3)
+- Graceful degradation: raw archive on LLM failure (MicroClaw pattern)
+- Non-LLM pre-pass: hash-based exact dedup before LLM call (MemU pattern)
+- Recovery mechanism: compare LLM output with original, merge back accidentally dropped items (EverMemOS pattern)
+
+**6.8: JWT Secret** — ALREADY COMPLETE in Phase 1 (ephemeral crypto-random generation)
 
 **CHECKPOINT 6:** `cargo check --workspace` + Spencer approval
 

@@ -13,6 +13,7 @@ pub struct FeishuConfig {
     pub app_id: String,
     pub app_secret: String,
     pub verification_token: String,
+    pub chat_id: String, // Required: the chat/group ID to poll messages from
 }
 
 /// Feishu/Lark channel adapter.
@@ -21,7 +22,7 @@ pub struct FeishuAdapter {
     config: FeishuConfig,
     http: reqwest::Client,
     nexus: Arc<savant_core::bus::NexusBridge>,
-    tenant_token: Arc<tokio::sync::Mutex<Option<String>>>,
+    tenant_token: Arc<tokio::sync::Mutex<Option<(String, i64)>>>, // (token, expires_at_epoch)
 }
 
 impl FeishuAdapter {
@@ -34,12 +35,17 @@ impl FeishuAdapter {
         }
     }
 
-    /// Gets or refreshes the tenant_access_token.
+    /// Gets or refreshes the tenant_access_token with proactive refresh.
+    /// Feishu tokens expire after 2 hours — refresh 5 minutes before expiry.
     async fn get_token(&self) -> Result<String, SavantError> {
         {
             let lock = self.tenant_token.lock().await;
-            if let Some(ref token) = *lock {
-                return Ok(token.clone());
+            if let Some((ref token, expires_at)) = *lock {
+                let now = chrono::Utc::now().timestamp();
+                // Proactive refresh: 5 minutes before expiry
+                if now < expires_at - 300 {
+                    return Ok(token.clone());
+                }
             }
         }
 
@@ -64,8 +70,14 @@ impl FeishuAdapter {
             })?
             .to_string();
 
+        // Feishu tokens expire after 7200 seconds (2 hours)
+        let expire_seconds = resp["expire"].as_i64().unwrap_or(7200);
+        let expires_at = chrono::Utc::now().timestamp() + expire_seconds;
+
         let mut lock = self.tenant_token.lock().await;
-        *lock = Some(token.clone());
+        *lock = Some((token.clone(), expires_at));
+
+        info!("[FEISHU] Token refreshed, expires in {}s", expire_seconds);
         Ok(token)
     }
 
@@ -106,7 +118,7 @@ impl FeishuAdapter {
             .bearer_auth(&token)
             .query(&[
                 ("container_id_type", "chat"),
-                ("container_id", ""),
+                ("container_id", &self.config.chat_id),
                 ("page_size", "20"),
             ])
             .send()
@@ -153,7 +165,7 @@ impl FeishuAdapter {
                                     let resp = http_out
                                         .post("https://open.feishu.cn/open-apis/im/v1/messages")
                                         .query(&[("receive_id_type", "chat_id")])
-                                        .bearer_auth(token_out.lock().await.as_deref().unwrap_or(""))
+                                        .bearer_auth(token_out.lock().await.as_ref().map(|(t, _)| t.as_str()).unwrap_or(""))
                                         .json(&serde_json::json!({
                                             "receive_id": chat_id,
                                             "msg_type": "text",
@@ -171,10 +183,14 @@ impl FeishuAdapter {
                 }
             });
 
-            // Inbound polling loop
+            // Inbound polling loop with exponential backoff
+            let mut poll_interval = Duration::from_secs(5);
+            let max_interval = Duration::from_secs(60);
             loop {
                 match self.poll_messages().await {
                     Ok(messages) => {
+                        // Reset interval on success
+                        poll_interval = Duration::from_secs(5);
                         for msg in messages {
                             let sender = msg["sender"]["sender_id"]["open_id"]
                                 .as_str()
@@ -207,9 +223,13 @@ impl FeishuAdapter {
                             }
                         }
                     }
-                    Err(e) => warn!("[FEISHU] Poll error: {}", e),
+                    Err(e) => {
+                        warn!("[FEISHU] Poll error: {}", e);
+                        // Exponential backoff on error: 5s → 10s → 20s → 40s → 60s max
+                        poll_interval = (poll_interval * 2).min(max_interval);
+                    }
                 }
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::time::sleep(poll_interval).await;
             }
         })
     }

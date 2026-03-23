@@ -9,6 +9,35 @@
 
 ### Added
 
+#### 2026-03-23: Full Project Audit + Production Pass FID
+
+**Source:** Full project audit — every file read 0-EOF across 16 crates
+**Method:** Perfection Loop (2 iterations on FID), Development Workflow
+**Result:** Audit report with ~250 issues, Production Pass FID with 30 fixes certified
+
+**Audit Report:**
+- `dev/AUDIT-REPORT.md` — ~250 issues catalogued
+- 15 Critical bugs, 25 High, 80+ Medium, 60+ Low, 20+ Stubs
+- Every source file in all 16 crates + dashboard read completely
+
+**Critical Findings:**
+- MemoryEntry ID collision (async_backend.rs:94) — string length as ID, silent data loss
+- Atomic compact deletes before insert (lsm_engine.rs:335) — no rollback on failure
+- VECTOR_DIM=384 leftover in lsm_engine.rs:27 + core/db.rs:15 (previous fix missed 2 files)
+- turn_failed never set to true (stream.rs:130) — all failures reported as successes
+- Excluded tools computed but never used (stream.rs:406) — self-repair non-functional
+- Dashboard shared session ID (auth/mod.rs:57) — state collision
+- Hardcoded API key in frontend (page.tsx:472)
+- Blocking std::thread::sleep in async context (email.rs:438)
+
+**Production Pass FID:**
+- `dev/fids/FID-20260323-PRODUCTION-PASS.md` — 30 fixes across 10 phases
+- Brain surgery protocol: read 0-EOF, cross-impact analysis, Spencer approval per fix
+- Checkpoint gates: cargo check after every fix, Spencer approval before next
+- Phase 0: 8 implement-vs-remove decisions for stubs
+- File-grouped execution to minimize reads and catch intra-file interactions
+- Risk register with 6 identified risks and mitigations
+
 #### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
 
 **Source:** Ultimate Sovereign Audit — 6 competitors, ~1,000,000 LOC scanned, ~200 features catalogued

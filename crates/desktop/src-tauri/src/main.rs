@@ -147,27 +147,39 @@ fn main() {
         })
         .setup(|app| {
             let handle = app.handle();
-            let bridge = LogBridge {
-                app_handle: handle.clone(),
-            };
 
-            use tracing_subscriber::layer::SubscriberExt;
-            use tracing_subscriber::util::SubscriberInitExt;
+            // Defer tracing init + status emission until window is ready
+            let app_handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait for webview to load
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-            let _ = tracing_subscriber::registry()
-                .with(tracing_subscriber::EnvFilter::new(
-                    "info,savant_desktop=debug,savant_agent=debug",
-                ))
-                .with(tracing_subscriber::fmt::layer())
-                .with(bridge)
-                .try_init();
+                // Initialize tracing
+                let bridge = LogBridge {
+                    app_handle: app_handle.clone(),
+                };
+                use tracing_subscriber::layer::SubscriberExt;
+                use tracing_subscriber::util::SubscriberInitExt;
+                let _ = tracing_subscriber::registry()
+                    .with(tracing_subscriber::EnvFilter::new(
+                        "info,savant_desktop=debug,savant_agent=debug",
+                    ))
+                    .with(tracing_subscriber::fmt::layer())
+                    .with(bridge)
+                    .try_init();
 
-            let app_version = app
-                .config()
-                .version
-                .clone()
-                .unwrap_or_else(|| "0.0.0".to_string());
-            info!("Savant Desktop v{} starting", app_version);
+                // Emit initial status
+                let version = app_handle
+                    .config()
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| "0.0.0".to_string());
+                let _ = app_handle.emit(
+                    "system-log-event",
+                    format!("Savant Desktop v{} starting", version),
+                );
+                let _ = app_handle.emit("system-log-event", "Initializing...");
+            });
 
             // System tray
             let show_item = MenuItemBuilder::with_id("show", "Show Dashboard").build(app)?;

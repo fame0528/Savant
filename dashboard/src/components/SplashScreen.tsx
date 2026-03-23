@@ -18,59 +18,60 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
   const [fadeOut, setFadeOut] = useState(false);
 
   useEffect(() => {
-    // Listen for status updates from the backend
-    const handleLog = (event: MessageEvent) => {
+    let unlisten: (() => void) | null = null;
+
+    const setupListener = async () => {
       try {
-        const data = typeof event.data === "string" ? event.data : "";
-        if (!data) return;
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<string>("system-log-event", (event) => {
+          const data = event.payload;
+          if (!data) return;
 
-        // Update current status
-        setStatus(data);
+          setStatus(data);
+          setHistory((prev) => [
+            ...prev.slice(-10),
+            { text: data, timestamp: Date.now() },
+          ]);
 
-        // Add to history
-        setHistory((prev) => [
-          ...prev.slice(-10), // Keep last 10
-          { text: data, timestamp: Date.now() },
-        ]);
-
-        // Check for completion
-        if (
-          data.includes("Swarm Ignition Sequence Complete") ||
-          data.includes("Swarm is already active")
-        ) {
-          // Dismiss splash after short delay
-          setTimeout(() => {
-            setFadeOut(true);
-            setTimeout(onComplete, 600);
-          }, 800);
-        }
+          if (
+            data.includes("Swarm Ignition Sequence Complete") ||
+            data.includes("Swarm is already active")
+          ) {
+            setTimeout(() => {
+              setFadeOut(true);
+              setTimeout(onComplete, 600);
+            }, 800);
+          }
+        });
       } catch {
-        // Ignore parse errors
+        // Not in Tauri context — use WebSocket fallback
+        const handleWS = (event: MessageEvent) => {
+          const data = typeof event.data === "string" ? event.data : "";
+          if (!data) return;
+          setStatus(data);
+          setHistory((prev) => [
+            ...prev.slice(-10),
+            { text: data, timestamp: Date.now() },
+          ]);
+          if (
+            data.includes("Swarm Ignition Sequence Complete") ||
+            data.includes("Swarm is already active")
+          ) {
+            setTimeout(() => {
+              setFadeOut(true);
+              setTimeout(onComplete, 600);
+            }, 800);
+          }
+        };
+        window.addEventListener("message", handleWS);
+        unlisten = () => window.removeEventListener("message", handleWS);
       }
     };
 
-    // Listen for system log events via WebSocket or event source
-    if (typeof window !== "undefined") {
-      window.addEventListener("message", handleLog);
-
-      // Also listen for Tauri events if available
-      const checkTauri = async () => {
-        try {
-          const { listen } = await import("@tauri-apps/api/event");
-          await listen("system-log-event", (event: { payload: unknown }) => {
-            handleLog({ data: String(event.payload) } as MessageEvent);
-          });
-        } catch {
-          // Not in Tauri context — use WebSocket
-        }
-      };
-      checkTauri();
-    }
+    setupListener();
 
     return () => {
-      if (typeof window !== "undefined") {
-        window.removeEventListener("message", handleLog);
-      }
+      if (unlisten) unlisten();
     };
   }, [onComplete]);
 
@@ -103,6 +104,10 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
             ))}
           </div>
         )}
+
+        <button onClick={onComplete} className={styles.skipBtn}>
+          Skip to Dashboard
+        </button>
       </div>
     </div>
   );

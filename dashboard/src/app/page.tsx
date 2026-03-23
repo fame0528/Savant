@@ -658,8 +658,8 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
     const savedAgent = localStorage.getItem('activeAgent');
     if (savedAgent) setActiveAgent(savedAgent.toLowerCase().trim());
 
-    // Auto-dismiss splash after 10 seconds if no status event
-    const splashTimer = setTimeout(() => setShowSplash(false), 10000);
+    // Auto-dismiss splash after 5 seconds if no status event
+    const splashTimer = setTimeout(() => setShowSplash(false), 5000);
     return () => clearTimeout(splashTimer);
   }, [isMounted]);
 

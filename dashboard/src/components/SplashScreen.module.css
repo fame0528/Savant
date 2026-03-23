@@ -102,3 +102,21 @@
   font-family: monospace;
   text-align: center;
 }
+
+.skipBtn {
+  margin-top: 24px;
+  padding: 6px 16px;
+  background: transparent;
+  color: #555;
+  border: 1px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: monospace;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.skipBtn:hover {
+  color: #00fbff;
+  border-color: #00fbff;
+}

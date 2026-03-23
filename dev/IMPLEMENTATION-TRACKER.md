@@ -5,6 +5,43 @@
 
 ---
 
+## Active Work — Production Pass (All Audit Findings)
+
+**Source:** FID `dev/fids/FID-20260323-PRODUCTION-PASS.md`
+**Audit Report:** `dev/AUDIT-REPORT.md` (~250 issues across 16 crates)
+**Protocol:** Brain surgery — read 0-EOF, cross-impact analysis, Spencer approval, checkpoint gates
+**Status:** FID CERTIFIED (Perfection Loop Iteration 2) — AWAITING PHASE 0 DECISIONS
+
+### Phase 0: Decision Gates (Spencer decides before any code changes)
+
+| # | Item | Implement | Remove | Decision |
+|---|------|-----------|--------|----------|
+| 0.1 | Web tool (navigate/snapshot/scrape stubs) | Real browser automation | Delete from registry | **PENDING** |
+| 0.2 | Web projection (hardcoded DOM) | Real DOM projection | Delete from registry | **PENDING** |
+| 0.3 | PromotionEngine | Integrate with memory engine | Delete module | **PENDING** |
+| 0.4 | Consolidation LLM summary | Call LLM for summarization | Disable, keep raw messages | **PENDING** |
+| 0.5 | Nostr adapter | secp256k1 signing | Delete adapter | **PENDING** |
+| 0.6 | X/Twitter adapter | Fix API endpoints | Delete adapter | **PENDING** |
+| 0.7 | Feishu adapter | Fix container_id | Delete adapter | **PENDING** |
+| 0.8 | JWT secret missing | Skip pipeline | Error on missing | **PENDING** |
+
+### Phases 1-10: Fix Execution
+
+| Phase | Fixes | Focus | Status |
+|-------|-------|-------|--------|
+| 1 | 5 | Memory crate data integrity | PENDING |
+| 2 | 4 | Agent loop bugs (stream.rs) | PENDING |
+| 3 | 8 | Gateway security + error handling | PENDING |
+| 4 | 1 | Shell tool cwd sandboxing | PENDING |
+| 5 | 1 | Heuristic recovery rollback | PENDING |
+| 6 | varies | Channel/tool removals (per Phase 0) | PENDING |
+| 7 | 5 | Channel adapter fixes | PENDING |
+| 8 | 4 | Dashboard frontend fixes | PENDING |
+| 9 | 2 | Configuration fixes | PENDING |
+| 10 | 9 | Final verification | PENDING |
+
+---
+
 ## Active Work — Top 5 Highest Impact Features
 
 **Source:** Ultimate Sovereign Audit (6 competitors, ~1M LOC scanned, ~200 features catalogued)

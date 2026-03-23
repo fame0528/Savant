@@ -38,14 +38,14 @@ Before any implementation begins, Spencer must decide on all stubs and removals.
 
 | # | Item | Option A: Implement | Option B: Remove/Disable | Decision |
 |---|------|-------------------|-------------------------|----------|
-| 0.1 | Web tool (navigate/snapshot/scrape) | Implement real browser automation | Remove tool from registry | **PENDING** |
-| 0.2 | Web projection (hardcoded DOM) | Implement real DOM projection | Remove tool from registry | **PENDING** |
-| 0.3 | PromotionEngine | Integrate with memory engine | Remove module | **PENDING** |
-| 0.4 | Consolidation LLM summary | Call LLM for summarization | Disable, keep raw messages only | **PENDING** |
-| 0.5 | Nostr adapter | Implement secp256k1 signing | Remove adapter + lib.rs declaration | **PENDING** |
-| 0.6 | X/Twitter adapter | Fix API endpoints | Remove adapter + lib.rs declaration | **PENDING** |
-| 0.7 | Feishu adapter | Fix container_id polling | Remove adapter + lib.rs declaration | **PENDING** |
-| 0.8 | JWT secret missing | Skip distillation pipeline | Error on missing config | **PENDING** |
+| 0.1 | Web tool (navigate/snapshot/scrape) | Implement real browser automation | Remove tool from registry | **IMPLEMENT** |
+| 0.2 | Web projection (hardcoded DOM) | Implement real DOM projection | Remove tool from registry | **IMPLEMENT** |
+| 0.3 | PromotionEngine | Integrate with memory engine | Remove module | **IMPLEMENT** |
+| 0.4 | Consolidation LLM summary | Call LLM for summarization | Disable, keep raw messages only | **IMPLEMENT** |
+| 0.5 | Nostr adapter | Implement secp256k1 signing | Remove adapter + lib.rs declaration | **IMPLEMENT** |
+| 0.6 | X/Twitter adapter | Fix API endpoints | Remove adapter + lib.rs declaration | **IMPLEMENT** |
+| 0.7 | Feishu adapter | Fix container_id polling | Remove adapter + lib.rs declaration | **IMPLEMENT** |
+| 0.8 | JWT secret missing | Skip distillation pipeline | Error on missing config | **ERROR ON MISSING** |
 
 ---
 
@@ -170,18 +170,20 @@ Rollback → Agent loop message history, full_trace accumulation, heuristic stat
 
 ---
 
-### Phase 6: Channel Adapters — Removals (per Phase 0 decisions)
+### Phase 6: Stub Implementation (ALL decided IMPLEMENT)
 
-Only adapters that Spencer decided to REMOVE in Phase 0.
+All stubs decided for implementation per Phase 0.
 
 | # | Severity | Issue | File | Action |
 |---|----------|-------|------|--------|
-| 6.1 | HIGH | Nostr (if decided REMOVE) | `channels/nostr.rs`, `channels/lib.rs` | Delete file, remove `pub mod nostr;` declaration |
-| 6.2 | HIGH | X/Twitter (if decided REMOVE) | `channels/x.rs`, `channels/lib.rs` | Delete file, remove `pub mod x;` declaration |
-| 6.3 | HIGH | Feishu (if decided REMOVE) | `channels/feishu.rs`, `channels/lib.rs` | Delete file, remove `pub mod feishu;` declaration |
-| 6.4 | MEDIUM | Web tool (if decided REMOVE) | `agent/tools/web.rs`, `agent/tools/mod.rs` | Delete file, remove `pub mod web;` + registration |
-| 6.5 | MEDIUM | Web projection (if decided REMOVE) | `agent/tools/web_projection.rs`, `agent/tools/mod.rs` | Delete file, remove declaration + registration |
-| 6.6 | MEDIUM | PromotionEngine (if decided REMOVE) | `memory/promotion.rs`, `memory/lib.rs` | Delete file, remove `pub mod promotion;` + re-export |
+| 6.1 | HIGH | Nostr unsigned events | `channels/nostr.rs` | Implement secp256k1 event signing |
+| 6.2 | HIGH | X/Twitter invalid endpoints | `channels/x.rs` | Fix DM API endpoints |
+| 6.3 | HIGH | Feishu empty container_id | `channels/feishu.rs` | Fix polling with actual container_id |
+| 6.4 | MEDIUM | Web tool stubs | `agent/tools/web.rs` | Implement real navigate/snapshot/scrape |
+| 6.5 | MEDIUM | Web projection stub | `agent/tools/web_projection.rs` | Implement real DOM projection |
+| 6.6 | MEDIUM | PromotionEngine unused | `memory/promotion.rs` | Integrate with memory engine |
+| 6.7 | HIGH | Consolidation placeholder | `memory/async_backend.rs:239` | Implement LLM summarization |
+| 6.8 | CRITICAL | JWT secret default | `memory/engine.rs:290` | Error on missing jwt_secret config |
 
 **CHECKPOINT 6:** `cargo check --workspace` + Spencer approval
 
@@ -189,7 +191,7 @@ Only adapters that Spencer decided to REMOVE in Phase 0.
 
 ### Phase 7: Channel Adapters — Fixes (5 fixes)
 
-Only adapters that Spencer decided to KEEP in Phase 0.
+All adapters kept — these fixes apply to all.
 
 | # | Severity | Issue | File | Line | Fix | Cross-Impact |
 |---|----------|-------|------|------|-----|-------------|

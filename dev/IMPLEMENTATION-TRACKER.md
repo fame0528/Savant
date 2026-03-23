@@ -16,14 +16,14 @@
 
 | # | Item | Implement | Remove | Decision |
 |---|------|-----------|--------|----------|
-| 0.1 | Web tool (navigate/snapshot/scrape stubs) | Real browser automation | Delete from registry | **PENDING** |
-| 0.2 | Web projection (hardcoded DOM) | Real DOM projection | Delete from registry | **PENDING** |
-| 0.3 | PromotionEngine | Integrate with memory engine | Delete module | **PENDING** |
-| 0.4 | Consolidation LLM summary | Call LLM for summarization | Disable, keep raw messages | **PENDING** |
-| 0.5 | Nostr adapter | secp256k1 signing | Delete adapter | **PENDING** |
-| 0.6 | X/Twitter adapter | Fix API endpoints | Delete adapter | **PENDING** |
-| 0.7 | Feishu adapter | Fix container_id | Delete adapter | **PENDING** |
-| 0.8 | JWT secret missing | Skip pipeline | Error on missing | **PENDING** |
+| 0.1 | Web tool (navigate/snapshot/scrape stubs) | Real browser automation | Delete from registry | **IMPLEMENT** |
+| 0.2 | Web projection (hardcoded DOM) | Real DOM projection | Delete from registry | **IMPLEMENT** |
+| 0.3 | PromotionEngine | Integrate with memory engine | Delete module | **IMPLEMENT** |
+| 0.4 | Consolidation LLM summary | Call LLM for summarization | Disable, keep raw messages | **IMPLEMENT** |
+| 0.5 | Nostr adapter | secp256k1 signing | Delete adapter | **IMPLEMENT** |
+| 0.6 | X/Twitter adapter | Fix API endpoints | Delete adapter | **IMPLEMENT** |
+| 0.7 | Feishu adapter | Fix container_id | Delete adapter | **IMPLEMENT** |
+| 0.8 | JWT secret missing | Skip pipeline | Error on missing | **ERROR ON MISSING** |
 
 ### Phases 1-10: Fix Execution
 

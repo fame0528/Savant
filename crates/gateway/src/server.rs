@@ -22,6 +22,7 @@ use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
+use tower_http::cors::{Any, CorsLayer};
 
 /// Shared state for the gateway server.
 pub struct GatewayState {
@@ -54,6 +55,11 @@ pub async fn start_gateway(
         )),
         gateway_signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
     });
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     let app = Router::new()
         .route("/ws", get(websocket_handler))
@@ -101,6 +107,7 @@ pub async fn start_gateway(
             "/api/setup/install-model",
             axum::routing::post(crate::handlers::setup::setup_install_model_handler),
         )
+        .layer(cors)
         .with_state(state);
 
     tracing::info!("Gateway server listening on {}", addr);
@@ -124,7 +131,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     tracing::info!("New WebSocket connection established");
     let (mut sender, mut receiver) = socket.split();
 
-    // 1. Authentication Phase (Stubbed for consistency)
+    // 1. Authentication Phase
     let auth_frame = match receiver.next().await {
         Some(Ok(Message::Text(text))) => match serde_json::from_str::<RequestFrame>(&text) {
             Ok(frame) => frame,
@@ -133,6 +140,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                 return;
             }
         },
+        Some(Ok(Message::Close(_))) => {
+            tracing::debug!("WebSocket closed during auth phase");
+            return;
+        }
         _ => return,
     };
 
@@ -247,11 +258,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                     serde_json::from_str::<savant_core::types::ChatMessage>(&outbound_event.payload)
                 {
                     if msg.channel == savant_core::types::AgentOutputChannel::Chat {
-                        let _ = crate::persistence::GatewayPersistence::persist_chat(
+                        if let Err(e) = crate::persistence::GatewayPersistence::persist_chat(
                             &storage_clone,
                             &msg,
                         )
-                        .await;
+                        .await
+                        {
+                            tracing::warn!("Failed to persist chat message: {}", e);
+                        }
                     }
                 }
             } else if outbound_event.event_type == "learning.insight" {
@@ -268,9 +282,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                         session_id: Some(savant_core::types::SessionId("learnings".to_string())),
                         channel: savant_core::types::AgentOutputChannel::Telemetry,
                     };
-                    let _ =
+                    if let Err(e) =
                         crate::persistence::GatewayPersistence::persist_chat(&storage_clone, &msg)
-                            .await;
+                            .await
+                    {
+                        tracing::warn!("Failed to persist learning insight: {}", e);
+                    }
                 }
             }
 
@@ -318,20 +335,37 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         let session_id = session_id.clone();
         let session_context_clone = session_context.clone();
         async move {
-            while let Some(Ok(Message::Text(text))) = receiver.next().await {
-                if let Ok(frame) = serde_json::from_str::<RequestFrame>(&text) {
-                    if frame.session_id == session_id {
-                        // Route message through proper handler
-                        crate::handlers::handle_message(
-                            frame,
-                            session_context_clone.clone(),
-                            axum::extract::State(crate::handlers::AppState {
-                                nexus: nexus_inner.clone(),
-                                storage: storage.clone(),
-                                config: config_inner.clone(),
-                            }),
-                        )
-                        .await;
+            while let Some(msg_result) = receiver.next().await {
+                match msg_result {
+                    Ok(Message::Text(text)) => {
+                        if let Ok(frame) = serde_json::from_str::<RequestFrame>(&text) {
+                            if frame.session_id == session_id {
+                                crate::handlers::handle_message(
+                                    frame,
+                                    session_context_clone.clone(),
+                                    axum::extract::State(crate::handlers::AppState {
+                                        nexus: nexus_inner.clone(),
+                                        storage: storage.clone(),
+                                        config: config_inner.clone(),
+                                    }),
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                    Ok(Message::Ping(_data)) => {
+                        // Axum handles Ping→Pong automatically
+                    }
+                    Ok(Message::Close(_)) => {
+                        tracing::debug!("WebSocket close received");
+                        break;
+                    }
+                    Ok(_) => {
+                        // Binary, Pong — ignore
+                    }
+                    Err(e) => {
+                        tracing::error!("WebSocket receive error: {}", e);
+                        break;
                     }
                 }
             }
@@ -387,7 +421,6 @@ async fn agent_image_handler(
         if let Some((content, content_type)) = cache.get(&name_lower) {
             return Response::builder()
                 .header(header::CONTENT_TYPE, content_type)
-                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .header(header::CACHE_CONTROL, "public, max-age=3600")
                 .body(axum::body::Body::from(content.clone()))
                 .unwrap_or_else(|_| {
@@ -423,7 +456,6 @@ async fn agent_image_handler(
 
                 return Response::builder()
                     .header(header::CONTENT_TYPE, content_type)
-                    .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                     .header(header::CACHE_CONTROL, "public, max-age=3600")
                     .body(axum::body::Body::from(content))
                     .unwrap_or_else(|_| {
@@ -452,7 +484,6 @@ async fn agent_image_handler(
 
     Response::builder()
         .header(header::CONTENT_TYPE, "image/svg+xml")
-        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(axum::body::Body::from(svg))
         .unwrap_or_else(|_| {
             tracing::error!("Failed to build SVG response for {}", name);
@@ -533,16 +564,8 @@ async fn settings_post_handler(
     State(state): State<Arc<GatewayState>>,
     Json(update): Json<SettingsUpdate>,
 ) -> impl IntoResponse {
-    let mut config = match savant_core::config::Config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"status": "error", "message": e.to_string()})),
-            )
-                .into_response()
-        }
-    };
+    // Use in-memory config clone instead of re-reading from disk (prevents race conditions)
+    let mut config = state.config.clone();
 
     // 1. Update Chat Model (Agent-specific)
     if let Some(model) = update.chat_model {
@@ -650,16 +673,8 @@ async fn settings_post_handler(
 
 /// Restores AI configuration to system defaults
 async fn settings_reset_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let mut config = match savant_core::config::Config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"status": "error", "message": e.to_string()})),
-            )
-                .into_response()
-        }
-    };
+    // Use in-memory config clone instead of re-reading from disk
+    let mut config = state.config.clone();
 
     // Apply defaults from savant_core::config::AiConfig::default()
     config.ai = savant_core::config::AiConfig::default();

@@ -376,6 +376,7 @@ async fn handle_skill_scan(
     let skills_base = workspace_dir.join("skills");
     let workspaces_base = workspace_dir.join("workspaces");
 
+    // Must be within skills/ or workspaces/ directory
     let canonical = match path.canonicalize() {
         Ok(p) => p,
         Err(e) => {
@@ -388,11 +389,23 @@ async fn handle_skill_scan(
         }
     };
 
-    // Must be within skills/ or workspaces/ directory
-    let skills_canonical = skills_base.canonicalize().unwrap_or(skills_base.clone());
-    let workspaces_canonical = workspaces_base
-        .canonicalize()
-        .unwrap_or(workspaces_base.clone());
+    let skills_canonical = match skills_base.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("Cannot canonicalize skills base: {}", e);
+            let result = serde_json::json!({
+                "success": false,
+                "message": "Skills directory not accessible",
+            });
+            let _ = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await;
+            return;
+        }
+    };
+
+    let workspaces_canonical = match workspaces_base.canonicalize() {
+        Ok(p) => p,
+        Err(_) => workspaces_base.clone(),
+    };
 
     if !canonical.starts_with(&skills_canonical) && !canonical.starts_with(&workspaces_canonical) {
         warn!(
@@ -505,11 +518,11 @@ fn extract_description_from_skill_md(content: &str) -> Option<String> {
     None
 }
 
-/// Send a skill management response
+/// Send a skill management response to the requesting session
 async fn send_skill_response(
     event_type: &str,
     data: serde_json::Value,
-    _session_id: &savant_core::types::SessionId,
+    session_id: &savant_core::types::SessionId,
     nexus: &Arc<NexusBridge>,
 ) -> Result<(), String> {
     let payload = serde_json::json!({
@@ -517,11 +530,10 @@ async fn send_skill_response(
         "data": data,
     });
 
+    // Publish to session-specific channel (prevents data leak to other sessions)
+    let channel = format!("session.{}.{}", session_id.0, event_type.to_lowercase());
     nexus
-        .publish(
-            &format!("skills.{}", event_type.to_lowercase()),
-            &payload.to_string(),
-        )
+        .publish(&channel, &payload.to_string())
         .await
         .map_err(|e| format!("Failed to publish skill event: {}", e))?;
 

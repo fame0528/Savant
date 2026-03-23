@@ -43,14 +43,13 @@ pub async fn handle_message(
             };
             let partition = partition_raw.to_lowercase();
 
-            // 🌀 Perfection Loop: Context Safeguard
-            // Prune history for the specific lane to prevent OOM/Overflow before it happens.
-            // Target: 1000 message safety net for 256k windows.
-            let _ = state.storage.prune_history(&partition, 1000);
-
+            // Persist message FIRST (data safety — append before pruning)
             if let Err(e) = state.storage.append_chat(&partition, &message) {
                 tracing::error!("❌ Failed to persist chat message to {}: {}", partition, e);
             }
+
+            // Prune AFTER successful append to prevent data loss
+            let _ = state.storage.prune_history(&partition, 1000);
 
             // Route message to appropriate agent through Nexus
             if let Err(e) = route_chat_message(message, &state.nexus).await {

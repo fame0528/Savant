@@ -98,6 +98,55 @@
 - Issue: `return` at lines 207, 339, 577 skipped turn finalization block — turns stuck in Processing
 - Fix: Added inline turn finalization (save_turn + save_session) before every `return` in error paths
 
+#### 2026-03-23: Production Pass — Phase 3 (Gateway Security + Error Handling)
+
+**Source:** FID-20260323-PRODUCTION-PASS Phase 3
+**Result:** 8 gateway security and error handling fixes
+
+**Fix 3.1: Dashboard Shared Session ID**
+- File: `crates/gateway/src/auth/mod.rs:57`
+- Issue: `SessionId("dashboard-session")` — all users shared same session, state collision
+- Fix: `SessionId(format!("dash-{}", uuid::Uuid::new_v4()))` — unique per connection
+- Added `uuid = "1.8"` to `gateway/Cargo.toml`
+
+**Fix 3.2: CORS Wildcard on All Responses**
+- File: `crates/gateway/src/server.rs:390, 427, 455`
+- Issue: `ACCESS_CONTROL_ALLOW_ORIGIN: "*"` on manual headers in 3 responses
+- Fix: Replaced manual headers with `tower_http::cors::CorsLayer` middleware
+- Added `cors` feature to tower-http in `gateway/Cargo.toml`
+
+**Fix 3.3: Non-Constant-Time API Key Comparison**
+- File: `crates/gateway/src/auth/mod.rs:54`
+- Issue: `key == configured_key` vulnerable to timing attacks
+- Fix: Added `constant_time_eq()` function — XOR-based constant-time byte comparison
+
+**Fix 3.4: WebSocket Only Handles Text Frames**
+- File: `crates/gateway/src/server.rs:129, 321`
+- Issue: Only `Message::Text` handled; Ping/Pong/Close ignored or caused silent failures
+- Fix: Added explicit handling for Close, Ping (auto-pong by axum), error propagation
+
+**Fix 3.5: Config Re-Read from Disk on Every Update**
+- File: `crates/gateway/src/server.rs:536, 653`
+- Issue: `Config::load()` re-read from disk on every settings update — concurrent requests race
+- Fix: Use `state.config.clone()` (in-memory) instead of disk re-read
+
+**Fix 3.6: Persistence Fire-and-Forget**
+- File: `crates/gateway/src/server.rs:250, 271`
+- Issue: `let _ = persist_chat(...)` silently discards persistence failures
+- Fix: Changed to `if let Err(e) = ... { tracing::warn!(...) }`
+
+**Fix 3.7: Prune-Before-Append Message Loss**
+- File: `crates/gateway/src/handlers/mod.rs:49`
+- Issue: `prune_history()` called BEFORE `append_chat()` — if append fails, old data already deleted
+- Fix: Reversed order — append first, prune after
+
+**Fix 3.8: Path Traversal Bypass + Skill Broadcast Leak**
+- Files: `crates/gateway/src/handlers/skills.rs:392, 509`
+- Issue 1: `canonicalize().unwrap_or(path.clone())` — fallback to non-canonical path bypasses traversal check
+- Issue 2: `send_skill_response` published to `skills.{event}` broadcast channel — ALL sessions receive ALL responses
+- Fix 1: Removed fallback — canonicalize must succeed or operation fails
+- Fix 2: Publish to `session.{session_id}.{event}` — only requesting session receives response
+
 #### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
 
 **Source:** Ultimate Sovereign Audit — 6 competitors, ~1,000,000 LOC scanned, ~200 features catalogued

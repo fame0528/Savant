@@ -3,7 +3,7 @@
 **Current Objective:** Production Pass — Fix all audit findings (~250 issues, 30 critical fixes)
 **FID:** `dev/fids/FID-20260323-PRODUCTION-PASS.md` (Perfection Loop certified, Iteration 2)
 **Protocol:** Brain surgery — read 0-EOF, cross-impact analysis, Spencer approval, checkpoint gates
-**Status:** Phase 1 + 2 COMPLETE. Phase 3 next (Gateway Security + Error Handling)
+**Status:** Phase 1 + 2 + 3 COMPLETE. Phase 4 next (Shell tool cwd sandboxing)
 
 ---
 
@@ -18,8 +18,9 @@
 5. ✅ Competitor research (17 projects scanned for implementation approaches)
 6. ✅ All /dev tracking files updated
 7. ✅ Phase 0 decisions made (all IMPLEMENT, JWT ERROR ON MISSING)
-8. ✅ Phase 1: Memory crate data integrity (5 fixes — ID collision, compact, VECTOR_DIM, JWT, temporal)
-9. ✅ Phase 2: Agent loop critical bugs (4 fixes — turn_failed, excluded tools, context window discovery, turn finalization)
+8. ✅ Phase 1: Memory crate data integrity (5 fixes)
+9. ✅ Phase 2: Agent loop critical bugs (4 fixes + context window discovery)
+10. ✅ Phase 3: Gateway security + error handling (8 fixes)
 
 ### Pending (Production Pass)
 

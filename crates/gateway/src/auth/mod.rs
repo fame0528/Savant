@@ -51,10 +51,12 @@ pub async fn authenticate(
         if let Some(key) = auth_str.strip_prefix("DASHBOARD_API_KEY:") {
             // Validate dashboard API key
             match dashboard_api_key {
-                Some(configured_key) if key == configured_key => {
+                Some(configured_key)
+                    if constant_time_eq(key.as_bytes(), configured_key.as_bytes()) =>
+                {
                     debug!("Dashboard API key authentication successful");
                     return Ok(AuthenticatedSession {
-                        session_id: SessionId("dashboard-session".to_string()),
+                        session_id: SessionId(format!("dash-{}", uuid::Uuid::new_v4())),
                         public_key: [0u8; 32], // Dashboard uses API key, not Ed25519
                     });
                 }
@@ -181,6 +183,19 @@ pub async fn authenticate(
         session_id: frame.session_id.clone(),
         public_key: pk_array,
     })
+}
+
+/// Constant-time byte comparison to prevent timing attacks on API key validation.
+/// Returns true if both slices are equal, with execution time independent of where they differ.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 #[cfg(test)]

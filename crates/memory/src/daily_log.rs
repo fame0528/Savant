@@ -216,69 +216,24 @@ impl DailyLog {
     }
 
     fn days_to_ymd(days: i64) -> (i32, u32, u32) {
-        // Simplified: days since 1970-01-01
-        let mut y = 1970i32;
-        let mut d = days;
-        while d >= 365 {
-            let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-                366
-            } else {
-                365
-            };
-            if d < days_in_year {
-                break;
-            }
-            d -= days_in_year;
-            y += 1;
-        }
-        let months = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        let mut m = 1u32;
-        for &days_in_month in &months {
-            let dim = if m == 2 && y % 4 == 0 {
-                days_in_month + 1
-            } else {
-                days_in_month
-            };
-            if d < dim as i64 {
-                break;
-            }
-            d -= dim as i64;
-            m += 1;
-        }
-        (y, m, (d + 1) as u32)
+        // Use chrono for correct date arithmetic (handles leap years, centuries, 400-year rules)
+        use chrono::Datelike;
+        chrono::NaiveDate::from_num_days_from_ce_opt(days as i32 + 719163)
+            .map(|d| (d.year(), d.month(), d.day()))
+            .unwrap_or((1970, 1, 1))
     }
 
     fn days_between(from: &str, to: &str) -> i64 {
-        let from_days = Self::date_to_days(from);
-        let to_days = Self::date_to_days(to);
-        to_days - from_days
+        Self::date_to_days(to) - Self::date_to_days(from)
     }
 
     fn date_to_days(date: &str) -> i64 {
-        let parts: Vec<&str> = date.split('-').collect();
-        if parts.len() != 3 {
-            return 0;
-        }
-        let y: i32 = parts[0].parse().unwrap_or(1970);
-        let m: u32 = parts[1].parse().unwrap_or(1);
-        let d: u32 = parts[2].parse().unwrap_or(1);
-
-        let mut days = 0i64;
-        for year in 1970..y {
-            days += if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-                366
-            } else {
-                365
-            };
-        }
-        let months = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        for month in 1..m {
-            days += months[(month - 1) as usize] as i64;
-            if month == 2 && y % 4 == 0 {
-                days += 1;
-            }
-        }
-        days + (d as i64) - 1
+        chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map(|d| {
+                d.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+                    .num_days()
+            })
+            .unwrap_or(0)
     }
 }
 

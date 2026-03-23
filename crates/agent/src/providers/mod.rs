@@ -11,6 +11,35 @@ use savant_core::types::{ChatChunk, ChatMessage, LlmParams};
 use serde_json::{json, Value};
 use std::pin::Pin;
 
+/// Classifies reqwest errors into appropriate SavantError variants.
+/// This enables the provider chain (error classification, cooldown, circuit breaker)
+/// to handle different failure modes correctly:
+/// - Timeout → retries with backoff
+/// - Rate limit (429) → cooldown tracking
+/// - Auth (401/403) → terminal (no retry)
+/// - Server error (5xx) → transient retry
+/// - Network → transient retry
+fn classify_http_error(e: reqwest::Error, provider: &str) -> SavantError {
+    if e.is_timeout() {
+        SavantError::Timeout(format!("{} request timed out: {}", provider, e))
+    } else if e.is_connect() {
+        SavantError::NetworkError(format!("{} connection failed: {}", provider, e))
+    } else if let Some(status) = e.status() {
+        match status.as_u16() {
+            401 | 403 => {
+                SavantError::AuthError(format!("{} auth failed ({}): {}", provider, status, e))
+            }
+            429 => SavantError::RateLimit(format!("{} rate limited ({}): {}", provider, status, e)),
+            500..=599 => {
+                SavantError::Unknown(format!("{} server error ({}): {}", provider, status, e))
+            }
+            _ => SavantError::NetworkError(format!("{} HTTP {}: {}", provider, status, e)),
+        }
+    } else {
+        SavantError::NetworkError(format!("{} request failed: {}", provider, e))
+    }
+}
+
 /// Parses a single JSON object from the beginning of a buffer.
 /// Returns the parsed object and the remaining unparsed string.
 fn parse_json_object(buffer: &str) -> Option<(Value, String)> {
@@ -220,7 +249,7 @@ impl LlmProvider for OpenAiProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("OpenAI request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "OpenAI"))?;
 
         let stream = response
             .bytes_stream()
@@ -304,7 +333,7 @@ impl LlmProvider for OpenRouterProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("OpenRouter request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "OpenRouter"))?;
 
         let stream = response
             .bytes_stream()
@@ -472,7 +501,7 @@ impl LlmProvider for AnthropicProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Anthropic request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Anthropic"))?;
 
         let stream = response
             .bytes_stream()
@@ -512,7 +541,7 @@ impl LlmProvider for OllamaProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Ollama request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Ollama"))?;
 
         let stream = response
             .bytes_stream()
@@ -642,7 +671,7 @@ impl LlmProvider for GroqProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Groq request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Groq"))?;
 
         let stream = response
             .bytes_stream()
@@ -710,7 +739,7 @@ impl LlmProvider for GoogleProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Google AI request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Google AI"))?;
 
         let stream = response
             .bytes_stream()
@@ -829,7 +858,7 @@ impl LlmProvider for MistralProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Mistral request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Mistral"))?;
 
         let stream = response
             .bytes_stream()
@@ -876,7 +905,7 @@ impl LlmProvider for TogetherProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Together AI request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Together AI"))?;
 
         let stream = response
             .bytes_stream()
@@ -923,7 +952,7 @@ impl LlmProvider for DeepseekProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Deepseek request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Deepseek"))?;
 
         let stream = response
             .bytes_stream()
@@ -1006,7 +1035,7 @@ impl LlmProvider for CohereProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Cohere request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Cohere"))?;
 
         let stream = response
             .bytes_stream()
@@ -1127,7 +1156,7 @@ impl LlmProvider for AzureProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Azure OpenAI request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Azure"))?;
 
         let stream = response
             .bytes_stream()
@@ -1176,7 +1205,7 @@ impl LlmProvider for XaiProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("xAI request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "xAI"))?;
 
         let stream = response
             .bytes_stream()
@@ -1223,7 +1252,7 @@ impl LlmProvider for FireworksProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Fireworks AI request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Fireworks"))?;
 
         let stream = response
             .bytes_stream()
@@ -1270,7 +1299,7 @@ impl LlmProvider for NovitaProvider {
             }))
             .send()
             .await
-            .map_err(|e| SavantError::AuthError(format!("Novita AI request failed: {}", e)))?;
+            .map_err(|e| classify_http_error(e, "Novita"))?;
 
         let stream = response
             .bytes_stream()

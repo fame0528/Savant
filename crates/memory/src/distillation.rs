@@ -90,10 +90,11 @@ pub fn spawn_distillation_pipeline(
                                 let now_ms = chrono::Utc::now().timestamp_millis();
 
                                 // Generate a stable u64 ID from the source message UUID
-                                let mut s = std::collections::hash_map::DefaultHasher::new();
-                                use std::hash::Hasher;
-                                s.write(msg.id.as_bytes());
-                                let entry_id = s.finish();
+                                // blake3 is deterministic across Rust versions (unlike DefaultHasher)
+                                let hash = blake3::hash(msg.id.as_bytes());
+                                let bytes = hash.as_bytes();
+                                let entry_id =
+                                    u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]));
 
                                 let content = format!(
                                     "{} {} {}",

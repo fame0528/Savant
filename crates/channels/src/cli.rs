@@ -12,7 +12,7 @@ impl ChannelAdapter for CliAdapter {
     }
 
     async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
-        println!("[CLI] {}", event.payload);
+        tracing::info!("[CLI] {}", event.payload);
         Ok(())
     }
 

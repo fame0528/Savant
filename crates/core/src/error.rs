@@ -41,6 +41,12 @@ pub enum SavantError {
     #[error("Model/embedding error: {0}")]
     ModelError(String),
 
+    #[error("Request timed out: {0}")]
+    Timeout(String),
+
+    #[error("Rate limited: {0}")]
+    RateLimit(String),
+
     #[error("Operation failed: {0}")]
     OperationFailed(String),
 

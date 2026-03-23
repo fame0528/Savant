@@ -150,14 +150,14 @@ impl EntityExtractor {
             .unwrap_or_default()
             .as_millis() as i64;
 
-        // Split into sentences and look for entity indicators
-        for sentence in text.split('.') {
+        // Context-aware sentence splitting: split on sentence-ending periods
+        // (followed by space + uppercase) but NOT periods in URLs, decimals, abbreviations
+        for sentence in Self::split_sentences(text) {
             let lower = sentence.to_lowercase();
             for pattern in &self.patterns {
                 for keyword in &pattern.keywords {
                     if lower.contains(keyword) {
-                        // Extract the entity name (word after keyword or before)
-                        if let Some(name) = Self::extract_entity_name(sentence, keyword) {
+                        if let Some(name) = Self::extract_entity_name(&sentence, keyword) {
                             let entity_id = Self::normalize_id(&name, &pattern.entity_type);
                             entities.push(Entity {
                                 entity_id,
@@ -175,6 +175,63 @@ impl EntityExtractor {
         }
 
         entities
+    }
+
+    /// Context-aware sentence boundary detection.
+    /// Splits on periods that end sentences (followed by space + uppercase letter)
+    /// but preserves periods in URLs, decimals, and abbreviations.
+    fn split_sentences(text: &str) -> Vec<String> {
+        let mut sentences = Vec::new();
+        let mut current = String::new();
+        let chars: Vec<char> = text.chars().collect();
+
+        for i in 0..chars.len() {
+            let ch = chars[i];
+            current.push(ch);
+
+            if ch == '.' {
+                // Look ahead to determine if this is a sentence boundary
+                let next = chars.get(i + 1).copied();
+                let next_next = chars.get(i + 2).copied();
+
+                let is_sentence_end = match next {
+                    Some(' ') | Some('\n') | Some('\t') | None => {
+                        // Followed by whitespace or end — check if next visible char is uppercase
+                        match next_next {
+                            Some(c) if c.is_uppercase() => true,
+                            None => true, // End of text
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                };
+
+                // Skip if it's a decimal (digit.digit)
+                let prev = if i > 0 { chars[i - 1] } else { ' ' };
+                let is_decimal =
+                    prev.is_ascii_digit() && next.map_or(false, |c| c.is_ascii_digit());
+
+                // Skip if it's a URL fragment (preceded by ://)
+                let is_url =
+                    i >= 3 && chars[i - 3] == ':' && chars[i - 2] == '/' && chars[i - 1] == '/';
+
+                if is_sentence_end && !is_decimal && !is_url {
+                    let trimmed = current.trim().to_string();
+                    if !trimmed.is_empty() {
+                        sentences.push(trimmed);
+                    }
+                    current.clear();
+                }
+            }
+        }
+
+        // Add remaining text
+        let trimmed = current.trim().to_string();
+        if !trimmed.is_empty() {
+            sentences.push(trimmed);
+        }
+
+        sentences
     }
 
     /// Extracts the entity name from a sentence near a keyword.

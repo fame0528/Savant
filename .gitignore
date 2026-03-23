@@ -57,6 +57,8 @@ nul
 .env.production.local
 **/.env
 workspaces/*/.env
+.tauri/
+*.key
 
 # IDEs
 .vscode/

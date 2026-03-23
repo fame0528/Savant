@@ -32,6 +32,21 @@ const IRC_MAX_MSG_BYTES: usize = 512;
 /// We conservatively reserve 64 bytes for target + overhead.
 const _IRC_PRIVMSG_OVERHEAD: usize = 64;
 
+/// SASL negotiation state machine.
+#[derive(Debug, Clone, PartialEq)]
+enum SaslState {
+    /// No SASL negotiation in progress
+    Idle,
+    /// CAP ACK received, sending AUTHENTICATE PLAIN
+    SentAuthPlain,
+    /// AUTHENTICATE + received, sending credentials
+    SentCredentials,
+    /// 903 received, SASL complete
+    Complete,
+    /// 904-907 received, SASL failed
+    Failed,
+}
+
 /// IRC channel adapter configuration.
 #[derive(Debug, Clone)]
 pub struct IrcConfig {
@@ -178,34 +193,38 @@ impl IrcAdapter {
         Ok(())
     }
 
-    /// Initiates SASL PLAIN authentication.
+    /// Sends AUTHENTICATE PLAIN after CAP ACK is received.
+    /// Only sends the initial request — credentials are sent in `send_sasl_credentials`.
     async fn initiate_sasl(
         &self,
         writer: &Arc<Mutex<Option<TlsWriter>>>,
+        sasl_state: &mut SaslState,
+    ) -> Result<(), SavantError> {
+        if self.config.sasl_password.is_none() {
+            return Ok(());
+        }
+        info!("[IRC] Sending AUTHENTICATE PLAIN");
+        Self::send_raw(writer, "AUTHENTICATE PLAIN").await?;
+        *sasl_state = SaslState::SentAuthPlain;
+        Ok(())
+    }
+
+    /// Sends SASL PLAIN credentials after AUTHENTICATE + is received.
+    /// This is triggered by the read loop, not by a fixed sleep.
+    async fn send_sasl_credentials(
+        &self,
+        writer: &Arc<Mutex<Option<TlsWriter>>>,
+        sasl_state: &mut SaslState,
     ) -> Result<(), SavantError> {
         if let Some(ref sasl_pass) = self.config.sasl_password {
-            info!("[IRC] Initiating SASL PLAIN negotiation");
-            Self::send_raw(writer, "CAP REQ :sasl").await?;
-
-            // Wait a moment for server response
-            tokio::time::sleep(Duration::from_millis(500)).await;
-
-            Self::send_raw(writer, "AUTHENTICATE PLAIN").await?;
-
-            // Build SASL PLAIN payload: base64(\0username\0password)
+            info!("[IRC] Sending SASL credentials");
             let authz = "";
             let authc = &self.config.nickname;
-            let authp = sasl_pass;
-            let plain = format!("{}\x00{}\x00{}", authz, authc, authp);
+            let plain = format!("{}\x00{}\x00{}", authz, authc, sasl_pass);
             let encoded = base64_encode(plain.as_bytes());
-
-            tokio::time::sleep(Duration::from_millis(200)).await;
             Self::send_raw(writer, &format!("AUTHENTICATE {}", encoded)).await?;
-
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            Self::send_raw(writer, "CAP END").await?;
+            *sasl_state = SaslState::SentCredentials;
         }
-
         Ok(())
     }
 
@@ -236,7 +255,8 @@ impl IrcAdapter {
         for channel in &self.config.channels {
             info!("[IRC] Joining {}", channel);
             Self::send_raw(writer, &format!("JOIN {}", channel)).await?;
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            // Rate limit: avoid flooding the server with rapid JOINs
+            // (send_raw already flushes, this is just spacing)
         }
         Ok(())
     }
@@ -305,7 +325,7 @@ impl IrcAdapter {
         &self,
         line: &str,
         writer: &Arc<Mutex<Option<TlsWriter>>>,
-        sasl_sent: &mut bool,
+        sasl_state: &mut SaslState,
         registered: &mut bool,
     ) -> Result<bool, SavantError> {
         debug!("[IRC] << {}", line);
@@ -350,27 +370,31 @@ impl IrcAdapter {
                 Self::send_raw(writer, &format!("NICK {}", alt_nick)).await?;
             }
             "AUTHENTICATE" => {
-                // SASL response — + means proceed
-                if line.contains("+") && !*sasl_sent {
-                    *sasl_sent = true;
+                // AUTHENTICATE + means server is ready for credentials
+                if line.contains("+") && *sasl_state == SaslState::SentAuthPlain {
+                    self.send_sasl_credentials(writer, sasl_state).await?;
                 }
             }
             "903" => {
                 // RPL_SASLSUCCESS
                 info!("[IRC] SASL authentication successful");
+                *sasl_state = SaslState::Complete;
                 Self::send_raw(writer, "CAP END").await?;
             }
             "904" | "905" | "906" | "907" => {
                 // SASL failure
                 warn!("[IRC] SASL authentication failed (code {})", command);
+                *sasl_state = SaslState::Failed;
                 Self::send_raw(writer, "CAP END").await?;
             }
             "CAP" => {
                 // CAP negotiation response
                 if let Some(trail) = &trailing {
-                    if trail.contains("sasl") && !*sasl_sent {
+                    if trail.contains("sasl") && *sasl_state == SaslState::Idle {
                         info!("[IRC] Server supports SASL, initiating PLAIN auth");
-                        self.initiate_sasl(writer).await?;
+                        // Send CAP REQ :sasl first, then AUTHENTICATE PLAIN
+                        Self::send_raw(writer, "CAP REQ :sasl").await?;
+                        self.initiate_sasl(writer, sasl_state).await?;
                     }
                 }
             }
@@ -520,7 +544,7 @@ impl IrcAdapter {
 
             // Read loop
             let mut line_buf = String::new();
-            let mut sasl_sent = false;
+            let mut sasl_state = SaslState::Idle;
             let mut registered = false;
             let mut read_reader = reader;
 
@@ -544,7 +568,7 @@ impl IrcAdapter {
                 }
 
                 match self
-                    .process_irc_line(trimmed, &writer, &mut sasl_sent, &mut registered)
+                    .process_irc_line(trimmed, &writer, &mut sasl_state, &mut registered)
                     .await
                 {
                     Ok(true) => {}

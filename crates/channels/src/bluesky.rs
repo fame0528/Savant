@@ -53,9 +53,21 @@ impl BlueskyAdapter {
             .map_err(|e| SavantError::Unknown(e.to_string()))?;
 
         Ok(BlueskySession {
-            access_jwt: resp["accessJwt"].as_str().unwrap_or("").to_string(),
+            access_jwt: resp["accessJwt"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    SavantError::AuthError("Bluesky login: missing or empty accessJwt".into())
+                })?
+                .to_string(),
             _refresh_jwt: resp["refreshJwt"].as_str().unwrap_or("").to_string(),
-            did: resp["did"].as_str().unwrap_or("").to_string(),
+            did: resp["did"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    SavantError::AuthError("Bluesky login: missing or empty did".into())
+                })?
+                .to_string(),
         })
     }
 
@@ -112,8 +124,8 @@ impl BlueskyAdapter {
                     if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
                         if p["recipient"]
                             .as_str()
-                            .map_or(false, |r| r == "bluesky:post")
-                            || p["role"].as_str() == Some("Assistant")
+                            .map_or(false, |r| r.starts_with("bluesky:"))
+                            && p["role"].as_str() == Some("Assistant")
                         {
                             let text = p["content"].as_str().unwrap_or("");
                             if let Err(e) = self.post_skeet(text).await {

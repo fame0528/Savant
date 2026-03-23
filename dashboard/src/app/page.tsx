@@ -468,10 +468,14 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
       isConnectingRef.current = false;
       
       // Send Auth frame first (required by Gateway)
-      // Auth payload is a plain string, not an object
+      // Auth payload reads from environment variable — no hardcoded keys in production
+      const apiKey = process.env.NEXT_PUBLIC_DASHBOARD_API_KEY;
+      if (!apiKey) {
+        console.error('[SAVANT] NEXT_PUBLIC_DASHBOARD_API_KEY is not set. Dashboard auth will fail.');
+      }
       socket.send(JSON.stringify({
         session_id: GATEWAY_SESSION_ID,
-        payload: "DASHBOARD_API_KEY:savant-dev-key",
+        payload: `DASHBOARD_API_KEY:${apiKey || ''}`,
         signature: null
       }));
       
@@ -677,7 +681,7 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
             <img src="/img/logo.png" alt="Savant Logo" style={{ maxHeight: '80%', maxWidth: '80%', objectFit: 'contain' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
           </div>
           {!isCollapsed && <h2 className="neon-text" style={{ fontSize: '1.2rem', margin: '4px 0 0 0', textAlign: 'center', letterSpacing: '4px', color: 'var(--accent)' }}>SAVANT</h2>}
-          {!isCollapsed && <span style={{ fontSize: '9px', color: '#666', letterSpacing: '1px', fontFamily: 'monospace' }}>v1.6.0</span>}
+          {!isCollapsed && <span style={{ fontSize: '9px', color: '#666', letterSpacing: '1px', fontFamily: 'monospace' }}>{`v${process.env.NEXT_PUBLIC_VERSION || '0.0.1'}`}</span>}
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', width: '100%', paddingRight: isCollapsed ? '0' : '4px' }}>

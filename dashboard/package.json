@@ -1,6 +1,6 @@
 {
   "name": "savant-dashboard",
-  "version": "0.0.01",
+  "version": "0.0.1",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -10,7 +10,7 @@
     "clean": "rm -rf node_modules .next"
   },
   "dependencies": {
-    "@tauri-apps/api": "^1.6.0",
+    "@tauri-apps/api": "^2.10.1",
     "dayjs": "^1.11.20",
     "next": "16.1.6",
     "react": "19.2.3",

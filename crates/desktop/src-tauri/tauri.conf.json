@@ -4,8 +4,8 @@
   "version": "0.0.1",
   "identifier": "com.savant.app",
   "build": {
-    "beforeDevCommand": "npm --prefix C:/Users/spenc/dev/Savant/dashboard run dev",
-    "beforeBuildCommand": "set TAURI_BUILD=1 && npm --prefix C:/Users/spenc/dev/Savant/dashboard run build",
+    "beforeDevCommand": "npm --prefix ../../../dashboard run dev",
+    "beforeBuildCommand": "set TAURI_BUILD=1 && npm --prefix ../../../dashboard run build",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../../../dashboard/out"
   },
@@ -47,7 +47,7 @@
       "endpoints": [
         "https://github.com/fame0528/Savant/releases/latest/download/latest.json"
       ],
-      "pubkey": "GENERATED_PUBLIC_KEY_HERE"
+      "pubkey": ""
     }
   }
 }

@@ -8,7 +8,8 @@ use tracing::info;
 
 /// Sandboxing Path Resolver
 /// Computes an absolute path strictly bounded within the agent's assigned workspace.
-fn secure_resolve_path(workspace: &Path, target: &str) -> Result<PathBuf, SavantError> {
+/// Rejects ParentDir traversal above workspace root; silently re-roots absolute paths.
+pub(crate) fn secure_resolve_path(workspace: &Path, target: &str) -> Result<PathBuf, SavantError> {
     let target_path = Path::new(target);
     let mut resolved = workspace.to_path_buf();
 

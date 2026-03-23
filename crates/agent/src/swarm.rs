@@ -553,7 +553,9 @@ impl SwarmController {
                 agent_cfg.workspace_path.clone(),
             )));
             agent_tools.push(Arc::new(crate::tools::SettingsTool::new()));
-            agent_tools.push(Arc::new(crate::tools::SovereignShell::new()));
+            agent_tools.push(Arc::new(crate::tools::SovereignShell::new(
+                agent_cfg.workspace_path.clone(),
+            )));
             agent_tools.push(Arc::new(crate::tools::TaskMatrixTool::new(
                 agent_cfg.workspace_path.clone(),
                 agent_cfg.proactive.clone(),

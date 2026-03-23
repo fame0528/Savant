@@ -157,21 +157,49 @@
 - 5-question evaluation: all cases, 1000 agents, hostile attacker, 2-year maintenance, industry standard
 - Anti-patterns expanded: "good enough" is never good enough
 
-#### 2026-03-23: Production Pass — Phase 4 Certified (Shell Tool Enterprise Sandboxing)
+#### 2026-03-23: Production Pass — Phase 4 (Shell Tool Enterprise Sandboxing)
 
-**File:** `dev/fids/FID-20260323-PRODUCTION-PASS.md`
-**Status:** Phase 4 plan certified via Perfection Loop (Iteration 2), awaiting implementation
-**Scope:** 8 components in shell.rs, foundation.rs, swarm.rs
+**File:** `crates/agent/src/tools/shell.rs`, `crates/agent/src/tools/foundation.rs`, `crates/agent/src/swarm.rs`
+**Status:** COMPLETE — 8 components implemented, `cargo check --workspace` 0 errors
+**Scope:** Enterprise-grade shell tool sandboxing with workspace isolation, destructive pattern prevention, path injection detection, and audit trail
 
-**Components (certified):**
-- 4.1: `pub(crate) secure_resolve_path` — reuse proven path resolver
-- 4.2: `workspace_root: PathBuf` on SovereignShell — explicit boundary, remove `Default` impl
-- 4.3: Update construction in swarm.rs — pass workspace_path
-- 4.4: CWD sandboxing via `secure_resolve_path` — rejects escapes, re-roots absolute paths
-- 4.5: Expanded destructive patterns (20+) — spaced variants, RCE, fork bombs, permission escalation
-- 4.6: Absolute path allowlist — verify paths under workspace or known-safe system dirs
-- 4.7: Audit logging — structured, grep-able, multi-agent traceable
-- 4.8: Pre-flight workspace verification — verify/create before execution
+**Component 4.1: `pub(crate) secure_resolve_path`**
+- File: `crates/agent/src/tools/foundation.rs:11`
+- Made `secure_resolve_path` `pub(crate)` — reusable within agent crate
+
+**Component 4.2: Workspace root on SovereignShell**
+- File: `crates/agent/src/tools/shell.rs`
+- `pub struct SovereignShell { workspace_root: PathBuf }` — explicit workspace boundary
+- Constructor: `new(workspace_root: PathBuf)`
+- Removed `Default` impl — workspace_root is required, no sensible default
+
+**Component 4.3: Updated construction**
+- File: `crates/agent/src/swarm.rs:556`
+- `SovereignShell::new(agent_cfg.workspace_path.clone())` — matches FoundationTool, FileCreateTool, etc.
+
+**Component 4.4: CWD sandboxing**
+- File: `crates/agent/src/tools/shell.rs` (execute method)
+- CWD resolved through `secure_resolve_path` — rejects ParentDir escape, re-roots absolute paths
+- No cwd defaults to workspace root
+
+**Component 4.5: Expanded destructive patterns (30+)**
+- File: `crates/agent/src/tools/shell.rs` (DESTRUCTIVE_PATTERNS constant)
+- 30+ patterns: spaced flag variants (`rm -r -f`, `rm -fr`), disk formatting (`mkfs.*`), git destruction, secure deletion, permission escalation, ownership changes, remote code execution (`curl | sh`), fork bombs, code evaluation, Python destruction
+
+**Component 4.6: Absolute path allowlist**
+- File: `crates/agent/src/tools/shell.rs` (execute method)
+- SAFE_SYSTEM_DIRS: `/usr/bin`, `/usr/local/bin`, `/bin`, `/sbin`, `/usr/sbin`, `/usr/lib`, `/usr/local/lib`, `/usr/share`, `/opt`, `/var/lib`, `/tmp`
+- Dangerous paths detected: `/etc/`, `/root/`, `/home/`, `/var/log/`, `/dev/`, `/proc/`, `/sys/` (Linux) and `C:\Windows\`, `C:\Users\` (Windows)
+
+**Component 4.7: Audit logging**
+- File: `crates/agent/src/tools/shell.rs` (execute method)
+- Format: `[SHELL_AUDIT] decision={} cwd={} command_hash={}`
+- Command hash (truncated) instead of full command — prevents credential leakage
+- Every execution logged (ALLOWED or REJECTED with reason)
+
+**Component 4.8: Pre-flight workspace verification**
+- File: `crates/agent/src/tools/shell.rs` (execute method)
+- Verifies workspace root exists before execution; creates if missing
 
 #### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
 

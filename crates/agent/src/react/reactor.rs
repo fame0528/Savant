@@ -1,7 +1,22 @@
 use crate::react::AgentLoop;
 use savant_core::error::SavantError;
 use savant_core::traits::MemoryBackend;
+use savant_core::types::ChatMessage;
 use tracing::{info, warn};
+
+/// Outcome of heuristic resolution attempt.
+/// Signals to the agent loop whether to continue with a hint, rollback state, or abort.
+pub(crate) enum HeuristicOutcome {
+    /// Recovery hint — agent continues with additional context
+    Hint(String),
+    /// Rollback — restore message history to last stable checkpoint
+    Rollback {
+        messages: Vec<ChatMessage>,
+        hint: String,
+    },
+    /// Fatal — unrecoverable, abort the turn
+    Fatal(SavantError),
+}
 
 impl<M: MemoryBackend> AgentLoop<M> {
     /// Verifies if the current agent has the required security token to execute a specific tool.
@@ -122,7 +137,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
         &mut self,
         tool_name: &str,
         error: SavantError,
-    ) -> Result<String, SavantError> {
+    ) -> HeuristicOutcome {
         info!(
             "[{}] HEURISTIC: Triggering resolution path for tool [{}] failure: {:?}",
             self.agent_id, tool_name, error
@@ -136,17 +151,21 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     "[{}] HEURISTIC: Path 1 - Contextual Expansion triggered.",
                     self.agent_id
                 );
-                Ok("Recovery hint: Try to re-read the documentation for the tool and verify arguments.".to_string())
+                HeuristicOutcome::Hint("Recovery hint: Try to re-read the documentation for the tool and verify arguments.".to_string())
             }
             2 => {
                 // Path 2: Technical Refinement (Rollback)
                 if let Some(checkpoint) = self.heuristic.last_stable_checkpoint.take() {
                     info!("[{}] HEURISTIC: Path 2 - Triggering state rollback to last stable checkpoint ({} messages).", self.agent_id, checkpoint.len());
-                    // In a real loop, we'd reset the 'history' here.
-                    // For now, we signal the loop to retry with a fresh prompt.
-                    Ok("Recovery hint: System state inconsistent. Rolling back to last stable checkpoint. Please simplify the request.".to_string())
+                    HeuristicOutcome::Rollback {
+                        messages: checkpoint,
+                        hint: "Recovery hint: System state inconsistent. Rolling back to last stable checkpoint. Please simplify the request.".to_string(),
+                    }
                 } else {
-                    Ok("Recovery hint: Attempting alternate tool strategy.".to_string())
+                    info!("[{}] HEURISTIC: Path 2 - No checkpoint available, attempting alternate strategy.", self.agent_id);
+                    HeuristicOutcome::Hint(
+                        "Recovery hint: Attempting alternate tool strategy.".to_string(),
+                    )
                 }
             }
             _ => {
@@ -155,7 +174,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     "[{}] HEURISTIC: Maximum retries reached. Failing session.",
                     self.agent_id
                 );
-                Err(SavantError::HeuristicFailure(format!(
+                HeuristicOutcome::Fatal(SavantError::HeuristicFailure(format!(
                     "Recursive failure loop detected for tool: {}",
                     tool_name
                 )))

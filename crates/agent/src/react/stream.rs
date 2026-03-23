@@ -587,7 +587,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                             }
 
                                             match self.handle_heuristic_resolution(&resolution_name, e).await {
-                                                Ok(hint) => {
+                                                crate::react::reactor::HeuristicOutcome::Hint(hint) => {
                                                     yield Ok(AgentEvent::Observation(hint.clone()));
                                                     let hint_msg = ChatMessage {
                                                         is_telemetry: false,
@@ -601,7 +601,25 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                     };
                                                     history.push(hint_msg);
                                                 }
-                                                Err(fatal) => {
+                                                crate::react::reactor::HeuristicOutcome::Rollback { messages, hint } => {
+                                                    // Restore message history to last stable checkpoint
+                                                    // This undoes all tool interactions since the checkpoint
+                                                    info!("[{}] HEURISTIC: Rolling back history from {} to {} messages", self.agent_id, history.len(), messages.len());
+                                                    history = messages;
+                                                    yield Ok(AgentEvent::Observation(hint.clone()));
+                                                    let hint_msg = ChatMessage {
+                                                        is_telemetry: false,
+                                                        role: ChatRole::User,
+                                                        content: format!("Recovery Hint ({}): {}", resolution_name, hint),
+                                                        sender: Some("SYSTEM".to_string()),
+                                                        recipient: None,
+                                                        agent_id: None,
+                                                        session_id: session_id.clone(),
+                                                        channel: savant_core::types::AgentOutputChannel::Telemetry
+                                                    };
+                                                    history.push(hint_msg);
+                                                }
+                                                crate::react::reactor::HeuristicOutcome::Fatal(fatal) => {
                                                     // Mark turn as failed before returning
                                                     turn_failed = true;
                                                     // Finalize turn state before error return (prevents stuck Processing state)

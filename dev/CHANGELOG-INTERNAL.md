@@ -201,6 +201,16 @@
 - File: `crates/agent/src/tools/shell.rs` (execute method)
 - Verifies workspace root exists before execution; creates if missing
 
+#### 2026-03-23: Production Pass — Phase 5 (Heuristic Recovery Rollback)
+
+**Source:** FID-20260323-PRODUCTION-PASS Phase 5
+**Result:** Heuristic recovery rollback implemented — agent now actually recovers from errors
+
+**Fix 5.1: Heuristic Recovery Rollback**
+- Files: `crates/agent/src/react/reactor.rs`, `crates/agent/src/react/stream.rs`
+- Issue: `handle_heuristic_resolution` Path 2 consumed checkpoint via `.take()` but never restored history. Rollback was a no-op.
+- Fix: Added `HeuristicOutcome` enum (Hint/Rollback/Fatal). On Path 2, returns `Rollback { messages, hint }` with the checkpoint. In stream.rs, when Rollback received, restores `history` from checkpoint — undoes all tool interactions since the last stable point.
+
 #### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
 
 **Source:** Ultimate Sovereign Audit — 6 competitors, ~1,000,000 LOC scanned, ~200 features catalogued

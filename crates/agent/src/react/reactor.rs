@@ -184,16 +184,29 @@ impl<M: MemoryBackend> AgentLoop<M> {
 }
 
 /// Truncate tool output with head+tail preservation.
+/// Uses char-boundary-aware slicing to prevent UTF-8 panics on multi-byte content.
 fn truncate_output(output: &str, max_chars: usize) -> String {
     if output.len() <= max_chars {
         return output.to_string();
     }
     let head_size = (max_chars * 60) / 100;
     let tail_size = (max_chars * 40) / 100;
+
+    // Find safe char boundary for head slice
+    let mut head_end = head_size.min(output.len());
+    while head_end > 0 && !output.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+
+    // Find safe char boundary for tail slice
+    let mut tail_start = output.len().saturating_sub(tail_size);
+    while tail_start < output.len() && !output.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+
     format!(
-        "{}\n\n[... {} chars truncated ...]\n\n{}",
-        &output[..head_size],
-        output.len() - max_chars,
-        &output[output.len() - tail_size..]
+        "{}\n\n[... truncated ...]\n\n{}",
+        &output[..head_end],
+        &output[tail_start..]
     )
 }

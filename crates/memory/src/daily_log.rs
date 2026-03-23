@@ -126,9 +126,13 @@ impl DailyLog {
         let path = self.today_path();
         if path.exists() {
             let content = fs::read_to_string(&path)?;
-            // Cap at ~2000 chars (~500 tokens)
+            // Cap at ~2000 bytes, aligned to char boundary to prevent UTF-8 panics
             if content.len() > 2000 {
-                Ok(content[content.len() - 2000..].to_string())
+                let mut start = content.len() - 2000;
+                while start > 0 && !content.is_char_boundary(start) {
+                    start -= 1;
+                }
+                Ok(content[start..].to_string())
             } else {
                 Ok(content)
             }
@@ -142,8 +146,13 @@ impl DailyLog {
         let path = self.log_path(date);
         if path.exists() {
             let content = fs::read_to_string(&path)?;
+            // Cap at ~2000 bytes, aligned to char boundary to prevent UTF-8 panics
             if content.len() > 2000 {
-                Ok(content[content.len() - 2000..].to_string())
+                let mut start = content.len() - 2000;
+                while start > 0 && !content.is_char_boundary(start) {
+                    start -= 1;
+                }
+                Ok(content[start..].to_string())
             } else {
                 Ok(content)
             }

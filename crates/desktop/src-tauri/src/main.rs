@@ -191,7 +191,13 @@ fn main() {
                 .build()?;
 
             let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(app.default_window_icon()
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        tracing::warn!("default_window_icon() returned None, loading from bundled icon");
+                        tauri::image::Image::from_path("icons/icon.ico")
+                            .expect("CRITICAL: Brand icon 'icons/icon.ico' not found. Branding must always be visible.")
+                    }))
                 .menu(&menu)
                 .tooltip("Savant Swarm")
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -216,5 +222,8 @@ fn main() {
             get_version
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            tracing::error!("Tauri runtime error: {}", e);
+            std::process::exit(1);
+        });
 }

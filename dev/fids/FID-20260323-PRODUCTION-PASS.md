@@ -5,7 +5,8 @@
 **Protocol:** Perfection Loop + Checkpoint Gates (brain surgery protocol)
 **Source:** Full project audit (AUDIT-REPORT.md) — ~250 issues across 16 crates
 **Standard:** $1M+ enterprise valuation — zero tolerance for stubs, data loss, security gaps
-**Perfection Loop:** Iteration 1 complete — restructured for file-grouped execution, merged dependent fixes, added missing items
+**Perfection Loop:** Iteration 2 complete — restructured for file-grouped execution, merged dependent fixes, added missing items
+**Competitor Research:** 17 projects scanned (ironclaw, openclaw, nanobot, zeroclaw, picoclaw, nanoclaw, microclaw, moxxy, hiclaw, cai-hobbes, hermes-agent, trinity-claw, zeptoclaw, openfang, opencrabs, EverMemOS, memU). Best implementations identified and improved upon via Perfection Loop.
 
 ---
 
@@ -172,18 +173,18 @@ Rollback → Agent loop message history, full_trace accumulation, heuristic stat
 
 ### Phase 6: Stub Implementation (ALL decided IMPLEMENT)
 
-All stubs decided for implementation per Phase 0.
+All stubs decided for implementation per Phase 0. Approaches informed by 17 competitor scans.
 
-| # | Severity | Issue | File | Action |
-|---|----------|-------|------|--------|
-| 6.1 | HIGH | Nostr unsigned events | `channels/nostr.rs` | Implement secp256k1 event signing |
-| 6.2 | HIGH | X/Twitter invalid endpoints | `channels/x.rs` | Fix DM API endpoints |
-| 6.3 | HIGH | Feishu empty container_id | `channels/feishu.rs` | Fix polling with actual container_id |
-| 6.4 | MEDIUM | Web tool stubs | `agent/tools/web.rs` | Implement real navigate/snapshot/scrape |
-| 6.5 | MEDIUM | Web projection stub | `agent/tools/web_projection.rs` | Implement real DOM projection |
-| 6.6 | MEDIUM | PromotionEngine unused | `memory/promotion.rs` | Integrate with memory engine |
-| 6.7 | HIGH | Consolidation placeholder | `memory/async_backend.rs:239` | Implement LLM summarization |
-| 6.8 | CRITICAL | JWT secret default | `memory/engine.rs:290` | Error on missing jwt_secret config |
+| # | Severity | Issue | File | Approach (Competitor-Informed) |
+|---|----------|-------|------|------|
+| 6.1 | HIGH | Nostr unsigned events | `channels/nostr.rs` | Use `nostr-sdk` crate (like ZeroClaw). Dual-protocol NIP-04+NIP-17 with per-sender protocol tracking. |
+| 6.2 | HIGH | X/Twitter invalid endpoints | `channels/x.rs` | Fix DM endpoints to valid Twitter API v2 paths: `POST /2/dm_conversations/with/{participant_id}/messages` |
+| 6.3 | HIGH | Feishu empty container_id | `channels/feishu.rs` | Fix polling: pass actual container_id from event headers. Add exponential backoff (1s→60s max, reset on success). |
+| 6.4 | MEDIUM | Web tool stubs | `agent/tools/web.rs` | 3-tier: HTTP fetch with `scraper` crate DOM→Markdown (like ZeptoClaw) → Readability-like extraction → CDP fallback. SSRF at every layer with DNS pinning + IPv6 checks. |
+| 6.5 | MEDIUM | Web projection stub | `agent/tools/web_projection.rs` | Content-root detection (main→article→[role=main]→body, like ZeptoClaw). SHA256 boundary markers for external content (like OpenFang). Skip-elements list (script/style/nav/footer/header/aside/iframe/svg/form). |
+| 6.6 | MEDIUM | PromotionEngine unused | `memory/promotion.rs` | Confidence decay (like OpenFang: `confidence *= 0.9` per cycle, floor at 0.1). Salience scoring (like MemU: `similarity * log(reinforcement+1) * recency_decay`). Integrate with memory engine's periodic hygiene task. |
+| 6.7 | HIGH | Consolidation placeholder | `memory/async_backend.rs:239` | LLM-based summarization with forced tool-call output (like NanoBot). 3-tier urgency: Normal (summarize, keep 10) → Emergency (summarize, keep 5) → Critical (truncate, keep 3). Graceful degradation: raw archive on LLM failure. |
+| 6.8 | CRITICAL | JWT secret default | `memory/engine.rs:290` | Error on missing jwt_secret: skip distillation pipeline with `tracing::warn`. No default secret. |
 
 **CHECKPOINT 6:** `cargo check --workspace` + Spencer approval
 

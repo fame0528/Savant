@@ -4,7 +4,8 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "1.7", features = [ "api-all", "system-tray"] }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-updater = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
@@ -16,7 +17,7 @@ dotenvy = "0.15"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
 
 [build-dependencies]
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

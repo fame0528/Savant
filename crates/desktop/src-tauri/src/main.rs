@@ -5,7 +5,9 @@ use savant_core::bus::NexusBridge;
 use serde_json;
 use std::sync::Arc;
 use tauri::{
-    AppHandle, CustomMenuItem, Manager, State, SystemTray, SystemTrayMenu, SystemTrayMenuItem,
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::TrayIconBuilder,
+    AppHandle, Emitter, Manager, State,
 };
 use tokio::sync::Mutex;
 use tracing::{error, field::Visit, info, Subscriber};
@@ -21,7 +23,7 @@ impl<S: Subscriber> Layer<S> for LogBridge {
         event.record(&mut visitor);
 
         let msg = format!("[{}] {}", event.metadata().level(), visitor.message);
-        let _ = self.app_handle.emit_all("system-log-event", msg);
+        let _ = self.app_handle.emit("system-log-event", msg);
     }
 }
 
@@ -51,17 +53,16 @@ struct AppState {
 
 #[tauri::command]
 async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Result<String, String> {
-    info!("🚀 Tauri: Initiating Swarm Ignition...");
+    info!("Tauri: Initiating Swarm Ignition...");
 
     let mut lock = state.ignition.lock().await;
     if lock.is_some() {
         let msg = "Swarm is already active";
-        info!("✅ Tauri: {}", msg);
-        let _ = app_handle.emit_all("system-log-event", msg);
+        info!("Tauri: {}", msg);
+        let _ = app_handle.emit("system-log-event", msg);
         return Ok(msg.into());
     }
 
-    // Find project root relative to executable to locate config
     let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
     let project_root = exe_path
         .parent()
@@ -84,14 +85,14 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
             start_event_forwarder(Arc::clone(&ignition_arc), app_handle.clone()).await;
 
             let msg = "Swarm Ignition Sequence Complete";
-            info!("✅ Tauri: {}", msg);
-            let _ = app_handle.emit_all("system-log-event", msg);
+            info!("Tauri: {}", msg);
+            let _ = app_handle.emit("system-log-event", msg);
             Ok(msg.into())
         }
         Err(e) => {
             let msg = format!("Ignition Failed: {}", e);
-            error!("❌ Tauri: {}", msg);
-            let _ = app_handle.emit_all("system-log-event", &msg);
+            error!("Tauri: {}", msg);
+            let _ = app_handle.emit("system-log-event", &msg);
             Err(msg)
         }
     }
@@ -113,37 +114,42 @@ async fn get_swarm_status(state: State<'_, AppState>) -> Result<serde_json::Valu
     }
 }
 
+#[tauri::command]
+async fn get_version(app_handle: AppHandle) -> Result<String, String> {
+    let version = app_handle
+        .config()
+        .version
+        .clone()
+        .unwrap_or_else(|| "0.0.0".to_string());
+    Ok(version)
+}
+
 async fn start_event_forwarder(ignition: Arc<SwarmIgnition>, app_handle: AppHandle) {
     let nexus = ignition.nexus.clone();
     tokio::spawn(async move {
         let (mut event_rx, _log_rx) = nexus.subscribe().await;
         while let Ok(event) = event_rx.recv().await {
             if let Ok(json_str) = serde_json::to_string(&event) {
-                let _ = app_handle.emit_all("gateway-event", format!("EVENT:{}", json_str));
+                let _ = app_handle.emit("gateway-event", format!("EVENT:{}", json_str));
             }
         }
     });
 }
 
 fn main() {
-    // Load .env from project root
     dotenvy::dotenv().ok();
 
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(CustomMenuItem::new("show".to_string(), "Show Dashboard"))
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(CustomMenuItem::new("quit".to_string(), "Quit Savant"));
-
-    let system_tray = SystemTray::new().with_menu(tray_menu);
-
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             ignition: Mutex::new(None),
             nexus: Mutex::new(None),
         })
         .setup(|app| {
             let handle = app.handle();
-            let bridge = LogBridge { app_handle: handle };
+            let bridge = LogBridge {
+                app_handle: handle.clone(),
+            };
 
             use tracing_subscriber::layer::SubscriberExt;
             use tracing_subscriber::util::SubscriberInitExt;
@@ -156,25 +162,47 @@ fn main() {
                 .with(bridge)
                 .try_init();
 
-            info!("🧬 Savant Swarm Desktop Substrate Online");
+            let app_version = app
+                .config()
+                .version
+                .clone()
+                .unwrap_or_else(|| "0.0.0".to_string());
+            info!("Savant Desktop v{} starting", app_version);
+
+            // System tray
+            let show_item = MenuItemBuilder::with_id("show", "Show Dashboard").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit Savant").build(app)?;
+            let menu = MenuBuilder::new(app)
+                .item(&show_item)
+                .separator()
+                .item(&quit_item)
+                .build()?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .tooltip("Savant Swarm")
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
             Ok(())
         })
-        .system_tray(system_tray)
-        .on_system_tray_event(|app, event| match event {
-            tauri::SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                "quit" => {
-                    std::process::exit(0);
-                }
-                "show" => {
-                    let window = app.get_window("main").unwrap();
-                    window.show().unwrap();
-                    window.set_focus().unwrap();
-                }
-                _ => {}
-            },
-            _ => {}
-        })
-        .invoke_handler(tauri::generate_handler![ignite_swarm, get_swarm_status])
+        .invoke_handler(tauri::generate_handler![
+            ignite_swarm,
+            get_swarm_status,
+            get_version
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

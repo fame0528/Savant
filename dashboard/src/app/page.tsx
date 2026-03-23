@@ -5,6 +5,7 @@ import Link from "next/link";
 import styles from "./page.module.css";
 import ReactMarkdown from "react-markdown";
 import { logger } from "@/lib/logger";
+import SplashScreen from "@/components/SplashScreen";
 
 // ─── Error Boundary ───────────────────────────────────────────────────
 interface ErrorBoundaryProps { children: ReactNode }
@@ -95,6 +96,7 @@ export default function Dashboard() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isReady, setIsReady] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
   const [typingAgents, setTypingAgents] = useState<Set<string>>(new Set());
   const [streamingContent, setStreamingContent] = useState<Map<string, string>>(new Map());
   const [streamingThoughts, setStreamingThoughts] = useState<Map<string, string>>(new Map());
@@ -655,10 +657,16 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
     if (!isMounted) return;
     const savedAgent = localStorage.getItem('activeAgent');
     if (savedAgent) setActiveAgent(savedAgent.toLowerCase().trim());
+
+    // Auto-dismiss splash after 10 seconds if no status event
+    const splashTimer = setTimeout(() => setShowSplash(false), 10000);
+    return () => clearTimeout(splashTimer);
   }, [isMounted]);
 
   return (
-    <DashboardErrorBoundary>
+    <>
+      {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
+      <DashboardErrorBoundary>
     <div className={styles.container} style={{
       '--sidebar-width': isCollapsed ? '80px' : '280px',
       '--right-sidebar-width': isRightCollapsed ? '60px' : 'min(750px, 45vw)'
@@ -669,6 +677,7 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
             <img src="/img/logo.png" alt="Savant Logo" style={{ maxHeight: '80%', maxWidth: '80%', objectFit: 'contain' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
           </div>
           {!isCollapsed && <h2 className="neon-text" style={{ fontSize: '1.2rem', margin: '4px 0 0 0', textAlign: 'center', letterSpacing: '4px', color: 'var(--accent)' }}>SAVANT</h2>}
+          {!isCollapsed && <span style={{ fontSize: '9px', color: '#666', letterSpacing: '1px', fontFamily: 'monospace' }}>v1.6.0</span>}
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', width: '100%', paddingRight: isCollapsed ? '0' : '4px' }}>
@@ -713,6 +722,18 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
                 style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
                 <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>🎙️</span>
                 {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px' }}>Fine-Tuning</span>}
+              </div>
+            </Link>
+
+            <Link href="/changelog" style={{ textDecoration: 'none', color: 'inherit' }}>
+              <div className={styles.agentTab}
+                role="button"
+                tabIndex={0}
+                aria-label="Changelog"
+                title="Changelog"
+                style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
+                <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>📋</span>
+                {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px' }}>Changelog</span>}
               </div>
             </Link>
 
@@ -1154,5 +1175,6 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
       )}
     </div>
     </DashboardErrorBoundary>
+    </>
   );
 }

@@ -59,7 +59,21 @@ impl MemoryEnclave {
         config: EngineConfig,
     ) -> Result<Arc<Self>, MemoryError> {
         let lsm = LsmStorageEngine::new(storage_path.as_ref(), config.lsm_config)?;
-        let vector = SemanticVectorEngine::new(storage_path.as_ref(), config.vector_config)?;
+
+        // Dynamic vector dimension: use embedding service dimension if available
+        let mut vector_config = config.vector_config;
+        if let Some(ref emb) = config.embedding_service {
+            let emb_dims = emb.dimensions();
+            if emb_dims > 0 && emb_dims != vector_config.dimensions {
+                info!(
+                    "Overriding vector dimension: {} -> {} (from embedding service)",
+                    vector_config.dimensions, emb_dims
+                );
+                vector_config.dimensions = emb_dims;
+            }
+        }
+
+        let vector = SemanticVectorEngine::new(storage_path.as_ref(), vector_config)?;
 
         Ok(Arc::new(Self {
             lsm,

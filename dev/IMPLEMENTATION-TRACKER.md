@@ -119,7 +119,27 @@
 - [x] `cargo check --workspace` — 0 errors
 - [x] All test targets compile clean — 0 errors
 - [x] Memory tests — 217 passed, 0 failed
-- [ ] Full test suite execution — in progress
+- [x] Dimension fix applied (384→2560 for qwen3-embedding:4b)
+- [ ] Full test suite execution — deferred
+
+---
+
+## Desktop App Upgrade
+
+**Source:** FID `dev/fids/FID-20260322-TAURI-2-UPGRADE-AND-UPDATER.md` (archived)
+**Status:** ALL 7 FEATURES COMPLETE — 2026-03-22
+
+| # | Feature | Status | Files |
+|---|---------|--------|-------|
+| 1 | Tauri 2.x Upgrade | **COMPLETE** | Cargo.toml, tauri.conf.json, main.rs |
+| 2 | Auto-Updater | **COMPLETE** | tauri.conf.json, main.rs |
+| 3 | Splash Screen | **COMPLETE** | SplashScreen.tsx, SplashScreen.module.css |
+| 4 | Version Display | **COMPLETE** | page.tsx (sidebar) |
+| 5 | Changelog Page | **COMPLETE** | changelog/page.tsx |
+| 6 | Dependency Check | **COMPLETE** | handlers/setup.rs, SetupWizard.tsx |
+| 7 | Dimension Fix | **COMPLETE** | memory/engine.rs |
+
+**~700 LOC across 10 files. 0 errors.**
 
 ---
 

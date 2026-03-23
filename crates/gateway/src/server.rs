@@ -93,6 +93,14 @@ pub async fn start_gateway(
         )
         .route("/live", get(|| async { "OK" }))
         .route("/ready", get(|| async { "OK" }))
+        .route(
+            "/api/setup/check",
+            get(crate::handlers::setup::setup_check_handler),
+        )
+        .route(
+            "/api/setup/install-model",
+            axum::routing::post(crate::handlers::setup::setup_install_model_handler),
+        )
         .with_state(state);
 
     tracing::info!("Gateway server listening on {}", addr);

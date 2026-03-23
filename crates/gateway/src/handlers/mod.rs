@@ -7,6 +7,7 @@ use tracing::info;
 
 pub mod mcp;
 pub mod pairing;
+pub mod setup;
 pub mod skills;
 
 /// Shared application state for axum handlers.

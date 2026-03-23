@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.6.0] - 2026-03-22
 
-**OMEGA-VIII Production Audit + Sovereign Audit + Top 5 + MCP + Smithery + 25 Channels + Self-Repair + Hooks + Mount Security. ~5,000 LOC across 35+ files.**
+**OMEGA-VIII Production Audit + Sovereign Audit + Top 5 + MCP + Smithery + 25 Channels + Self-Repair + Hooks + Mount Security + Tauri 2.x + Auto-Updater + Splash + Dependency Check. ~6,630 LOC across 40+ files.**
 
-After an exhaustive competitive analysis of 6 frameworks (~1,000,000 LOC scanned, ~200 features catalogued), 11 features implemented, 25 channels built, and 111 CRITICAL production violations eliminated.
+After an exhaustive competitive analysis of 6 frameworks (~1,000,000 LOC scanned, ~200 features catalogued), 22 features implemented, 25 channels built, 111 CRITICAL production violations eliminated, and full desktop app modernization.
 
 ### Added
 
@@ -72,8 +72,21 @@ After an exhaustive competitive analysis of 6 frameworks (~1,000,000 LOC scanned
 - Dashboard MCP page at `/mcp` — server list, install from Smithery marketplace, add custom servers, remove/uninstall
 - `McpConfig` + `McpServerEntry` in `crates/core/src/config.rs` — `[mcp]` config section
 
+#### Tauri 2.x Upgrade + Auto-Updater + Splash + Version + Changelog + Dependency Check
+- Tauri 1.7 → 2.x migration: `tauri = { version = "2", features = ["tray-icon"] }`
+- Tauri 2.x API: `TrayIconBuilder`, `Emitter`, `MenuItemBuilder`, `MenuBuilder`
+- `tauri.conf.json` v2 format: `app.windows`, `app.security`, `plugins.updater`
+- Auto-updater: `tauri-plugin-updater = "2"`, GitHub Releases integration, Ed25519 signature verification
+- Splash screen: `SplashScreen.tsx` + CSS — logo, spinner, status messages, auto-dismiss on swarm ready
+- Version display: sidebar `v1.6.0` badge, `get_version` Tauri command
+- Changelog page: `/changelog` with embedded release history, sidebar navigation link
+- Dependency check: `GET /api/setup/check` + `POST /api/setup/install-model` endpoints
+- Setup wizard: `SetupWizard.tsx` — checks Ollama + model, one-click install, skip option
+- First-launch detection with auto-dismiss on success
+
 ### Dependencies
 - Added `sha2 = "0.10"` to savant_agent (SHA-256 for response cache)
+- Added `tauri-plugin-updater = "2"` to savant-desktop
 
 ### Fixed
 - `FileDeleteTool::execute()` — `self.base_path` → `self.workspace_dir`, `SavantError::Validation` → `SavantError::Unknown`, `SavantError::Security` → `SavantError::Unknown`

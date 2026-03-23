@@ -184,6 +184,51 @@
 - Auto-recall latency target: <200ms (30ms FastEmbed + 15ms Fjall scan)
 - Bi-temporal contradiction detection threshold: cosine similarity > 0.92
 
+#### 2026-03-22: Tauri 2.x Upgrade + Desktop Features (~700 LOC)
+
+**Tauri 2.x Migration:**
+- `tauri = { version = "2", features = ["tray-icon"] }` — 1.7 → 2.x
+- `tauri-build = { version = "2" }` — build dependency upgrade
+- `tauri.conf.json` v2 format: `app.windows`, `app.security`, `plugins.updater`
+- API: `TrayIconBuilder`, `Emitter` (replaces `emit_all`), `MenuItemBuilder`, `MenuBuilder`
+- `get_window()` → `get_webview_window()`
+- System tray: `SystemTray` → `TrayIconBuilder` with `on_menu_event`
+- Files: `desktop/src-tauri/Cargo.toml`, `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/src/main.rs`
+
+**Auto-Updater:**
+- `tauri-plugin-updater = "2"` — built-in Tauri updater plugin
+- GitHub Releases integration via `latest.json` manifest
+- Ed25519 signature verification for binary integrity
+- Config: `plugins.updater.endpoints` + `plugins.updater.pubkey`
+
+**Splash Screen:**
+- `components/SplashScreen.tsx` + `SplashScreen.module.css`
+- Logo + spinner + status messages + history log
+- Auto-dismiss on "Swarm Ignition Sequence Complete" or timeout (10s)
+- Tauri event listener for `system-log-event`
+- Files: `dashboard/src/components/SplashScreen.tsx`, `dashboard/src/components/SplashScreen.module.css`
+
+**Version Display:**
+- `v1.6.0` badge in sidebar below SAVANT title
+- `get_version` Tauri command returning `app.config().version`
+- Files: `dashboard/src/app/page.tsx`
+
+**Changelog Page:**
+- `/changelog` route with embedded markdown content (v1.6.0 + v1.5.0)
+- Sidebar link with 📋 icon
+- Files: `dashboard/src/app/changelog/page.tsx`
+
+**Dependency Check:**
+- `GET /api/setup/check` — Ollama health check + model availability + issues/instructions
+- `POST /api/setup/install-model` — `ollama pull qwen3-embedding:4b` via Ollama API
+- `SetupWizard.tsx` + `SetupWizard.module.css` — checklist UI, install button, skip option
+- Files: `gateway/src/handlers/setup.rs`, `dashboard/src/components/SetupWizard.tsx`
+
+**Dimension Fix:**
+- `engine.rs` — vector dimension now dynamic from embedding service (`emb.dimensions()`)
+- Fixed hardcoded 384 → 2560 for qwen3-embedding:4b
+- Vector index deleted and recreated at correct dimension
+
 ---
 
 ## [2.0.1] - 2026-03-18

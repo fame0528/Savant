@@ -147,6 +147,32 @@
 - Fix 1: Removed fallback — canonicalize must succeed or operation fails
 - Fix 2: Publish to `session.{session_id}.{event}` — only requesting session receives response
 
+#### 2026-03-23: Development Workflow v2.0.1 — Perfection Over Convenience Standard
+
+**File:** `dev/DEVELOPMENT-WORKFLOW.md`
+**Added:** "The Standard: Perfection Over Convenience" section
+**Key points:**
+- No time pressure, no speed optimization, no "simple" approaches
+- Quality IS the product — other teams ship fast and fix later, we ship right
+- 5-question evaluation: all cases, 1000 agents, hostile attacker, 2-year maintenance, industry standard
+- Anti-patterns expanded: "good enough" is never good enough
+
+#### 2026-03-23: Production Pass — Phase 4 Certified (Shell Tool Enterprise Sandboxing)
+
+**File:** `dev/fids/FID-20260323-PRODUCTION-PASS.md`
+**Status:** Phase 4 plan certified via Perfection Loop (Iteration 2), awaiting implementation
+**Scope:** 8 components in shell.rs, foundation.rs, swarm.rs
+
+**Components (certified):**
+- 4.1: `pub(crate) secure_resolve_path` — reuse proven path resolver
+- 4.2: `workspace_root: PathBuf` on SovereignShell — explicit boundary, remove `Default` impl
+- 4.3: Update construction in swarm.rs — pass workspace_path
+- 4.4: CWD sandboxing via `secure_resolve_path` — rejects escapes, re-roots absolute paths
+- 4.5: Expanded destructive patterns (20+) — spaced variants, RCE, fork bombs, permission escalation
+- 4.6: Absolute path allowlist — verify paths under workspace or known-safe system dirs
+- 4.7: Audit logging — structured, grep-able, multi-agent traceable
+- 4.8: Pre-flight workspace verification — verify/create before execution
+
 #### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
 
 **Source:** Ultimate Sovereign Audit — 6 competitors, ~1,000,000 LOC scanned, ~200 features catalogued

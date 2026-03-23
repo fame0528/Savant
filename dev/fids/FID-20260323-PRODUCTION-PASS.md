@@ -137,17 +137,35 @@ Skill Responses → All skill management endpoints
 
 ---
 
-### Phase 4: Agent Tools — Security (1 fix)
+### Phase 4: Agent Tools — Security (8 components, enterprise-grade)
 
-**Files:** `agent/tools/shell.rs`
+**Files:** `agent/tools/shell.rs`, `agent/tools/foundation.rs`, `agent/src/swarm.rs`
 
-| # | Severity | Issue | File | Line | Fix | Cross-Impact |
-|---|----------|-------|------|------|-----|-------------|
-| 4.1 | HIGH | Shell tool no cwd sandboxing | `agent/tools/shell.rs` | 96-109 | Validate `cwd` is within workspace bounds; reject absolute paths outside workspace | Shell tool execution — agents can no longer escape workspace |
+**Attack surface being closed:**
+1. CWD escape — agent passes absolute path outside workspace
+2. Command injection — `cat /etc/passwd` bypasses cwd entirely
+3. Pattern evasion — `rm -r -f` bypasses `rm -rf` check (space between flags)
+4. No audit trail — rejections not logged for security review
+5. No workspace boundary — tool has no concept of allowed domain
+
+| # | Component | File | Line | Change | Cross-Impact |
+|---|-----------|------|------|--------|-------------|
+| 4.1 | `pub(crate) secure_resolve_path` | `foundation.rs` | 11 | Add `pub(crate)` visibility — same crate only | Reused by shell tool for path sandboxing |
+| 4.2 | Workspace root on SovereignShell | `shell.rs` | 13 | `pub struct SovereignShell { workspace_root: PathBuf }` + constructor `new(workspace_root)`, remove `Default` impl | All shell tool construction affected |
+| 4.3 | Update construction | `swarm.rs` | 556 | `SovereignShell::new(agent_cfg.workspace_path.clone())` | Swarm agent creation |
+| 4.4 | CWD sandboxing | `shell.rs` | `execute()` | Resolve cwd via `secure_resolve_path(&self.workspace_root, cwd)` — rejects escapes, re-roots absolute paths | Shell execution sandbox |
+| 4.5 | Expanded destructive patterns | `shell.rs` | `execute()` | 20+ patterns: spaced variants (`rm -r -f`, `rm -fr`), remote code (`curl \| sh`, `wget \| bash`), fork bomb (`:(){ :\|:& };:`), permission escalation (`chmod 777`), ownership changes (`chown -R`), Python destruction (`os.remove`, `shutil.rmtree`), code execution (`eval(`, `exec(`) | Destructive command prevention |
+| 4.6 | Absolute path allowlist | `shell.rs` | `execute()` | Extract absolute paths from command args. Verify each is under workspace root OR known-safe system paths (`/usr/bin`, `/usr/local/bin`, `/bin`, `/sbin`). Block `/etc/`, `/root/`, `C:\Windows\`, `C:\Users\`. | Command injection prevention |
+| 4.7 | Audit logging | `shell.rs` | `execute()` | `[SHELL_AUDIT] agent={} cwd={} command_hash={} decision={} reason={}` — every execution, structured, grep-able | Security audit trail |
+| 4.8 | Pre-flight workspace verification | `shell.rs` | `execute()` | Verify workspace root exists before execution; create if missing | Execution reliability |
 
 **Cross-Impact for Phase 4:**
 ```
-Shell cwd → Agent workspace isolation, tool execution sandbox
+secure_resolve_path → foundation.rs (pub(crate)), reused by shell.rs
+SovereignShell struct → swarm.rs:556 (construction), shell.rs (implementation)
+workspace_root → agent workspace isolation, tool execution sandbox
+destructive patterns → command safety, agent autonomy boundaries
+audit logging → security review, multi-agent traceability
 ```
 
 **CHECKPOINT 4:** `cargo check --workspace` + `cargo test -p savant_agent` + Spencer approval

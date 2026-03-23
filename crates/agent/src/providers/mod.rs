@@ -234,6 +234,39 @@ impl LlmProvider for OpenAiProvider {
     }
 }
 
+/// Fetches the context window size for a model from the OpenRouter API.
+/// Discovery-based: queries `GET /api/v1/models/{model_id}` for the model's `context_length`.
+/// Returns None if the API call fails or the model is not found.
+pub async fn fetch_openrouter_context_window(
+    client: &Client,
+    api_key: &str,
+    model_id: &str,
+) -> Option<usize> {
+    let url = format!(
+        "https://openrouter.ai/api/v1/models/{}",
+        model_id.replace('/', "%2F")
+    );
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .ok()?;
+
+    let json: Value = response.json().await.ok()?;
+    let context_length = json["data"]["context_length"].as_u64()?;
+    if context_length > 0 {
+        tracing::info!(
+            "Discovered context window for {}: {} tokens",
+            model_id,
+            context_length
+        );
+        Some(context_length as usize)
+    } else {
+        None
+    }
+}
+
 pub struct OpenRouterProvider {
     pub client: Client,
     pub api_key: String,
@@ -241,6 +274,7 @@ pub struct OpenRouterProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub context_window: Option<usize>,
 }
 
 #[async_trait]
@@ -281,6 +315,10 @@ impl LlmProvider for OpenRouterProvider {
             self.agent_id.clone(),
             self.agent_name.clone(),
         ))
+    }
+
+    fn context_window(&self) -> Option<usize> {
+        self.context_window
     }
 }
 

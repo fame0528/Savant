@@ -304,17 +304,29 @@ impl SwarmController {
 
             // 2. Select LLM Provider
             let base_provider: Box<dyn LlmProvider> = match agent_cfg.model_provider {
-                ModelProvider::OpenRouter => Box::new(OpenRouterProvider {
-                    client: client.clone(),
-                    api_key: agent_cfg.api_key.clone().unwrap_or_default(),
-                    model: agent_cfg
+                ModelProvider::OpenRouter => {
+                    let model_id = agent_cfg
                         .model
                         .clone()
-                        .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string()),
-                    agent_id: agent_cfg.agent_id.clone(),
-                    agent_name: agent_cfg.agent_name.clone(),
-                    llm_params: Some(agent_cfg.llm_params.clone()),
-                }),
+                        .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
+                    let or_api_key = agent_cfg.api_key.clone().unwrap_or_default();
+                    // Discovery-based: fetch context window from OpenRouter API
+                    let context_window = crate::providers::fetch_openrouter_context_window(
+                        &client,
+                        &or_api_key,
+                        &model_id,
+                    )
+                    .await;
+                    Box::new(OpenRouterProvider {
+                        client: client.clone(),
+                        api_key: or_api_key,
+                        model: model_id,
+                        agent_id: agent_cfg.agent_id.clone(),
+                        agent_name: agent_cfg.agent_name.clone(),
+                        llm_params: Some(agent_cfg.llm_params.clone()),
+                        context_window,
+                    })
+                }
                 ModelProvider::OpenAi => Box::new(OpenAiProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
@@ -463,17 +475,27 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                 }),
                 ModelProvider::LmStudio | ModelProvider::Perplexity | ModelProvider::Local => {
-                    // Fall back to OpenRouter-compatible format for these providers
+                    // OpenRouter's model catalog is a superset — query it for context window
+                    // even when using a local/different provider
+                    let model_id = agent_cfg
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
+                    let or_api_key = agent_cfg.api_key.clone().unwrap_or_default();
+                    let context_window = crate::providers::fetch_openrouter_context_window(
+                        &client,
+                        &or_api_key,
+                        &model_id,
+                    )
+                    .await;
                     Box::new(OpenRouterProvider {
                         client: client.clone(),
-                        api_key: agent_cfg.api_key.clone().unwrap_or_default(),
-                        model: agent_cfg
-                            .model
-                            .clone()
-                            .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string()),
+                        api_key: or_api_key,
+                        model: model_id,
                         agent_id: agent_cfg.agent_id.clone(),
                         agent_name: agent_cfg.agent_name.clone(),
                         llm_params: Some(agent_cfg.llm_params.clone()),
+                        context_window,
                     })
                 }
             };

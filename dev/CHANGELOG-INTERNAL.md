@@ -34,9 +34,69 @@
 - `dev/fids/FID-20260323-PRODUCTION-PASS.md` — 30 fixes across 10 phases
 - Brain surgery protocol: read 0-EOF, cross-impact analysis, Spencer approval per fix
 - Checkpoint gates: cargo check after every fix, Spencer approval before next
-- Phase 0: 8 implement-vs-remove decisions for stubs
+- Phase 0: 8 implement-vs-remove decisions for stubs (all decided IMPLEMENT)
 - File-grouped execution to minimize reads and catch intra-file interactions
 - Risk register with 6 identified risks and mitigations
+- Competitor research: 17 projects scanned for implementation approaches
+
+#### 2026-03-23: Production Pass — Phase 1 (Memory Crate Data Integrity)
+
+**Source:** FID-20260323-PRODUCTION-PASS Phase 1
+**Result:** 5 critical data integrity fixes in memory crate
+
+**Fix 1.1: MemoryEntry ID Collision**
+- File: `crates/memory/src/async_backend.rs:94-104`
+- Issue: `(msg_id.len() as u64).into()` — all same-length IDs collided
+- Fix: blake3 content hash of `session_id + "|" + msg_id` as u64
+- Added `blake3 = "1.5"` to `crates/memory/Cargo.toml`
+
+**Fix 1.2: Atomic Compact Data Loss**
+- File: `crates/memory/src/lsm_engine.rs:335-388`
+- Issue: Delete before insert — no rollback on insert failure
+- Fix: Insert new batch FIRST, then delete old entries (write-before-delete)
+
+**Fix 1.3: VECTOR_DIM=384 Leftover**
+- Files: `crates/memory/src/lsm_engine.rs:27` + `crates/core/src/db.rs:15`
+- Issue: Hardcoded at 384, Ollama qwen3-embedding outputs 2560
+- Fix: Configurable vector dimension via `LsmConfig.vector_dimension`, stored in `LsmStorageEngine`, used by `CortexaDB::open()` and `zero_embedding()`. Same for `core/db.rs Storage`.
+- Also fixed pre-existing bug: `iter_metadata()` referenced undefined `&collection`
+
+**Fix 1.4: JWT Secret Hardcoded Default**
+- File: `crates/memory/src/engine.rs:280-310`
+- Issue: `unwrap_or_else(|| "default_secret".to_string())` — publicly visible secret
+- Fix: Ephemeral crypto-random secret generated at runtime via blake3(UUID + UUID + PID + timestamp). In-memory only, destroyed on process exit. Same pattern as agent keys.
+
+**Fix 1.5: Temporal Entity Search Ignores Parameter**
+- File: `crates/memory/src/lsm_engine.rs:575-598`
+- Issue: `_entity_name` parameter unused — returned ALL active temporal entries
+- Fix: Added `&& temporal.entity_name == entity_name` filter
+
+#### 2026-03-23: Production Pass — Phase 2 (Agent Loop Critical Bugs)
+
+**Source:** FID-20260323-PRODUCTION-PASS Phase 2
+**Result:** 4 critical agent loop fixes + context window discovery system
+
+**Fix 2.1: `turn_failed` Never Set to True**
+- File: `crates/agent/src/react/stream.rs:130`
+- Issue: `let turn_failed = false;` never updated — all failures reported as successes
+- Fix: `let mut turn_failed = false;` + set `turn_failed = true` on fatal heuristic error path
+
+**Fix 2.2: Excluded Tools Computed But Never Used**
+- File: `crates/agent/src/react/stream.rs:406`
+- Issue: `let _excluded_tools = ...` — self-repair system non-functional
+- Fix: Pass excluded tools to tool execution; skip tools in `excluded_tools` list before matching
+
+**Fix 2.3: Context Window Discovery-Based (Not Hardcoded)**
+- Files: `crates/core/src/traits/mod.rs`, `crates/agent/src/providers/mod.rs`, `crates/agent/src/react/mod.rs`, `crates/agent/src/react/stream.rs`, `crates/agent/src/swarm.rs`
+- Issue: `ContextMonitor::new(128_000)` and `TokenBudget::new(256000)` hardcoded
+- Fix: Added `fn context_window(&self) -> Option<usize>` to `LlmProvider` trait (default None). OpenRouter provider fetches from `GET /api/v1/models/{model_id}` API. AgentLoop stores discovered value. ContextMonitor + TokenBudget use stored value. Compactor keep_recent scales proportionally.
+- Discovery-based: different model = different context window = automatically detected
+- All providers (OpenRouter, LmStudio, Local) query OpenRouter catalog for model specs
+
+**Fix 2.4: Turn Finalization Skipped on Error Returns**
+- File: `crates/agent/src/react/stream.rs` (multiple error paths)
+- Issue: `return` at lines 207, 339, 577 skipped turn finalization block — turns stuck in Processing
+- Fix: Added inline turn finalization (save_turn + save_session) before every `return` in error paths
 
 #### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
 

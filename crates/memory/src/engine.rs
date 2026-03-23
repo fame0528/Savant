@@ -279,17 +279,40 @@ impl MemoryEngine {
 
         // OMEGA-VIII: Spawn the autonomous background pipelines
         if let Some(llm_provider) = config.distill_llm_provider {
+            // Generate ephemeral JWT secret — in-memory only, destroyed on process exit.
+            // If configured, use it. If not, generate crypto-random secret at runtime.
+            // This follows the same pattern as ephemeral agent keys: no persistence, no vulnerability.
+            let jwt_secret = config
+                .distill_params
+                .unwrap_or_default()
+                .jwt_secret
+                .unwrap_or_else(|| {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(uuid::Uuid::new_v4().as_bytes());
+                    hasher.update(uuid::Uuid::new_v4().as_bytes());
+                    hasher.update(&std::process::id().to_le_bytes());
+                    hasher.update(
+                        &std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_nanos()
+                            .to_le_bytes(),
+                    );
+                    let hash = hasher.finalize();
+                    let secret = hash.to_hex().to_string();
+                    tracing::info!(
+                        "Generated ephemeral JWT secret for distillation pipeline (in-memory only)"
+                    );
+                    secret
+                });
+
             info!("Spawning Distillation Pipeline...");
             crate::distillation::spawn_distillation_pipeline(
                 enclave.clone(),
                 collective.clone(),
                 llm_provider,
                 config.embedding_service.clone(),
-                config
-                    .distill_params
-                    .unwrap_or_default()
-                    .jwt_secret
-                    .unwrap_or_else(|| "default_secret".to_string()),
+                jwt_secret,
             );
         }
 

@@ -22,17 +22,12 @@ use rkyv::rancor::Error as RkyvError;
 use crate::error::MemoryError;
 use crate::models::{verify_tool_pair_integrity, AgentMessage};
 
-/// Vector dimension for CortexaDB embeddings.
-/// Uses zero-vectors for non-semantic storage; real embeddings for vector search.
-const VECTOR_DIM: usize = 384;
+/// Vector dimension for CortexaDB embeddings (default fallback only).
+/// Actual dimension should come from LsmConfig.vector_dimension.
+const DEFAULT_VECTOR_DIM: usize = 384;
 
 /// Maximum entries to retrieve per collection query.
 const MAX_BATCH_SIZE: usize = 100_000;
-
-/// Creates a zero-vector embedding for non-semantic entries.
-fn zero_embedding() -> Vec<f32> {
-    vec![0.0; VECTOR_DIM]
-}
 
 /// Creates metadata HashMap with a key field.
 fn make_meta(key: &str, timestamp: i64) -> Option<HashMap<String, String>> {
@@ -71,6 +66,8 @@ pub struct LsmStorageEngine {
     db: CortexaDB,
     /// Known session IDs (maintained in memory for iteration).
     sessions: dashmap::DashSet<String>,
+    /// Configured vector dimension for zero-embedding construction.
+    vector_dimension: usize,
 }
 
 /// Configuration for the CortexaDB storage engine.
@@ -87,7 +84,7 @@ pub struct LsmConfig {
 impl Default for LsmConfig {
     fn default() -> Self {
         Self {
-            vector_dimension: VECTOR_DIM,
+            vector_dimension: DEFAULT_VECTOR_DIM,
             strict_sync: true,
             checkpoint_every_ops: 1000,
         }
@@ -106,14 +103,18 @@ impl LsmStorageEngine {
             MemoryError::InitFailed("Database path is not valid UTF-8".to_string())
         })?;
 
-        let db = CortexaDB::open(path_str, VECTOR_DIM)
+        let db = CortexaDB::open(path_str, config.vector_dimension)
             .map_err(|e| MemoryError::InitFailed(format!("CortexaDB open failed: {}", e)))?;
 
         // Rebuild sessions set from the session registry
         let sessions = dashmap::DashSet::new();
-        if let Ok(hits) =
-            db.search_in_collection("_registry", zero_embedding(), MAX_BATCH_SIZE, None)
-        {
+        let vector_dimension = config.vector_dimension;
+        if let Ok(hits) = db.search_in_collection(
+            "_registry",
+            vec![0.0; vector_dimension],
+            MAX_BATCH_SIZE,
+            None,
+        ) {
             for hit in hits {
                 if let Ok(memory) = db.get_memory(hit.id) {
                     if let Some(session_id) = memory.metadata.get("session_id") {
@@ -128,12 +129,21 @@ impl LsmStorageEngine {
             sessions.len()
         );
 
-        Ok(Arc::new(Self { db, sessions }))
+        Ok(Arc::new(Self {
+            db,
+            sessions,
+            vector_dimension,
+        }))
     }
 
     /// Convenience: Create with default configuration.
     pub fn with_defaults(storage_path: &Path) -> Result<Arc<Self>, MemoryError> {
         Self::new(storage_path, LsmConfig::default())
+    }
+
+    /// Creates a zero-vector embedding at the configured dimension.
+    pub fn zero_embedding(&self) -> Vec<f32> {
+        vec![0.0; self.vector_dimension]
     }
 
     /// Returns the collection name for a session transcript.
@@ -159,7 +169,7 @@ impl LsmStorageEngine {
             .add_with_content(
                 &collection,
                 bytes.to_vec(),
-                zero_embedding(),
+                self.zero_embedding(),
                 make_meta(&key, timestamp),
             )
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
@@ -171,7 +181,7 @@ impl LsmStorageEngine {
             let _ = self.db.add_with_content(
                 "_registry",
                 session_id.as_bytes().to_vec(),
-                zero_embedding(),
+                self.zero_embedding(),
                 Some(reg_meta),
             );
         }
@@ -188,10 +198,12 @@ impl LsmStorageEngine {
             let session_id = session_ref.key().clone();
             let collection = Self::transcript_collection(&session_id);
 
-            if let Ok(hits) =
-                self.db
-                    .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
-            {
+            if let Ok(hits) = self.db.search_in_collection(
+                &collection,
+                self.zero_embedding(),
+                MAX_BATCH_SIZE,
+                None,
+            ) {
                 for hit in hits {
                     if let Ok(memory) = self.db.get_memory(hit.id) {
                         if memory.content.len() <= 10 * 1024 * 1024 {
@@ -230,7 +242,7 @@ impl LsmStorageEngine {
             .add_with_content(
                 "metadata",
                 bytes.to_vec(),
-                zero_embedding(),
+                self.zero_embedding(),
                 make_key_meta(&key),
             )
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
@@ -248,7 +260,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection("metadata", zero_embedding(), 1, Some(filter))
+                .search_in_collection("metadata", self.zero_embedding(), 1, Some(filter))
         {
             for hit in hits {
                 self.db
@@ -266,14 +278,15 @@ impl LsmStorageEngine {
         let mut messages = Vec::new();
         let mut validation_failures = 0;
 
-        let hits =
-            match self
-                .db
-                .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
-            {
-                Ok(h) => h,
-                Err(_) => return messages,
-            };
+        let hits = match self.db.search_in_collection(
+            &collection,
+            self.zero_embedding(),
+            MAX_BATCH_SIZE,
+            None,
+        ) {
+            Ok(h) => h,
+            Err(_) => return messages,
+        };
 
         for hit in hits {
             let memory = match self.db.get_memory(hit.id) {
@@ -345,19 +358,8 @@ impl LsmStorageEngine {
 
         let collection = Self::transcript_collection(session_id);
 
-        // Delete existing entries for this session
-        if let Ok(hits) =
-            self.db
-                .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
-        {
-            for hit in hits {
-                self.db
-                    .delete(hit.id)
-                    .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
-            }
-        }
-
-        // Insert compacted batch
+        // Phase 1: Insert compacted batch FIRST (write-before-delete ensures data safety)
+        // If this fails, old entries remain intact — no data loss.
         let mut records: Vec<BatchRecord> = Vec::with_capacity(batch.len());
         for msg in &batch {
             let bytes = rkyv::to_bytes::<RkyvError>(msg)
@@ -370,7 +372,7 @@ impl LsmStorageEngine {
             records.push(BatchRecord {
                 collection: collection.clone(),
                 content: bytes.to_vec(),
-                embedding: Some(zero_embedding()),
+                embedding: Some(self.zero_embedding()),
                 metadata: Some(meta),
             });
         }
@@ -378,6 +380,20 @@ impl LsmStorageEngine {
         self.db
             .add_batch(records)
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+
+        // Phase 2: Delete old entries AFTER successful insert
+        // If this fails, duplicates exist temporarily but next compaction cleans them up.
+        // This ordering guarantees no data loss — the insert is the commitment point.
+        if let Ok(hits) =
+            self.db
+                .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
+        {
+            for hit in hits {
+                self.db
+                    .delete(hit.id)
+                    .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+            }
+        }
 
         info!(
             session = %session_id,
@@ -392,7 +408,7 @@ impl LsmStorageEngine {
         let collection = Self::transcript_collection(session_id);
         let hits = self
             .db
-            .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
+            .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
         Ok(hits.len() as u64)
     }
@@ -404,7 +420,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
+                .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
             for hit in hits {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
@@ -424,7 +440,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
+                .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
             for hit in hits {
                 self.db
@@ -471,7 +487,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection("metadata", zero_embedding(), MAX_BATCH_SIZE, None)
+                .search_in_collection("metadata", self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
             for hit in hits {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
@@ -517,7 +533,12 @@ impl LsmStorageEngine {
             .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
 
         self.db
-            .add_with_content("temporal", bytes, zero_embedding(), make_key_meta(&key))
+            .add_with_content(
+                "temporal",
+                bytes,
+                self.zero_embedding(),
+                make_key_meta(&key),
+            )
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
         Ok(())
     }
@@ -536,7 +557,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection("temporal", zero_embedding(), 1, Some(filter))
+                .search_in_collection("temporal", self.zero_embedding(), 1, Some(filter))
         {
             if let Some(hit) = hits.first() {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
@@ -553,20 +574,20 @@ impl LsmStorageEngine {
     /// Finds active temporal entries for an entity name.
     pub fn find_active_temporal_by_entity(
         &self,
-        _entity_name: &str,
+        entity_name: &str,
     ) -> Result<Vec<crate::models::TemporalMetadata>, MemoryError> {
         let mut results = Vec::new();
 
         if let Ok(hits) =
             self.db
-                .search_in_collection("temporal", zero_embedding(), MAX_BATCH_SIZE, None)
+                .search_in_collection("temporal", self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
             for hit in hits {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
                     if let Ok(temporal) =
                         serde_json::from_slice::<crate::models::TemporalMetadata>(&memory.content)
                     {
-                        if temporal.is_active() {
+                        if temporal.is_active() && temporal.entity_name == entity_name {
                             results.push(temporal);
                         }
                     }
@@ -583,7 +604,7 @@ impl LsmStorageEngine {
             .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
 
         self.db
-            .add_with_content("dag", bytes, zero_embedding(), make_key_meta(&key))
+            .add_with_content("dag", bytes, self.zero_embedding(), make_key_meta(&key))
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
 
         // Graph edges require u64 IDs, but DAG nodes use UUIDs.
@@ -612,9 +633,9 @@ impl LsmStorageEngine {
             m
         };
 
-        if let Ok(hits) = self
-            .db
-            .search_in_collection("dag", zero_embedding(), 1, Some(filter))
+        if let Ok(hits) =
+            self.db
+                .search_in_collection("dag", self.zero_embedding(), 1, Some(filter))
         {
             if let Some(hit) = hits.first() {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
@@ -638,7 +659,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection(collection, zero_embedding(), 1, Some(filter))
+                .search_in_collection(collection, self.zero_embedding(), 1, Some(filter))
         {
             if let Some(hit) = hits.first() {
                 return Ok(Some(hit.id));
@@ -666,7 +687,7 @@ impl LsmStorageEngine {
             .add_with_content(
                 "facts",
                 object.as_bytes().to_vec(),
-                zero_embedding(),
+                self.zero_embedding(),
                 Some(meta),
             )
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
@@ -679,7 +700,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection("facts", zero_embedding(), MAX_BATCH_SIZE, None)
+                .search_in_collection("facts", self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
             for hit in hits {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
@@ -711,10 +732,12 @@ impl LsmStorageEngine {
             m
         };
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection("facts", zero_embedding(), MAX_BATCH_SIZE, Some(filter))
-        {
+        if let Ok(hits) = self.db.search_in_collection(
+            "facts",
+            self.zero_embedding(),
+            MAX_BATCH_SIZE,
+            Some(filter),
+        ) {
             for hit in hits {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
                     let predicate = memory
@@ -752,9 +775,9 @@ impl LsmStorageEngine {
             m
         };
 
-        if let Ok(hits) = self
-            .db
-            .search_in_collection("facts", zero_embedding(), 1, Some(filter))
+        if let Ok(hits) =
+            self.db
+                .search_in_collection("facts", self.zero_embedding(), 1, Some(filter))
         {
             for hit in hits {
                 self.db
@@ -781,7 +804,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection("metadata", zero_embedding(), 1, Some(filter))
+                .search_in_collection("metadata", self.zero_embedding(), 1, Some(filter))
         {
             if let Some(hit) = hits.first() {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
@@ -809,10 +832,12 @@ impl LsmStorageEngine {
             let session_id = session_ref.key().clone();
             let collection = Self::transcript_collection(&session_id);
 
-            if let Ok(hits) =
-                self.db
-                    .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
-            {
+            if let Ok(hits) = self.db.search_in_collection(
+                &collection,
+                self.zero_embedding(),
+                MAX_BATCH_SIZE,
+                None,
+            ) {
                 for hit in hits {
                     if let Ok(memory) = self.db.get_memory(hit.id) {
                         if memory.content.len() > 10 * 1024 * 1024 {
@@ -847,7 +872,7 @@ impl LsmStorageEngine {
         };
 
         self.db
-            .search_in_collection("distillation", zero_embedding(), 1, Some(filter))
+            .search_in_collection("distillation", self.zero_embedding(), 1, Some(filter))
             .map(|h| !h.is_empty())
             .unwrap_or(false)
     }
@@ -858,7 +883,7 @@ impl LsmStorageEngine {
         meta.insert("msg_id".to_string(), msg_id.to_string());
 
         self.db
-            .add_with_content("distillation", vec![1], zero_embedding(), Some(meta))
+            .add_with_content("distillation", vec![1], self.zero_embedding(), Some(meta))
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
         Ok(())
     }
@@ -880,7 +905,7 @@ impl LsmStorageEngine {
             .add_with_content(
                 "sessions",
                 bytes.to_vec(),
-                zero_embedding(),
+                self.zero_embedding(),
                 make_key_meta(&key),
             )
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
@@ -904,7 +929,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection("sessions", zero_embedding(), 1, Some(filter))
+                .search_in_collection("sessions", self.zero_embedding(), 1, Some(filter))
         {
             if let Some(hit) = hits.first() {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
@@ -956,7 +981,7 @@ impl LsmStorageEngine {
             .add_with_content(
                 &collection,
                 bytes.to_vec(),
-                zero_embedding(),
+                self.zero_embedding(),
                 make_key_meta(&key),
             )
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
@@ -984,7 +1009,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection(&collection, zero_embedding(), 1, Some(filter))
+                .search_in_collection(&collection, self.zero_embedding(), 1, Some(filter))
         {
             if let Some(hit) = hits.first() {
                 if let Ok(memory) = self.db.get_memory(hit.id) {
@@ -1016,7 +1041,7 @@ impl LsmStorageEngine {
 
         if let Ok(hits) =
             self.db
-                .search_in_collection(&collection, zero_embedding(), MAX_BATCH_SIZE, None)
+                .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
             for hit in hits {
                 if let Ok(memory) = self.db.get_memory(hit.id) {

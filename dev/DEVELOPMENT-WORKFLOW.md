@@ -1,137 +1,244 @@
 # Development Workflow
 
-> **Version:** 0.0.1  
-> **Purpose:** Step-by-step development process. Follow this exactly.  
-> **Read this first, then check `dev/IMPLEMENTATION-TRACKER.md` for what to work on.**
+> **Version:** 2.0.0  
+> **Purpose:** The exact methodology for all development sessions. Follow this precisely.  
+> **Read this first, then check `dev/IMPLEMENTATION-TRACKER.md` for what to work on.**  
+> **This workflow was refined from the 2026-03-23 Production Pass session — the most productive session to date.**
 
 ---
 
-## The Development Loop
+## Core Philosophy
 
-Every session follows this sequence. No exceptions.
+Every session is a surgical operation on a highly interconnected codebase. One change in file A can break logic in file Z. The only way to solve this is with a protocol that forces full understanding before every change.
 
-```
-1. AUDIT         →  What's the current state?
-2. FIND GAPS     →  What needs fixing?
-3. PLAN          →  Add items to IMPLEMENTATION-TRACKER.md
-4. PERFECTION    →  Run Perfection Loop (from coding system skill)
-5. IMPLEMENT     →  Fix it with AAA quality
-6. DOCUMENT      →  Update all affected docs
-7. PUSH          →  Commit and push
-```
+**The three laws:**
+1. **Read before touch.** Every file read 0-EOF before any edit. No exceptions. No skimming. No assumptions.
+2. **Present before act.** Every change presented to Spencer with impact analysis BEFORE implementation. No autonomous changes.
+3. **Verify before proceed.** Every change verified with `cargo check --workspace` before moving on. No broken builds.
 
 ---
 
-## Step 1: Audit — What's the current state?
+## Session Startup (First Thing Every Session)
 
-Before touching any code, run these commands:
+### 1. Get Back Up to Speed
+
+After a context compact or new session start, you MUST re-familiarize with the codebase before touching anything:
 
 ```bash
 # 1. Does it compile?
 cargo check --workspace
 
 # 2. Do tests pass?
-cargo test --workspace -- --test-threads=1
+cargo test --workspace
 
 # 3. What changed recently?
 git log --oneline -10
 
-# 4. What's being worked on?
-# Check dev/IMPLEMENTATION-TRACKER.md
+# 4. What's the current state?
+# Read dev/progress.md
+# Read dev/IMPLEMENTATION-TRACKER.md
+# Read dev/SESSION-SUMMARY.md (last session's summary)
 ```
 
-**Success criteria:** Zero compilation errors, all tests passing.  
-**If tests fail:** Fix them first. Nothing else matters if tests are broken.
+### 2. Full Project Audit (If Needed)
+
+If you've been compacted or are starting fresh, do a FULL audit:
+- Read EVERY file across all crates 0-EOF
+- Create `dev/AUDIT-REPORT.md` with all issues found
+- Categorize: Critical, High, Medium, Low, Stubs
+- This serves dual purpose: audit + re-familiarization
+
+**This is not optional.** The 2026-03-23 audit found ~250 issues and was the foundation for the entire production pass.
 
 ---
 
-## Step 2: Find Gaps — What needs fixing?
+## The Production Pass Protocol
 
-Read the code. Look for these specific problems:
+This is the protocol for fixing bugs, addressing security issues, and implementing features at enterprise grade. Follow this for EVERY fix.
 
-### Security (CRITICAL)
-- Path traversal — `join()` with user input without validation
-- Injection — user input used in queries, commands, or URLs
-- Auth bypass — missing or weak authentication checks
-- SSRF — HTTP requests with user-controlled URLs or redirects
-- Credential leaks — secrets in logs, error messages, or responses
+### Phase A: Create the FID
 
-### Data Integrity (CRITICAL)
-- Non-atomic writes — data that could corrupt on crash
-- Missing error propagation — `unwrap()`, `expect()`, `let _ =`
-- Resource leaks — unclosed connections, uncancelled tasks
-- Race conditions — shared mutable state without synchronization
+1. Create `dev/fids/FID-YYYYMMDD-DESCRIPTION.md`
+2. Build a fix matrix:
 
-### Code Quality
-- Dead code — unused functions, imports, structs
-- Blocking in async — sync I/O in async functions
-- Unbounded growth — caches/maps/channels without limits
-- Inconsistent APIs — different patterns for similar operations
-- Duplicate logic — overlapping functions that should be combined (Law 11)
+| # | Severity | Issue | File | Line | Fix | Cross-Impact | Gate |
+|---|----------|-------|------|------|-----|-------------|------|
+| 1.1 | CRITICAL | Description | `file.rs` | 94 | Proposed fix | What it affects | CHECKPOINT |
+
+3. Group fixes by target file (not by severity) — this minimizes file reads and catches intra-file interactions
+4. Add a cross-impact map showing which systems are interconnected
+5. Add a risk register
+6. Define checkpoint gates after every fix group
+
+### Phase B: Perfection Loop on the FID
+
+Run the Perfection Loop on the FID itself BEFORE any implementation:
+
+1. **Deep Audit** — review every fix, every cross-impact, every gate
+2. **Enhance** — improve the FID based on findings (merge fixes, add missing items, reorder)
+3. **Validate** — check for dependency issues, ordering conflicts, missing verification steps
+4. **Iterate** — if improvements found, go back to step 1 (max 5 iterations)
+5. **Certify** — FID is ready for execution
+
+### Phase C: Decision Gates (If Needed)
+
+If the FID has ambiguous items (implement vs remove, multiple approaches):
+
+1. Present each decision to Spencer with options
+2. Spencer decides before any code changes
+3. Update the FID with decisions
+4. Commit decisions
+
+### Phase D: Competitor Research (If Needed)
+
+Before implementing stubs or new features:
+
+1. Scan competitor projects for their implementations
+2. Understand their approach (DO NOT copy code line-for-line)
+3. Run Perfection Loop on the competitor's approach to improve it
+4. Update the FID with competitor-informed approaches
+
+### Phase E: Execute Fixes
+
+For EVERY fix, follow this exact sequence:
+
+#### Step 1: Present to Spencer
+
+Before touching any code, present:
+- **Issue description** — what's broken and why it matters
+- **File + line** — exact location
+- **Proposed fix** — exact code change
+- **Cross-impact analysis** — what else touches this code? What could break?
+- **Risk assessment** — what's the worst case if this is wrong?
+
+#### Step 2: Wait for Spencer Approval
+
+Do NOT proceed without explicit approval. If anything is unclear, STOP. Get clarity.
+
+#### Step 3: Read the Target File 0-EOF
+
+Read the ENTIRE file, not just the affected lines. Understand:
+- The file's purpose and structure
+- All imports and their types
+- All functions that interact with the code you're changing
+- The data flow: where does the data come from, where does it go?
+
+#### Step 4: Read Cross-Impact Files 0-EOF
+
+Read every file that imports from or is imported by the target. Understand:
+- How the changed code is called
+- What depends on the current behavior
+- What could break if the behavior changes
+
+#### Step 5: Make the Change
+
+Implement the fix exactly as approved. No improvements beyond the scope unless discussed.
+
+#### Step 6: Verify
+
+```bash
+cargo check --workspace     # Must pass with 0 errors
+cargo test -p <crate>       # If applicable
+npx tsc --noEmit            # If frontend changes
+```
+
+#### Step 7: Checkpoint with Spencer
+
+Present:
+- What changed (exact diff)
+- What cross-impacts were affected
+- Verification results
+- Get approval for next fix
+
+#### Step 8: Update Changelog
+
+Update `dev/CHANGELOG-INTERNAL.md` with the fix details:
+- File changed
+- Issue fixed
+- Approach taken
+- Cross-impacts
+
+### Phase F: Final Verification
+
+After ALL fixes are complete:
+
+```bash
+cargo check --workspace     # 0 errors
+cargo test --workspace      # All passing
+npx tsc --noEmit            # 0 errors (if frontend changes)
+```
+
+Update tracking files:
+- `dev/IMPLEMENTATION-TRACKER.md` — mark items complete
+- `dev/progress.md` — update current status
+- `dev/SESSION-SUMMARY.md` — archive old, write new
+- `dev/CHANGELOG-INTERNAL.md` — all changes documented
+
+Commit and push:
+```bash
+git add -A && git commit -m "Description" && git push origin main
+```
 
 ---
 
-## Step 3: Plan — Track in IMPLEMENTATION-TRACKER.md
+## Rules (Non-Negotiable)
 
-Every task goes into `dev/IMPLEMENTATION-TRACKER.md`:
-
-| # | Task | Status | Details |
-|---|------|--------|---------|
-| 1 | Short description | PENDING | File: `crate/src/file.rs`, severity: CRITICAL |
-
-**Severity levels:**
-- `CRITICAL` — Data corruption, security vulnerability, crash
-- `HIGH` — Feature broken, significant bug
-- `MEDIUM` — Performance issue, poor error handling
-- `LOW` — Code quality, documentation, naming
-
-**Status values:**
-- `PENDING` — Not started
-- `IN PROGRESS` — Currently being worked on
-- `COMPLETE` — Shipped, tested, documented
-- `BLOCKED` — Cannot proceed (external dependency)
-
----
-
-## Step 4: Perfection Loop — Quality audit before implementation
-
-**Source:** Loaded from `skills/savant-coding-system/SKILL.md`
-
-The Perfection Loop is mandatory before implementing any fix. See the coding system skill for the full protocol.
-
-Quick summary:
-1. Deep Audit — read ALL related files (1-EOF)
-2. Enhance — identify optimizations while reading
-3. Validate — check impact on related systems
-4. Iterate — if new issues found, go back to step 1 (max 5 iterations)
-5. Certify — ready to implement
-
----
-
-## Step 5: Implement — Fix it with AAA quality
-
-### Rules (non-negotiable)
-
+### Code Rules
 1. **No stubs.** No `todo!()`, `unimplemented!()`, `// TODO`, or empty functions.
 2. **No `unwrap()` in non-test code.** Use `match`, `if let`, or return `Result`.
 3. **No `expect()` in non-test code.** Same reason.
 4. **No swallowed errors.** `let _ = foo()` only for cleanup where failure is acceptable.
 5. **All error paths handled.** Every `Result` is either propagated with `?` or handled explicitly.
-6. **Compilation stays clean.** Zero errors, zero warnings after changes.
-7. **Tests pass.** Run `cargo test` after each batch of changes.
-8. **Combine overlap.** If two functions share logic, combine them into one universal function (Law 11).
+6. **Compilation stays clean.** Zero errors after changes.
+7. **Discovery-based over hardcoded.** Query the system for its capabilities. Don't assume.
 
-### Process per fix
+### Process Rules
+1. **Read 0-EOF before every edit.** No exceptions.
+2. **Present before act.** No autonomous changes.
+3. **Verify before proceed.** `cargo check --workspace` after every fix.
+4. **Checkpoint gates.** Spencer approval between every fix group.
+5. **No skimming.** The codebase is complex and interconnected. Partial reads cause bugs.
+6. **Changelog every change.** Track what was done and why.
 
-1. Read the file being modified (full file, not just the line)
-2. Understand the surrounding context
-3. Make the fix
-4. Update `dev/IMPLEMENTATION-TRACKER.md` status to `COMPLETE`
-5. Run `cargo check`
-6. Move to next fix
-7. After batch: run `cargo test`
+### Anti-Patterns (Never Do These)
+- "The simplest approach" — we do NASA-level implementations, not simple ones
+- "Let me just quickly fix this" — there is no quick fix, every change is surgical
+- Reading only the affected line — you MUST read the full file
+- Making changes without presenting — Spencer is the partner, not a rubber stamp
+- Skipping verification — broken builds cascade
 
-### Common fix patterns
+---
+
+## Quality Standard: "Enterprise Grade"
+
+Every line of code must be:
+
+- **Correct** — Does what it's supposed to do
+- **Safe** — No panics, no data corruption, no security holes
+- **Complete** — All error paths handled, no stubs
+- **Clean** — Readable, consistent naming, no dead code
+- **Tested** — Covered by tests, tests pass
+- **Discovery-based** — Queries the system for capabilities, doesn't hardcode assumptions
+
+If you find yourself writing `unwrap()`, `todo!()`, or `// TODO` — stop and fix it properly.
+
+---
+
+## Documentation (Always Updated)
+
+| File | When | What |
+|------|------|------|
+| `dev/CHANGELOG-INTERNAL.md` | After EVERY fix | Detailed fix description with file, issue, approach |
+| `dev/IMPLEMENTATION-TRACKER.md` | After EVERY phase | Mark status, add completion details |
+| `dev/progress.md` | After EVERY phase | Update current status and pending work |
+| `dev/SESSION-SUMMARY.md` | End of session | Archive old, write new summary |
+| `dev/AUDIT-REPORT.md` | After full audit | All issues catalogued |
+| `CHANGELOG.md` (root) | At release | User-facing changes |
+| `README.md` | At release | If user-facing changes |
+
+---
+
+## Common Fix Patterns
 
 **Path validation (prevent traversal):**
 ```rust
@@ -160,127 +267,54 @@ let result = match some_function() {
 };
 ```
 
-**Atomic file writes:**
+**Atomic writes (write-before-delete):**
 ```rust
-// BAD
-std::fs::write(path, data)?;
+// BAD — delete before insert, no rollback
+delete_old_entries()?;
+insert_new_entries()?;  // If this fails, data is lost
 
-// GOOD
-let tmp = path.with_extension("tmp");
-std::fs::write(&tmp, data)?;
-std::fs::rename(&tmp, path)?;
+// GOOD — insert first, delete after
+insert_new_entries()?;   // If this fails, old data is intact
+delete_old_entries()?;   // If this fails, duplicates exist temporarily (next run cleans up)
 ```
 
-**Blocking I/O in async:**
+**Discovery-based configuration:**
 ```rust
-// BAD
-async fn read_files(&self) -> Result<()> {
-    let content = std::fs::read_to_string(path)?; // Blocks!
-    Ok(())
-}
+// BAD — hardcoded
+const CONTEXT_WINDOW: usize = 128_000;
 
-// GOOD
-async fn read_files(&self) -> Result<()> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || std::fs::read_to_string(path)).await??;
-    Ok(())
+// GOOD — discovery-based
+fn context_window(&self) -> Option<usize> {
+    // Query the actual system capabilities
+    self.cached_context_window
 }
 ```
 
-**Combining overlapping functions (Law 11):**
+**Ephemeral secrets (runtime-only, no persistence):**
 ```rust
-// BAD — three functions doing similar things
-fn validate_email(input: &str) -> Result<()> { ... }
-fn validate_username(input: &str) -> Result<()> { ... }
-fn validate_phone(input: &str) -> Result<()> { ... }
+// BAD — hardcoded default
+let secret = config.secret.unwrap_or_else(|| "default_secret".to_string());
 
-// GOOD — one universal function
-enum InputType { Email, Username, Phone }
-fn validate_input(input: &str, input_type: InputType) -> Result<()> { ... }
+// GOOD — crypto-random ephemeral
+let secret = config.secret.unwrap_or_else(|| {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(uuid::Uuid::new_v4().as_bytes());
+    hasher.update(uuid::Uuid::new_v4().as_bytes());
+    hasher.finalize().to_hex().to_string()
+});
 ```
-
----
-
-## Step 6: Document — Keep everything current
-
-After implementing, update these files:
-
-| File | When to update | What |
-|------|---------------|------|
-| `dev/IMPLEMENTATION-TRACKER.md` | After EVERY feature | Mark status, add details |
-| `dev/SESSION-SUMMARY.md` | End of EVERY session | Archive old, write new |
-| `dev/CHANGELOG-INTERNAL.md` | Significant features | Add entries |
-| `CHANGELOG.md` (root) | At release time | User-facing changes |
-| `README.md` | User-facing changes | Only if relevant |
-
-**Do NOT update docs if nothing relevant changed.** Only touch files that need updating.
-
----
-
-## Step 7: Push — Get it to GitHub
-
-### Commit message format
-```
-<type>: <short description>
-
-<optional body>
-- Bullet point changes
-```
-
-**Types:** `fix`, `feat`, `docs`, `refactor`, `test`, `chore`, `sync`
-
-### Before pushing checklist
-- [ ] `cargo check --workspace` passes with zero errors
-- [ ] `cargo test --workspace` passes
-- [ ] `dev/IMPLEMENTATION-TRACKER.md` is updated
-- [ ] `CHANGELOG.md` updated (if user-facing changes)
-- [ ] `README.md` updated if any changes were made
-- [ ] Commit message follows format
-
-### Push command
-```bash
-git add -A && git commit -m "<message>" && git push origin main
-```
-
----
-
-## End of Session
-
-1. Archive current `dev/SESSION-SUMMARY.md` to `dev/archive/YYYY-MM-DD/`
-2. Write new `dev/SESSION-SUMMARY.md` with:
-   - Features completed
-   - Bugs fixed
-   - Test results
-   - Files changed
-   - Git commit hash
-3. Update `dev/IMPLEMENTATION-TRACKER.md`
-4. Update `dev/CHANGELOG-INTERNAL.md` if significant
-5. Commit and push
 
 ---
 
 ## When You're Stuck
 
-1. Read the file you're modifying — all of it, not just the line
+1. Read the file you're modifying — ALL of it, not just the line
 2. Read the imports and understand the types
 3. Search for similar patterns in the codebase
 4. Check tests for usage examples
-5. If still stuck, mark as `BLOCKED` with reason and move to the next item
-
----
-
-## Quality Standard: "AAA"
-
-Every line of code must be:
-
-- **Correct** — Does what it's supposed to do
-- **Safe** — No panics, no data corruption, no security holes
-- **Complete** — All error paths handled, no stubs
-- **Clean** — Readable, consistent naming, no dead code
-- **Tested** — Covered by tests, tests pass
-- **Universal** — No duplicate logic, overlap combined into one function (Law 11)
-
-If you find yourself writing `unwrap()`, `todo!()`, or `// TODO` — stop and fix it properly.
+5. Check competitor projects for how they solved it
+6. If still stuck, mark as `BLOCKED` with reason and move to the next item
+7. NEVER guess. If unclear, ask Spencer.
 
 ---
 

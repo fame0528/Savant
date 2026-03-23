@@ -11,16 +11,11 @@ use tracing::{debug, info, warn};
 /// Maximum number of content hashes to keep for deduplication per partition.
 const DEDUP_WINDOW_SIZE: usize = 100;
 
-/// Vector dimension for CortexaDB embeddings (not used semantically; zeros are stored).
-const VECTOR_DIM: usize = 384;
+/// Default vector dimension for CortexaDB embeddings (fallback).
+const DEFAULT_VECTOR_DIM: usize = 384;
 
 /// Maximum entries to retrieve per collection query.
 const MAX_BATCH_SIZE: usize = 100_000;
-
-/// Creates a zero-vector of the configured dimension.
-fn zero_embedding() -> Vec<f32> {
-    vec![0.0; VECTOR_DIM]
-}
 
 /// Maps an agent_id to a CortexaDB collection name.
 fn collection_name(agent_id: &str) -> String {
@@ -43,24 +38,38 @@ pub struct Storage {
     /// Per-partition content hash windows for message deduplication.
     /// Maps agent_id → (timestamp, hash) pairs, oldest evicted first.
     dedup_hashes: DashMap<String, VecDeque<(u64, String)>>,
+    /// Configured vector dimension for zero-embedding construction.
+    vector_dimension: usize,
 }
 
 impl Storage {
-    pub fn new(path: PathBuf) -> Result<Self, SavantError> {
+    /// Creates a new Storage instance with the specified vector dimension.
+    pub fn new(path: PathBuf, vector_dimension: usize) -> Result<Self, SavantError> {
         info!("Sovereign Substrate: Initializing CortexaDB at {:?}", path);
 
         let path_str = path
             .to_str()
             .ok_or_else(|| SavantError::StorageError("Database path is not valid UTF-8".into()))?;
 
-        let db = CortexaDB::open(path_str, VECTOR_DIM)
+        let db = CortexaDB::open(path_str, vector_dimension)
             .map_err(|e| SavantError::StorageError(e.to_string()))?;
 
         Ok(Self {
             db: Arc::new(db),
             partition_counts: DashMap::new(),
             dedup_hashes: DashMap::new(),
+            vector_dimension,
         })
+    }
+
+    /// Creates a new Storage instance with the default vector dimension.
+    pub fn with_defaults(path: PathBuf) -> Result<Self, SavantError> {
+        Self::new(path, DEFAULT_VECTOR_DIM)
+    }
+
+    /// Creates a zero-vector at the configured dimension.
+    fn zero_embedding(&self) -> Vec<f32> {
+        vec![0.0; self.vector_dimension]
     }
 
     /// Ghost-Restore: Performs a full database integrity check and recovery.
@@ -137,7 +146,7 @@ impl Storage {
             .add_with_content(
                 &coll,
                 payload.into_bytes(),
-                zero_embedding(),
+                self.zero_embedding(),
                 Some(metadata),
             )
             .map_err(|e| SavantError::StorageError(e.to_string()))?;
@@ -168,7 +177,7 @@ impl Storage {
 
         let hits = self
             .db
-            .search_in_collection(&coll, zero_embedding(), MAX_BATCH_SIZE, None)
+            .search_in_collection(&coll, self.zero_embedding(), MAX_BATCH_SIZE, None)
             .map_err(|e| SavantError::StorageError(e.to_string()))?;
 
         let mut entries: Vec<(u64, ChatMessage)> = Vec::with_capacity(hits.len());
@@ -211,7 +220,7 @@ impl Storage {
 
         let hits = self
             .db
-            .search_in_collection(&coll, zero_embedding(), MAX_BATCH_SIZE, None)
+            .search_in_collection(&coll, self.zero_embedding(), MAX_BATCH_SIZE, None)
             .map_err(|e| SavantError::StorageError(e.to_string()))?;
 
         if hits.len() <= keep_last {

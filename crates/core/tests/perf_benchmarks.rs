@@ -10,7 +10,7 @@ fn bench_storage_append() {
     let _ = std::fs::remove_dir_all(&temp_dir); // Clean up from previous runs
     let db_path = temp_dir.clone();
 
-    let storage = match savant_core::db::Storage::new(db_path) {
+    let storage = match savant_core::db::Storage::with_defaults(db_path) {
         Ok(s) => s,
         Err(_) => {
             eprintln!("SKIP: Could not create storage");
@@ -51,7 +51,7 @@ fn bench_storage_retrieve() {
     let _ = std::fs::remove_dir_all(&temp_dir);
     let db_path = temp_dir.clone();
 
-    let storage = match savant_core::db::Storage::new(db_path) {
+    let storage = match savant_core::db::Storage::with_defaults(db_path) {
         Ok(s) => s,
         Err(_) => {
             eprintln!("SKIP: Could not create storage");

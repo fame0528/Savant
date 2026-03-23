@@ -91,7 +91,17 @@ impl MemoryBackend for AsyncMemoryBackend {
                     Ok(embedding) => {
                         // Create a MemoryEntry for indexing
                         let entry = crate::models::MemoryEntry {
-                            id: (msg_id.len() as u64).into(), // Use content hash for stable ID
+                            id: {
+                                // Deterministic content-hash ID using blake3 for collision resistance
+                                // Hash input: session_id + "|" + msg_id ensures global uniqueness
+                                let mut hasher = blake3::Hasher::new();
+                                hasher.update(sid.as_bytes());
+                                hasher.update(b"|");
+                                hasher.update(msg_id.as_bytes());
+                                let hash = hasher.finalize();
+                                let bytes = hash.as_bytes();
+                                u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8])).into()
+                            },
                             session_id: sid.clone(),
                             created_at: chrono::Utc::now().timestamp_millis().into(),
                             updated_at: chrono::Utc::now().timestamp_millis().into(),

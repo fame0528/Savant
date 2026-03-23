@@ -180,6 +180,9 @@ pub struct AgentLoop<M: MemoryBackend> {
     pub(crate) heuristic: HeuristicState,
     pub(crate) vision_service: Option<Arc<dyn VisionProvider>>,
     pub(crate) self_repair: crate::react::self_repair::SelfRepair,
+    /// Discovery-based context window size from the provider.
+    /// Used for TokenBudget, ContextMonitor, and Compactor scaling.
+    pub(crate) context_window: usize,
 }
 
 impl<M: MemoryBackend> AgentLoop<M> {
@@ -203,6 +206,9 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
         let agent_id_hash = xxhash_rust::xxh3::xxh3_64(agent_id.as_bytes());
 
+        // Discovery-based: use provider's context window, fall back to 128K default
+        let context_window = provider.context_window().unwrap_or(128_000);
+
         Self {
             agent_id,
             agent_id_hash,
@@ -212,7 +218,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             tools,
             context: ContextAssembler::new(
                 identity,
-                TokenBudget::new(256000),
+                TokenBudget::new(context_window),
                 skills_list,
                 substrate_prompt,
             ),
@@ -232,6 +238,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             heuristic: HeuristicState::default(),
             vision_service: None,
             self_repair: crate::react::self_repair::SelfRepair::with_defaults(),
+            context_window,
         }
     }
 

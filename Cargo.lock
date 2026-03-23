@@ -8364,6 +8364,7 @@ name = "savant_memory"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "blake3",
  "bytecheck",
  "chrono",
  "cortexadb-core",

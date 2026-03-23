@@ -56,7 +56,8 @@ impl IgnitionService {
         // 4. Storage
         let db_path = config.resolve_path(&config.system.db_path);
         info!("💾 Synchronizing storage at: {}", db_path.display());
-        let storage = Arc::new(Storage::new(db_path).context("Storage initialization failed")?);
+        let storage =
+            Arc::new(Storage::with_defaults(db_path).context("Storage initialization failed")?);
 
         // 5. Agent Discovery
         let manager = Arc::new(AgentManager::new(config.clone()));

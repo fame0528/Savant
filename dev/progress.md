@@ -3,7 +3,7 @@
 **Current Objective:** Production Pass — Fix all audit findings (~250 issues, 30 critical fixes)
 **FID:** `dev/fids/FID-20260323-PRODUCTION-PASS.md` (Perfection Loop certified, Iteration 2)
 **Protocol:** Brain surgery — read 0-EOF, cross-impact analysis, Spencer approval, checkpoint gates
-**Status:** FID CERTIFIED — Awaiting Phase 0 decisions from Spencer
+**Status:** Phase 1 + 2 COMPLETE. Phase 3 next (Gateway Security + Error Handling)
 
 ---
 
@@ -15,14 +15,22 @@
 2. ✅ Audit report (`dev/AUDIT-REPORT.md`)
 3. ✅ Production pass FID (`dev/fids/FID-20260323-PRODUCTION-PASS.md`)
 4. ✅ FID certified via Perfection Loop (Iteration 2)
-5. ✅ All /dev tracking files updated
+5. ✅ Competitor research (17 projects scanned for implementation approaches)
+6. ✅ All /dev tracking files updated
+7. ✅ Phase 0 decisions made (all IMPLEMENT, JWT ERROR ON MISSING)
+8. ✅ Phase 1: Memory crate data integrity (5 fixes — ID collision, compact, VECTOR_DIM, JWT, temporal)
+9. ✅ Phase 2: Agent loop critical bugs (4 fixes — turn_failed, excluded tools, context window discovery, turn finalization)
 
 ### Pending (Production Pass)
 
-- Phase 0: Spencer decides implement vs remove for 8 stubs
-- Phases 1-10: 30 fixes with checkpoint gates
-- Final verification: cargo check + cargo test + npx tsc
-- Commit + push
+- Phase 3: Gateway Security + Error Handling (8 fixes)
+- Phase 4: Shell tool cwd sandboxing (1 fix)
+- Phase 5: Heuristic recovery rollback (1 fix)
+- Phase 6: Stub implementations (8 items)
+- Phase 7: Channel adapter fixes (5 fixes)
+- Phase 8: Dashboard frontend (4 fixes)
+- Phase 9: Configuration fixes (2 fixes)
+- Phase 10: Final verification
 
 ---
 

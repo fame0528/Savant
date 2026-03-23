@@ -127,7 +127,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                 // Track tool calls made during this turn
                 let mut turn_tool_calls: Vec<String> = Vec::new();
-                let turn_failed = false;
+                let mut turn_failed = false;
 
                 while depth < self.max_tool_iterations as u32 {
                     info!("[{}] Agent loop cycle start (depth={})", self.agent_id, depth);
@@ -135,8 +135,8 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     let mut messages = self.assemble_context(&user_input, &session_id, &history).await?;
 
                     // === Context Compaction Check ===
-                    // Default context limit: 128K tokens (most modern models)
-                    let monitor = crate::react::compaction::ContextMonitor::new(128_000);
+                    // Discovery-based: use provider's context window, not hardcoded value
+                    let monitor = crate::react::compaction::ContextMonitor::new(self.context_window);
                     if let Some(strategy) = monitor.suggest(&messages) {
                         let usage = monitor.usage_ratio(&messages);
                         info!(
@@ -148,7 +148,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         yield Ok(AgentEvent::StatusUpdate(
                             format!("CONTEXT_COMPACTING: {:.0}% usage → {:?}", usage * 100.0, strategy)
                         ));
-                        messages = crate::react::compaction::Compactor::compact(messages, strategy, 10);
+                        // Scale keep_recent proportionally to context window size
+                        // 128K context → 10 messages, 256K → 20, 32K → 5
+                        let keep_recent = (self.context_window / 12_800).max(5);
+                        messages = crate::react::compaction::Compactor::compact(messages, strategy, keep_recent);
                         // Rebuild history from compacted messages (skip system prompt)
                         history = messages.iter()
                             .filter(|m| m.role != savant_core::types::ChatRole::System)
@@ -200,6 +203,20 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                 yield Ok(AgentEvent::StatusUpdate("FALLBACK_PROVIDER_ACTIVATED".to_string()));
                                 fallback.stream_completion(messages, tool_schemas).await?
                             } else {
+                                // Finalize turn state before error return
+                                let final_turn = savant_core::types::TurnState {
+                                    turn_id: turn_id.clone(),
+                                    session_id: sid.clone(),
+                                    state: savant_core::types::TurnPhase::Failed,
+                                    tool_calls_made: turn_tool_calls.clone(),
+                                    started_at: turn_state.started_at,
+                                    completed_at: chrono::Utc::now().timestamp_millis(),
+                                };
+                                let _ = self.memory.save_turn(&final_turn).await;
+                                session_state.active_turn_id = None;
+                                session_state.last_active = chrono::Utc::now().timestamp_millis();
+                                let _ = self.memory.save_session(&session_state).await;
+
                                 yield Err(e);
                                 return;
                             }
@@ -332,6 +349,20 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                 if chunk.is_final { break; }
                             }
                             Err(e) => {
+                                // Finalize turn state before error return
+                                let final_turn = savant_core::types::TurnState {
+                                    turn_id: turn_id.clone(),
+                                    session_id: sid.clone(),
+                                    state: savant_core::types::TurnPhase::Failed,
+                                    tool_calls_made: turn_tool_calls.clone(),
+                                    started_at: turn_state.started_at,
+                                    completed_at: chrono::Utc::now().timestamp_millis(),
+                                };
+                                let _ = self.memory.save_turn(&final_turn).await;
+                                session_state.active_turn_id = None;
+                                session_state.last_active = chrono::Utc::now().timestamp_millis();
+                                let _ = self.memory.save_session(&session_state).await;
+
                                 yield Err(e);
                                 return;
                             }
@@ -403,7 +434,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     }
 
                     // === Self-Repair: Get excluded tools ===
-                    let _excluded_tools = self.self_repair.get_excluded_tools().await;
+                    let excluded_tools = self.self_repair.get_excluded_tools().await;
 
                     if !actions.is_empty() {
                         // --- OMEGA: Transactional Checkpoint ---
@@ -459,11 +490,20 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                     let reg_inner = registry.clone();
                                     let host_inner = e_host.clone();
                                     let security_token_inner = security_token.clone();
+                                    let excluded_tools_inner = excluded_tools.clone();
                                     let node_name_inner = node_name.clone();
                                     let node_args_inner = node_args.clone();
                                     let agent_id_inner = self.agent_id.clone();
 
                                     queue.push(async move {
+                                        // Self-Repair: Skip excluded tools (marked broken by health tracker)
+                                        if excluded_tools_inner.contains(&node_name_inner) {
+                                            let err_name = node_name_inner.clone();
+                                            return (idx, node_name_inner, Err(SavantError::Unknown(
+                                                format!("Tool excluded by self-repair: {}", err_name)
+                                            )));
+                                        }
+
                                         let mut result = Err(SavantError::Unknown(format!("Tool access denied or not found: {}", node_name_inner)));
                                         // Savant (the house) has unrestricted access - CCT is for sub-agents only
                                         let is_savant = agent_id_inner.to_lowercase() == "savant";
@@ -562,6 +602,22 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                     history.push(hint_msg);
                                                 }
                                                 Err(fatal) => {
+                                                    // Mark turn as failed before returning
+                                                    turn_failed = true;
+                                                    // Finalize turn state before error return (prevents stuck Processing state)
+                                                    let final_turn = savant_core::types::TurnState {
+                                                        turn_id: turn_id.clone(),
+                                                        session_id: sid.clone(),
+                                                        state: savant_core::types::TurnPhase::Failed,
+                                                        tool_calls_made: turn_tool_calls.clone(),
+                                                        started_at: turn_state.started_at,
+                                                        completed_at: chrono::Utc::now().timestamp_millis(),
+                                                    };
+                                                    let _ = self.memory.save_turn(&final_turn).await;
+                                                    session_state.active_turn_id = None;
+                                                    session_state.last_active = chrono::Utc::now().timestamp_millis();
+                                                    let _ = self.memory.save_session(&session_state).await;
+
                                                     yield Err(fatal);
                                                     return;
                                                 }

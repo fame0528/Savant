@@ -27,6 +27,13 @@ pub trait LlmProvider: Send + Sync {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>;
+
+    /// Returns the context window size in tokens for the underlying model.
+    /// Discovery-based: the provider queries the model's capabilities at construction.
+    /// Returns None if the context window is unknown.
+    fn context_window(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// OMEGA-VIII: Semantic Embedding Provider Trait

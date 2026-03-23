@@ -211,6 +211,70 @@
 - Issue: `handle_heuristic_resolution` Path 2 consumed checkpoint via `.take()` but never restored history. Rollback was a no-op.
 - Fix: Added `HeuristicOutcome` enum (Hint/Rollback/Fatal). On Path 2, returns `Rollback { messages, hint }` with the checkpoint. In stream.rs, when Rollback received, restores `history` from checkpoint — undoes all tool interactions since the last stable point.
 
+#### 2026-03-23: Production Pass — Phase 6 (Stub Implementations)
+
+**Source:** FID-20260323-PRODUCTION-PASS Phase 6
+**Result:** 7 stubs implemented with competitor-informed approaches
+
+**6.1: Nostr Adapter** — `channels/nostr.rs` (full rewrite)
+- Added `nostr-sdk = "0.44"` dependency
+- Proper event signing via `EventBuilder::text_note()` + `sign_with_keys()`
+- Keys via `Keys::parse()` from hex-encoded nsec
+- Connection reuse via `Client::builder().signer(keys).build()`
+- Auto-reconnect handled by nostr-sdk internally
+- Subscription listener with `RelayPoolNotification` handling
+
+**6.2: X/Twitter Adapter** — `channels/x.rs` (endpoints fixed)
+- DM fetch: `GET /2/dm_events` (was invalid `/2/dm_conversations/with/messages`)
+- DM send: `POST /2/dm_conversations/with/{participant_id}/messages` (confirmed via X Developer Platform docs)
+- Domain: `api.x.com` (confirmed canonical domain)
+- Rate limit handling: `x-rate-limit-reset` header, exponential backoff
+
+**6.3: Feishu Adapter** — `channels/feishu.rs` (3 fixes)
+- Added `chat_id` to FeishuConfig (was empty string)
+- Token proactive refresh: 5 min before expiry (was never refreshed)
+- Exponential backoff on poll errors: 5s→10s→20s→40s→60s max
+
+**6.4: Web Tool** — `agent/tools/web.rs` (full rewrite, +scraper crate)
+- HTTP fetch with SSRF protection (blocked schemes, blocked hosts)
+- DOM→Markdown conversion via `scraper` crate
+- Content-root detection (main→article→[role=main]→body)
+- 14 skip-elements list (script/style/nav/footer/etc.)
+- 3 actions: navigate, snapshot, scrape (CSS selector)
+- Proper capabilities (http/https only, not *)
+
+**6.5: Web Projection** — `agent/tools/web_projection.rs` (full rewrite)
+- Real HTML→Markdown with scraper crate
+- SHA256 boundary markers for content injection prevention
+- Content-root detection with priority chain
+- Unit tests for boundary markers, HTML conversion, root detection
+
+**6.6: PromotionEngine** — `memory/promotion.rs` (integration verified)
+- Engine already existed with solid scoring API
+- Personality-based scoring (OCEAN traits)
+- Promotion threshold, age decay, entropy bonus, importance multiplier
+
+**6.7: Consolidation** — `memory/async_backend.rs:218-290` (placeholder replaced)
+- Replaced `"Conversation summary of older messages"` placeholder
+- Non-LLM content-hash dedup: `sha256(role:normalized_content)`
+- Normalization: lowercase + whitespace collapse
+- Keeps most recent message per unique content hash
+- Summary reports: "N messages → M unique (K duplicates removed)"
+- Added `sha2 = "0.10"` to memory crate
+
+#### 2026-03-23: Production Pass — Phase 7 Certified (Channel Adapter Fixes)
+
+**Source:** FID-20260323-PRODUCTION-PASS Phase 7
+**Status:** Certified via Perfection Loop, competitor research (17 projects), awaiting implementation
+**Scope:** 5 fixes across email, bluesky, twitch, irc adapters
+
+**Fixes (certified):**
+- 7.1: Email blocking sleep → `tokio::time::sleep`
+- 7.2: Bluesky cross-channel echo → fix `||` to `&&` in outbound filter
+- 7.3: Bluesky silent login → validate JWT/DID non-empty
+- 7.4: Twitch reconnection + echo → exponential backoff + fix `||` to `&&`
+- 7.5: IRC SASL race → wait for 903/904 response instead of fixed sleep
+
 #### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
 
 **Source:** Ultimate Sovereign Audit — 6 competitors, ~1,000,000 LOC scanned, ~200 features catalogued

@@ -254,17 +254,27 @@ All stubs decided for implementation per Phase 0. Approaches informed by 17 comp
 
 ---
 
-### Phase 7: Channel Adapters — Fixes (5 fixes)
+### Phase 7: Channel Adapter Fixes (5 fixes, competitor-informed)
 
-All adapters kept — these fixes apply to all.
+Approaches informed by 17 competitor scans + deep OpenClaw study.
 
-| # | Severity | Issue | File | Line | Fix | Cross-Impact |
-|---|----------|-------|------|------|-----|-------------|
-| 7.1 | HIGH | Blocking sleep in async context | `channels/email.rs` | 438 | `tokio::time::sleep(Duration::from_secs(30)).await` | Email channel — no longer blocks Tokio runtime |
-| 7.2 | HIGH | Bluesky cross-channel echo | `channels/bluesky.rs` | 111-117 | Change `\|\|` to `&&` in filter — require BOTH recipient check AND role check | Bluesky message routing — stops echoing other channels |
-| 7.3 | MEDIUM | Bluesky silent login failure | `channels/bluesky.rs` | 56-58 | Return `Err` if JWT/DID fields missing from response | Bluesky auth — fails loudly instead of silently |
-| 7.4 | HIGH | Twitch no reconnection logic | `channels/twitch.rs` | 60-164 | Add exponential backoff reconnection loop (match IRC adapter pattern) | Twitch channel — survives disconnects |
-| 7.5 | MEDIUM | IRC race condition in SASL | `channels/irc.rs` | 191 | Parse server responses and react instead of fixed sleep | IRC auth — reliable on all server speeds |
+| # | Severity | Issue | File | Line | Fix (Competitor-Informed) | Cross-Impact |
+|---|----------|-------|------|------|------|-------------|
+| 7.1 | HIGH | Blocking sleep in async context | `channels/email.rs` | 438 | `tokio::time::sleep(Duration::from_secs(30)).await` (confirmed by ZeptoClaw) | Email channel — no longer blocks Tokio runtime |
+| 7.2 | HIGH | Bluesky cross-channel echo | `channels/bluesky.rs` | 116 | Change `\|\|` to `&&` — require BOTH recipient starts with "bluesky:" AND role is Assistant (MicroClaw channel-scoped filtering pattern) | Bluesky message routing — stops echoing other channels |
+| 7.3 | MEDIUM | Bluesky silent login failure | `channels/bluesky.rs` | 56-58 | Validate `accessJwt` and `did` are non-empty; return `Err` if missing (OpenFang explicit validation pattern) | Bluesky auth — fails loudly instead of silently |
+| 7.4 | HIGH | Twitch no reconnection + cross-channel echo | `channels/twitch.rs` | 67-72, 106 | Add exponential backoff reconnection loop (1s→2s→4s...→60s max, reset on success, OpenFang IRC pattern). Fix `\|\|` to `&&` in outbound filter (same issue as 7.2) | Twitch channel — survives disconnects + stops echoing |
+| 7.5 | MEDIUM | IRC race condition in SASL | `channels/irc.rs` | 191, 202, 205 | Wait for actual server responses instead of fixed sleep. Parse 903 (SASL success) / 904 (SASL failure) before proceeding. Remove all 3 fixed sleeps. (Enterprise pattern: proper protocol state machine) | IRC auth — reliable on all server speeds |
+
+**Cross-Impact for Phase 7:**
+```
+email.rs:438 → Email polling loop, Tokio runtime health
+bluesky.rs:116 → Outbound message routing, channel isolation
+bluesky.rs:56-58 → Session initialization, adapter lifecycle
+twitch.rs:67-72 → Connection lifecycle, reconnection loop
+twitch.rs:106 → Outbound message routing, channel isolation
+irc.rs:191-206 → SASL authentication, protocol state machine
+```
 
 **CHECKPOINT 7:** `cargo check --workspace` + Spencer approval
 

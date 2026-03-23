@@ -223,7 +223,6 @@ impl MemoryBackend for AsyncMemoryBackend {
         let messages = self.engine.fetch_session_tail(&sid, 500);
 
         if messages.len() < 50 {
-            // Not enough messages to consolidate
             debug!(
                 "Session {} has only {} messages, skipping consolidation",
                 sid,
@@ -233,7 +232,6 @@ impl MemoryBackend for AsyncMemoryBackend {
         }
 
         // Split into older (to consolidate) and recent (to keep as-is)
-        // Keep the most recent 20 messages, consolidate the rest
         let recent_count = 20;
         let (to_consolidate, recent) = if messages.len() > recent_count {
             let split_idx = messages.len() - recent_count;
@@ -244,9 +242,46 @@ impl MemoryBackend for AsyncMemoryBackend {
             return Ok(());
         };
 
-        // Create a summary message from consolidated messages
-        // AAA: Real production implementation would perform LLM-based summarization here.
-        let summary = "Conversation summary of older messages".to_string();
+        // Non-LLM consolidation: content-hash dedup
+        // Normalize messages, hash content, remove duplicates (keep most recent)
+        use std::collections::HashMap;
+        let mut seen_hashes: HashMap<String, usize> = HashMap::new();
+        let mut deduped: Vec<AgentMessage> = Vec::new();
+        let mut duplicates_removed = 0;
+
+        for msg in &to_consolidate {
+            let normalized = msg
+                .content
+                .to_lowercase()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let hash = {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(format!("{:?}", msg.role).as_bytes());
+                hasher.update(b":");
+                hasher.update(normalized.as_bytes());
+                format!("{:x}", hasher.finalize())[..16].to_string()
+            };
+
+            if let Some(&idx) = seen_hashes.get(&hash) {
+                // Duplicate found — keep the newer one
+                deduped[idx] = msg.clone();
+                duplicates_removed += 1;
+            } else {
+                seen_hashes.insert(hash, deduped.len());
+                deduped.push(msg.clone());
+            }
+        }
+
+        // Build summary from dedup results
+        let summary = format!(
+            "Conversation compacted: {} messages → {} unique ({} duplicates removed).",
+            to_consolidate.len(),
+            deduped.len(),
+            duplicates_removed
+        );
         let summary_id = uuid::Uuid::new_v4().to_string();
         let summary_msg = AgentMessage {
             id: summary_id.clone(),
@@ -260,10 +295,9 @@ impl MemoryBackend for AsyncMemoryBackend {
             channel: "Chat".to_string(), // Summary stays in active context
         };
 
-        // 🧬 OMEGA-VIII: Structurally Lossless Trimming (DAG Architecture)
-        // Instead of deleting older messages, we preserve them as archived leaves.
+        // Link older messages to summary node (DAG architecture)
         let mut archived_older = Vec::new();
-        for mut old_msg in to_consolidate {
+        for mut old_msg in deduped {
             old_msg.channel = "Archive".to_string();
             old_msg.parent_id = Some(summary_id.clone());
             archived_older.push(old_msg);

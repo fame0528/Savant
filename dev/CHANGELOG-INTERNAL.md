@@ -9,7 +9,52 @@
 
 ### Added
 
-#### 2026-03-23: Full Project Audit + Production Pass FID
+#### 2026-03-24: Deep Audit FID + Research Reports
+
+**Source:** Python static analysis (1,492 violations) + manual stub scan + competitor research
+**Method:** FID / Perfection Loop (2 iterations), read-only audit protocol
+**Result:** Enterprise-grade FID with 333 actionable findings, 24 fix items, 13 research reports
+
+**FID-20260324-DEEP-AUDIT-EXPANDED:**
+- `dev/fids/FID-20260324-DEEP-AUDIT-EXPANDED.md` — 619 lines
+- 5 CRITICAL, 10 HIGH, 5 MEDIUM, 4 LOW fix items
+- Single consolidated fix matrix (removed duplicate matrices from earlier iteration)
+- Structured per-item metadata: Severity, File, Risk, Status, Acceptance Criteria checkboxes
+- Cross-impact analysis, risk register, validation protocol per phase
+- No time estimates — removed (they caused corner-cutting)
+
+**Core Audit:**
+- `docs/AUDIT-REPORT.md` — 287 findings across 16 crates
+- Critical: config dashboard API key in source control, CORS wildcard, auth bypass
+
+**Python Audit Filtering:**
+- 1,492 raw violations → 333 actionable (79% filtered as test code, false positives, vendored library)
+- Categories: Mutex contention (42), TOCTOU (67), let _ = (127), SSRF (58), unwrap (25)
+
+**Stub/Placeholder Scan (NOT caught by Python):**
+- S-1: All 3 agent delegates return empty ChatResponse (CRITICAL)
+- S-2: `consolidate()` is a no-op (HIGH)
+- S-3: `cull_low_entropy_memories` always returns 0 (MEDIUM)
+- S-4: All 6 NLP command dispatchers return hardcoded text (HIGH)
+- S-5: `MemoryLayer` enum dead code (LOW)
+- S-6: `AgentRegistry.defaults` stored but never read (LOW)
+- S-7: `ensure_stable_id` dead code (LOW)
+- S-8: `MockEmbeddingProvider` publicly exposed (MEDIUM)
+
+**Research Reports (13 of 24 projects):**
+- `docs/research/IRONCLAW-REPORT.md`
+- `docs/research/NANOBOT-REPORT.md`
+- `docs/research/PICOCLAW-REPORT.md`
+- `docs/research/NANOCLAW-REPORT.md`
+- `docs/research/HICLAW-REPORT.md`
+- `docs/research/CAI-HOBBES-REPORT.md`
+- `docs/research/HERMES-AGENT-REPORT.md`
+- `docs/research/TRINITY-CLAW-REPORT.md`
+- `docs/research/ZEPTOCLAW-REPORT.md`
+- `docs/research/OPENFANG-REPORT.md`
+- `docs/research/OPENCRABS-REPORT.md`
+- `docs/research/EVERMEMOS-REPORT.md`
+- `docs/research/OPENCLAW-REPORT.md`
 
 **Source:** Full project audit — every file read 0-EOF across 16 crates
 **Method:** Perfection Loop (2 iterations on FID), Development Workflow

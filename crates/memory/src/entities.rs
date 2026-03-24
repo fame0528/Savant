@@ -145,10 +145,7 @@ impl EntityExtractor {
     /// Extracts entities from text content.
     pub fn extract(&self, text: &str, session_id: &str) -> Vec<Entity> {
         let mut entities = Vec::new();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
+        let now = savant_core::utils::time::now_millis() as i64;
 
         // Context-aware sentence splitting: split on sentence-ending periods
         // (followed by space + uppercase) but NOT periods in URLs, decimals, abbreviations

@@ -395,10 +395,7 @@ pub struct TemporalMetadata {
 impl TemporalMetadata {
     /// Creates a new temporal metadata for an active fact.
     pub fn new_active(memory_id: u64, entity_type: &str, entity_name: &str) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
+        let now = savant_core::utils::time::now_millis() as i64;
 
         Self {
             valid_from: now,
@@ -418,12 +415,7 @@ impl TemporalMetadata {
 
     /// Marks this fact as superseded by another memory.
     pub fn invalidate(&mut self, superseded_by_id: u64) {
-        self.valid_to = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64,
-        );
+        self.valid_to = Some(savant_core::utils::time::now_millis() as i64);
         self.superseded_by = Some(superseded_by_id);
     }
 }
@@ -478,10 +470,7 @@ impl DagNode {
             raw_message_ids: messages.iter().map(|m| m.id.clone()).collect(),
             child_nodes: Vec::new(),
             session_id: session_id.to_string(),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64,
+            created_at: savant_core::utils::time::now_millis() as i64,
             message_count: messages.len(),
         }
     }

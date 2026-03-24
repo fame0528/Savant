@@ -38,7 +38,7 @@ impl SecurityAuthority {
     fn current_time() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .expect("System clock error: time is before Unix epoch")
             .as_secs()
     }
 

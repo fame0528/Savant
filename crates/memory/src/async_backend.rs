@@ -546,10 +546,7 @@ impl AsyncMemoryBackend {
         let mut block = ContextCacheBlock {
             query_intent: query_owned.clone(),
             retrieved_memories: Vec::new(),
-            injected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64,
+            injected_at: savant_core::utils::time::now_millis() as i64,
             estimated_tokens: 0,
         };
 

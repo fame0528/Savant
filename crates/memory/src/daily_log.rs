@@ -78,12 +78,7 @@ impl DailyLog {
 
     /// Gets today's date as YYYY-MM-DD.
     pub fn today_date() -> String {
-        let now = std::time::SystemTime::now();
-        let duration = now
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let secs = duration.as_secs();
-        // Simple date calculation (days since epoch)
+        let secs = savant_core::utils::time::now_secs();
         let days = secs / 86400;
         let (year, month, day) = Self::days_to_ymd(days as i64);
         format!("{:04}-{:02}-{:02}", year, month, day)
@@ -205,11 +200,7 @@ impl DailyLog {
     }
 
     fn current_time() -> String {
-        let now = std::time::SystemTime::now();
-        let duration = now
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let secs = duration.as_secs() % 86400;
+        let secs = savant_core::utils::time::now_secs() % 86400;
         let hours = secs / 3600;
         let mins = (secs % 3600) / 60;
         format!("{:02}:{:02}", hours, mins)

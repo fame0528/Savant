@@ -7,7 +7,6 @@
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use savant_core::error::SavantError;
 use savant_core::types::{RequestFrame, SessionId};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, warn};
 
 pub mod oauth;
@@ -90,10 +89,7 @@ pub async fn authenticate(
     })?;
 
     // Replay protection: reject timestamps outside the allowed drift window
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = savant_core::utils::time::now_secs() as i64;
 
     let drift = (now - timestamp).abs();
     if drift > MAX_TIMESTAMP_DRIFT_SECS {
@@ -203,6 +199,7 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
     use rand::rngs::OsRng;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[tokio::test]
     async fn test_valid_authentication() {

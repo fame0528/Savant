@@ -1,7 +1,6 @@
 use crate::heartbeat::HeartbeatScheduler;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 use tracing::{error, info};
 
@@ -18,10 +17,7 @@ impl SovereignWatchdog {
     }
 
     fn current_time() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
+        crate::utils::time::now_secs()
     }
 
     /// Attaches the watchdog to a scheduler to monitor heartbeat regularity.

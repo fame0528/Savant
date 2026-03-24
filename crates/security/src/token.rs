@@ -63,10 +63,10 @@ impl AgentToken {
         // AAA: Action matching (exact match only - no wildcards permitted)
         let action_match = self.payload.permitted_action == action;
 
-        // AAA: Expiration check
+        // AAA: Expiration check — loud failure on clock error
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
+            .expect("System clock error: time is before Unix epoch")
             .as_secs();
         let not_expired = self.payload.expires_at > now;
 
@@ -85,7 +85,7 @@ impl AgentToken {
     pub fn should_rotate(&self) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
+            .expect("System clock error: time is before Unix epoch")
             .as_secs();
 
         let lifetime = self
@@ -105,7 +105,7 @@ impl AgentToken {
     pub fn is_expired(&self) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
+            .expect("System clock error: time is before Unix epoch")
             .as_secs();
         self.payload.expires_at <= now
     }

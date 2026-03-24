@@ -3,6 +3,7 @@ pub mod io;
 pub mod ollama_embeddings;
 pub mod ollama_vision;
 pub mod parsing;
+pub mod time;
 
 /// Token count utility.
 ///

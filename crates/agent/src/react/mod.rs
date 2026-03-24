@@ -183,6 +183,10 @@ pub struct AgentLoop<M: MemoryBackend> {
     /// Discovery-based context window size from the provider.
     /// Used for TokenBudget, ContextMonitor, and Compactor scaling.
     pub(crate) context_window: usize,
+    /// Hook registry for lifecycle extensibility.
+    /// Void hooks: fire-and-forget (logging, telemetry).
+    /// Modifying hooks: sequential with cancel support (approval, context injection).
+    pub(crate) hooks: Arc<savant_core::hooks::HookRegistry>,
 }
 
 impl<M: MemoryBackend> AgentLoop<M> {
@@ -239,6 +243,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             vision_service: None,
             self_repair: crate::react::self_repair::SelfRepair::with_defaults(),
             context_window,
+            hooks: Arc::new(savant_core::hooks::HookRegistry::new()),
         }
     }
 

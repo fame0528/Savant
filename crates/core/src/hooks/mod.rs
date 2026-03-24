@@ -1,23 +1,39 @@
 //! Hook/Lifecycle System — runtime extensibility for agent lifecycle events.
 //!
-//! 6 hook events with 3 execution strategies:
+//! Two tiers of hooks with panic safety:
 //! - **Void** (fire-and-forget, parallel): All handlers run concurrently
-//! - **Modifying** (sequential, priority-ordered): Handlers can modify the payload
-//! - **Claiming** (first-wins): First handler claiming success stops iteration
+//! - **Modifying** (sequential, priority-ordered): Handlers can modify or cancel
+//!
+//! Hooks are wrapped in `catch_unwind` — panics in hooks are caught and logged,
+//! never crashing the agent loop (zeroclaw pattern).
 
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Hook event types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookEvent {
+    // Tool lifecycle
     BeforeToolCall,
     AfterToolCall,
+    ToolError,
+    // LLM lifecycle
+    BeforeLlmCall,
+    AfterLlmCall,
     LlmInput,
     LlmOutput,
+    LlmError,
+    // Session lifecycle
     SessionStart,
     SessionEnd,
+    // Agent lifecycle
+    CheckSignals,
+    BuildIdentity,
+    HeartbeatTick,
+    TurnStart,
+    TurnEnd,
 }
 
 /// Hook execution strategy.
@@ -25,16 +41,14 @@ pub enum HookEvent {
 pub enum HookStrategy {
     /// All handlers run in parallel, errors logged
     Void,
-    /// Handlers run sequentially by priority, first can modify
+    /// Handlers run sequentially by priority, first can modify or cancel
     Modifying,
-    /// First handler claiming success wins
-    Claiming,
 }
 
 /// Hook priority — higher runs first.
 pub type HookPriority = i32;
 
-/// Hook handler trait for void hooks.
+/// Hook handler trait for void hooks (fire-and-forget, parallel).
 #[async_trait::async_trait]
 pub trait VoidHookHandler: Send + Sync {
     fn event(&self) -> HookEvent;
@@ -48,8 +62,11 @@ pub trait VoidHookHandler: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct HookContext {
     pub event: HookEvent,
+    pub session_id: Option<String>,
+    pub agent_id: Option<String>,
     pub tool_name: Option<String>,
     pub content: Option<String>,
+    pub error: Option<String>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -58,62 +75,97 @@ pub struct HookContext {
 pub enum HookResult {
     /// Content was modified
     Modified(String),
-    /// Content unchanged
+    /// Content unchanged, continue
     Unchanged,
+    /// Cancel the operation with a reason
+    Cancel(String),
 }
 
-/// Modifying hook handler trait.
+/// Modifying hook handler trait (sequential, can modify or cancel).
 #[async_trait::async_trait]
 pub trait ModifyingHookHandler: Send + Sync {
     fn event(&self) -> HookEvent;
     fn priority(&self) -> HookPriority {
         0
     }
-    async fn handle(&self, context: HookContext) -> HookResult;
+    async fn handle(&self, context: &mut HookContext) -> HookResult;
 }
 
-/// Hook registration entry.
-struct HookRegistration {
+/// Hook registration entry for void hooks.
+struct VoidHookRegistration {
     handler: Arc<dyn VoidHookHandler>,
     priority: HookPriority,
 }
 
+/// Hook registration entry for modifying hooks.
+struct ModifyingHookRegistration {
+    handler: Arc<dyn ModifyingHookHandler>,
+    priority: HookPriority,
+}
+
 /// Hook registry — manages lifecycle hooks.
+/// Uses two tiers: void hooks (parallel) and modifying hooks (sequential with cancel).
 pub struct HookRegistry {
-    handlers: RwLock<HashMap<HookEvent, Vec<HookRegistration>>>,
+    void_handlers: RwLock<HashMap<HookEvent, Vec<VoidHookRegistration>>>,
+    modifying_handlers: RwLock<HashMap<HookEvent, Vec<ModifyingHookRegistration>>>,
 }
 
 impl HookRegistry {
     pub fn new() -> Self {
         Self {
-            handlers: RwLock::new(HashMap::new()),
+            void_handlers: RwLock::new(HashMap::new()),
+            modifying_handlers: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Registers a void hook handler.
+    /// Registers a void hook handler (fire-and-forget, parallel).
     pub async fn register_void(&self, handler: impl VoidHookHandler + 'static) {
         let event = handler.event();
         let priority = handler.priority();
-        let mut handlers = self.handlers.write().await;
+        let mut handlers = self.void_handlers.write().await;
         let entry = handlers.entry(event).or_default();
-        entry.push(HookRegistration {
+        entry.push(VoidHookRegistration {
             handler: Arc::new(handler),
             priority,
         });
-        // Sort by priority descending (highest first)
         entry.sort_by(|a, b| b.priority.cmp(&a.priority));
     }
 
-    /// Runs void hooks for an event (parallel via tokio::spawn).
+    /// Registers a modifying hook handler (sequential, can cancel).
+    pub async fn register_modifying(&self, handler: impl ModifyingHookHandler + 'static) {
+        let event = handler.event();
+        let priority = handler.priority();
+        let mut handlers = self.modifying_handlers.write().await;
+        let entry = handlers.entry(event).or_default();
+        entry.push(ModifyingHookRegistration {
+            handler: Arc::new(handler),
+            priority,
+        });
+        entry.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    /// Runs void hooks for an event (parallel via tokio::spawn, panic-safe).
     pub async fn run_void(&self, context: &HookContext) {
-        let handlers = self.handlers.read().await;
+        let handlers = self.void_handlers.read().await;
         if let Some(event_handlers) = handlers.get(&context.event) {
             let mut tasks = Vec::new();
             for reg in event_handlers {
                 let ctx = context.clone();
                 let handler = reg.handler.clone();
                 tasks.push(tokio::spawn(async move {
-                    handler.handle(&ctx).await;
+                    // Catch panics — hooks must never crash the agent
+                    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        let rt = tokio::runtime::Handle::current();
+                        rt.block_on(handler.handle(&ctx));
+                    }));
+                    if let Err(e) = result {
+                        let msg = e
+                            .downcast_ref::<&str>()
+                            .map(|s| s.to_string())
+                            .or_else(|| e.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown panic".to_string());
+                        tracing::error!("[HOOK] Void hook panicked: {}", msg);
+                    }
                 }));
             }
             for task in tasks {
@@ -122,9 +174,56 @@ impl HookRegistry {
         }
     }
 
-    /// Gets the number of registered handlers for an event.
+    /// Runs modifying hooks for an event (sequential by priority, first Cancel stops chain).
+    /// Returns HookResult: Unchanged if all pass, Modified(content) or Cancel(reason) if intercepted.
+    pub async fn run_modifying(&self, context: &mut HookContext) -> HookResult {
+        let handlers = self.modifying_handlers.read().await;
+        if let Some(event_handlers) = handlers.get(&context.event) {
+            for reg in event_handlers {
+                let handler = reg.handler.clone();
+                // Catch panics — hooks must never crash the agent
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    let rt = tokio::runtime::Handle::current();
+                    rt.block_on(handler.handle(context))
+                }));
+                match result {
+                    Ok(HookResult::Cancel(reason)) => {
+                        tracing::info!(
+                            "[HOOK] Modifying hook cancelled {}: {}",
+                            format!("{:?}", context.event),
+                            reason
+                        );
+                        return HookResult::Cancel(reason);
+                    }
+                    Ok(HookResult::Modified(content)) => {
+                        context.content = Some(content.clone());
+                        return HookResult::Modified(content);
+                    }
+                    Ok(HookResult::Unchanged) => continue,
+                    Err(e) => {
+                        let msg = e
+                            .downcast_ref::<&str>()
+                            .map(|s| s.to_string())
+                            .or_else(|| e.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown panic".to_string());
+                        tracing::error!("[HOOK] Modifying hook panicked: {}", msg);
+                        // Continue to next hook on panic
+                    }
+                }
+            }
+        }
+        HookResult::Unchanged
+    }
+
+    /// Gets the number of registered void handlers for an event.
     pub async fn handler_count(&self, event: HookEvent) -> usize {
-        let handlers = self.handlers.read().await;
+        let handlers = self.void_handlers.read().await;
+        handlers.get(&event).map(|v| v.len()).unwrap_or(0)
+    }
+
+    /// Gets the number of registered modifying handlers for an event.
+    pub async fn modifying_handler_count(&self, event: HookEvent) -> usize {
+        let handlers = self.modifying_handlers.read().await;
         handlers.get(&event).map(|v| v.len()).unwrap_or(0)
     }
 }
@@ -164,7 +263,7 @@ pub struct LlmInputLogger;
 #[async_trait::async_trait]
 impl VoidHookHandler for LlmInputLogger {
     fn event(&self) -> HookEvent {
-        HookEvent::LlmInput
+        HookEvent::BeforeLlmCall
     }
     fn priority(&self) -> HookPriority {
         0
@@ -183,7 +282,7 @@ pub struct LlmOutputLogger;
 #[async_trait::async_trait]
 impl VoidHookHandler for LlmOutputLogger {
     fn event(&self) -> HookEvent {
-        HookEvent::LlmOutput
+        HookEvent::AfterLlmCall
     }
     fn priority(&self) -> HookPriority {
         0
@@ -196,24 +295,94 @@ impl VoidHookHandler for LlmOutputLogger {
     }
 }
 
+/// Health monitor hook — logs heartbeat ticks.
+pub struct HealthMonitorHook;
+
+#[async_trait::async_trait]
+impl VoidHookHandler for HealthMonitorHook {
+    fn event(&self) -> HookEvent {
+        HookEvent::HeartbeatTick
+    }
+    fn priority(&self) -> HookPriority {
+        -10
+    }
+
+    async fn handle(&self, _context: &HookContext) {
+        tracing::debug!("[HOOK] Heartbeat tick received");
+    }
+}
+
+/// Session lifecycle hook — logs session start/end.
+pub struct SessionLifecycleHook;
+
+#[async_trait::async_trait]
+impl VoidHookHandler for SessionLifecycleHook {
+    fn event(&self) -> HookEvent {
+        HookEvent::SessionStart
+    }
+    fn priority(&self) -> HookPriority {
+        0
+    }
+
+    async fn handle(&self, context: &HookContext) {
+        let session_id = context.session_id.as_deref().unwrap_or("unknown");
+        tracing::info!("[HOOK] Session started: {}", session_id);
+    }
+}
+
+/// Session end lifecycle hook.
+pub struct SessionEndHook;
+
+#[async_trait::async_trait]
+impl VoidHookHandler for SessionEndHook {
+    fn event(&self) -> HookEvent {
+        HookEvent::SessionEnd
+    }
+    fn priority(&self) -> HookPriority {
+        0
+    }
+
+    async fn handle(&self, context: &HookContext) {
+        let session_id = context.session_id.as_deref().unwrap_or("unknown");
+        tracing::info!("[HOOK] Session ended: {}", session_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    struct TestHandler;
+    struct TestVoidHandler;
 
     #[async_trait::async_trait]
-    impl VoidHookHandler for TestHandler {
+    impl VoidHookHandler for TestVoidHandler {
         fn event(&self) -> HookEvent {
             HookEvent::BeforeToolCall
         }
         async fn handle(&self, _context: &HookContext) {}
     }
 
+    struct TestModifyingHandler;
+
+    #[async_trait::async_trait]
+    impl ModifyingHookHandler for TestModifyingHandler {
+        fn event(&self) -> HookEvent {
+            HookEvent::BeforeLlmCall
+        }
+        async fn handle(&self, context: &mut HookContext) -> HookResult {
+            if let Some(ref content) = context.content {
+                if content.contains("BLOCK") {
+                    return HookResult::Cancel("Blocked by handler".to_string());
+                }
+            }
+            HookResult::Unchanged
+        }
+    }
+
     #[tokio::test]
     async fn test_hook_registry_register_and_count() {
         let registry = HookRegistry::new();
-        registry.register_void(TestHandler).await;
+        registry.register_void(TestVoidHandler).await;
         assert_eq!(registry.handler_count(HookEvent::BeforeToolCall).await, 1);
         assert_eq!(registry.handler_count(HookEvent::AfterToolCall).await, 0);
     }
@@ -224,10 +393,47 @@ mod tests {
         registry.register_void(ToolCallLogger).await;
         let context = HookContext {
             event: HookEvent::AfterToolCall,
+            session_id: None,
+            agent_id: None,
             tool_name: Some("shell".to_string()),
             content: None,
+            error: None,
             metadata: HashMap::new(),
         };
         registry.run_void(&context).await;
+    }
+
+    #[tokio::test]
+    async fn test_modifying_hook_cancel() {
+        let registry = HookRegistry::new();
+        registry.register_modifying(TestModifyingHandler).await;
+        let mut context = HookContext {
+            event: HookEvent::BeforeLlmCall,
+            session_id: None,
+            agent_id: None,
+            tool_name: None,
+            content: Some("BLOCK this request".to_string()),
+            error: None,
+            metadata: HashMap::new(),
+        };
+        let result = registry.run_modifying(&mut context).await;
+        assert!(matches!(result, HookResult::Cancel(_)));
+    }
+
+    #[tokio::test]
+    async fn test_modifying_hook_unchanged() {
+        let registry = HookRegistry::new();
+        registry.register_modifying(TestModifyingHandler).await;
+        let mut context = HookContext {
+            event: HookEvent::BeforeLlmCall,
+            session_id: None,
+            agent_id: None,
+            tool_name: None,
+            content: Some("Allow this request".to_string()),
+            error: None,
+            metadata: HashMap::new(),
+        };
+        let result = registry.run_modifying(&mut context).await;
+        assert!(matches!(result, HookResult::Unchanged));
     }
 }

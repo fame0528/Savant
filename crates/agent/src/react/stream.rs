@@ -106,6 +106,18 @@ impl<M: MemoryBackend> AgentLoop<M> {
                 // Begin turn
                 session_state.active_turn_id = Some(turn_id.clone());
                 session_state.turn_count += 1;
+
+                // === Hook: Turn Start ===
+                let turn_start_ctx = savant_core::hooks::HookContext {
+                    event: savant_core::hooks::HookEvent::TurnStart,
+                    session_id: Some(sid.clone()),
+                    agent_id: Some(self.agent_id.clone()),
+                    tool_name: None,
+                    content: Some(user_input.clone()),
+                    error: None,
+                    metadata: std::collections::HashMap::new(),
+                };
+                self.hooks.run_void(&turn_start_ctx).await;
                 session_state.last_active = chrono::Utc::now().timestamp_millis();
                 let _ = self.memory.save_session(&session_state).await;
 
@@ -194,6 +206,21 @@ impl<M: MemoryBackend> AgentLoop<M> {
                             }
                         })
                     }).collect();
+
+                    // === Hook: Before LLM Call (modifying — can cancel) ===
+                    let mut before_llm_ctx = savant_core::hooks::HookContext {
+                        event: savant_core::hooks::HookEvent::BeforeLlmCall,
+                        session_id: Some(sid.clone()),
+                        agent_id: Some(self.agent_id.clone()),
+                        tool_name: None,
+                        content: Some(format!("{} messages, {} tools", messages.len(), tool_schemas.len())),
+                        error: None,
+                        metadata: std::collections::HashMap::new(),
+                    };
+                    if let savant_core::hooks::HookResult::Cancel(reason) = self.hooks.run_modifying(&mut before_llm_ctx).await {
+                        yield Ok(AgentEvent::Observation(format!("LLM call cancelled by hook: {}", reason)));
+                        break;
+                    }
 
                     let response_stream = match self.provider.stream_completion(messages.clone(), tool_schemas.clone()).await {
                         Ok(stream) => stream,
@@ -558,6 +585,18 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                 }
                                             }
                                             yield Ok(AgentEvent::Observation(obs.clone()));
+
+                                            // === Hook: After Tool Call (void) ===
+                                            let after_tool_ctx = savant_core::hooks::HookContext {
+                                                event: savant_core::hooks::HookEvent::AfterToolCall,
+                                                session_id: Some(sid.clone()),
+                                                agent_id: Some(self.agent_id.clone()),
+                                                tool_name: Some(name.clone()),
+                                                content: Some(obs.clone()),
+                                                error: None,
+                                                metadata: std::collections::HashMap::new(),
+                                            };
+                                            self.hooks.run_void(&after_tool_ctx).await;
                                             let safe_obs = savant_core::utils::parsing::scrub_secrets(&obs);
                                             let obs_msg = ChatMessage { role: ChatRole::User, content: format!("Observation ({}): {}", name, safe_obs), sender: Some("SYSTEM".to_string()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Telemetry, is_telemetry: false };
                                             history.push(obs_msg);
@@ -727,6 +766,18 @@ impl<M: MemoryBackend> AgentLoop<M> {
                 session_state.active_turn_id = None;
                 session_state.last_active = chrono::Utc::now().timestamp_millis();
                 let _ = self.memory.save_session(&session_state).await;
+
+                // === Hook: Turn End (void) ===
+                let turn_end_ctx = savant_core::hooks::HookContext {
+                    event: savant_core::hooks::HookEvent::TurnEnd,
+                    session_id: Some(sid.clone()),
+                    agent_id: Some(self.agent_id.clone()),
+                    tool_name: None,
+                    content: None,
+                    error: if turn_failed { Some("Turn failed".to_string()) } else { None },
+                    metadata: std::collections::HashMap::new(),
+                };
+                self.hooks.run_void(&turn_end_ctx).await;
 
                 yield Ok(AgentEvent::TurnEnd {
                     session_id: sid.clone(),

@@ -1,5 +1,3 @@
-#![allow(clippy::disallowed_methods)] // serde_json::json! macro false positives
-
 //! Slack Channel Adapter
 //!
 //! Provides integration with the Slack Web API for sending and receiving messages.

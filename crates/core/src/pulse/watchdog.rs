@@ -27,7 +27,7 @@ impl SovereignWatchdog {
     /// Attaches the watchdog to a scheduler to monitor heartbeat regularity.
     /// Returns a JoinHandle for the monitoring task.
     pub async fn attach(&mut self, scheduler: &HeartbeatScheduler) -> JoinHandle<()> {
-        info!("🧬 SovereignWatchdog: Attached to core pulse scheduler.");
+        info!("SovereignWatchdog: Attached to core pulse scheduler.");
         let mut rx = scheduler.subscribe();
         let last_pulse = self.last_pulse.clone();
 
@@ -46,7 +46,7 @@ impl SovereignWatchdog {
         let last = self.last_pulse.load(Ordering::Relaxed);
         if now - last > 120 {
             error!(
-                "🚨 Substrate Flatline Detected! Last pulse: {}s ago",
+                "Substrate Flatline Detected! Last pulse: {}s ago",
                 now - last
             );
             false

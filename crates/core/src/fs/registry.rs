@@ -82,13 +82,13 @@ impl AgentRegistry {
         // 2. Select the first valid workspaces directory
         let mut workspaces_path = None;
         tracing::info!(
-            "🔍 Agent Discovery: Checking {} potential locations...",
+            "Agent Discovery: Checking {} potential locations...",
             potential_paths.len()
         );
         for path in &potential_paths {
             tracing::debug!("   - Checking: {:?}", path);
             if path.exists() && path.is_dir() {
-                tracing::info!("   ✅ Unified anchor confirmed: {}", path.display());
+                tracing::info!("   Unified anchor confirmed: {}", path.display());
                 workspaces_path = Some(path.clone());
                 break;
             }
@@ -98,20 +98,17 @@ impl AgentRegistry {
             Some(p) => p,
             None => {
                 let diagnostic_content = format!(
-                    "❌ DISCOVERY FAILURE: Could not locate agent workspaces folder.\nSearched paths:\n{:?}\n\nHint: Ensure your project has a 'workspaces' folder in the root or set AGENTS_PATH in savant.toml.",
+                    "DISCOVERY FAILURE: Could not locate agent workspaces folder.\nSearched paths:\n{:?}\n\nHint: Ensure your project has a 'workspaces' folder in the root or set AGENTS_PATH in savant.toml.",
                     potential_paths
                 );
                 let _ = std::fs::write("diagnostics_discovery.txt", diagnostic_content);
-                tracing::error!("❌ DISCOVERY FAILURE: Could not locate agent workspaces folder.");
+                tracing::error!("DISCOVERY FAILURE: Could not locate agent workspaces folder.");
                 tracing::info!("   Searched paths: {:?}", potential_paths);
                 return Ok(agents);
             }
         };
 
-        tracing::info!(
-            "📂 Scanning discovery anchor: {}",
-            workspaces_path.display()
-        );
+        tracing::info!("Scanning discovery anchor: {}", workspaces_path.display());
 
         // 3. Scan for folders in the discovery path
         for entry in fs::read_dir(&workspaces_path)? {
@@ -123,14 +120,14 @@ impl AgentRegistry {
                 match self.load_agent(&path) {
                     Ok(config) => {
                         tracing::info!(
-                            "      ✅ Agent validated: {} ({})",
+                            "      Agent validated: {} ({})",
                             config.agent_name,
                             config.agent_id
                         );
                         agents.push(config);
                     }
                     Err(e) => {
-                        tracing::warn!("      ⚠️ Registry skip for {}: {}", path.display(), e);
+                        tracing::warn!("      Registry skip for {}: {}", path.display(), e);
                     }
                 }
             }
@@ -155,7 +152,7 @@ impl AgentRegistry {
         // AAA Perfection: Allow partial parsing of legacy agent.json by using relaxed deserialization
         let file_config: AgentFileConfig = serde_json::from_str(&content).unwrap_or_else(|e| {
             tracing::warn!(
-                "      ⚠️ Partial parse for {}: {}. Attempting heuristic recovery...",
+                "      Partial parse for {}: {}. Attempting heuristic recovery...",
                 config_file.display(),
                 e
             );

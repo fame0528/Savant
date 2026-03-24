@@ -1,5 +1,3 @@
-#![allow(clippy::disallowed_methods)] // serde_json::json! macro false positives
-
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;

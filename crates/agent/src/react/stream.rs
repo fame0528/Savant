@@ -139,7 +139,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                 // Track tool calls made during this turn
                 let mut turn_tool_calls: Vec<String> = Vec::new();
-                let mut turn_failed = false;
+                let turn_failed = false;
 
                 while depth < self.max_tool_iterations as u32 {
                     info!("[{}] Agent loop cycle start (depth={})", self.agent_id, depth);
@@ -659,8 +659,6 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                     history.push(hint_msg);
                                                 }
                                                 crate::react::reactor::HeuristicOutcome::Fatal(fatal) => {
-                                                    // Mark turn as failed before returning
-                                                    turn_failed = true;
                                                     // Finalize turn state before error return (prevents stuck Processing state)
                                                     let final_turn = savant_core::types::TurnState {
                                                         turn_id: turn_id.clone(),

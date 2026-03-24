@@ -5,7 +5,7 @@ use colored::*;
 use savant_agent::orchestration::ignition::IgnitionService;
 use savant_core::config::Config;
 use savant_core::crypto::AgentKeyPair;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Tracing layer that publishes log messages to the global debug log channel
 /// for real-time streaming to the dashboard via WebSocket.
@@ -182,8 +182,12 @@ fn print_phase(num: u8, desc: &str) {
 
 async fn cmd_start(config_path: Option<String>) -> Result<()> {
     print_splash();
+    print_phase(1, "Loading configuration");
+    print_phase(2, "Igniting substrate");
 
     let _ignition = IgnitionService::ignite(config_path.as_deref()).await?;
+
+    print_phase(3, "Substrate active");
 
     println!();
     println!(
@@ -647,7 +651,7 @@ async fn cmd_heartbeat(
     check: bool,
 ) -> Result<()> {
     println!("{}", "=== Savant Heartbeat Diagnostics ===".cyan().bold());
-    let config = Config::load_from(config_path.as_deref()).unwrap_or_else(|_| Config::default());
+    let _config = Config::load_from(config_path.as_deref()).unwrap_or_else(|_| Config::default());
 
     if pulse {
         println!("{} Connecting to Nexus bridge...", "→".bright_black());

@@ -386,10 +386,13 @@ impl Tool for WebSovereign {
                     .ok_or_else(|| SavantError::Unknown("Missing 'url' for snapshot".into()))?;
 
                 let html = self.fetch_url(url).await?;
-                let markdown = self.html_to_markdown(&html);
 
-                info!("[WEB] Snapshot of {} — {} chars", url, markdown.len());
-                Ok(markdown)
+                // Use ChromeProjection for snapshot — adds SHA256 boundary markers
+                // for content injection prevention (enterprise security)
+                let projected = self.projection.project_html(&html, url);
+
+                info!("[WEB] Snapshot of {} — {} chars", url, projected.len());
+                Ok(projected)
             }
             "scrape" => {
                 let url = payload["url"]

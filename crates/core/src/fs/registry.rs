@@ -1,5 +1,5 @@
 use crate::error::SavantError;
-use crate::types::{AgentConfig, AgentFileConfig, ModelProvider};
+use crate::types::{AgentConfig, AgentFileConfig, AgentIdentity, ModelProvider};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -194,7 +194,7 @@ impl AgentRegistry {
         let user_context = fs::read_to_string(workspace_path_resolved.join("USER.md")).ok();
         let metadata = fs::read_to_string(workspace_path_resolved.join("IDENTITY.md")).ok();
 
-        let mut config = AgentConfig {
+        let config = AgentConfig {
             agent_id: file_config
                 .agent_id
                 .clone()
@@ -220,7 +220,21 @@ impl AgentRegistry {
             heartbeat_interval: self.defaults.heartbeat_interval,
             allowed_skills: Vec::new(),
             workspace_path: workspace_path.to_path_buf(),
-            identity: None,
+            identity: Some(AgentIdentity {
+                name: file_config
+                    .agent_name
+                    .clone()
+                    .unwrap_or_else(|| agent_name.clone()),
+                soul: soul.clone(),
+                instructions: instructions.clone(),
+                user_context: user_context.clone(),
+                metadata: metadata.clone(),
+                mission: None,
+                expertise: Vec::new(),
+                ethics: None,
+                image: None,
+                internal_settings: None,
+            }),
             parent_id: None,
             session_id: None,
             proactive: crate::config::ProactiveConfig::default(),

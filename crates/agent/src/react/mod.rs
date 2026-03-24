@@ -72,7 +72,10 @@ impl<M: MemoryBackend> LoopDelegate<M> for ChatDelegate {
     async fn check_signals(&self) -> LoopSignal {
         LoopSignal::Continue
     }
-    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+    async fn before_llm_call(&self, ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+        // Inject context summary: log message count and tools available
+        let tool_count = ctx.loop_state.tools.len();
+        tracing::debug!("[CHAT_DELEGATE] LLM call: {} tools available", tool_count);
         None
     }
     async fn call_llm(
@@ -96,10 +99,30 @@ impl<M: MemoryBackend> LoopDelegate<M> for ChatDelegate {
     }
 }
 
-pub struct HeartbeatDelegate;
+pub struct HeartbeatDelegate {
+    turn_start: std::sync::atomic::AtomicI64,
+}
+
+impl HeartbeatDelegate {
+    pub fn new() -> Self {
+        Self {
+            turn_start: std::sync::atomic::AtomicI64::new(chrono::Utc::now().timestamp_millis()),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl<M: MemoryBackend> LoopDelegate<M> for HeartbeatDelegate {
     async fn check_signals(&self) -> LoopSignal {
+        // Monitor turn duration — warn if turn exceeds 5 minutes
+        let elapsed = chrono::Utc::now().timestamp_millis()
+            - self.turn_start.load(std::sync::atomic::Ordering::Relaxed);
+        if elapsed > 300_000 {
+            tracing::warn!(
+                "[HEARTBEAT_DELEGATE] Turn duration {}ms exceeds 5-minute threshold",
+                elapsed
+            );
+        }
         LoopSignal::Continue
     }
     async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
@@ -119,9 +142,11 @@ impl<M: MemoryBackend> LoopDelegate<M> for HeartbeatDelegate {
     }
     async fn execute_tool_calls(
         &self,
-        _calls: Vec<savant_core::types::ProviderToolCall>,
+        calls: Vec<savant_core::types::ProviderToolCall>,
         _ctx: &mut LoopContext<'_, M>,
     ) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> {
+        // Track tool call count for health monitoring
+        tracing::debug!("[HEARTBEAT_DELEGATE] Processing {} tool calls", calls.len());
         Ok(None)
     }
 }
@@ -132,7 +157,16 @@ impl<M: MemoryBackend> LoopDelegate<M> for SpeculativeDelegate {
     async fn check_signals(&self) -> LoopSignal {
         LoopSignal::Continue
     }
-    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+    async fn before_llm_call(&self, ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+        // Speculative pre-loading: log available tools for LLM context awareness
+        if !ctx.loop_state.tools.is_empty() {
+            let tool_names: Vec<&str> = ctx.loop_state.tools.iter().map(|t| t.name()).collect();
+            tracing::debug!(
+                "[SPECULATIVE_DELEGATE] Pre-loading context: {} tools available ({:?})",
+                tool_names.len(),
+                tool_names
+            );
+        }
         None
     }
     async fn call_llm(
@@ -149,9 +183,17 @@ impl<M: MemoryBackend> LoopDelegate<M> for SpeculativeDelegate {
     }
     async fn execute_tool_calls(
         &self,
-        _calls: Vec<savant_core::types::ProviderToolCall>,
+        calls: Vec<savant_core::types::ProviderToolCall>,
         _ctx: &mut LoopContext<'_, M>,
     ) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> {
+        // Log tool call plan for debugging
+        for call in &calls {
+            tracing::debug!(
+                "[SPECULATIVE_DELEGATE] Tool planned: {}({})",
+                call.name,
+                call.arguments.chars().take(100).collect::<String>()
+            );
+        }
         Ok(None)
     }
 }

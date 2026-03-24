@@ -4,8 +4,13 @@
 mod crash_recovery {
     use savant_memory::{
         models::{AgentMessage, MessageRole},
-        MemoryEngine,
+        MemoryEngine, MockEmbeddingProvider,
     };
+    use std::sync::Arc;
+
+    fn make_engine(dir: &std::path::Path) -> Arc<MemoryEngine> {
+        MemoryEngine::with_defaults(dir, Arc::new(MockEmbeddingProvider)).unwrap()
+    }
 
     fn make_msg(i: usize) -> AgentMessage {
         AgentMessage {
@@ -24,7 +29,7 @@ mod crash_recovery {
     #[tokio::test]
     async fn test_append_then_read() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = MemoryEngine::with_defaults(dir.path()).unwrap();
+        let engine = make_engine(dir.path());
         for i in 0..10 {
             engine.append_message("sess", &make_msg(i)).await.unwrap();
         }
@@ -40,7 +45,7 @@ mod crash_recovery {
     async fn test_reopen_persists() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let engine = MemoryEngine::with_defaults(dir.path()).unwrap();
+            let engine = make_engine(dir.path());
             for i in 0..20 {
                 engine
                     .append_message("crash-sess", &make_msg(i))
@@ -48,7 +53,7 @@ mod crash_recovery {
                     .unwrap();
             }
         }
-        let engine2 = MemoryEngine::with_defaults(dir.path()).unwrap();
+        let engine2 = make_engine(dir.path());
         let msgs = engine2.fetch_session_tail("crash-sess", 100);
         assert!(
             msgs.len() >= 15,
@@ -60,7 +65,7 @@ mod crash_recovery {
     #[tokio::test]
     async fn test_write_order_preserved() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = MemoryEngine::with_defaults(dir.path()).unwrap();
+        let engine = make_engine(dir.path());
         for i in 0..50 {
             engine.append_message("ord", &make_msg(i)).await.unwrap();
         }
@@ -76,7 +81,7 @@ mod crash_recovery {
     #[tokio::test]
     async fn test_multi_session_isolation() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = MemoryEngine::with_defaults(dir.path()).unwrap();
+        let engine = make_engine(dir.path());
         engine.append_message("sess-a", &make_msg(1)).await.unwrap();
         engine.append_message("sess-b", &make_msg(2)).await.unwrap();
         let a = engine.fetch_session_tail("sess-a", 100);
@@ -88,7 +93,7 @@ mod crash_recovery {
     #[tokio::test]
     async fn test_bulk_insert_then_read() {
         let dir = tempfile::tempdir().unwrap();
-        let engine = MemoryEngine::with_defaults(dir.path()).unwrap();
+        let engine = make_engine(dir.path());
         for i in 0..100 {
             engine.append_message("bulk", &make_msg(i)).await.unwrap();
         }

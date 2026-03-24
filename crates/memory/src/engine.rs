@@ -28,19 +28,7 @@ pub struct EngineConfig {
     pub vector_config: VectorConfig,
     pub distill_llm_provider: Option<Arc<dyn LlmProvider>>,
     pub distill_params: Option<LlmParams>,
-    pub embedding_service: Option<Arc<dyn EmbeddingProvider>>,
-}
-
-impl Default for EngineConfig {
-    fn default() -> Self {
-        Self {
-            lsm_config: LsmConfig::default(),
-            vector_config: VectorConfig::default(),
-            distill_llm_provider: None,
-            distill_params: None,
-            embedding_service: None,
-        }
-    }
+    pub embedding_service: Arc<dyn EmbeddingProvider>,
 }
 
 /// The atomic Pure-Rust adapter (CortexaShim) that guarantees write atomicity
@@ -48,7 +36,7 @@ impl Default for EngineConfig {
 pub struct MemoryEnclave {
     lsm: Arc<LsmStorageEngine>,
     vector: Arc<SemanticVectorEngine>,
-    embedding_service: Option<Arc<dyn EmbeddingProvider>>,
+    embedding_service: Arc<dyn EmbeddingProvider>,
     // strict transaction lock ensuring unified WAL behavior
     write_lock: tokio::sync::Mutex<()>,
 }
@@ -60,17 +48,15 @@ impl MemoryEnclave {
     ) -> Result<Arc<Self>, MemoryError> {
         let lsm = LsmStorageEngine::new(storage_path.as_ref(), config.lsm_config)?;
 
-        // Dynamic vector dimension: use embedding service dimension if available
+        // Dynamic vector dimension: use embedding service dimension
         let mut vector_config = config.vector_config;
-        if let Some(ref emb) = config.embedding_service {
-            let emb_dims = emb.dimensions();
-            if emb_dims > 0 && emb_dims != vector_config.dimensions {
-                info!(
-                    "Overriding vector dimension: {} -> {} (from embedding service)",
-                    vector_config.dimensions, emb_dims
-                );
-                vector_config.dimensions = emb_dims;
-            }
+        let emb_dims = config.embedding_service.dimensions();
+        if emb_dims > 0 && emb_dims != vector_config.dimensions {
+            info!(
+                "Overriding vector dimension: {} -> {} (from embedding service)",
+                vector_config.dimensions, emb_dims
+            );
+            vector_config.dimensions = emb_dims;
         }
 
         let vector = SemanticVectorEngine::new(storage_path.as_ref(), vector_config)?;
@@ -108,13 +94,11 @@ impl MemoryEnclave {
     pub async fn index_memory(&self, mut entry: MemoryEntry) -> Result<(), MemoryError> {
         let _guard = self.write_lock.lock().await;
 
-        // OMEGA-VIII: Automatic Embedding Generation via Ollama
+        // Automatic Embedding Generation via embedding service
         if entry.embedding.is_empty() {
-            if let Some(ref provider) = self.embedding_service {
-                debug!("Generating automatic embedding for entry: {}", entry.id);
-                if let Ok(vec) = provider.embed(&entry.content).await {
-                    entry.embedding = vec;
-                }
+            debug!("Generating automatic embedding for entry: {}", entry.id);
+            if let Ok(vec) = self.embedding_service.embed(&entry.content).await {
+                entry.embedding = vec;
             }
         }
 
@@ -323,8 +307,20 @@ impl MemoryEngine {
         Ok(engine)
     }
 
-    pub fn with_defaults<P: AsRef<Path>>(storage_path: P) -> Result<Arc<Self>, MemoryError> {
-        Self::new(storage_path, EngineConfig::default())
+    pub fn with_defaults<P: AsRef<Path>>(
+        storage_path: P,
+        embedding_service: Arc<dyn EmbeddingProvider>,
+    ) -> Result<Arc<Self>, MemoryError> {
+        Self::new(
+            storage_path,
+            EngineConfig {
+                lsm_config: LsmConfig::default(),
+                vector_config: VectorConfig::default(),
+                distill_llm_provider: None,
+                distill_params: None,
+                embedding_service,
+            },
+        )
     }
 
     pub fn enclave(&self) -> Arc<MemoryEnclave> {
@@ -460,11 +456,5 @@ impl MemoryEngine {
         let lsm_stats = self.enclave.lsm.stats().unwrap_or_default();
         let vector_count = self.enclave.vector_count();
         (lsm_stats, vector_count)
-    }
-
-    pub fn verify_safety(&self) -> Result<(), MemoryError> {
-        #[cfg(feature = "kani")]
-        crate::safety::verify_memory_safety();
-        Ok(())
     }
 }

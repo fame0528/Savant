@@ -658,7 +658,30 @@ impl AsyncMemoryBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use savant_core::error::SavantError;
+    use savant_core::traits::EmbeddingProvider;
     use savant_core::types::{AgentOutputChannel, ChatRole, SessionId};
+
+    /// Mock embedding provider for tests — returns fixed 384-dim zero vectors.
+    struct MockEmbeddingProvider;
+
+    #[async_trait::async_trait]
+    impl EmbeddingProvider for MockEmbeddingProvider {
+        async fn embed(&self, _text: &str) -> Result<Vec<f32>, SavantError> {
+            Ok(vec![0.0; 384])
+        }
+        async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SavantError> {
+            Ok(texts.iter().map(|_| vec![0.0; 384]).collect())
+        }
+        fn dimensions(&self) -> usize {
+            384
+        }
+    }
+
+    fn mock_engine(dir: &std::path::Path) -> Arc<MemoryEngine> {
+        MemoryEngine::with_defaults(dir, Arc::new(MockEmbeddingProvider))
+            .expect("Failed to init engine")
+    }
 
     #[tokio::test]
     async fn test_async_backend_store_and_retrieve() {
@@ -668,7 +691,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        let engine = MemoryEngine::with_defaults(&temp_dir).expect("Failed to init engine");
+        let engine = mock_engine(&temp_dir);
         let backend = AsyncMemoryBackend::new(engine);
 
         let chat_msg = ChatMessage {
@@ -700,7 +723,7 @@ mod tests {
             std::env::temp_dir().join(format!("savant_async_query_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        let engine = MemoryEngine::with_defaults(&temp_dir).expect("Failed to init engine");
+        let engine = mock_engine(&temp_dir);
         let backend = AsyncMemoryBackend::new(engine);
 
         // Store multiple messages
@@ -739,7 +762,7 @@ mod tests {
             std::env::temp_dir().join(format!("savant_async_emb_flag_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        let engine = MemoryEngine::with_defaults(&temp_dir).expect("Failed to init engine");
+        let engine = mock_engine(&temp_dir);
 
         let backend_no_emb = AsyncMemoryBackend::new(engine.clone());
         assert!(!backend_no_emb.has_embeddings());

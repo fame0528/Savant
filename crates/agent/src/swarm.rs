@@ -71,7 +71,7 @@ pub struct SwarmController {
     handles: Mutex<HashMap<String, (JoinHandle<()>, CancellationToken)>>,
     tools: Arc<HashMap<String, Arc<dyn Tool>>>,
     engine: Arc<MemoryEngine>,
-    embedding_service: Option<Arc<dyn EmbeddingProvider>>,
+    embedding_service: Arc<dyn EmbeddingProvider>,
     vision_service: Option<Arc<dyn VisionProvider>>,
     #[allow(dead_code)]
     blackboard: Arc<SwarmBlackboard>,
@@ -114,25 +114,31 @@ impl SwarmController {
 
         let tools = Arc::new(registry.tools);
 
-        // 2. Initialize Memory Engine (Fjall LSM + ruvector)
-        let engine = MemoryEngine::with_defaults(&config.memory_db_path).map_err(|e| {
-            savant_core::error::SavantError::Unknown(format!("Failed to init memory engine: {}", e))
-        })?;
+        // 2. Initialize Embedding Service FIRST (required by memory engine)
+        // Ollama qwen3-embedding:4b, fastembed fallback
+        let embedding_service: Arc<dyn savant_core::traits::EmbeddingProvider> =
+            create_embedding_service()
+                .await
+                .map_err(|e| {
+                    savant_core::error::SavantError::Unknown(format!(
+                        "Embedding service is required: {}",
+                        e
+                    ))
+                })
+                .map(Arc::from)?;
+        tracing::info!(
+            "Embedding service initialized ({} dims)",
+            embedding_service.dimensions()
+        );
 
-        // 2.5. Initialize Embedding Service (Ollama qwen3-embedding:4b, fastembed fallback)
-        let embedding_service = match create_embedding_service().await {
-            Ok(svc) => {
-                tracing::info!("Embedding service initialized ({} dims)", svc.dimensions());
-                Some(Arc::from(svc))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to init embedding service: {}. Semantic search disabled.",
+        // 2.5. Initialize Memory Engine (Fjall LSM + ruvector)
+        let engine = MemoryEngine::with_defaults(&config.memory_db_path, embedding_service.clone())
+            .map_err(|e| {
+                savant_core::error::SavantError::Unknown(format!(
+                    "Failed to init memory engine: {}",
                     e
-                );
-                None
-            }
-        };
+                ))
+            })?;
 
         // 2.6. Initialize Vision Service (Ollama qwen3-vl)
         let vision_service = match create_vision_service().await {
@@ -513,11 +519,10 @@ impl SwarmController {
                 .collect();
 
             // Create async memory backend from the shared engine
-            let inner_backend = if let Some(ref emb) = embedding_service {
-                Arc::new(AsyncMemoryBackend::with_embeddings(engine, emb.clone()))
-            } else {
-                Arc::new(AsyncMemoryBackend::new(engine))
-            };
+            let inner_backend = Arc::new(AsyncMemoryBackend::with_embeddings(
+                engine,
+                embedding_service.clone(),
+            ));
 
             // Wrap in FileLoggingMemoryBackend to fulfill Perfection Loop requirements
             let memory_backend: Arc<dyn MemoryBackend> =

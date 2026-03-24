@@ -2,7 +2,17 @@
 
 #[cfg(test)]
 mod memory_stress_tests {
+    use std::sync::Arc;
     use std::time::Instant;
+
+    fn make_engine(
+        dir: &std::path::Path,
+    ) -> Result<std::sync::Arc<savant_memory::MemoryEngine>, savant_memory::MemoryError> {
+        savant_memory::MemoryEngine::with_defaults(
+            dir,
+            Arc::new(savant_memory::MockEmbeddingProvider),
+        )
+    }
 
     #[tokio::test]
     async fn test_concurrent_writes_same_session() {
@@ -11,7 +21,7 @@ mod memory_stress_tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("stress_test");
 
-        let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+        let engine = match make_engine(&db_path) {
             Ok(e) => e,
             Err(_) => {
                 eprintln!("SKIP: Could not create memory engine");
@@ -54,7 +64,7 @@ mod memory_stress_tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("stress_multi");
 
-        let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+        let engine = match make_engine(&db_path) {
             Ok(e) => e,
             Err(_) => {
                 eprintln!("SKIP: Could not create memory engine");
@@ -100,7 +110,7 @@ mod memory_stress_tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("perf_test");
 
-        let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+        let engine = match make_engine(&db_path) {
             Ok(e) => e,
             Err(_) => {
                 eprintln!("SKIP: Could not create memory engine");

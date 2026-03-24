@@ -35,7 +35,7 @@ pub fn spawn_distillation_pipeline(
     enclave: Arc<MemoryEnclave>,
     collective: Arc<MemoryEnclave>,
     llm: Arc<dyn LlmProvider>,
-    embeddings: Option<Arc<dyn EmbeddingProvider>>,
+    embeddings: Arc<dyn EmbeddingProvider>,
     _jwt_secret: String,
 ) {
     tokio::spawn(async move {
@@ -99,13 +99,14 @@ pub fn spawn_distillation_pipeline(
                                 claims.triplet.object
                             );
 
-                            // OMEGA-VIII: Generate semantic embedding if provider available
-                            let mut triplet_embedding = Vec::new();
-                            if let Some(ref provider) = embeddings {
-                                if let Ok(vec) = provider.embed(&content).await {
-                                    triplet_embedding = vec;
+                            // Generate semantic embedding for the triplet
+                            let triplet_embedding = match embeddings.embed(&content).await {
+                                Ok(vec) => vec,
+                                Err(e) => {
+                                    warn!("Failed to embed triplet: {}", e);
+                                    continue;
                                 }
-                            }
+                            };
 
                             // Index into Collective as a new MemoryEntry
                             let entry = MemoryEntry {

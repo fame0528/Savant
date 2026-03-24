@@ -42,3 +42,23 @@ pub use savant_core::utils::embeddings::EmbeddingService;
 #[cfg(feature = "kani")]
 pub use safety::verify_memory_safety;
 pub use vector_engine::SemanticVectorEngine;
+
+/// Mock embedding provider for tests — returns fixed 384-dim zero vectors.
+/// Use with `MemoryEngine::with_defaults(path, Arc::new(MockEmbeddingProvider))`.
+pub struct MockEmbeddingProvider;
+
+#[async_trait::async_trait]
+impl savant_core::traits::EmbeddingProvider for MockEmbeddingProvider {
+    async fn embed(&self, _text: &str) -> Result<Vec<f32>, savant_core::error::SavantError> {
+        Ok(vec![0.0; 384])
+    }
+    async fn embed_batch(
+        &self,
+        texts: &[&str],
+    ) -> Result<Vec<Vec<f32>>, savant_core::error::SavantError> {
+        Ok(texts.iter().map(|_| vec![0.0; 384]).collect())
+    }
+    fn dimensions(&self) -> usize {
+        384
+    }
+}

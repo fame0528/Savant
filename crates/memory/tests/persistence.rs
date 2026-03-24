@@ -1,6 +1,7 @@
 //! Memory persistence and integration tests.
 //! Tests message append/retrieve, ordering, delete cascade, and limit retrieval.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 #[tokio::test]
@@ -8,7 +9,10 @@ async fn test_lsm_message_append_and_retrieve() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test_lsm");
 
-    let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+    let engine = match savant_memory::MemoryEngine::with_defaults(
+        &db_path,
+        Arc::new(savant_memory::MockEmbeddingProvider),
+    ) {
         Ok(e) => e,
         Err(_) => {
             eprintln!("SKIP: Could not create memory engine");
@@ -31,7 +35,10 @@ async fn test_lsm_message_ordering() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test_ordering");
 
-    let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+    let engine = match savant_memory::MemoryEngine::with_defaults(
+        &db_path,
+        Arc::new(savant_memory::MockEmbeddingProvider),
+    ) {
         Ok(e) => e,
         Err(_) => {
             eprintln!("SKIP: Could not create memory engine");
@@ -65,7 +72,10 @@ async fn test_lsm_atomic_compact() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test_compact");
 
-    let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+    let engine = match savant_memory::MemoryEngine::with_defaults(
+        &db_path,
+        Arc::new(savant_memory::MockEmbeddingProvider),
+    ) {
         Ok(e) => e,
         Err(_) => {
             eprintln!("SKIP: Could not create memory engine");
@@ -99,7 +109,10 @@ async fn test_lsm_delete_session() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test_delete");
 
-    let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+    let engine = match savant_memory::MemoryEngine::with_defaults(
+        &db_path,
+        Arc::new(savant_memory::MockEmbeddingProvider),
+    ) {
         Ok(e) => e,
         Err(_) => {
             eprintln!("SKIP: Could not create memory engine");
@@ -128,7 +141,10 @@ async fn test_lsm_limit_retrieval() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test_limit");
 
-    let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+    let engine = match savant_memory::MemoryEngine::with_defaults(
+        &db_path,
+        Arc::new(savant_memory::MockEmbeddingProvider),
+    ) {
         Ok(e) => e,
         Err(_) => {
             eprintln!("SKIP: Could not create memory engine");
@@ -154,7 +170,10 @@ async fn test_lsm_high_throughput() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test_throughput");
 
-    let engine = match savant_memory::MemoryEngine::with_defaults(&db_path) {
+    let engine = match savant_memory::MemoryEngine::with_defaults(
+        &db_path,
+        Arc::new(savant_memory::MockEmbeddingProvider),
+    ) {
         Ok(e) => e,
         Err(_) => {
             eprintln!("SKIP: Could not create memory engine");

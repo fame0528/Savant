@@ -1,7 +1,9 @@
 use crate::error::SavantError;
+use crate::traits::EmbeddingProvider;
 use crate::traits::MemoryBackend;
 use crate::types::ChatMessage;
 use std::path::Path;
+use std::sync::Arc;
 use tracing::info;
 
 pub use savant_memory::MemoryEngine as SavantMemoryEngine;
@@ -12,9 +14,12 @@ pub struct FjallMemoryBackend {
 }
 
 impl FjallMemoryBackend {
-    /// Creates a new memory backend with the given storage path.
-    pub fn new(storage_path: impl AsRef<Path>) -> Result<Self, SavantError> {
-        let engine = SavantMemoryEngine::with_defaults(storage_path)
+    /// Creates a new memory backend with the given storage path and embedding provider.
+    pub fn new(
+        storage_path: impl AsRef<Path>,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+    ) -> Result<Self, SavantError> {
+        let engine = SavantMemoryEngine::with_defaults(storage_path, embedding_provider)
             .map_err(|e| SavantError::Unknown(format!("Fjall init failed: {}", e)))?;
         Ok(Self { engine })
     }

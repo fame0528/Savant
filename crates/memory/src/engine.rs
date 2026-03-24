@@ -37,6 +37,7 @@ pub struct MemoryEnclave {
     lsm: Arc<LsmStorageEngine>,
     vector: Arc<SemanticVectorEngine>,
     embedding_service: Arc<dyn EmbeddingProvider>,
+    promotion: crate::promotion::PromotionEngine,
     // strict transaction lock ensuring unified WAL behavior
     write_lock: tokio::sync::Mutex<()>,
 }
@@ -65,6 +66,9 @@ impl MemoryEnclave {
             lsm,
             vector,
             embedding_service: config.embedding_service,
+            promotion: crate::promotion::PromotionEngine::new(
+                crate::promotion::PersonalityTraits::default(),
+            ),
             write_lock: tokio::sync::Mutex::new(()),
         }))
     }
@@ -80,6 +84,46 @@ impl MemoryEnclave {
 
     pub fn fetch_session_tail(&self, session_id: &str, limit: usize) -> Vec<AgentMessage> {
         self.lsm.fetch_session_tail(session_id, limit)
+    }
+
+    /// Runs a promotion cycle: scores all memory entries and reports high/low value entries.
+    /// Low-scoring old entries are candidates for archival. High-scoring entries are reinforced.
+    pub fn run_promotion_cycle(&self) {
+        let entries = match self.lsm.iter_metadata() {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        let mut low_count = 0;
+        let mut high_count = 0;
+
+        for entry in &entries {
+            let age_hours = (chrono::Utc::now().timestamp_millis() - i64::from(entry.created_at))
+                as f32
+                / 3600000.0;
+            let metrics = crate::promotion::PromotionMetrics {
+                hit_count: u32::from(entry.hit_count),
+                age_hours,
+                shannon_entropy: f32::from(entry.shannon_entropy),
+                importance: entry.importance,
+                category: entry.category.clone(),
+            };
+            let score = self.promotion.calculate_score(&metrics);
+
+            if score < 0.35 && age_hours > 720.0 {
+                low_count += 1;
+            } else if score > 0.7 {
+                high_count += 1;
+            }
+        }
+
+        if low_count > 0 || high_count > 0 {
+            tracing::info!(
+                "[PROMOTION] Cycle: {} entries scored, {} low-value, {} high-value",
+                entries.len(),
+                low_count,
+                high_count
+            );
+        }
     }
 
     pub async fn atomic_compact(

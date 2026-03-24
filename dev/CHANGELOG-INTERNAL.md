@@ -275,6 +275,71 @@
 - 7.4: Twitch reconnection + echo → exponential backoff + fix `||` to `&&`
 - 7.5: IRC SASL race → wait for 903/904 response instead of fixed sleep
 
+#### 2026-03-23: Agent Hook System v1
+
+**File:** `core/src/hooks/mod.rs`, `agent/src/react/mod.rs`, `agent/src/react/stream.rs`
+**Result:** Extended HookRegistry with 15 events, panic-safe execution, wired into agent loop
+
+**core/hooks/mod.rs:**
+- Added `Cancel(String)` variant to `HookResult`
+- Added 9 new events: `BeforeLlmCall`, `AfterLlmCall`, `CheckSignals`, `BuildIdentity`, `ToolError`, `LlmError`, `SessionError`, `HeartbeatTick`, `TurnStart`, `TurnEnd`
+- `ModifyingHookHandler` with Cancel support (first Cancel stops chain)
+- `HookContext` extended with `session_id`, `agent_id`, `error` fields
+- Void hooks: parallel via `tokio::spawn` with `catch_unwind` (panic-safe)
+- Modifying hooks: sequential by priority with `catch_unwind`
+- 6 built-in hooks: `ToolCallLogger`, `LlmInputLogger`, `LlmOutputLogger`, `HealthMonitorHook`, `SessionLifecycleHook`, `SessionEndHook`
+
+**agent/react/mod.rs:**
+- Added `hooks: Arc<HookRegistry>` field to `AgentLoop`
+- Initialized in constructor
+- Replaced no-op `ChatDelegate` with real behavior (logs message count before LLM call)
+- Replaced no-op `HeartbeatDelegate` with real behavior (monitors turn duration, warns if >5 minutes)
+- Replaced no-op `SpeculativeDelegate` with real behavior (logs available tools for context awareness)
+
+**agent/react/stream.rs:**
+- TurnStart hook dispatch (void, before session initialization)
+- BeforeLlmCall hook dispatch (modifying, can cancel with reason)
+- AfterToolCall hook dispatch (void, after tool result)
+- TurnEnd hook dispatch (void, final event)
+
+#### 2026-03-23: Batch 5 — Enterprise Time Utilities
+
+**File:** `core/src/utils/time.rs` (NEW), 8 files updated
+**Result:** 11 `unwrap_or_default()` on system clock replaced with loud failure
+
+**core/utils/time.rs:**
+- `now_secs()` — loud failure on clock error
+- `now_millis()` — loud failure on clock error
+- `now_nanos()` — loud failure on clock error
+
+**Fixed across:**
+- security/token.rs: 3 instances → `expect()` with clear message
+- security/enclave.rs: 1 instance → `expect()`
+- core/pulse/watchdog.rs: 1 instance → `time::now_secs()`
+- gateway/auth/mod.rs: 1 instance → `time::now_secs()`
+- memory/daily_log.rs: 2 instances → `time::now_secs()`
+- memory/entities.rs: 1 instance → `time::now_millis()`
+- memory/async_backend.rs: 1 instance → `time::now_millis()`
+- memory/models.rs: 3 instances → `time::now_millis()`
+
+#### 2026-03-23: Batch 4 — Un-Integrated Features + Cleanup
+
+**Result:** 7 fixes (D4-D5 wired, D7-D13 cleaned)
+
+**D4:** Wired `defaults` field into agent discovery — model_provider and model from config
+**D5:** Wired `_send_privmsg` into IRC outbound — word-boundary-aware splitting, removed duplicate functions
+**D7-D9:** Removed emojis from watchdog.rs (2) and registry.rs (6)
+**D10-D13:** Removed blanket `#![allow(clippy::disallowed_methods)]` from discord.rs, email.rs, slack.rs, whatsapp.rs
+
+#### 2026-03-23: All Workspace Warnings Fixed
+
+**Result:** 0 errors, 0 warnings across full workspace
+
+- web.rs: Wired ChromeProjection into snapshot action (SHA256 boundary markers)
+- stream.rs: Removed dead `turn_failed` assignment, removed `mut`
+- registry.rs: Wired AgentIdentity from file contents
+- cli/main.rs: Wired `print_phase` into startup, removed unused imports
+
 #### 2026-03-21: Top 5 Competitive Features — Sovereign Audit Implementation
 
 **Source:** Ultimate Sovereign Audit — 6 competitors, ~1,000,000 LOC scanned, ~200 features catalogued

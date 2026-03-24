@@ -9,7 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.6.0] - 2026-03-22
 
-**OMEGA-VIII Production Audit + Sovereign Audit + Top 5 + MCP + Smithery + 25 Channels + Self-Repair + Hooks + Mount Security + Tauri 2.x + Auto-Updater + Splash + Dependency Check. ~6,630 LOC across 40+ files.**
+**Production Pass + OMEGA-VIII Audit + Sovereign Audit + Top 5 + MCP + Smithery + 25 Channels + Self-Repair + Hooks + Mount Security + Tauri 2.x + Auto-Updater + Splash + Dependency Check. ~6,630 LOC across 40+ files.**
+
+### Production Pass (2026-03-23)
+
+Full project audit of 100+ files across 16 crates. 87+ fixes addressing data integrity, security, agent loop stability, enterprise patterns, and production readiness.
+
+#### Critical Fixes
+- Memory: Content-hash ID generation (blake3), atomic compact with write-before-delete ordering, configurable vector dimension, ephemeral JWT secrets
+- Agent: turn_failed tracking, excluded tools integration, discovery-based context windows, turn finalization on error paths, heuristic recovery rollback
+- Gateway: Unique dashboard sessions, constant-time API comparison, CORS middleware, WebSocket frame handling, persistence error logging
+- Shell: Workspace-bounded execution via `secure_resolve_path`, 30+ destructive pattern detection, absolute path injection prevention, audit logging
+
+#### New Features
+- **Context Window Discovery**: Agent automatically detects model context window from OpenRouter API. No more hardcoded values.
+- **Web Tool**: HTTP fetch with SSRF protection, DOM-to-Markdown conversion via scraper crate, content-root detection, SHA256 boundary markers
+- **Agent Hook System**: Extended HookRegistry with 15 events, void/modifying hooks, cancel support, panic-safe execution
+- **Nostr Adapter**: Proper event signing via nostr-sdk, NIP-04 support, auto-reconnection
+- **Consolidation**: Non-LLM content-hash dedup during memory compaction
+- **Time Utilities**: Reliable `now_secs()`/`now_millis()` with loud failure on clock errors
+- **Updater Keypair Automation**: Auto-generates signing keypair on first build
+
+#### Enterprise Cleanup
+- Removed all emojis from log messages (log aggregation compatible)
+- Removed blanket clippy suppression from 4 channel adapters
+- Removed `println!` in production code (replaced with `tracing`)
+- Removed dead code (JWT signing, verify_memory_safety no-op, IRC dead functions)
+- Replaced all `unwrap_or_default()` on system clock with loud failure
+- Health checks return structured JSON
+
+#### Dependencies Added
+- `nostr-sdk = "0.44"` — Nostr protocol integration
+- `scraper = "0.21"` — DOM parsing for web tools
+- `sha2 = "0.10"` — Hashing for memory dedup
+
+---
 
 After an exhaustive competitive analysis of 6 frameworks (~1,000,000 LOC scanned, ~200 features catalogued), 22 features implemented, 25 channels built, 111 CRITICAL production violations eliminated, and full desktop app modernization.
 

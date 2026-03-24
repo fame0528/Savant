@@ -261,65 +261,6 @@ impl IrcAdapter {
         Ok(())
     }
 
-    /// Splits a message into IRC-safe chunks (accounting for UTF-8 char boundaries).
-    fn split_message(&self, message: &str, target: &str) -> Vec<String> {
-        let prefix = format!("PRIVMSG {} :", target);
-        let max_payload = IRC_MAX_MSG_BYTES
-            .saturating_sub(prefix.len())
-            .saturating_sub(2); // CRLF
-
-        if message.len() <= max_payload {
-            return vec![message.to_string()];
-        }
-
-        let mut chunks = Vec::new();
-        let mut remaining = message;
-
-        while !remaining.is_empty() {
-            // Find the largest char boundary <= max_payload
-            let split_idx = remaining
-                .char_indices()
-                .map(|(i, _)| i)
-                .take_while(|&i| i <= max_payload)
-                .last()
-                .unwrap_or(0);
-
-            if split_idx == 0 {
-                // Single character exceeds limit — take one char anyway
-                let next = remaining.chars().next();
-                if let Some(c) = next {
-                    let len = c.len_utf8();
-                    chunks.push(remaining[..len].to_string());
-                    remaining = &remaining[len..];
-                } else {
-                    break;
-                }
-            } else {
-                chunks.push(remaining[..split_idx].to_string());
-                remaining = &remaining[split_idx..];
-            }
-        }
-
-        chunks
-    }
-
-    /// Sends a PRIVMSG to a target, splitting if necessary.
-    async fn _send_privmsg(
-        &self,
-        writer: &Arc<Mutex<Option<TlsWriter>>>,
-        target: &str,
-        message: &str,
-    ) -> Result<(), SavantError> {
-        let chunks = self.split_message(message, target);
-        for chunk in chunks {
-            let line = format!("PRIVMSG {} :{}", target, chunk);
-            Self::send_raw(writer, &line).await?;
-            // Rate limit: avoid flooding
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        Ok(())
-    }
-
     /// Processes a single IRC line.
     async fn process_irc_line(
         &self,
@@ -646,52 +587,58 @@ impl IrcAdapter {
     }
 
     /// Static helper for sending PRIVMSG from the outbound loop.
+    /// Uses word-boundary-aware splitting to avoid breaking words mid-message.
     async fn send_privmsg_static(
         writer: &Arc<Mutex<Option<TlsWriter>>>,
         target: &str,
         message: &str,
     ) -> Result<(), SavantError> {
-        // Split message for 512-byte limit
         let prefix = format!("PRIVMSG {} :", target);
         let max_payload = IRC_MAX_MSG_BYTES
             .saturating_sub(prefix.len())
             .saturating_sub(2);
 
-        let chunks = if message.len() <= max_payload {
-            vec![message.to_string()]
-        } else {
-            let mut chunks = Vec::new();
-            let mut remaining = message;
-            while !remaining.is_empty() {
-                let split_idx = remaining
-                    .char_indices()
-                    .map(|(i, _)| i)
-                    .take_while(|&i| i <= max_payload)
-                    .last()
-                    .unwrap_or(0);
+        // Word-boundary-aware splitting (enterprise pattern from openclaw IRC protocol)
+        let mut chunks = Vec::new();
+        let mut remaining = message;
 
-                if split_idx == 0 {
-                    let next = remaining.chars().next();
-                    if let Some(c) = next {
-                        let len = c.len_utf8();
-                        chunks.push(remaining[..len].to_string());
-                        remaining = &remaining[len..];
-                    } else {
-                        break;
-                    }
-                } else {
-                    chunks.push(remaining[..split_idx].to_string());
-                    remaining = &remaining[split_idx..];
-                }
+        while !remaining.is_empty() {
+            if remaining.len() <= max_payload {
+                chunks.push(remaining.to_string());
+                break;
             }
-            chunks
-        };
 
+            // Find the last word boundary within the limit
+            let split_idx = remaining[..max_payload.min(remaining.len())]
+                .rfind(|c: char| c.is_whitespace())
+                .unwrap_or_else(|| {
+                    // No word boundary — find last char boundary
+                    remaining
+                        .char_indices()
+                        .map(|(i, _)| i)
+                        .take_while(|&i| i <= max_payload)
+                        .last()
+                        .unwrap_or(0)
+                });
+
+            if split_idx == 0 {
+                // Single word exceeds limit — take one char
+                let len = remaining.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                chunks.push(remaining[..len].to_string());
+                remaining = &remaining[len..];
+            } else {
+                chunks.push(remaining[..split_idx].trim_end().to_string());
+                remaining = remaining[split_idx..].trim_start();
+            }
+        }
+
+        // Send chunks with rate limiting to avoid flooding
         for chunk in chunks {
             let line = format!("PRIVMSG {} :{}", target, chunk);
             Self::send_raw(writer, &line).await?;
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
+
         Ok(())
     }
 }

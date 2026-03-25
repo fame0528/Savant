@@ -82,7 +82,9 @@ impl EventHandler for Handler {
         );
 
         // Perfection: Show immediate intent via typing indicator
-        let _ = msg.channel_id.broadcast_typing(&ctx.http).await;
+        if let Err(e) = msg.channel_id.broadcast_typing(&ctx.http).await {
+            tracing::warn!("[channels] HTTP send failed: {}", e);
+        }
 
         // 🤖 Bot Filtering: Only process messages from bots in the explicit allow-list.
         // Echo-back is handled at the Agent level via HeartbeatPulse identity pinning.
@@ -308,7 +310,9 @@ impl DiscordAdapter {
                         payload: scs.to_string(),
                     };
 
-                    let _ = nexus_scs.event_bus.send(event);
+                    if let Err(e) = nexus_scs.event_bus.send(event) {
+                        tracing::warn!("[channels] Event publish failed: {}", e);
+                    }
                 }
             });
 

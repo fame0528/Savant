@@ -123,7 +123,12 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                     })),
                 };
                 if let Ok(resp_text) = serde_json::to_string(&err_response) {
-                    let _ = socket.send(Message::Text(resp_text)).await;
+                    if let Err(e) = socket.send(Message::Text(resp_text)).await {
+                        warn!(
+                            "[mcp::server] Failed to send rate limit error response: {}",
+                            e
+                        );
+                    }
                 }
                 continue;
             }
@@ -141,7 +146,9 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                         })),
                     };
                     if let Ok(resp_text) = serde_json::to_string(&err_response) {
-                        let _ = socket.send(Message::Text(resp_text)).await;
+                        if let Err(e) = socket.send(Message::Text(resp_text)).await {
+                            warn!("[mcp::server] Failed to send parse error response: {}", e);
+                        }
                     }
                     continue;
                 }
@@ -160,7 +167,9 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                         })),
                     };
                     if let Ok(resp_text) = serde_json::to_string(&err_response) {
-                        let _ = socket.send(Message::Text(resp_text)).await;
+                        if let Err(e) = socket.send(Message::Text(resp_text)).await {
+                            warn!("[mcp::server] Failed to send auth required response: {}", e);
+                        }
                     }
                     continue;
                 }
@@ -181,7 +190,7 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
 
                         if provided_token.is_empty() {
                             // No token provided but auth is configured
-                            let _ = socket.send(Message::Text(
+                            if let Err(e) = socket.send(Message::Text(
                                 serde_json::to_string(&JsonRpcResponse {
                                     jsonrpc: "2.0".to_string(),
                                     id: req.id.clone(),
@@ -191,7 +200,9 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                                         "message": "Authentication required: provide auth_token in initialize params"
                                     })),
                                 }).unwrap_or_default()
-                            )).await;
+                            )).await {
+                                warn!("[mcp::server] Failed to send auth required response: {}", e);
+                            }
                             continue;
                         }
 
@@ -207,7 +218,7 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                             true
                         } else {
                             warn!("MCP authentication failed: invalid token");
-                            let _ = socket
+                            if let Err(e) = socket
                                 .send(Message::Text(
                                     serde_json::to_string(&JsonRpcResponse {
                                         jsonrpc: "2.0".to_string(),
@@ -220,7 +231,10 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                                     })
                                     .unwrap_or_default(),
                                 ))
-                                .await;
+                                .await
+                            {
+                                warn!("[mcp::server] Failed to send auth failed response: {}", e);
+                            }
                             continue;
                         }
                     } else {

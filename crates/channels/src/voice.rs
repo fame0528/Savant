@@ -31,7 +31,7 @@ impl VoiceAdapter {
     pub fn new(config: VoiceConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
         }
     }
@@ -176,7 +176,9 @@ impl VoiceAdapter {
                                     event_type: "voice.transcription".into(),
                                     payload: serde_json::json!({"text": text}).to_string(),
                                 };
-                                let _ = self.nexus.event_bus.send(frame);
+                                if let Err(e) = self.nexus.event_bus.send(frame) {
+                                    tracing::warn!("[channels] Event publish failed: {}", e);
+                                }
                             }
                             Err(e) => warn!("[VOICE] STT error: {}", e),
                         }

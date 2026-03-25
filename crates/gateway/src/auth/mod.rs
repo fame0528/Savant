@@ -469,7 +469,9 @@ mod tests {
 
         let result = authenticate(&frame, None).await;
         // Should still attempt auth (may succeed or fail based on verification)
-        let _ = result;
+        if let Err(e) = result {
+            tracing::warn!("[gateway::auth] Authentication attempt failed: {}", e);
+        }
     }
 
     #[tokio::test]

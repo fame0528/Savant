@@ -158,9 +158,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         Ok(ctx) => ctx,
         Err(e) => {
             tracing::error!("Authentication failed: {}", e);
-            let _ = sender
+            if let Err(e) = sender
                 .send(Message::Text("Authentication failed".to_string()))
-                .await;
+                .await
+            {
+                tracing::warn!("[gateway] Failed to send auth failure message: {}", e);
+            }
             return;
         }
     };
@@ -190,7 +193,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
             return;
         }
     };
-    let _ = sender.send(Message::Text(format!("EVENT:{}", msg))).await;
+    if let Err(e) = sender.send(Message::Text(format!("EVENT:{}", msg))).await {
+        tracing::warn!("[gateway] Failed to send agents.discovered event: {}", e);
+    }
     tracing::info!(
         "Sovereign Ignition: Hydrated sidebar for session {}",
         session_id.0
@@ -226,7 +231,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                     continue;
                 }
             };
-            let _ = out_tx.send(Message::Text(msg)).await;
+            if let Err(e) = out_tx.send(Message::Text(msg)).await {
+                tracing::warn!("[gateway] Failed to forward lane response: {}", e);
+            }
         }
     });
 
@@ -304,7 +311,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                     continue;
                 }
             };
-            let _ = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await;
+            if let Err(e) = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await {
+                tracing::warn!(
+                    "[gateway::server] Failed to send telemetry event to client: {}",
+                    e
+                );
+            }
         }
     });
 
@@ -318,7 +330,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                 payload: serde_json::json!({ "message": log_msg }).to_string(),
             };
             if let Ok(msg) = serde_json::to_string(&event) {
-                let _ = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await;
+                if let Err(e) = out_tx.send(Message::Text(format!("EVENT:{}", msg))).await {
+                    tracing::warn!("[gateway] Failed to send debug log event: {}", e);
+                }
             }
         }
     });
@@ -584,7 +598,9 @@ async fn settings_post_handler(
                         if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
                             json["model"] = serde_json::Value::String(model.clone());
                             if let Ok(updated) = serde_json::to_string_pretty(&json) {
-                                let _ = std::fs::write(&agent_json, updated);
+                                if let Err(e) = std::fs::write(&agent_json, updated) {
+                                    tracing::warn!("[gateway] Failed to write agent.json: {}", e);
+                                }
                             }
                         }
                     }
@@ -657,7 +673,7 @@ async fn settings_post_handler(
         }
 
         // Notify the Swarm via Nexus
-        let _ = state
+        if let Err(e) = state
             .nexus
             .publish(
                 "system.config.updated",
@@ -667,7 +683,10 @@ async fn settings_post_handler(
                 })
                 .to_string(),
             )
-            .await;
+            .await
+        {
+            tracing::warn!("[gateway] Failed to publish config update: {}", e);
+        }
     }
 
     Json(serde_json::json!({
@@ -696,13 +715,16 @@ async fn settings_reset_handler(State(state): State<Arc<GatewayState>>) -> impl 
     }
 
     // Notify the Swarm
-    let _ = state
+    if let Err(e) = state
         .nexus
         .publish(
             "system.config.reset",
             &serde_json::json!({"section": "ai"}).to_string(),
         )
-        .await;
+        .await
+    {
+        tracing::warn!("[gateway] Failed to publish config reset: {}", e);
+    }
 
     Json(serde_json::json!({"status": "ok", "message": "Settings restored to system defaults"}))
         .into_response()

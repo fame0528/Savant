@@ -119,7 +119,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                 };
                 self.hooks.run_void(&turn_start_ctx).await;
                 session_state.last_active = chrono::Utc::now().timestamp_millis();
-                let _ = self.memory.save_session(&session_state).await;
+                if let Err(e) = self.memory.save_session(&session_state).await { tracing::warn!("[{}] Failed to save session: {}", self.agent_id, e); }
 
                 let turn_state = savant_core::types::TurnState {
                     turn_id: turn_id.clone(),
@@ -129,7 +129,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     started_at: chrono::Utc::now().timestamp_millis(),
                     completed_at: 0,
                 };
-                let _ = self.memory.save_turn(&turn_state).await;
+                if let Err(e) = self.memory.save_turn(&turn_state).await { tracing::warn!("[{}] Failed to save turn: {}", self.agent_id, e); }
 
                 // Emit SessionStart event
                 yield Ok(AgentEvent::SessionStart {
@@ -239,10 +239,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                     started_at: turn_state.started_at,
                                     completed_at: chrono::Utc::now().timestamp_millis(),
                                 };
-                                let _ = self.memory.save_turn(&final_turn).await;
+                                if let Err(e) = self.memory.save_turn(&final_turn).await { tracing::warn!("[{}] Failed to save turn: {}", self.agent_id, e); }
                                 session_state.active_turn_id = None;
                                 session_state.last_active = chrono::Utc::now().timestamp_millis();
-                                let _ = self.memory.save_session(&session_state).await;
+                                if let Err(e) = self.memory.save_session(&session_state).await { tracing::warn!("[{}] Failed to save session: {}", self.agent_id, e); }
 
                                 yield Err(e);
                                 return;
@@ -385,10 +385,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                     started_at: turn_state.started_at,
                                     completed_at: chrono::Utc::now().timestamp_millis(),
                                 };
-                                let _ = self.memory.save_turn(&final_turn).await;
+                                if let Err(e) = self.memory.save_turn(&final_turn).await { tracing::warn!("[{}] Failed to save turn: {}", self.agent_id, e); }
                                 session_state.active_turn_id = None;
                                 session_state.last_active = chrono::Utc::now().timestamp_millis();
-                                let _ = self.memory.save_session(&session_state).await;
+                                if let Err(e) = self.memory.save_session(&session_state).await { tracing::warn!("[{}] Failed to save session: {}", self.agent_id, e); }
 
                                 yield Err(e);
                                 return;
@@ -604,7 +604,9 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                             // Report success to collective blackboard
                                             if let Some(cb) = &self.collective_blackboard {
                                                 let pressure = history.len() as f32 / 100.0;
-                                                let _ = cb.update_agent_metrics(self.agent_index, true, pressure);
+                                                if let Err(e) = cb.update_agent_metrics(self.agent_index, true, pressure) {
+                                                    tracing::warn!("[agent::stream] Failed to update success metrics on collective blackboard: {}", e);
+                                                }
                                             }
 
                                             // Self-Repair: Record tool success
@@ -622,7 +624,9 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                             // Report failure to collective blackboard
                                             if let Some(cb) = &self.collective_blackboard {
                                                 let pressure = history.len() as f32 / 100.0;
-                                                let _ = cb.update_agent_metrics(self.agent_index, false, pressure);
+                                                if let Err(e) = cb.update_agent_metrics(self.agent_index, false, pressure) {
+                                                    tracing::warn!("[agent::stream] Failed to update failure metrics on collective blackboard: {}", e);
+                                                }
                                             }
 
                                             match self.handle_heuristic_resolution(&resolution_name, e).await {
@@ -668,10 +672,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                         started_at: turn_state.started_at,
                                                         completed_at: chrono::Utc::now().timestamp_millis(),
                                                     };
-                                                    let _ = self.memory.save_turn(&final_turn).await;
+                                                    if let Err(e) = self.memory.save_turn(&final_turn).await { tracing::warn!("[{}] Failed to save turn: {}", self.agent_id, e); }
                                                     session_state.active_turn_id = None;
                                                     session_state.last_active = chrono::Utc::now().timestamp_millis();
-                                                    let _ = self.memory.save_session(&session_state).await;
+                                                    if let Err(e) = self.memory.save_session(&session_state).await { tracing::warn!("[{}] Failed to save session: {}", self.agent_id, e); }
 
                                                     yield Err(fatal);
                                                     return;
@@ -709,8 +713,8 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         if let Some(collective) = &self.collective_blackboard {
                             if let Ok(mut state) = collective.read_global_state() {
                                 state.heuristic_version = state.heuristic_version.wrapping_add(1);
-                                let _ = collective.publish_global_state(state);
-                                let _ = collective.aggregate_swarm_metrics();
+                                if let Err(e) = collective.publish_global_state(state) { tracing::warn!("[{}] Failed to publish collective state: {}", self.agent_id, e); }
+                                if let Err(e) = collective.aggregate_swarm_metrics() { tracing::warn!("[{}] Failed to aggregate swarm metrics: {}", self.agent_id, e); }
                             }
                         }
 
@@ -759,11 +763,11 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     started_at: turn_state.started_at,
                     completed_at: chrono::Utc::now().timestamp_millis(),
                 };
-                let _ = self.memory.save_turn(&final_turn).await;
+                if let Err(e) = self.memory.save_turn(&final_turn).await { tracing::warn!("[{}] Failed to save turn: {}", self.agent_id, e); }
 
                 session_state.active_turn_id = None;
                 session_state.last_active = chrono::Utc::now().timestamp_millis();
-                let _ = self.memory.save_session(&session_state).await;
+                if let Err(e) = self.memory.save_session(&session_state).await { tracing::warn!("[{}] Failed to save session: {}", self.agent_id, e); }
 
                 // === Hook: Turn End (void) ===
                 let turn_end_ctx = savant_core::hooks::HookContext {

@@ -97,9 +97,15 @@ impl IgnitionService {
         nexus
             .update_state("system.agents".to_string(), discovery_event.to_string())
             .await;
-        let _ = nexus
+        if let Err(e) = nexus
             .publish("agents.discovered", &discovery_event.to_string())
-            .await;
+            .await
+        {
+            tracing::warn!(
+                "[agent::ignition] Failed to publish agents.discovered event: {}",
+                e
+            );
+        }
 
         // 6. Swarm Controller
         let swarm_config = SwarmConfig {

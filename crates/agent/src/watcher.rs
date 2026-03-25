@@ -33,7 +33,9 @@ impl SwarmWatcher {
             move |res: DebounceEventResult| {
                 if let Ok(events) = res {
                     for event in events {
-                        let _ = tx.blocking_send(event.path);
+                        if let Err(e) = tx.blocking_send(event.path) {
+                            tracing::warn!("[agent::watcher] Failed to send file event: {}", e);
+                        }
                     }
                 }
             },
@@ -41,7 +43,12 @@ impl SwarmWatcher {
 
         let workspaces = self.manager._config.project_root.join("workspaces");
         if !workspaces.exists() {
-            let _ = std::fs::create_dir_all(&workspaces);
+            if let Err(e) = std::fs::create_dir_all(&workspaces) {
+                tracing::warn!(
+                    "[agent::watcher] Failed to create workspaces directory: {}",
+                    e
+                );
+            }
         }
         let workspaces = workspaces.canonicalize().unwrap_or(workspaces);
 
@@ -85,10 +92,13 @@ impl SwarmWatcher {
                                         "image": a.identity.as_ref().and_then(|i| i.image.clone())
                                     })).collect::<Vec<_>>()
                                 });
-                                let _ = self
+                                if let Err(e) = self
                                     .nexus
                                     .publish("agents.discovered", &discovery_event.to_string())
-                                    .await;
+                                    .await
+                                {
+                                    tracing::warn!("[agent::watcher] Failed to publish agent discovery event: {}", e);
+                                }
                                 self.nexus
                                     .update_state(
                                         "system.agents".to_string(),

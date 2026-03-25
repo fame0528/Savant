@@ -28,9 +28,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::plugins::WasmToolHost;
+use dashmap::DashMap;
 use savant_echo::{ComponentMetrics, EchoCompiler, HotSwappableRegistry};
 use std::sync::atomic::{AtomicU8, Ordering};
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -68,7 +68,7 @@ pub struct SwarmController {
     manager: Arc<AgentManager>,
     agents: Vec<AgentConfig>,
     client: Client,
-    handles: Mutex<HashMap<String, (JoinHandle<()>, CancellationToken)>>,
+    handles: DashMap<String, (JoinHandle<()>, CancellationToken)>,
     tools: Arc<HashMap<String, Arc<dyn Tool>>>,
     engine: Arc<MemoryEngine>,
     embedding_service: Arc<dyn EmbeddingProvider>,
@@ -85,13 +85,14 @@ pub struct SwarmController {
     echo_host: Arc<WasmToolHost>,
     collective_blackboard: Arc<CollectiveBlackboard>,
     agent_index_counter: AtomicU8,
-    dead_agents: Mutex<Vec<String>>,
+    dead_agents: DashMap<String, ()>,
     /// MCP server endpoints to connect on agent spawn
     mcp_servers: Vec<savant_core::config::McpServerEntry>,
 }
 
 impl SwarmController {
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::disallowed_methods)]
     pub async fn new(
         config: SwarmConfig,
         agents: Vec<AgentConfig>,
@@ -195,8 +196,14 @@ impl SwarmController {
             storage,
             manager,
             agents,
-            client: Client::new(),
-            handles: Mutex::new(HashMap::new()),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(12))
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .pool_max_idle_per_host(4)
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()
+                .expect("CRITICAL: Failed to build secure HTTP client"),
+            handles: DashMap::new(),
             tools,
             engine,
             embedding_service,
@@ -212,7 +219,7 @@ impl SwarmController {
             echo_host,
             collective_blackboard,
             agent_index_counter: AtomicU8::new(1),
-            dead_agents: Mutex::new(Vec::new()),
+            dead_agents: DashMap::new(),
             mcp_servers,
         })
     }
@@ -674,15 +681,11 @@ impl SwarmController {
             pulse.start(agent_loop).await;
         });
 
-        let mut lock = self.handles.lock().await;
-        lock.insert(agent_id, (handle, shutdown_token));
+        self.handles.insert(agent_id, (handle, shutdown_token));
     }
 
     pub async fn evacuate_agent(&self, agent_id: &str) {
-        if let Some((handle, token)) = {
-            let mut lock = self.handles.lock().await;
-            lock.remove(agent_id)
-        } {
+        if let Some((_, (handle, token))) = self.handles.remove(agent_id) {
             tracing::info!(
                 "Evacuating agent: {} (triggering graceful shutdown)",
                 agent_id
@@ -699,17 +702,15 @@ impl SwarmController {
                 }
             }
 
-            let mut dead = self.dead_agents.lock().await;
-            if !dead.contains(&agent_id.to_string()) {
-                dead.push(agent_id.to_string());
-            }
+            self.dead_agents.insert(agent_id.to_string(), ());
         }
     }
 
     pub async fn check_swarm_health(&self) -> Vec<String> {
-        let mut dead_agents = self.dead_agents.lock().await.clone();
-        let lock = self.handles.lock().await;
-        for (id, (handle, _)) in lock.iter() {
+        let mut dead_agents: Vec<String> =
+            self.dead_agents.iter().map(|r| r.key().clone()).collect();
+        for entry in self.handles.iter() {
+            let (id, (handle, _)) = entry.pair();
             if handle.is_finished() && !dead_agents.contains(id) {
                 dead_agents.push(id.clone());
             }
@@ -722,7 +723,7 @@ impl SwarmController {
     }
 
     pub async fn active_agents_count(&self) -> usize {
-        self.handles.lock().await.len()
+        self.handles.len()
     }
 }
 // force recompile

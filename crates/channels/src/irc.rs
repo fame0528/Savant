@@ -797,7 +797,13 @@ impl IrcAdapter {
                 outbound_adapter.run_outbound_loop().await;
             });
 
-            let _ = tokio::join!(conn_handle, outbound_handle);
+            let (conn_result, outbound_result) = tokio::join!(conn_handle, outbound_handle);
+            if let Err(e) = conn_result {
+                tracing::warn!("[channels] IRC connection task failed: {}", e);
+            }
+            if let Err(e) = outbound_result {
+                tracing::warn!("[channels] IRC outbound task failed: {}", e);
+            }
             error!("[IRC] Background task terminated.");
         })
     }

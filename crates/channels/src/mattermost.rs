@@ -23,7 +23,7 @@ impl MattermostAdapter {
     pub fn new(config: MattermostConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
         }
     }
@@ -124,7 +124,9 @@ impl MattermostAdapter {
                                         payload: serde_json::to_string(&msg)
                                             .unwrap_or_else(|_| "{}".to_string()),
                                     };
-                                    let _ = adapter.nexus.event_bus.send(frame);
+                                    if let Err(e) = adapter.nexus.event_bus.send(frame) {
+                                        tracing::warn!("[channels] Event publish failed: {}", e);
+                                    }
                                 }
                             }
                         }

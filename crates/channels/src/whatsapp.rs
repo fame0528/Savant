@@ -118,7 +118,9 @@ impl WhatsAppAdapter {
                                 })
                                 .to_string(),
                             };
-                            let _ = tx.send(frame);
+                            if let Err(e) = tx.send(frame) {
+                                tracing::warn!("[channels] Channel send failed: {}", e);
+                            }
                         }
                         WhatsAppMessage::Status { state } => {
                             info!("WhatsApp sidecar status: {}", state);
@@ -151,7 +153,9 @@ impl Drop for WhatsAppAdapter {
         // Kill child process if still running
         if let Ok(mut lock) = self.child_process.try_lock() {
             if let Some(mut child) = lock.take() {
-                let _ = child.start_kill();
+                if let Err(e) = child.start_kill() {
+                    tracing::warn!("[channels] Process kill failed: {}", e);
+                }
             }
         }
     }

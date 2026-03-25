@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use lru::LruCache;
 use std::num::NonZeroUsize;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use tracing::info;
 
 /// Cache capacity — 1000 is always non-zero.
@@ -23,7 +23,7 @@ const CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(1000) {
 /// so this service can be wrapped in `Arc` and shared across async tasks.
 pub struct EmbeddingService {
     model: Mutex<TextEmbedding>,
-    cache: Mutex<LruCache<String, Vec<f32>>>,
+    cache: RwLock<LruCache<String, Vec<f32>>>,
 }
 
 #[async_trait]
@@ -55,7 +55,7 @@ impl EmbeddingService {
 
         Ok(Self {
             model: Mutex::new(model),
-            cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),
+            cache: RwLock::new(LruCache::new(CACHE_CAPACITY)),
         })
     }
 
@@ -69,13 +69,13 @@ impl EmbeddingService {
     /// This is a synchronous method. When calling from async code, use
     /// `EmbeddingProvider::embed` or wrap this in `tokio::task::spawn_blocking`.
     pub fn embed_sync(&self, text: &str) -> Result<Vec<f32>, SavantError> {
-        // Check cache first
+        // Check cache first (read lock — concurrent reads allowed)
         {
-            let mut cache = self
+            let cache = self
                 .cache
-                .lock()
+                .read()
                 .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
-            if let Some(embedding) = cache.get(text) {
+            if let Some(embedding) = cache.peek(text) {
                 return Ok(embedding.clone());
             }
         }
@@ -93,11 +93,11 @@ impl EmbeddingService {
             embeddings[0].clone()
         };
 
-        // Cache the result
+        // Cache the result (write lock)
         {
             let mut cache = self
                 .cache
-                .lock()
+                .write()
                 .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
             cache.put(text_owned, result.clone());
         }
@@ -119,15 +119,15 @@ impl EmbeddingService {
         let mut uncached_indices = Vec::new();
         let mut uncached_texts = Vec::new();
 
-        // Check cache for each text
+        // Check cache for each text (read lock)
         {
-            let mut cache = self
+            let cache = self
                 .cache
-                .lock()
+                .read()
                 .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
 
             for (i, text) in texts.iter().enumerate() {
-                if let Some(embedding) = cache.get(*text) {
+                if let Some(embedding) = cache.peek(*text) {
                     results.push(Some(embedding.clone()));
                 } else {
                     results.push(None);
@@ -150,10 +150,10 @@ impl EmbeddingService {
                     .map_err(|e| SavantError::Unknown(format!("Batch embedding error: {}", e)))?
             };
 
-            // Populate results and cache
+            // Populate results and cache (write lock)
             let mut cache = self
                 .cache
-                .lock()
+                .write()
                 .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
 
             for (idx, embedding) in uncached_indices.iter().zip(batch_embeddings.iter()) {
@@ -171,13 +171,12 @@ impl EmbeddingService {
 
     /// Clears the embedding cache.
     pub fn clear_cache(&self) {
-        if let Ok(mut cache) = self.cache.lock() {
+        if let Ok(mut cache) = self.cache.write() {
             cache.clear();
         }
     }
 
-    /// Returns the current cache size.
     pub fn cache_size(&self) -> usize {
-        self.cache.lock().map(|c| c.len()).unwrap_or(0)
+        self.cache.read().map(|c| c.len()).unwrap_or(0)
     }
 }

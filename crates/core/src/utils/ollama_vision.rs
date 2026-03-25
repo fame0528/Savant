@@ -23,7 +23,7 @@ impl OllamaVisionService {
             model, url
         );
         Self {
-            client: reqwest::Client::new(),
+            client: crate::net::secure_client(),
             url,
             model,
         }
@@ -35,7 +35,7 @@ impl OllamaVisionService {
             model, url
         );
         Self {
-            client: reqwest::Client::new(),
+            client: crate::net::secure_client(),
             url: url.to_string(),
             model: model.to_string(),
         }

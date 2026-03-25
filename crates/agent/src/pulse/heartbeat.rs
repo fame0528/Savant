@@ -192,7 +192,14 @@ impl HeartbeatPulse {
                                     tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
-                                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                                    if let Err(e) = self.nexus.publish("chat.chunk", &payload).await
+                                    {
+                                        tracing::warn!(
+                                            "[{}] Failed to publish telemetry: {}",
+                                            self.agent.agent_name,
+                                            e
+                                        );
+                                    }
                                 }
                             }
                             Ok(AgentEvent::Action { name, args }) => {
@@ -217,7 +224,14 @@ impl HeartbeatPulse {
                                     tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
-                                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                                    if let Err(e) = self.nexus.publish("chat.chunk", &payload).await
+                                    {
+                                        tracing::warn!(
+                                            "[{}] Failed to publish telemetry: {}",
+                                            self.agent.agent_name,
+                                            e
+                                        );
+                                    }
                                 }
                             }
                             Ok(AgentEvent::Reflection(r)) => {
@@ -235,7 +249,14 @@ impl HeartbeatPulse {
                                     tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
-                                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                                    if let Err(e) = self.nexus.publish("chat.chunk", &payload).await
+                                    {
+                                        tracing::warn!(
+                                            "[{}] Failed to publish telemetry: {}",
+                                            self.agent.agent_name,
+                                            e
+                                        );
+                                    }
                                 }
 
                                 let emitter = crate::learning::emitter::LearningEmitter::new(
@@ -243,7 +264,13 @@ impl HeartbeatPulse {
                                     memory_clone.clone(),
                                     self.nexus.clone(),
                                 );
-                                let _ = emitter.emit_emergent(r, None).await;
+                                if let Err(e) = emitter.emit_emergent(r, None).await {
+                                    tracing::warn!(
+                                        "[{}] Failed to emit emergent learning: {}",
+                                        self.agent.agent_name,
+                                        e
+                                    );
+                                }
                             }
                             Ok(AgentEvent::Observation(o)) => {
                                 debug!("[{}] Observation: {}", self.agent.agent_name, o);
@@ -261,7 +288,14 @@ impl HeartbeatPulse {
                                     tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
-                                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                                    if let Err(e) = self.nexus.publish("chat.chunk", &payload).await
+                                    {
+                                        tracing::warn!(
+                                            "[{}] Failed to publish telemetry: {}",
+                                            self.agent.agent_name,
+                                            e
+                                        );
+                                    }
                                 }
                             }
                             Ok(AgentEvent::FinalAnswer(a)) => {
@@ -287,7 +321,14 @@ impl HeartbeatPulse {
                                     tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
-                                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                                    if let Err(e) = self.nexus.publish("chat.chunk", &payload).await
+                                    {
+                                        tracing::warn!(
+                                            "[{}] Failed to publish observation telemetry: {}",
+                                            self.agent.agent_name,
+                                            e
+                                        );
+                                    }
                                 }
                             }
                             Ok(AgentEvent::StatusUpdate(s)) => {
@@ -305,7 +346,14 @@ impl HeartbeatPulse {
                                     tool_calls: None,
                                 };
                                 if let Ok(payload) = serde_json::to_string(&chunk) {
-                                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                                    if let Err(e) = self.nexus.publish("chat.chunk", &payload).await
+                                    {
+                                        tracing::warn!(
+                                            "[{}] Failed to publish status telemetry: {}",
+                                            self.agent.agent_name,
+                                            e
+                                        );
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -496,9 +544,16 @@ impl HeartbeatPulse {
                         Ok(AgentEvent::FinalAnswer(a)) => current_dialogue = a,
                         Ok(AgentEvent::FinalAnswerChunk(c)) => current_dialogue.push_str(&c),
                         Ok(AgentEvent::Reflection(r)) => {
-                            let _ = emitter
+                            if let Err(e) = emitter
                                 .emit_emergent(format!("# [{}] {}", lens_id, r), None)
-                                .await;
+                                .await
+                            {
+                                tracing::warn!(
+                                    "[{}] Failed to emit emergent learning: {}",
+                                    self.agent.agent_name,
+                                    e
+                                );
+                            }
                         }
                         Ok(AgentEvent::Action { name, args }) => {
                             if name == "heartbeat" {
@@ -580,7 +635,13 @@ impl HeartbeatPulse {
                     tool_calls: None,
                 };
                 if let Ok(payload) = serde_json::to_string(&chunk) {
-                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                    if let Err(e) = self.nexus.publish("chat.chunk", &payload).await {
+                        tracing::warn!(
+                            "[{}] Failed to publish pulse telemetry: {}",
+                            self.agent.agent_name,
+                            e
+                        );
+                    }
                 }
             }
             break;
@@ -604,12 +665,19 @@ impl HeartbeatPulse {
                     "[{}] Internal reflection captured during stillness.",
                     self.agent.agent_name
                 );
-                let _ = emitter
+                if let Err(e) = emitter
                     .emit_emergent(
                         format!("# [{}] {}", lens_id, pulse_thought),
                         Some(savant_core::learning::LearningCategory::Insight),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(
+                        "[{}] Failed to emit stillness reflection: {}",
+                        self.agent.agent_name,
+                        e
+                    );
+                }
             } else {
                 info!("[{}] Complete stillness maintained.", self.agent.agent_name);
             }
@@ -627,7 +695,13 @@ impl HeartbeatPulse {
         // AAA: Sovereign Distillation (OMEGA-VIII)
         if !pulse_thought.is_empty() || !pulse_dialogue.is_empty() {
             let summary = format!("Thought: {}\nDialogue: {}", pulse_thought, pulse_dialogue);
-            let _ = self.proactive.distill_context(&summary);
+            if let Err(e) = self.proactive.distill_context(&summary) {
+                tracing::warn!(
+                    "[{}] Failed to distill context: {}",
+                    self.agent.agent_name,
+                    e
+                );
+            }
             buffer.context_summary = summary.clone();
 
             // 🛡️ Perfection Loop: If we have dialogue but no notification was requested yet,
@@ -650,16 +724,29 @@ impl HeartbeatPulse {
                 is_telemetry: false,
             };
             if let Ok(payload) = serde_json::to_string(&final_msg) {
-                let _ = self.nexus.publish("chat.message", &payload).await;
-                info!(
-                    "[{}] Heartbeat notification successfully routed to Main Chat.",
-                    self.agent.agent_name
-                );
+                if let Err(e) = self.nexus.publish("chat.message", &payload).await {
+                    tracing::warn!(
+                        "[{}] Failed to publish heartbeat notification: {}",
+                        self.agent.agent_name,
+                        e
+                    );
+                } else {
+                    info!(
+                        "[{}] Heartbeat notification successfully routed to Main Chat.",
+                        self.agent.agent_name
+                    );
+                }
             }
         }
 
         // Commit to WAL
-        let _ = self.proactive.commit_state(&buffer);
+        if let Err(e) = self.proactive.commit_state(&buffer) {
+            tracing::warn!(
+                "[{}] Failed to commit proactive state: {}",
+                self.agent.agent_name,
+                e
+            );
+        }
 
         // AAA: Autonomous Lesson Distillation (ALD) (Phase 19: Watermark Model)
         let ald = crate::learning::ald::ALDEngine::new(self.agent.workspace_path.clone());
@@ -691,12 +778,19 @@ impl HeartbeatPulse {
         }
 
         if !full_payload.trim().is_empty() {
-            let _ = emitter
+            if let Err(e) = emitter
                 .emit_emergent(
                     format!("# [{}] {}", lens_id, full_payload),
                     Some(savant_core::learning::LearningCategory::Insight),
                 )
-                .await;
+                .await
+            {
+                tracing::warn!(
+                    "[{}] Failed to emit full pulse emergent: {}",
+                    self.agent.agent_name,
+                    e
+                );
+            }
         }
 
         // 🛰️ Final Telemetry Message (Standardized Lane for History)
@@ -713,7 +807,13 @@ impl HeartbeatPulse {
             };
 
             if let Ok(payload) = serde_json::to_string(&final_msg) {
-                let _ = self.nexus.publish("chat.message", &payload).await;
+                if let Err(e) = self.nexus.publish("chat.message", &payload).await {
+                    tracing::warn!(
+                        "[{}] Failed to publish final telemetry: {}",
+                        self.agent.agent_name,
+                        e
+                    );
+                }
             }
         }
 

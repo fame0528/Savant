@@ -28,7 +28,7 @@ impl RedditAdapter {
     pub fn new(config: RedditConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
             access_token: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -166,7 +166,9 @@ impl RedditAdapter {
                                     event_type: "chat.message".into(),
                                     payload: serde_json::to_string(&chat_msg).unwrap_or_default(),
                                 };
-                                let _ = adapter.nexus.event_bus.send(frame);
+                                if let Err(e) = adapter.nexus.event_bus.send(frame) {
+                                    tracing::warn!("[channels] Event publish failed: {}", e);
+                                }
                             }
                         }
                     }

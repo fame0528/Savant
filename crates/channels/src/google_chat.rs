@@ -20,7 +20,7 @@ impl GoogleChatAdapter {
     pub fn new(config: GoogleChatConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
         }
     }

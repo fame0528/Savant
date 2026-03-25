@@ -145,7 +145,9 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         yield Ok(SpeculativeEvent::Action { name: tool_name.clone(), args: args.clone() });
 
                         // Execute tool immediately for validation (increases confidence)
-                        let _ = self.execute_tool(&tool_name, &args).await;
+                        if let Err(e) = self.execute_tool(&tool_name, &args).await {
+                            tracing::warn!("[agent::speculative] Failed to execute tool {}: {}", tool_name, e);
+                        }
                         speculative_steps.push((tool_name, args, "Ok".to_string()));
                     } else {
                         // No action found - might be final answer or reflection

@@ -74,3 +74,15 @@ push-to-github.bat
 
 # Research & Competitors
 /research/
+/docs/research/
+/archives/
+/dev/
+
+# Internal audit and process docs
+AUDIT-REPORT.MD
+docs/AUDIT-REPORT.md
+docs/perfection_loop.md
+docs/SYSTEM-UPDATE-*.md
+docs/Ranking*.md
+docs/CHEATSHEET.md
+docs/prompts/

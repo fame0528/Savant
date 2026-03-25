@@ -287,7 +287,9 @@ impl EmailAdapter {
                 let mut session = client
                     .login(&config.username, &config.password)
                     .map_err(|e| SavantError::AuthError(format!("Login error: {}", e.0)))?;
-                let _ = session.logout();
+                if let Err(e) = session.logout() {
+                    tracing::warn!("[channels] IMAP session logout failed: {}", e);
+                }
                 Ok::<(), SavantError>(())
             })
             .await
@@ -523,12 +525,14 @@ impl EmailAdapter {
             // Extract body
             let body = Self::extract_body_text(msg.body().unwrap_or(&[]));
 
-            let _ = tx.send(InboundEmail {
+            if let Err(e) = tx.send(InboundEmail {
                 message_id,
                 sender_email,
                 subject,
                 body,
-            });
+            }) {
+                tracing::warn!("[channels] Channel send failed: {}", e);
+            }
         }
 
         Ok(())
@@ -680,7 +684,9 @@ impl EmailAdapter {
                         payload: scs.to_string(),
                     };
 
-                    let _ = nexus_scs.event_bus.send(event);
+                    if let Err(e) = nexus_scs.event_bus.send(event) {
+                        tracing::warn!("[channels] Event publish failed: {}", e);
+                    }
                 }
             });
 

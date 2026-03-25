@@ -37,7 +37,12 @@ impl HeartbeatScheduler {
 
             Box::pin(async move {
                 tracing::info!("Triggered heartbeat job: {}", task_id);
-                let _ = tx.send(command);
+                if let Err(e) = tx.send(command) {
+                    tracing::warn!(
+                        "[core::heartbeat] Failed to send heartbeat command: {:?}",
+                        e
+                    );
+                }
             })
         })
         .map_err(|e| SavantError::Unknown(format!("Job creation error: {}", e)))?;

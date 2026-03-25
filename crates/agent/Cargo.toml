@@ -1,6 +1,6 @@
 [package]
 name = "savant_agent"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
 [dependencies]
@@ -28,6 +28,7 @@ async-trait = "0.1"
 async-stream = "0.3"
 bytes = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+dashmap = { workspace = true }
 rand = { workspace = true }
 rusqlite = { version = "0.38.0", features = ["chrono"] }
 notify = "8.2.0"

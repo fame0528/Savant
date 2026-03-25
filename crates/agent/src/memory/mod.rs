@@ -114,7 +114,13 @@ impl MemoryBackend for FileLoggingMemoryBackend {
     async fn store(&self, agent_id: &str, message: &ChatMessage) -> Result<(), SavantError> {
         // 🛡️ Sovereign Routing: Use the channel type, not string heuristics
         if message.channel == savant_core::types::AgentOutputChannel::Memory {
-            let _ = self.record_learning(agent_id, &message.content).await;
+            if let Err(e) = self.record_learning(agent_id, &message.content).await {
+                tracing::warn!(
+                    "[agent::memory] Failed to record learning for agent {}: {}",
+                    agent_id,
+                    e
+                );
+            }
         }
 
         self.inner.store(agent_id, message).await
@@ -163,7 +169,12 @@ impl MemoryBackend for FileLoggingMemoryBackend {
                                     )),
                                     channel: savant_core::types::AgentOutputChannel::Memory,
                                 };
-                                let _ = self.inner.store("swarm.insights", &msg).await;
+                                if let Err(e) = self.inner.store("swarm.insights", &msg).await {
+                                    tracing::warn!(
+                                        "[agent::memory] Failed to store swarm insight entry: {}",
+                                        e
+                                    );
+                                }
                             }
                         }
                     }

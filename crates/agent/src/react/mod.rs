@@ -1,6 +1,7 @@
 use crate::budget::TokenBudget;
 use crate::context::ContextAssembler;
 use crate::plugins::WasmToolHost;
+use futures::StreamExt;
 use savant_cognitive::DspPredictor;
 use savant_core::traits::{LlmProvider, MemoryBackend, Tool, VisionProvider};
 use savant_core::types::AgentIdentity;
@@ -80,11 +81,32 @@ impl<M: MemoryBackend> LoopDelegate<M> for ChatDelegate {
     }
     async fn call_llm(
         &self,
-        _ctx: &mut LoopContext<'_, M>,
+        ctx: &mut LoopContext<'_, M>,
     ) -> Result<ChatResponse, savant_core::error::SavantError> {
+        let tool_schemas: Vec<serde_json::Value> = ctx
+            .loop_state
+            .tools
+            .iter()
+            .map(|t| t.parameters_schema())
+            .collect();
+        let messages = ctx.loop_state.context.build_messages(vec![]);
+        let mut stream = ctx
+            .loop_state
+            .provider
+            .stream_completion(messages, tool_schemas)
+            .await?;
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        while let Some(chunk_res) = stream.next().await {
+            let chunk = chunk_res?;
+            content.push_str(&chunk.content);
+            if let Some(calls) = chunk.tool_calls {
+                tool_calls.extend(calls);
+            }
+        }
         Ok(ChatResponse {
-            content: String::new(),
-            tool_calls: vec![],
+            content,
+            tool_calls,
         })
     }
     async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction {
@@ -130,11 +152,32 @@ impl<M: MemoryBackend> LoopDelegate<M> for HeartbeatDelegate {
     }
     async fn call_llm(
         &self,
-        _ctx: &mut LoopContext<'_, M>,
+        ctx: &mut LoopContext<'_, M>,
     ) -> Result<ChatResponse, savant_core::error::SavantError> {
+        let tool_schemas: Vec<serde_json::Value> = ctx
+            .loop_state
+            .tools
+            .iter()
+            .map(|t| t.parameters_schema())
+            .collect();
+        let messages = ctx.loop_state.context.build_messages(vec![]);
+        let mut stream = ctx
+            .loop_state
+            .provider
+            .stream_completion(messages, tool_schemas)
+            .await?;
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        while let Some(chunk_res) = stream.next().await {
+            let chunk = chunk_res?;
+            content.push_str(&chunk.content);
+            if let Some(calls) = chunk.tool_calls {
+                tool_calls.extend(calls);
+            }
+        }
         Ok(ChatResponse {
-            content: String::new(),
-            tool_calls: vec![],
+            content,
+            tool_calls,
         })
     }
     async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction {
@@ -171,11 +214,32 @@ impl<M: MemoryBackend> LoopDelegate<M> for SpeculativeDelegate {
     }
     async fn call_llm(
         &self,
-        _ctx: &mut LoopContext<'_, M>,
+        ctx: &mut LoopContext<'_, M>,
     ) -> Result<ChatResponse, savant_core::error::SavantError> {
+        let tool_schemas: Vec<serde_json::Value> = ctx
+            .loop_state
+            .tools
+            .iter()
+            .map(|t| t.parameters_schema())
+            .collect();
+        let messages = ctx.loop_state.context.build_messages(vec![]);
+        let mut stream = ctx
+            .loop_state
+            .provider
+            .stream_completion(messages, tool_schemas)
+            .await?;
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        while let Some(chunk_res) = stream.next().await {
+            let chunk = chunk_res?;
+            content.push_str(&chunk.content);
+            if let Some(calls) = chunk.tool_calls {
+                tool_calls.extend(calls);
+            }
+        }
         Ok(ChatResponse {
-            content: String::new(),
-            tool_calls: vec![],
+            content,
+            tool_calls,
         })
     }
     async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction {

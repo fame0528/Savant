@@ -111,7 +111,9 @@ impl SessionLane {
                     request_id: frame.request_id.clone(),
                     payload: response_payload,
                 };
-                let _ = response_tx.send(response).await;
+                if let Err(e) = response_tx.send(response).await {
+                    tracing::warn!("[gateway] Failed to send lane response: {}", e);
+                }
             }
         });
     }

@@ -33,7 +33,7 @@ impl OllamaEmbeddingService {
             model, url
         );
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: crate::net::secure_client(),
             url,
             model,
             cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),
@@ -46,7 +46,7 @@ impl OllamaEmbeddingService {
             model, url
         );
         Self {
-            client: reqwest::Client::new(),
+            client: crate::net::secure_client(),
             url: url.to_string(),
             model: model.to_string(),
             cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),

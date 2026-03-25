@@ -21,7 +21,9 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DebugLogLayer {
         event.record(&mut visitor);
         let meta = event.metadata();
         let msg = format!("[{}] {}", meta.level(), visitor.message);
-        let _ = savant_core::bus::debug_log_sender().send(msg);
+        if let Err(e) = savant_core::bus::debug_log_sender().send(msg) {
+            tracing::warn!("[cli] Failed to send debug log message: {}", e);
+        }
     }
 }
 
@@ -610,7 +612,7 @@ async fn main() -> Result<()> {
     let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    let _ = tracing_subscriber::registry()
+    if let Err(e) = tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(filter))
         .with(
             tracing_subscriber::fmt::layer()
@@ -621,7 +623,10 @@ async fn main() -> Result<()> {
                 .with_line_number(false),
         )
         .with(DebugLogLayer)
-        .try_init();
+        .try_init()
+    {
+        tracing::warn!("[cli] Failed to initialize tracing subscriber: {}", e);
+    }
 
     match args.command {
         Some(Commands::TestSkill {

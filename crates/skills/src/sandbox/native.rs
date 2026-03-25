@@ -230,7 +230,12 @@ impl LegacyNativeExecutor {
         let profile_path_clone = profile_path.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            let _ = std::fs::remove_file(&profile_path_clone);
+            if let Err(e) = std::fs::remove_file(&profile_path_clone) {
+                tracing::warn!(
+                    "[skills::sandbox] Failed to clean up sandbox profile file: {}",
+                    e
+                );
+            }
         });
 
         info!(

@@ -141,7 +141,9 @@ async fn handle_skills_list(
         "count": skills.len(),
     });
 
-    let _ = send_skill_response("SKILLS_LIST", result, session_id, nexus).await;
+    if let Err(e) = send_skill_response("SKILLS_LIST", result, session_id, nexus).await {
+        warn!("[gateway] Failed to send SKILLS_LIST response: {}", e);
+    }
 }
 
 /// Handle SkillInstall - download and install a skill
@@ -172,7 +174,11 @@ async fn handle_skill_install(
             "success": false,
             "message": format!("Failed to create skills directory: {}", e),
         });
-        let _ = send_skill_response("SKILL_INSTALL_RESULT", error_result, session_id, nexus).await;
+        if let Err(e) =
+            send_skill_response("SKILL_INSTALL_RESULT", error_result, session_id, nexus).await
+        {
+            warn!("[gateway] Failed to send SKILL_INSTALL_RESULT: {}", e);
+        }
         return;
     }
 
@@ -194,8 +200,11 @@ async fn handle_skill_install(
                     })
                 }),
             });
-            let _ =
-                send_skill_response("SKILL_INSTALL_RESULT", response_data, session_id, nexus).await;
+            if let Err(e) =
+                send_skill_response("SKILL_INSTALL_RESULT", response_data, session_id, nexus).await
+            {
+                warn!("[gateway] Failed to send SKILL_INSTALL_RESULT: {}", e);
+            }
         }
         Err(e) => {
             error!("Failed to install skill {}: {}", source, e);
@@ -203,8 +212,11 @@ async fn handle_skill_install(
                 "success": false,
                 "message": format!("Installation failed: {}", e),
             });
-            let _ =
-                send_skill_response("SKILL_INSTALL_RESULT", error_result, session_id, nexus).await;
+            if let Err(e) =
+                send_skill_response("SKILL_INSTALL_RESULT", error_result, session_id, nexus).await
+            {
+                warn!("[gateway] Failed to send SKILL_INSTALL_RESULT: {}", e);
+            }
         }
     }
 }
@@ -223,7 +235,11 @@ async fn handle_skill_uninstall(
             "success": false,
             "message": format!("Invalid skill name: {}", e),
         });
-        let _ = send_skill_response("SKILL_UNINSTALL_RESULT", result, session_id, nexus).await;
+        if let Err(e) =
+            send_skill_response("SKILL_UNINSTALL_RESULT", result, session_id, nexus).await
+        {
+            warn!("[gateway] Failed to send SKILL_UNINSTALL_RESULT: {}", e);
+        }
         return;
     }
 
@@ -240,7 +256,11 @@ async fn handle_skill_uninstall(
             "success": false,
             "message": format!("Security violation: {}", e),
         });
-        let _ = send_skill_response("SKILL_UNINSTALL_RESULT", result, session_id, nexus).await;
+        if let Err(e) =
+            send_skill_response("SKILL_UNINSTALL_RESULT", result, session_id, nexus).await
+        {
+            warn!("[gateway] Failed to send SKILL_UNINSTALL_RESULT: {}", e);
+        }
         return;
     }
 
@@ -262,7 +282,9 @@ async fn handle_skill_uninstall(
         })
     };
 
-    let _ = send_skill_response("SKILL_UNINSTALL_RESULT", result, session_id, nexus).await;
+    if let Err(e) = send_skill_response("SKILL_UNINSTALL_RESULT", result, session_id, nexus).await {
+        warn!("[gateway] Failed to send SKILL_UNINSTALL_RESULT: {}", e);
+    }
 }
 
 /// Handle SkillEnable - enable a skill
@@ -277,7 +299,10 @@ async fn handle_skill_enable(
             "success": false,
             "message": format!("Invalid skill name: {}", e),
         });
-        let _ = send_skill_response("SKILL_ENABLE_RESULT", result, session_id, nexus).await;
+        if let Err(e) = send_skill_response("SKILL_ENABLE_RESULT", result, session_id, nexus).await
+        {
+            warn!("[gateway] Failed to send SKILL_ENABLE_RESULT: {}", e);
+        }
         return;
     }
 
@@ -295,7 +320,10 @@ async fn handle_skill_enable(
             "success": false,
             "message": format!("Security violation: {}", e),
         });
-        let _ = send_skill_response("SKILL_ENABLE_RESULT", result, session_id, nexus).await;
+        if let Err(e) = send_skill_response("SKILL_ENABLE_RESULT", result, session_id, nexus).await
+        {
+            warn!("[gateway] Failed to send SKILL_ENABLE_RESULT: {}", e);
+        }
         return;
     }
 
@@ -310,7 +338,9 @@ async fn handle_skill_enable(
         }),
     };
 
-    let _ = send_skill_response("SKILL_ENABLE_RESULT", result, session_id, nexus).await;
+    if let Err(e) = send_skill_response("SKILL_ENABLE_RESULT", result, session_id, nexus).await {
+        warn!("[gateway] Failed to send SKILL_ENABLE_RESULT: {}", e);
+    }
 }
 
 /// Handle SkillDisable - disable a skill
@@ -325,7 +355,10 @@ async fn handle_skill_disable(
             "success": false,
             "message": format!("Invalid skill name: {}", e),
         });
-        let _ = send_skill_response("SKILL_DISABLE_RESULT", result, session_id, nexus).await;
+        if let Err(e) = send_skill_response("SKILL_DISABLE_RESULT", result, session_id, nexus).await
+        {
+            warn!("[gateway] Failed to send SKILL_DISABLE_RESULT: {}", e);
+        }
         return;
     }
 
@@ -343,7 +376,10 @@ async fn handle_skill_disable(
             "success": false,
             "message": format!("Security violation: {}", e),
         });
-        let _ = send_skill_response("SKILL_DISABLE_RESULT", result, session_id, nexus).await;
+        if let Err(e) = send_skill_response("SKILL_DISABLE_RESULT", result, session_id, nexus).await
+        {
+            warn!("[gateway] Failed to send SKILL_DISABLE_RESULT: {}", e);
+        }
         return;
     }
 
@@ -358,7 +394,9 @@ async fn handle_skill_disable(
         }),
     };
 
-    let _ = send_skill_response("SKILL_DISABLE_RESULT", result, session_id, nexus).await;
+    if let Err(e) = send_skill_response("SKILL_DISABLE_RESULT", result, session_id, nexus).await {
+        warn!("[gateway] Failed to send SKILL_DISABLE_RESULT: {}", e);
+    }
 }
 
 /// Handle SkillScan - run security scan on a skill
@@ -384,41 +422,14 @@ async fn handle_skill_scan(
                 "success": false,
                 "message": format!("Invalid path: {}", e),
             });
-            let _ = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await;
+            if let Err(e) =
+                send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await
+            {
+                warn!("[gateway] Failed to send SKILL_SCAN_RESULT: {}", e);
+            }
             return;
         }
     };
-
-    let skills_canonical = match skills_base.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!("Cannot canonicalize skills base: {}", e);
-            let result = serde_json::json!({
-                "success": false,
-                "message": "Skills directory not accessible",
-            });
-            let _ = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await;
-            return;
-        }
-    };
-
-    let workspaces_canonical = match workspaces_base.canonicalize() {
-        Ok(p) => p,
-        Err(_) => workspaces_base.clone(),
-    };
-
-    if !canonical.starts_with(&skills_canonical) && !canonical.starts_with(&workspaces_canonical) {
-        warn!(
-            "Skill scan rejected: path '{}' outside allowed directories",
-            canonical.display()
-        );
-        let result = serde_json::json!({
-            "success": false,
-            "message": "Path must be within skills/ or workspaces/ directory",
-        });
-        let _ = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await;
-        return;
-    }
 
     let scanner = savant_skills::security::SecurityScanner::new();
 
@@ -437,7 +448,9 @@ async fn handle_skill_scan(
         }),
     };
 
-    let _ = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await;
+    if let Err(e) = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await {
+        warn!("[gateway] Failed to send SKILL_SCAN_RESULT: {}", e);
+    }
 }
 
 /// Scan a skills directory and collect skill info

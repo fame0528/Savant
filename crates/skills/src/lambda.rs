@@ -218,7 +218,7 @@ impl Default for LambdaSkillExecutor {
             // Return a no-op executor
             Self {
                 config: LambdaConfig::default(),
-                client: reqwest::Client::new(),
+                client: savant_core::net::secure_client(),
             }
         })
     }

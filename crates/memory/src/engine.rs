@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::error::MemoryError;
 use crate::lsm_engine::{LsmConfig, LsmStorageEngine};
@@ -38,8 +38,21 @@ pub struct MemoryEnclave {
     vector: Arc<SemanticVectorEngine>,
     embedding_service: Arc<dyn EmbeddingProvider>,
     promotion: crate::promotion::PromotionEngine,
-    // strict transaction lock ensuring unified WAL behavior
-    write_lock: tokio::sync::Mutex<()>,
+    // Per-session write lock pool: 64 partitions keyed by session_id hash
+    write_locks: [tokio::sync::Mutex<()>; 64],
+}
+
+impl MemoryEnclave {
+    /// Acquires the partitioned write lock for the given session.
+    async fn lock_session(&self, session_id: &str) -> tokio::sync::MutexGuard<'_, ()> {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for byte in session_id.as_bytes() {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        let idx = (hash % 64) as usize;
+        self.write_locks[idx].lock().await
+    }
 }
 
 impl MemoryEnclave {
@@ -69,7 +82,7 @@ impl MemoryEnclave {
             promotion: crate::promotion::PromotionEngine::new(
                 crate::promotion::PersonalityTraits::default(),
             ),
-            write_lock: tokio::sync::Mutex::new(()),
+            write_locks: std::array::from_fn(|_| tokio::sync::Mutex::new(())),
         }))
     }
 
@@ -78,7 +91,7 @@ impl MemoryEnclave {
         session_id: &str,
         message: &AgentMessage,
     ) -> Result<(), MemoryError> {
-        let _guard = self.write_lock.lock().await;
+        let _guard = self.lock_session(session_id).await;
         self.lsm.append_message(session_id, message)
     }
 
@@ -131,12 +144,12 @@ impl MemoryEnclave {
         session_id: &str,
         batch: Vec<AgentMessage>,
     ) -> Result<(), MemoryError> {
-        let _guard = self.write_lock.lock().await;
+        let _guard = self.lock_session(session_id).await;
         self.lsm.atomic_compact(session_id, batch)
     }
 
     pub async fn index_memory(&self, mut entry: MemoryEntry) -> Result<(), MemoryError> {
-        let _guard = self.write_lock.lock().await;
+        let _guard = self.lock_session(&entry.session_id).await;
 
         // Automatic Embedding Generation via embedding service
         if entry.embedding.is_empty() {
@@ -155,7 +168,12 @@ impl MemoryEnclave {
         if let Err(e) = self.lsm.insert_metadata(entry.id.to_native(), &entry) {
             // AAA Atomicity Rollback
             if !entry.embedding.is_empty() {
-                let _ = self.vector.remove(&entry.id.to_string());
+                if let Err(e) = self.vector.remove(&entry.id.to_string()) {
+                    warn!(
+                        "[memory::engine] Failed to rollback vector index on LSM error: {}",
+                        e
+                    );
+                }
             }
             return Err(e);
         }
@@ -164,10 +182,15 @@ impl MemoryEnclave {
     }
 
     pub async fn delete_memory(&self, id: u64) -> Result<(), MemoryError> {
-        let _guard = self.write_lock.lock().await;
+        let _guard = self.lock_session("__global__").await;
 
         // Remove from vector engine (best effort)
-        let _ = self.vector.remove(&id.to_string());
+        if let Err(e) = self.vector.remove(&id.to_string()) {
+            warn!(
+                "[memory::engine] Failed to remove vector for memory {}: {}",
+                id, e
+            );
+        }
 
         // Remove from LSM engine
         self.lsm.delete_metadata(id)
@@ -228,7 +251,7 @@ impl MemoryEnclave {
         &self,
         state: &crate::models::SessionState,
     ) -> Result<(), MemoryError> {
-        let _guard = self.write_lock.lock().await;
+        let _guard = self.lock_session(&state.session_id).await;
         self.lsm.save_session_state(state)
     }
 
@@ -248,7 +271,7 @@ impl MemoryEnclave {
         if let Some(state) = self.lsm.get_session_state(session_id)? {
             return Ok(state);
         }
-        let _guard = self.write_lock.lock().await;
+        let _guard = self.lock_session(session_id).await;
         self.lsm.get_or_create_session_state(session_id)
     }
 
@@ -257,7 +280,7 @@ impl MemoryEnclave {
         &self,
         turn: &crate::models::TurnState,
     ) -> Result<(), MemoryError> {
-        let _guard = self.write_lock.lock().await;
+        let _guard = self.lock_session(&turn.session_id).await;
         self.lsm.save_turn_state(turn)
     }
 
@@ -413,6 +436,39 @@ impl MemoryEngine {
 
     pub fn cull_low_entropy_memories(&self, _threshold: f32) -> Result<usize, MemoryError> {
         Ok(0)
+    }
+
+    /// Consolidates session memory: deduplicates consecutive identical messages
+    /// and compacts the session's message history.
+    pub async fn consolidate(&self, session_id: &str) -> Result<usize, MemoryError> {
+        let messages = self.enclave.fetch_session_tail(session_id, 500);
+        if messages.len() < 2 {
+            return Ok(0);
+        }
+
+        let mut deduped: Vec<AgentMessage> = Vec::with_capacity(messages.len());
+        let mut removed = 0usize;
+
+        for msg in messages {
+            if let Some(last) = deduped.last() {
+                if last.content == msg.content && last.role == msg.role {
+                    removed += 1;
+                    continue;
+                }
+            }
+            deduped.push(msg);
+        }
+
+        if removed > 0 {
+            tracing::info!(
+                "[memory] Consolidated session {}: removed {} duplicate messages",
+                session_id,
+                removed
+            );
+            self.enclave.atomic_compact(session_id, deduped).await?;
+        }
+
+        Ok(removed)
     }
 
     pub fn hydrate_session(

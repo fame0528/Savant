@@ -30,7 +30,7 @@ impl BlueskyAdapter {
     pub fn new(config: BlueskyConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
             session: Arc::new(tokio::sync::Mutex::new(None)),
         }

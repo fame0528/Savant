@@ -49,7 +49,9 @@ pub async fn handle_message(
             }
 
             // Prune AFTER successful append to prevent data loss
-            let _ = state.storage.prune_history(&partition, 1000);
+            if let Err(e) = state.storage.prune_history(&partition, 1000) {
+                tracing::warn!("[gateway] Failed to prune history for {}: {}", partition, e);
+            }
 
             // Route message to appropriate agent through Nexus
             if let Err(e) = route_chat_message(message, &state.nexus).await {
@@ -66,8 +68,11 @@ pub async fn handle_message(
                     channel: savant_core::types::AgentOutputChannel::Chat,
                 };
 
-                let _ = send_response_to_client(error_response, &session.session_id, &state.nexus)
-                    .await;
+                if let Err(e) =
+                    send_response_to_client(error_response, &session.session_id, &state.nexus).await
+                {
+                    tracing::warn!("[gateway] Failed to send error response to client: {}", e);
+                }
             }
         }
         savant_core::types::RequestPayload::ControlFrame(control) => {
@@ -88,13 +93,16 @@ pub async fn handle_message(
                                 "history": history
                             });
 
-                            let _ = send_control_response(
+                            if let Err(e) = send_control_response(
                                 "HISTORY",
                                 result,
                                 &session.session_id,
                                 &state.nexus,
                             )
-                            .await;
+                            .await
+                            {
+                                tracing::warn!("[gateway] Failed to send HISTORY response: {}", e);
+                            }
                         }
                         Err(e) => {
                             tracing::error!("Failed to retrieve history for {}: {}", lane_id, e);
@@ -106,7 +114,12 @@ pub async fn handle_message(
                     let nexus = state.nexus.clone();
                     tokio::spawn(async move {
                         if let Some(agents_json) = nexus.shared_memory.get("system.agents") {
-                            let _ = nexus.publish("agents.discovered", &agents_json).await;
+                            if let Err(e) = nexus.publish("agents.discovered", &agents_json).await {
+                                tracing::warn!(
+                                    "[gateway] Failed to publish agents.discovered: {}",
+                                    e
+                                );
+                            }
                         }
                     });
                 }
@@ -125,13 +138,16 @@ pub async fn handle_message(
                         "status": "pending",
                         "note": "Manifestation engine is exploding the prompt into a AAA soul..."
                     });
-                    let _ = send_control_response(
+                    if let Err(e) = send_control_response(
                         "MANIFEST_DRAFT",
                         result,
                         &session.session_id,
                         &state.nexus,
                     )
-                    .await;
+                    .await
+                    {
+                        tracing::warn!("[gateway] Failed to send MANIFEST_DRAFT response: {}", e);
+                    }
 
                     // Execute the generator as a background task to prevent frame blocking
                     let nexus = state.nexus.clone();
@@ -172,13 +188,19 @@ pub async fn handle_message(
                                     agent_id
                                 );
                                 let result = serde_json::json!({ "agent_id": agent_id, "status": "success" });
-                                let _ = send_control_response(
+                                if let Err(e) = send_control_response(
                                     "UPDATE_SUCCESS",
                                     result,
                                     &session.session_id,
                                     &state.nexus,
                                 )
-                                .await;
+                                .await
+                                {
+                                    tracing::warn!(
+                                        "[gateway] Failed to send UPDATE_SUCCESS response: {}",
+                                        e
+                                    );
+                                }
                             }
                         }
                         _ => {
@@ -191,13 +213,19 @@ pub async fn handle_message(
                                         config.workspace_path.display()
                                     );
                                     let result = serde_json::json!({ "agent_id": config.agent_id, "status": "created" });
-                                    let _ = send_control_response(
+                                    if let Err(e) = send_control_response(
                                         "UPDATE_SUCCESS",
                                         result,
                                         &session.session_id,
                                         &state.nexus,
                                     )
-                                    .await;
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            "[gateway] Failed to send UPDATE_SUCCESS response: {}",
+                                            e
+                                        );
+                                    }
                                 }
                                 Err(e) => tracing::error!("Failed to scaffold workspace: {}", e),
                             }
@@ -231,13 +259,16 @@ pub async fn handle_message(
 
                     let result =
                         serde_json::json!({ "status": "SWARM_DEPLOYED", "count": agent_count });
-                    let _ = send_control_response(
+                    if let Err(e) = send_control_response(
                         "BULK_SUCCESS",
                         result,
                         &session.session_id,
                         &state.nexus,
                     )
-                    .await;
+                    .await
+                    {
+                        tracing::warn!("[gateway] Failed to send BULK_SUCCESS response: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::SwarmInsightHistoryRequest { limit } => {
                     tracing::info!("🧠 Swarm insight history requested (limit: {})", limit);
@@ -274,13 +305,19 @@ pub async fn handle_message(
                     let result = serde_json::json!({
                         "history": all_insights
                     });
-                    let _ = send_control_response(
+                    if let Err(e) = send_control_response(
                         "swarm_insight_history",
                         result,
                         &session.session_id,
                         &state.nexus,
                     )
-                    .await;
+                    .await
+                    {
+                        tracing::warn!(
+                            "[gateway] Failed to send swarm_insight_history response: {}",
+                            e
+                        );
+                    }
                 }
                 // Skill management control frames
                 savant_core::types::ControlFrame::SkillsList { .. }
@@ -293,7 +330,9 @@ pub async fn handle_message(
                 }
                 // Configuration control frames
                 savant_core::types::ControlFrame::ConfigGet => {
-                    let _ = handle_config_get(&state.nexus).await;
+                    if let Err(e) = handle_config_get(&state.nexus).await {
+                        tracing::error!("[gateway] ConfigGet failed: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::ConfigSet {
                     section,
@@ -305,16 +344,24 @@ pub async fn handle_message(
                         key,
                         value,
                     };
-                    let _ = handle_config_set(request, &state.nexus).await;
+                    if let Err(e) = handle_config_set(request, &state.nexus).await {
+                        tracing::error!("[gateway] ConfigSet failed: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::ModelsList => {
-                    let _ = handle_models_list(&state.nexus).await;
+                    if let Err(e) = handle_models_list(&state.nexus).await {
+                        tracing::error!("[gateway] ModelsList failed: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::ParameterDescriptors => {
-                    let _ = handle_parameter_descriptors(&state.nexus).await;
+                    if let Err(e) = handle_parameter_descriptors(&state.nexus).await {
+                        tracing::error!("[gateway] ParameterDescriptors failed: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::AgentConfigGet { agent_id } => {
-                    let _ = handle_agent_config_get(agent_id, &state.nexus).await;
+                    if let Err(e) = handle_agent_config_get(agent_id, &state.nexus).await {
+                        tracing::error!("[gateway] AgentConfigGet failed: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::AgentConfigSet {
                     agent_id,
@@ -344,12 +391,14 @@ pub async fn handle_message(
                             description,
                         },
                     };
-                    let _ = handle_agent_config_set(request, &state.nexus).await;
+                    if let Err(e) = handle_agent_config_set(request, &state.nexus).await {
+                        tracing::error!("[gateway] AgentConfigSet failed: {}", e);
+                    }
                 }
                 // Natural language command
                 savant_core::types::ControlFrame::NLCommand { text } => {
                     let intent = savant_core::nlp::parse_command(&text);
-                    let _ = send_control_response(
+                    if let Err(e) = send_control_response(
                         "NL_COMMAND_RESULT",
                         serde_json::json!({
                             "category": match intent.category {
@@ -369,7 +418,10 @@ pub async fn handle_message(
                         &session.session_id,
                         &state.nexus,
                     )
-                    .await;
+                    .await
+                    {
+                        tracing::warn!("[gateway] Failed to send NL_COMMAND_RESULT: {}", e);
+                    }
                 }
             }
         }
@@ -465,7 +517,7 @@ async fn resolve_openrouter_key() -> String {
         return cached.clone();
     }
 
-    let client = reqwest::Client::new();
+    let client = savant_core::net::secure_client();
 
     // --- Path 1: Master key exchange ---
     if let Ok(master_key) = std::env::var("OR_MASTER_KEY") {
@@ -497,7 +549,12 @@ async fn resolve_openrouter_key() -> String {
                                     regular_key.len()
                                 );
                                 // Cache for all future calls in this process.
-                                let _ = RESOLVED_OPENROUTER_KEY.set(regular_key.clone());
+                                if let Err(e) = RESOLVED_OPENROUTER_KEY.set(regular_key.clone()) {
+                                    tracing::warn!(
+                                        "[gateway] Failed to cache resolved OpenRouter key: {}",
+                                        e
+                                    );
+                                }
                                 return regular_key;
                             } else {
                                 tracing::error!("/keys response missing key field: {:?}", json);
@@ -529,7 +586,9 @@ async fn resolve_openrouter_key() -> String {
         if !regular_key.trim().is_empty() {
             tracing::info!("Using OPENROUTER_API_KEY from environment.");
             // Cache so the check doesn't repeat.
-            let _ = RESOLVED_OPENROUTER_KEY.set(regular_key.clone());
+            if let Err(e) = RESOLVED_OPENROUTER_KEY.set(regular_key.clone()) {
+                tracing::warn!("[gateway] Failed to cache OpenRouter key from env: {}", e);
+            }
             return regular_key;
         }
     }
@@ -680,7 +739,7 @@ CRITICAL REQUIREMENTS:
 
     // 3. Call API (non-streaming — captures full response).
     if !api_key.is_empty() {
-        let client = reqwest::Client::new();
+        let client = savant_core::net::secure_client();
 
         tracing::info!(
             "🔮 Calling {} API for soul manifestation...",
@@ -730,13 +789,19 @@ CRITICAL REQUIREMENTS:
                                 }
                             });
 
-                            let _ = send_control_response(
+                            if let Err(e) = send_control_response(
                                 "MANIFEST_DRAFT",
                                 draft_payload,
                                 session_id,
                                 nexus,
                             )
-                            .await;
+                            .await
+                            {
+                                tracing::warn!(
+                                    "[gateway] Failed to send MANIFEST_DRAFT response: {}",
+                                    e
+                                );
+                            }
                         }
                         Err(e) => {
                             tracing::error!("Failed to parse OpenRouter response: {}", e);
@@ -783,7 +848,11 @@ CRITICAL REQUIREMENTS:
             }
         });
 
-        let _ = send_control_response("MANIFEST_DRAFT", draft_payload, session_id, nexus).await;
+        if let Err(e) =
+            send_control_response("MANIFEST_DRAFT", draft_payload, session_id, nexus).await
+        {
+            tracing::warn!("[gateway] Failed to send MANIFEST_DRAFT (template): {}", e);
+        }
     }
 
     Ok(())
@@ -816,7 +885,10 @@ async fn send_manifest_error(
         "status": "error",
         "error": error_msg
     });
-    let _ = send_control_response("MANIFEST_DRAFT", error_payload, session_id, nexus).await;
+    if let Err(e) = send_control_response("MANIFEST_DRAFT", error_payload, session_id, nexus).await
+    {
+        tracing::warn!("[gateway] Failed to send MANIFEST_DRAFT error: {}", e);
+    }
 }
 
 /// Generates a template-based soul when no AI API key is available.

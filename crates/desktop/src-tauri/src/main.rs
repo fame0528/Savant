@@ -23,7 +23,9 @@ impl<S: Subscriber> Layer<S> for LogBridge {
         event.record(&mut visitor);
 
         let msg = format!("[{}] {}", event.metadata().level(), visitor.message);
-        let _ = self.app_handle.emit("system-log-event", msg);
+        if let Err(e) = self.app_handle.emit("system-log-event", msg) {
+            tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
+        }
     }
 }
 
@@ -59,7 +61,9 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
     if lock.is_some() {
         let msg = "Swarm is already active";
         info!("Tauri: {}", msg);
-        let _ = app_handle.emit("system-log-event", msg);
+        if let Err(e) = app_handle.emit("system-log-event", msg) {
+            tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
+        }
         return Ok(msg.into());
     }
 
@@ -86,13 +90,17 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
 
             let msg = "Swarm Ignition Sequence Complete";
             info!("Tauri: {}", msg);
-            let _ = app_handle.emit("system-log-event", msg);
+            if let Err(e) = app_handle.emit("system-log-event", msg) {
+                tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
+            }
             Ok(msg.into())
         }
         Err(e) => {
             let msg = format!("Ignition Failed: {}", e);
             error!("Tauri: {}", msg);
-            let _ = app_handle.emit("system-log-event", &msg);
+            if let Err(e) = app_handle.emit("system-log-event", &msg) {
+                tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
+            }
             Err(msg)
         }
     }
@@ -130,7 +138,9 @@ async fn start_event_forwarder(ignition: Arc<SwarmIgnition>, app_handle: AppHand
         let (mut event_rx, _log_rx) = nexus.subscribe().await;
         while let Ok(event) = event_rx.recv().await {
             if let Ok(json_str) = serde_json::to_string(&event) {
-                let _ = app_handle.emit("gateway-event", format!("EVENT:{}", json_str));
+                if let Err(e) = app_handle.emit("gateway-event", format!("EVENT:{}", json_str)) {
+                    tracing::debug!("[desktop] Failed to emit gateway-event: {}", e);
+                }
             }
         }
     });
@@ -160,13 +170,16 @@ fn main() {
                 };
                 use tracing_subscriber::layer::SubscriberExt;
                 use tracing_subscriber::util::SubscriberInitExt;
-                let _ = tracing_subscriber::registry()
+                if let Err(e) = tracing_subscriber::registry()
                     .with(tracing_subscriber::EnvFilter::new(
                         "info,savant_desktop=debug,savant_agent=debug",
                     ))
                     .with(tracing_subscriber::fmt::layer())
                     .with(bridge)
-                    .try_init();
+                    .try_init()
+                {
+                    tracing::debug!("[desktop] Tracing subscriber init failed (may already be initialized): {}", e);
+                }
 
                 // Emit initial status
                 let version = app_handle
@@ -174,11 +187,15 @@ fn main() {
                     .version
                     .clone()
                     .unwrap_or_else(|| "0.0.0".to_string());
-                let _ = app_handle.emit(
+                if let Err(e) = app_handle.emit(
                     "system-log-event",
                     format!("Savant Desktop v{} starting", version),
-                );
-                let _ = app_handle.emit("system-log-event", "Initializing...");
+                ) {
+                    tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
+                }
+                if let Err(e) = app_handle.emit("system-log-event", "Initializing...") {
+                    tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
+                }
             });
 
             // System tray
@@ -206,8 +223,12 @@ fn main() {
                     }
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            if let Err(e) = window.show() {
+                                tracing::debug!("[desktop] Failed to show window: {}", e);
+                            }
+                            if let Err(e) = window.set_focus() {
+                                tracing::debug!("[desktop] Failed to focus window: {}", e);
+                            }
                         }
                     }
                     _ => {}

@@ -13,6 +13,7 @@ pub mod heartbeat;
 pub mod hooks;
 pub mod learning;
 pub mod migration;
+pub mod net;
 pub mod nlp;
 pub mod pulse;
 pub mod session;

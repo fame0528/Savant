@@ -68,7 +68,7 @@ impl SlackAdapter {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_else(|_| savant_core::net::secure_client());
 
         Self {
             config,
@@ -264,7 +264,7 @@ impl SlackAdapter {
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(800)).await;
                         let url = format!("{}/chat.delete", SLACK_API_BASE);
-                        let _ = client
+                        if let Err(e) = client
                             .post(&url)
                             .header("Authorization", format!("Bearer {}", token))
                             .json(&serde_json::json!({
@@ -272,7 +272,10 @@ impl SlackAdapter {
                                 "ts": ts,
                             }))
                             .send()
-                            .await;
+                            .await
+                        {
+                            tracing::warn!("[channels] HTTP send failed: {}", e);
+                        }
                     });
                 }
             }
@@ -560,7 +563,9 @@ impl SlackAdapter {
             });
 
             // Wait for either task to complete (they should run indefinitely)
-            let _ = tokio::try_join!(poll_handle, outbound_handle);
+            if let Err(e) = tokio::try_join!(poll_handle, outbound_handle) {
+                tracing::warn!("[channels] Task join failed: {}", e);
+            }
             warn!("[SLACK] Adapter tasks exited.");
         })
     }

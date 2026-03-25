@@ -443,11 +443,34 @@ impl Config {
         let mut tmp_path = path.to_path_buf();
         tmp_path.set_extension("toml.tmp");
 
-        std::fs::write(&tmp_path, toml).map_err(SavantError::IoError)?;
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)
+                .map_err(SavantError::IoError)?;
+            f.write_all(toml.as_bytes()).map_err(SavantError::IoError)?;
+            f.sync_all().map_err(SavantError::IoError)?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, toml).map_err(SavantError::IoError)?;
+        }
 
         // Rename is atomic on most systems
         std::fs::rename(&tmp_path, path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp_path);
+            if let Err(e) = std::fs::remove_file(&tmp_path) {
+                tracing::warn!(
+                    "[core::config] Failed to clean up temp file after rename error: {}",
+                    e
+                );
+            }
             SavantError::IoError(e)
         })?;
 

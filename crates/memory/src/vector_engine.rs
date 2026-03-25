@@ -699,8 +699,7 @@ mod tests {
 
     #[test]
     fn test_simd_supported_detection() {
-        let supported = SemanticVectorEngine::simd_supported();
-        let _ = supported;
+        let _supported = SemanticVectorEngine::simd_supported();
     }
 
     #[test]

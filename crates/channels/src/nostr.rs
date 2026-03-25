@@ -129,7 +129,9 @@ impl NostrAdapter {
                                 event_type: "chat.message".into(),
                                 payload: serde_json::to_string(&chat_msg).unwrap_or_default(),
                             };
-                            let _ = self.nexus.event_bus.send(frame);
+                            if self.nexus.event_bus.send(frame).is_err() {
+                                tracing::warn!("[channels::nostr] Event bus send failed");
+                            }
                         }
                     }
                 }

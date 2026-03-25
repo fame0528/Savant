@@ -8420,7 +8420,7 @@ dependencies = [
 
 [[package]]
 name = "savant-desktop"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -8438,13 +8438,14 @@ dependencies = [
 
 [[package]]
 name = "savant_agent"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
  "bytes",
  "chrono",
+ "dashmap",
  "ed25519-dalek",
  "futures",
  "notify 8.2.0",
@@ -8483,7 +8484,7 @@ dependencies = [
 
 [[package]]
 name = "savant_canvas"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
  "futures",
@@ -8498,7 +8499,7 @@ dependencies = [
 
 [[package]]
 name = "savant_channels"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bb8",
@@ -8528,7 +8529,7 @@ dependencies = [
 
 [[package]]
 name = "savant_cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -8551,7 +8552,7 @@ dependencies = [
 
 [[package]]
 name = "savant_cognitive"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytecheck",
  "candle-core",
@@ -8570,7 +8571,7 @@ dependencies = [
 
 [[package]]
 name = "savant_core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8615,7 +8616,7 @@ dependencies = [
 
 [[package]]
 name = "savant_echo"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arc-swap",
  "futures",
@@ -8637,7 +8638,7 @@ dependencies = [
 
 [[package]]
 name = "savant_gateway"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
  "backoff",
@@ -8664,7 +8665,7 @@ dependencies = [
 
 [[package]]
 name = "savant_ipc"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "iceoryx2",
  "opentelemetry",
@@ -8679,10 +8680,11 @@ dependencies = [
 
 [[package]]
 name = "savant_mcp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum 0.7.9",
+ "dashmap",
  "futures",
  "futures-util",
  "rmcp",
@@ -8699,7 +8701,7 @@ dependencies = [
 
 [[package]]
 name = "savant_memory"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -8726,7 +8728,7 @@ dependencies = [
 
 [[package]]
 name = "savant_panopticon"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8747,7 +8749,7 @@ dependencies = [
 
 [[package]]
 name = "savant_security"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "bytecheck",
@@ -8765,7 +8767,7 @@ dependencies = [
 
 [[package]]
 name = "savant_skills"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",

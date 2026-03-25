@@ -169,7 +169,12 @@ impl HookRegistry {
                 }));
             }
             for task in tasks {
-                let _ = task.await;
+                if let Err(e) = task.await {
+                    tracing::warn!(
+                        "[core::hooks] Void hook task panicked or was cancelled: {}",
+                        e
+                    );
+                }
             }
         }
     }

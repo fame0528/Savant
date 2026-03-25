@@ -50,7 +50,15 @@ impl MemoryBackend for FjallMemoryBackend {
     }
 
     async fn consolidate(&self, agent_id: &str) -> Result<(), SavantError> {
-        info!("Consolidation requested for agent {}", agent_id);
+        let removed = self
+            .engine
+            .consolidate(agent_id)
+            .await
+            .map_err(|e| SavantError::Unknown(format!("Memory consolidation failed: {}", e)))?;
+        info!(
+            "Consolidation complete for agent {}: removed {} duplicates",
+            agent_id, removed
+        );
         Ok(())
     }
 

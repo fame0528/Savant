@@ -3,7 +3,7 @@
 
 <img src="img/savant.png" alt="Savant Logo" width="180" />
 
-# SAVANT v1.6.0
+# SAVANT v0.1.0
 
 **One Mind. A Thousand Faces.**
 
@@ -13,7 +13,7 @@ A production-grade, Rust-native framework for building, deploying, and coordinat
 
 **Production Pass:** Full project audit complete (250 issues identified, 87+ fixes across 14 batches). All critical/high issues resolved. 0 errors, 0 warnings. Agent Hook System v1 with 15 lifecycle events, panic-safe execution. Discovery-based context windows. Enterprise-grade time utilities. Production-ready.
 
-**Deep Audit (2026-03-24):** Python static analysis (1,492 violations) filtered to 333 actionable findings. Enterprise-grade FID created with 24 fix items across 3 phases. 5 CRITICAL security vulnerabilities identified (TOCTOU, SSRF). 14 stub implementations discovered. 13 competitor research reports completed. Remediation in progress.
+**Deep Audit (2026-03-24):** Python static analysis (1,492 violations) filtered to 333 actionable findings. Enterprise-grade FID with 24 fix items across 3 phases. 5 CRITICAL security vulnerabilities (TOCTOU, SSRF) eliminated. 14 stub implementations discovered and wired. 133+ silent failures fixed. 72 files changed. Phase 1 + Phase 2 complete.
 
 **Desktop App:** Tauri 2.x with auto-updater, splash screen, dependency checker. Users always have the latest version.
 

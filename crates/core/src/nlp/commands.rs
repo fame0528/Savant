@@ -22,12 +22,12 @@ pub async fn execute_command(intent: &CommandIntent) -> Result<String, SavantErr
 async fn execute_agent_command(intent: &CommandIntent) -> Result<String, SavantError> {
     match intent.action.as_str() {
         "list" => Ok(
-            "Use the agents sidebar to see all agents, or run `savant list-agents` from the CLI."
+            "Agent listing requires swarm controller access. Query via WebSocket: send ControlFrame::AgentList to the gateway."
                 .to_string(),
         ),
         "restart" => {
             if let Some(agent) = &intent.target {
-                Ok(format!("Restart command queued for agent: {}. Note: Agent restart requires swarm controller integration.", agent))
+                Ok(format!("Agent restart requires swarm controller access. Send ControlFrame::AgentRestart(\"{}\") via WebSocket to the gateway.", agent))
             } else {
                 Ok("Which agent would you like to restart?".to_string())
             }
@@ -40,10 +40,13 @@ async fn execute_channel_command(intent: &CommandIntent) -> Result<String, Savan
     if let Some(channel) = &intent.target {
         match intent.action.as_str() {
             "restart" => Ok(format!(
-                "Channel '{}' restart initiated. The channel will reconnect momentarily.",
-                channel
+                "Channel '{}' restart requires channel pool access. Send ControlFrame::ChannelRestart(\"{}\") via WebSocket.",
+                channel, channel
             )),
-            "stop" => Ok(format!("Channel '{}' has been disabled.", channel)),
+            "stop" => Ok(format!(
+                "Channel '{}' disable requires channel pool access. Send ControlFrame::ChannelStop(\"{}\") via WebSocket.",
+                channel, channel
+            )),
             _ => Ok(format!("Unknown channel action: {}", intent.action)),
         }
     } else {
@@ -57,8 +60,8 @@ async fn execute_channel_command(intent: &CommandIntent) -> Result<String, Savan
 async fn execute_model_command(intent: &CommandIntent) -> Result<String, SavantError> {
     if let Some(model) = &intent.target {
         Ok(format!(
-            "Model switch requested to '{}'. Use Settings to change the model, or send ConfigSet via WebSocket.",
-            model
+            "Model switch to '{}' requires config access. Send ControlFrame::ConfigSet {{ section: \"model\", key: \"name\", value: \"{}\" }} via WebSocket.",
+            model, model
         ))
     } else {
         Ok("Which model would you like to switch to? Try: hunter alpha, healer alpha, stepfun, or free router.".to_string())
@@ -68,12 +71,12 @@ async fn execute_model_command(intent: &CommandIntent) -> Result<String, SavantE
 async fn execute_diagnostics_command(intent: &CommandIntent) -> Result<String, SavantError> {
     match intent.action.as_str() {
         "memory_usage" => Ok(
-            "Memory diagnostics: Check the dashboard telemetry panel or run `cargo test -p savant_memory` to verify engine health.".to_string()
+            "Memory diagnostics: Query via WebSocket ControlFrame::MemoryStats or run `cargo test -p savant_memory` to verify engine health.".to_string()
         ),
         "failure_reason" => {
             if let Some(agent) = &intent.target {
                 Ok(format!(
-                    "Failure analysis for agent '{}': Check the dashboard timeline or session logs for error details.",
+                    "Failure analysis for agent '{}': Query agent heartbeat logs via the dashboard timeline or WebSocket subscription.",
                     agent
                 ))
             } else {
@@ -86,7 +89,7 @@ async fn execute_diagnostics_command(intent: &CommandIntent) -> Result<String, S
 
 async fn execute_status_command() -> Result<String, SavantError> {
     Ok(
-        "System status: All services operational. Check the dashboard connection indicator or run `savant status` for details.".to_string()
+        "System status: Health check available via WebSocket ControlFrame::SystemStatus or dashboard connection indicator.".to_string()
     )
 }
 

@@ -163,7 +163,13 @@ mod tests {
             let path = Path::new(path_str);
             // canonicalize will fail for non-existent paths, but we test the logic
             // In production, paths are validated before mounting
-            let _ = validate_mount_source(path);
+            if let Err(e) = validate_mount_source(path) {
+                tracing::warn!(
+                    "[skills::mount_security] Mount source validation failed for {}: {}",
+                    path.display(),
+                    e
+                );
+            }
         }
     }
 

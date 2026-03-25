@@ -54,14 +54,16 @@ impl Default for WebSovereign {
 }
 
 impl WebSovereign {
+    #[allow(clippy::disallowed_methods)]
     pub fn new() -> Self {
         Self {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(5))
                 .user_agent("Savant/1.6")
                 .redirect(reqwest::redirect::Policy::limited(5))
                 .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
+                .expect("CRITICAL: Failed to build HTTP client with security constraints"),
             projection: Arc::new(super::web_projection::ChromeProjection::new()),
         }
     }

@@ -91,7 +91,7 @@ impl CircuitBreaker {
                 let now = Self::now_secs();
                 if now.saturating_sub(last_failure) >= self.recovery_timeout_secs {
                     // Transition to HalfOpen via CAS
-                    let _ = self.state.compare_exchange(
+                    let _prev = self.state.compare_exchange(
                         BreakerState::Open as u8,
                         BreakerState::HalfOpen as u8,
                         Ordering::SeqCst,

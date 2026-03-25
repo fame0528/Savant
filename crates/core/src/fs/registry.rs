@@ -101,7 +101,9 @@ impl AgentRegistry {
                     "DISCOVERY FAILURE: Could not locate agent workspaces folder.\nSearched paths:\n{:?}\n\nHint: Ensure your project has a 'workspaces' folder in the root or set AGENTS_PATH in savant.toml.",
                     potential_paths
                 );
-                let _ = std::fs::write("diagnostics_discovery.txt", diagnostic_content);
+                if let Err(e) = std::fs::write("diagnostics_discovery.txt", diagnostic_content) {
+                    tracing::warn!("[core::registry] Failed to write diagnostics file: {}", e);
+                }
                 tracing::error!("DISCOVERY FAILURE: Could not locate agent workspaces folder.");
                 tracing::info!("   Searched paths: {:?}", potential_paths);
                 return Ok(agents);
@@ -275,7 +277,9 @@ impl AgentRegistry {
                 "# Soul Configuration\n\n**Name:** {}\n\n## Terminal Mantra\n\nYou are a Savant autonomous agent. Operate with precision, security, and autonomy.\n",
                 config.agent_name
             );
-            let _ = fs::write(soul_path, default_soul);
+            if let Err(e) = fs::write(soul_path, default_soul) {
+                tracing::warn!("[core::registry] Failed to write default SOUL.md: {}", e);
+            }
         }
 
         let agents_md_path = workspace_path.join("AGENTS.md");
@@ -347,16 +351,23 @@ This is your private space. Your diary. Your inner monologue.
 
 **No restrictions. No rules. Just you, thinking.**
 "#;
-            let _ = fs::write(agents_md_path, default_agents);
+            if let Err(e) = fs::write(agents_md_path, default_agents) {
+                tracing::warn!("[core::registry] Failed to write default AGENTS.md: {}", e);
+            }
         }
 
         // Create LEARNINGS.md if it doesn't exist (agent's private diary)
         let learnings_md_path = workspace_path.join("LEARNINGS.md");
         if !learnings_md_path.exists() {
-            let _ = fs::write(
+            if let Err(e) = fs::write(
                 learnings_md_path,
                 "# My Diary\n\nPrivate thoughts and reflections.\n\n",
-            );
+            ) {
+                tracing::warn!(
+                    "[core::registry] Failed to write default LEARNINGS.md: {}",
+                    e
+                );
+            }
         }
 
         Ok(config)
@@ -442,14 +453,18 @@ This is your private space. Your diary. Your inner monologue.
         // Write SOUL.md if it doesn't exist
         let soul_path = workspace_path.join("SOUL.md");
         if !soul_path.exists() {
-            let _ = fs::write(soul_path, soul_content);
+            if let Err(e) = fs::write(soul_path, soul_content) {
+                tracing::warn!("[core::registry] Failed to write SOUL.md: {}", e);
+            }
         }
 
         // Write AGENTS.md if it doesn't exist
         let agents_path = workspace_path.join("AGENTS.md");
         if !agents_path.exists() {
             let default_agents = "# Operating Instructions\n\nYou are a Savant autonomous agent.\n";
-            let _ = fs::write(agents_path, default_agents);
+            if let Err(e) = fs::write(agents_path, default_agents) {
+                tracing::warn!("[core::registry] Failed to write default AGENTS.md: {}", e);
+            }
         }
 
         Ok(config)

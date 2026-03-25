@@ -25,7 +25,7 @@ impl WeComAdapter {
     pub fn new(config: WeComConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
             access_token: Arc::new(tokio::sync::Mutex::new(None)),
         }

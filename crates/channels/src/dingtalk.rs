@@ -25,7 +25,7 @@ impl DingTalkAdapter {
     pub fn new(config: DingTalkConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
             _access_token: Arc::new(tokio::sync::Mutex::new(None)),
         }

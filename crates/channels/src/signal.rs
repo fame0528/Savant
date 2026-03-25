@@ -53,7 +53,7 @@ impl SignalAdapter {
         let http = HttpClient::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_else(|_| savant_core::net::secure_client());
 
         Self {
             config,
@@ -410,7 +410,10 @@ impl SignalAdapter {
                         };
 
                         // Show typing indicator before sending
-                        let _ = self.send_typing_indicator(group_id.as_deref(), true).await;
+                        if let Err(e) = self.send_typing_indicator(group_id.as_deref(), true).await
+                        {
+                            tracing::warn!("[channels] Typing indicator failed: {}", e);
+                        }
 
                         debug!(
                             "[SIGNAL] Delivering message to {}: {}",
@@ -424,8 +427,11 @@ impl SignalAdapter {
                         {
                             Ok(_) => {
                                 debug!("[SIGNAL] Message delivered to {}", target);
-                                let _ =
-                                    self.send_typing_indicator(group_id.as_deref(), false).await;
+                                if let Err(e) =
+                                    self.send_typing_indicator(group_id.as_deref(), false).await
+                                {
+                                    tracing::warn!("[channels] Typing indicator failed: {}", e);
+                                }
                             }
                             Err(e) => {
                                 error!("[SIGNAL] Failed to deliver message to {}: {}", target, e);
@@ -501,7 +507,13 @@ impl SignalAdapter {
             });
 
             // Run both loops; if either exits, the other is dropped
-            let _ = tokio::join!(sse_handle, outbound_handle);
+            let (sse_result, outbound_result) = tokio::join!(sse_handle, outbound_handle);
+            if let Err(e) = sse_result {
+                tracing::warn!("[channels] SSE task failed: {}", e);
+            }
+            if let Err(e) = outbound_result {
+                tracing::warn!("[channels] Outbound task failed: {}", e);
+            }
             error!("[SIGNAL] Background task terminated.");
         })
     }

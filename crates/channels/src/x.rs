@@ -24,7 +24,7 @@ impl XAdapter {
     pub fn new(config: XConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
         }
     }
@@ -140,9 +140,13 @@ impl XAdapter {
                                 let sid = p["session_id"].as_str().unwrap_or("");
                                 if let Some(target) = sid.strip_prefix("x:") {
                                     if target == "post" {
-                                        let _ = outbound.post_tweet(content).await;
+                                        if let Err(e) = outbound.post_tweet(content).await {
+                                            tracing::warn!("[channels] HTTP send failed: {}", e);
+                                        }
                                     } else {
-                                        let _ = outbound.send_dm(target, content).await;
+                                        if let Err(e) = outbound.send_dm(target, content).await {
+                                            tracing::warn!("[channels] HTTP send failed: {}", e);
+                                        }
                                     }
                                 }
                             }
@@ -174,7 +178,9 @@ impl XAdapter {
                                     event_type: "chat.message".into(),
                                     payload: serde_json::to_string(&msg).unwrap_or_default(),
                                 };
-                                let _ = adapter.nexus.event_bus.send(frame);
+                                if let Err(e) = adapter.nexus.event_bus.send(frame) {
+                                    tracing::warn!("[channels] Event publish failed: {}", e);
+                                }
                             }
                         }
                     }

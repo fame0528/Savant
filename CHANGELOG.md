@@ -7,358 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.6.0] - 2026-03-22
+## [0.1.0] - 2026-03-25
 
-**Production Pass + OMEGA-VIII Audit + Sovereign Audit + Top 5 + MCP + Smithery + 25 Channels + Self-Repair + Hooks + Mount Security + Tauri 2.x + Auto-Updater + Splash + Dependency Check. ~6,630 LOC across 40+ files.**
+**First release on v0.0.1 foundation. Security hardening, concurrency refactors, error handling overhaul, feature stub wiring. 72 files changed, +1,407 / -375 lines.**
 
-### Production Pass (2026-03-23)
+### Security
 
-Full project audit of 100+ files across 16 crates. 87+ fixes addressing data integrity, security, agent loop stability, enterprise patterns, and production readiness.
+#### TOCTOU Permission Escalation (CRITICAL)
+- `crates/core/src/crypto.rs` — Crypto key files now written atomically via `OpenOptions::mode(0o600)` on Unix. File is created with restrictive permissions from the start, eliminating the race window where keys were briefly world-readable.
+- `crates/core/src/config.rs` — Config temp files written with `OpenOptions::mode(0o600)` on Unix before atomic rename. Prevents local privilege escalation via config file race.
 
-#### Critical Fixes
-- Memory: Content-hash ID generation (blake3), atomic compact with write-before-delete ordering, configurable vector dimension, ephemeral JWT secrets
-- Agent: turn_failed tracking, excluded tools integration, discovery-based context windows, turn finalization on error paths, heuristic recovery rollback
-- Gateway: Unique dashboard sessions, constant-time API comparison, CORS middleware, WebSocket frame handling, persistence error logging
-- Shell: Workspace-bounded execution via `secure_resolve_path`, 30+ destructive pattern detection, absolute path injection prevention, audit logging
+#### SSRF Protection (CRITICAL)
+- `crates/agent/src/tools/web.rs` — Removed unsafe `unwrap_or_else(|_| reqwest::Client::new())` fallback that created an HTTP client without timeout or redirect limits. Replaced with loud `.expect()` failure. Added `connect_timeout`.
+- Centralized `secure_client()` factory in `crates/core/src/net/mod.rs` — all production HTTP calls go through a single factory with 12s timeout, 5s connect timeout, 4 idle connections per host, 10-redirect limit.
+- Replaced **28 `reqwest::Client::new()` calls** across 22 files with `secure_client()`. Zero unconfigured HTTP clients in production code.
 
-#### New Features
-- **Context Window Discovery**: Agent automatically detects model context window from OpenRouter API. No more hardcoded values.
-- **Web Tool**: HTTP fetch with SSRF protection, DOM-to-Markdown conversion via scraper crate, content-root detection, SHA256 boundary markers
-- **Agent Hook System**: Extended HookRegistry with 15 events, void/modifying hooks, cancel support, panic-safe execution
-- **Nostr Adapter**: Proper event signing via nostr-sdk, NIP-04 support, auto-reconnection
-- **Consolidation**: Non-LLM content-hash dedup during memory compaction
-- **Time Utilities**: Reliable `now_secs()`/`now_millis()` with loud failure on clock errors
-- **Updater Keypair Automation**: Auto-generates signing keypair on first build
+### Error Handling
 
-#### Enterprise Cleanup
-- Removed all emojis from log messages (log aggregation compatible)
-- Removed blanket clippy suppression from 4 channel adapters
-- Removed `println!` in production code (replaced with `tracing`)
-- Removed dead code (JWT signing, verify_memory_safety no-op, IRC dead functions)
-- Replaced all `unwrap_or_default()` on system clock with loud failure
-- Health checks return structured JSON
+#### Gateway Handler Result Discard
+- `crates/gateway/src/handlers/mod.rs` — 6 control frame handlers (ConfigGet, ConfigSet, ModelsList, ParameterDescriptors, AgentConfigGet, AgentConfigSet) now log errors via `tracing::error!` instead of silently discarding `Result`.
 
-#### Dependencies Added
-- `nostr-sdk = "0.44"` — Nostr protocol integration
-- `scraper = "0.21"` — DOM parsing for web tools
-- `sha2 = "0.10"` — Hashing for memory dedup
+#### Agent Pulse Telemetry
+- `crates/agent/src/pulse/heartbeat.rs` — Replaced **15 `let _ =` bindings** with `if let Err(e)` + `tracing::warn!`. All heartbeat telemetry (nexus publish, emergent learning, context distillation, proactive state commit) now logs failures.
 
----
+#### Session/Turn State Saves
+- `crates/agent/src/react/stream.rs` — Replaced **12 `let _ =` bindings** for session and turn saves with `if let Err(e)` + `tracing::warn!`. Session persistence failures are now visible in logs.
 
-After an exhaustive competitive analysis of 6 frameworks (~1,000,000 LOC scanned, ~200 features catalogued), 22 features implemented, 25 channels built, 111 CRITICAL production violations eliminated, and full desktop app modernization.
+#### Mass `let _ =` Cleanup (H-6)
+- Replaced **133+ `let _ =` bindings** across all production code with proper error handling. Zero `let _ =` remain in production code (excluding tests). Covers channels (30), gateway (39), agent (8), core (13), memory (5), MCP (7), canvas (8), skills (4), cli (2), echo (1), desktop (10).
 
-### Added
+### Concurrency
 
-#### Session/Thread/Turn Model
-- `SessionState` and `TurnState` structs with rkyv zero-copy serialization in `crates/memory/src/models.rs`
-- `TurnPhase` enum (Processing, Completed, Failed, Interrupted, AwaitingApproval)
-- `LsmStorageEngine` session methods: `save_session_state`, `get_session_state`, `get_or_create_session_state`, `save_turn_state`, `get_turn_state`, `fetch_recent_turns`
-- `MemoryEnclave` write-locked session operations
-- `MemoryBackend` trait extended with 6 new methods: `get_or_create_session`, `get_session`, `save_session`, `save_turn`, `get_turn`, `fetch_recent_turns`
-- Agent loop integration: session initialization, turn tracking, tool call recording, turn finalization
-- `AgentEvent::SessionStart` and `AgentEvent::TurnEnd` events for stream consumers
-- Session state persisted in CortexaDB `sessions` collection; turns in `turns.{session_id}` collection
+#### Memory Engine Partitioned Locking (H-3)
+- `crates/memory/src/engine.rs` — Replaced single global `tokio::sync::Mutex<()>` write lock with 64-partition lock pool keyed by session_id hash. Writes to different sessions no longer serialize through a single lock.
 
-#### Provider Chain (Error Classification + Cooldown + Circuit Breaker + Response Cache)
-- `crates/agent/src/providers/chain.rs` — 4-layer provider resilience system
-- **Error Classifier**: Categorizes errors into Auth, RateLimit, Billing, Timeout, Format, Overloaded, Transient
-- **Cooldown Tracker**: Exponential backoff per provider — standard: `min(1h, 1min * 5^n)`, billing: `min(24h, 5h * 2^n)`
-- **Circuit Breaker**: Closed → Open → HalfOpen state machine with configurable failure threshold and open duration
-- **Response Cache**: SHA-256 keyed, LRU eviction, TTL-based (5 min default, 256 max entries). Tool calls never cached
-- `ProviderChain` wraps any `LlmProvider` with all 4 layers
+#### Swarm DashMap Migration (H-1)
+- `crates/agent/src/swarm.rs` — `handles: Mutex<HashMap<...>>` → `DashMap<String, ...>`. Agent handle operations (insert, remove, iterate) no longer block on a single async mutex. `dead_agents` also migrated to `DashMap`.
 
-#### Context Compaction
-- `crates/agent/src/react/compaction.rs` — prevents context overflow on long conversations
-- `ContextMonitor`: tracks usage ratio, selects strategy based on threshold
-- `Compactor`: 3 strategies — MoveToWorkspace (80-85%), Summarize (85-95%), Truncate (>95%)
-- Token estimation: word count * 1.3 + 4 overhead per message
-- System message injection when context is compacted to inform the LLM
-- Integration: pre-LLM-call check in agent loop
+#### MCP Client DashMap Migration (H-5)
+- `crates/mcp/src/client.rs` — `responses: Arc<Mutex<HashMap<...>>>` → `Arc<DashMap<...>>`. Pending response registration/removal is now lock-free.
 
-#### Approval Gating
-- `ApprovalRequirement` enum on `Tool` trait: Never, Conditional, Always
-- `requires_approval()` method on `Tool` trait (default: Never)
-- Dangerous tools set to require approval: SovereignShell (Conditional), FileDeleteTool (Always), FileMoveTool (Conditional), FileAtomicEditTool (Conditional)
-- Foundation for future approval flow with user consent events
+#### Embedding Cache RwLock (H-4)
+- `crates/core/src/utils/embeddings.rs` — Cache `Mutex<LruCache>` → `RwLock<LruCache>`. Concurrent embedding cache reads no longer block each other. Cache reads use `read()`, writes use `write()`.
 
-#### Tool Coercion + Schema Validation
-- `crates/agent/src/tools/coercion.rs` — recursive argument coercion against JSON Schema
-- Empty string → null coercion for optional fields
-- String → typed coercion (integer, number, boolean, array, object)
-- `$ref` resolution (draft-07 `#/definitions/` + 2020-12 `#/$defs/`) with depth limit
-- oneOf/anyOf discriminator matching
-- `crates/agent/src/tools/schema_validator.rs` — two-tier validation
-- Strict mode (CI-time): top-level object, required keys, array items
-- Lenient mode (runtime): relaxed rules for execution-time validation
-- Integration: coercion applied before tool execution in reactor.rs
+### Features
 
-#### MCP Agent Loop Integration
-- `McpConfig` and `McpServerEntry` structs in `crates/core/src/config.rs` — `[mcp]` section in savant.toml
-- `SwarmController` extended with `mcp_servers` field — threaded through `new()` to `spawn_agent()`
-- MCP tool discovery at agent startup: connects to all configured servers, discovers tools via `tools/list`
-- `McpRemoteTool` now passes `input_schema` from MCP server through `parameters_schema()` — MCP tool schemas sent to LLM API
-- `McpToolDiscovery::get_remote_tools()` output flows into `AgentLoop.tools` — MCP tools visible to agent as native tools
-- Config example: `servers = [{ name = "fs", url = "ws://localhost:3001/mcp", auth_token = "..." }]`
+#### Agent Delegate LLM Wiring (S-1)
+- `crates/agent/src/react/mod.rs` — All 3 agent delegates (ChatDelegate, HeartbeatDelegate, SpeculativeDelegate) now call `provider.stream_completion()` and collect responses into `ChatResponse`. Previously returned empty responses.
 
-#### Smithery CLI + Dashboard
-- `SmitheryManager` in `crates/gateway/src/smithery.rs` — wraps @smithery/cli for install/list/uninstall/info
-- 6 gateway REST endpoints: `GET /api/mcp/servers`, `POST /api/mcp/servers/install`, `POST /api/mcp/servers/add`, `POST /api/mcp/servers/remove`, `POST /api/mcp/servers/uninstall`, `GET /api/mcp/servers/info`
-- Dashboard MCP page at `/mcp` — server list, install from Smithery marketplace, add custom servers, remove/uninstall
-- `McpConfig` + `McpServerEntry` in `crates/core/src/config.rs` — `[mcp]` config section
+#### Memory Consolidation (S-2)
+- `crates/memory/src/engine.rs` — `MemoryEngine::consolidate()` implemented: fetches recent messages, deduplicates consecutive identical messages (by content + role), compacts via atomic_compact. Reports removed count.
+- `crates/core/src/memory/mod.rs` — `FjallMemoryBackend::consolidate()` wired to engine's real implementation.
 
-#### Tauri 2.x Upgrade + Auto-Updater + Splash + Version + Changelog + Dependency Check
-- Tauri 1.7 → 2.x migration: `tauri = { version = "2", features = ["tray-icon"] }`
-- Tauri 2.x API: `TrayIconBuilder`, `Emitter`, `MenuItemBuilder`, `MenuBuilder`
-- `tauri.conf.json` v2 format: `app.windows`, `app.security`, `plugins.updater`
-- Auto-updater: `tauri-plugin-updater = "2"`, GitHub Releases integration, Ed25519 signature verification
-- Splash screen: `SplashScreen.tsx` + CSS — logo, spinner, status messages, auto-dismiss on swarm ready
-- Version display: sidebar `v1.6.0` badge, `get_version` Tauri command
-- Changelog page: `/changelog` with embedded release history, sidebar navigation link
-- Dependency check: `GET /api/setup/check` + `POST /api/setup/install-model` endpoints
-- Setup wizard: `SetupWizard.tsx` — checks Ollama + model, one-click install, skip option
-- First-launch detection with auto-dismiss on success
+#### NLP Command Dispatchers (S-4)
+- `crates/core/src/nlp/commands.rs` — All 6 command handlers updated to return accurate WebSocket API references instead of fake execution confirmations. Users now see the exact `ControlFrame` to send for each operation.
 
-### Dependencies
-- Added `sha2 = "0.10"` to savant_agent (SHA-256 for response cache)
-- Added `tauri-plugin-updater = "2"` to savant-desktop
+### Dependencies Added
+- `dashmap = "6.1.0"` — added to `savant_agent` and `savant_mcp` crate dependencies
+- `crates/core/src/net/mod.rs` — new module for centralized HTTP client factory
 
-### Fixed
-- `FileDeleteTool::execute()` — `self.base_path` → `self.workspace_dir`, `SavantError::Validation` → `SavantError::Unknown`, `SavantError::Security` → `SavantError::Unknown`
-- `FileAtomicEditTool` — removed duplicate struct definition created during earlier edit
+### Infrastructure
+- `.gitignore` updated to exclude `dev/`, `docs/research/`, `archives/`, `AUDIT-REPORT.MD` from git tracking
+- `AUDIT-REPORT.MD` removed from version control (internal use only)
 
 ---
 
-## [1.5.0] - 2026-03-21
+## [0.0.1] - 2026-03-24
 
-**Architectural Metamorphosis. OMEGA-VIII Certification. 80% Code Re-Birth.**
+**Foundation reset. Core framework established.**
 
-This release marks a massive stabilization of the Savant substrate after a comprehensive architectural overhaul. The entire agentic core, memory system, and heartbeat protocol have been elevated to AAA standards.
-
-### Added
-- **10-Lens Cognitive Diary**: High-fidelity diagnostic rotation with 10 distinct lenses (`INFRASTRUCTURE` to `EMPIRE`).
-- **Substrate Telemetry**: Multi-crate RAM usage and system metrics injection into heartbeat pulses.
-- **Savant-CLI Diagnostics**: New `heartbeat` (--pulse, --lens) and `state` (--inspect) subcommands.
-- **Ollama Native Support**: Integrated `qwen3-embedding` and `qwen3-vl` for sovereign local intelligence.
-- **Structured Archiving**: New top-level `archives/` hierarchy for historical project preservation.
-
-### Changed
-- **Memory Engine Evolution**: Transitioned to the OMEGA-grade hybrid storage engine (SQLite + LSM + Vectors).
-- **Sovereign Context**: Standardized proactive state filenames (`DEV-SESSION-STATE.md`, `CONTEXT.md`).
-- **Performance**: Sub-millisecond latency for inter-crate communication via Nexus Bridge.
-
-### Fixed
-- **Recursive Chaos Correction**: Resolved all architectural debt introduced during the "rogue agent" incident.
-- **Build Stability**: Zero-error compilation verified across the 16-crate workspace.
+Initial foundation release with core framework: Rust-native multi-crate workspace, 15 AI providers, agent swarm orchestration, 25 channel adapters, MCP integration, memory engine with LSM + vector search, WebSocket gateway, Next.js dashboard, Tauri desktop app, WASM skill sandboxing, post-quantum cryptography.
 
 ---
 
-### Added
-- **AI Fine-Tuning Dashboard**: New UI for tuning conversational weights (`temperature`, `top_p`, `penalties`) with real-time feedback.
-- **Dynamic Parameter Descriptors**: UI now pulls min/max/descriptions directly from `savant-core` via the Gateway, ensuring perfect engine alignment.
-- **Swarm-Wide Telemetry**: Dashboard reflections now announce configuration updates and 'Guardian' clamping events.
-- **System Demeanor Presets**: "Deep Observer", "Creative Spark", and "Rapid Solver" presets.
-- **Stillness & Presence Toggle**: Auto-optimizes penalties for deep relational observation.
-- **Persistence Recovery**: "Reset to Defaults" feature in Gateway and Dashboard UI.
-- **Atomic Config Writes**: Hardened `Config::save` with temp-file + rename pattern in `savant-core`.
-
-### Fixed
-- **Gateway Intelligence**: Refactored `settings_post_handler` to batch configuration updates and expose dynamic descriptors.
-- **Guardian Validation**: Server-side range checking and clamping for all AI parameters.
-- **SPA Resilience**: Navigation to Fine-Tuning maintains WebSocket persistence with 'Retry' recovery.
-
----
-
-## [2.0.1] - 2026-03-18
-
-**Feature completion. Quality pass. Gap analysis. Autonomous workflow documented.**
-
-**Stats:** 14/14 features complete. 324/324 tests passing. 0 errors. 0 warnings. 28 files changed, +2615 / -476 lines.
-
-### Added
-
-#### Vector Search / Semantic Memory
-- `EmbeddingService` with fastembed AllMiniLML6V2 (384 dimensions) in `crates/core/src/utils/embeddings.rs`
-- LRU cache (1000 entries) for embedding reuse
-- Batch embedding (`embed_batch`) for high-throughput scenarios
-- Semantic retrieval in `AsyncMemoryBackend` — hybrid search with fallback to substring matching
-- Auto-indexing during `store()` for messages >= 3 characters
-- Re-exported from `savant_memory` crate
-
-#### MCP Client Tool Discovery
-- `McpClient` — full WebSocket client: connect, initialize handshake, tools/list, tools/call in `crates/mcp/src/client.rs`
-- `McpRemoteTool` — implements `Tool` trait, proxies execution to remote MCP servers
-- `McpToolDiscovery` — discovers tools from multiple servers, bridges to local registry
-- `McpClientPool` — compatibility wrapper with `connect()`, `execute_tool()`, `list_tools()`
-- Auth support via `connect_with_auth()`
-- 30-second request timeout with oneshot channel cleanup
-
-#### Docker Skill Execution
-- `DockerToolExecutor` — implements `ToolExecutor` trait in `crates/skills/src/docker.rs`
-- `ExecutionMode::DockerContainer(String)` in `crates/core/src/types/mod.rs`
-- `SandboxDispatcher::create_executor()` routes to Docker with fallback executor
-- 8 integration tests passing (requires Docker daemon)
-
-#### Skill Testing CLI
-- `savant test-skill --skill-path <path> --input <json> --timeout <secs>`
-- Loads via `SkillRegistry`, executes with timeout enforcement
-- Pass/fail output formatting
-
-#### Database Backup/Restore
-- `savant backup --output <path> [--include-memory]`
-- `savant restore --input <path>`
-- Atomic backup with pre-restore safety copy
-- Supports main database and memory database
-
-#### CLI Subcommand Architecture
-- Converted from flags-only to `clap` subcommands in `crates/cli/src/main.rs`
-- `start` — launch swarm orchestrator (default, backward compatible)
-- `test-skill` — test individual skills
-- `backup` / `restore` — database management
-- `list-agents` — discover workspace agents
-- `status` — system health check
-
-#### Lambda Executor
-- `LambdaSkillExecutor` — AWS Lambda Invoke API integration in `crates/skills/src/lambda.rs`
-- `LambdaTool` — implements `Tool` trait for skill registry
-- Configurable region, function name, timeout, sync/async invocation
-- 8 unit tests
-
-#### Autonomous Development Workflow
-- `docs/AUTONOMOUS-WORKFLOW.md` — formalized overnight automation protocol
-- `docs/GAP-ANALYSIS.md` — 10 high-impact features, 12 easter eggs, impact ratings
-- `dev/SESSION-SUMMARY.md` — session report
-
-### Fixed
-
-#### Test Suite (8 files)
-- `crates/gateway/tests/security_tests.rs` — `DashMap` import, unique Fjall temp paths, `NexusBridge::new()` API
-- `crates/echo/tests/circuit_breaker_tests.rs` — rewrote for `ComponentMetrics` / `CircuitState` API
-- `crates/echo/tests/speculative_tests.rs` — rewrote for actual circuit breaker interface
-- `crates/cognitive/src/synthesis.rs` — broadened error detection to include plain text "Error:" prefix
-- `crates/gateway/src/auth/mod.rs` — auth tests check generic message instead of internal details
-- `crates/cognitive/src/predictor.rs` — doc-test examples fixed (missing `max_history_size`, `Result::unwrap()`)
-- `crates/mcp/tests/integration.rs` — unused variable warnings
-- `crates/mcp/src/client.rs` — unused variable warning
-
-#### Security
-- `SavantError::AuthError` Display impl changed from `"Authentication failed: {0}"` to `"Authentication failed"` — prevents information leakage to external callers
-
----
-
-## [2.0.0] - 2026-03-17
-
-**Deep audit. Security hardening. 121 issues audited, 107+ fixed. Full line-by-line review of all 133 source files.**
-
-### Added
-
-#### MCP Server Authentication
-- Token-based auth for MCP WebSocket connections
-- Rate limiting: 100 requests/minute/connection
-- Auth required before any method except `initialize`
-- Hash-based token verification
-
-#### MCP Circuit Breaker
-- Full implementation: Closed → Open → HalfOpen with CAS transitions
-- Configurable thresholds (failure, recovery, success)
-- 5 unit tests
-
-#### Security Scanner Enhancements
-- Recursive directory traversal with `walkdir`
-- SHA-256 content hashing replacing `DefaultHasher`
-- Directory-wide hashing (all files, not just SKILL.md)
-
-#### CLI Features
-- `--keygen` flag for master key generation
-- `--config` flag for custom config path
-- Dynamic build timestamp
-
-#### LCS-Based Array Diff
-- Proper Longest Common Subsequence algorithm in `crates/canvas/src/diff.rs`
-
-#### RAII Temp Directory Cleanup
-- `TempDirGuard` with auto-cleanup on drop
-
-### Fixed
-
-#### Data Integrity
-- `atomic_compact` — deletes old messages before inserting compacted batch
-- `delete_session` — collects keys inside transaction snapshot
-- Vector persistence — atomic write via temp file + rename
-- Vector engine Drop — auto-persists on Drop
-- `db.rs` — rewrote Storage with proper ghost_restore, partition counters
-
-#### Security
-- Path traversal — input validation on all skill handlers
-- Gateway signing key — `OsRng` instead of deterministic
-- SSRF — disabled redirects in threat intel client
-- Auth error leak — generic messages
-- Directive injection — length limit, control char rejection
-- Token verification — proper error propagation
-- File permissions — 0o600 on Unix
-
-#### Agent Crate
-- `ChatRole::Tool` variant added
-- `MessageRole::Tool` → `ChatRole::Tool` mapping
-- API key serialization skip
-- Provider fallback warning
-
-#### Echo Crate
-- Circuit breaker — Mutex + CAS for TOCTOU protection
-- AWS env leak — explicit allowlist all platforms
-- Watcher thread — `mem::forget(debouncer)`
-
-#### Cognitive Crate
-- Forge panic — early return for empty population
-- Goal decomposition — advance past conjunction
-- Dependency depth — bounds check
-
-#### Channels
-- Discord token panic — safe slicing
-- Telegram UTF-8 — `chars().take()` instead of byte slicing
-- Discord resource leak — `spawn()` returns `JoinHandle`
-- WhatsApp zombie process — handle storage + Drop cleanup
-
-#### Gateway
-- Replaced all 6 `.expect()` calls
-- Auth error sanitized
-- Agent image handler — name validation
-
-#### Memory Engine
-- Non-atomic delete operations fixed
-- `retrieve()` uses query parameter
-- Error propagation in `vector.remove()`
-- Rollback failures logged at critical
-
-### Changed
-- Storage and Memory Engine use separate Fjall instances (prevents `Locked` error)
-- `SessionMapper::sanitize()` returns `Option<String>`
-- Build timestamp uses `std::time::SystemTime`
-
----
-
-## [1.0.0] - 2026-03-15
-
-**Initial release. Core system, agents, gateway, dashboard.**
-
-### Core System
-- Rust-native architecture with 14 crates
-- Fjall LSM-tree persistent storage
-- Axum WebSocket gateway
-- Next.js 16 dashboard
-- 15 AI providers (OpenRouter, OpenAI, Anthropic, Google, Mistral, Groq, Deepseek, Cohere, Together, Azure, xAI, Fireworks, Novita, Ollama, LmStudio)
-- Multi-channel support (Discord, Telegram, WhatsApp, Matrix)
-- Post-quantum cryptography (Dilithium2)
-- WASM skill sandboxing (wasmtime)
-- Docker skill execution (bollard)
-- MCP server and client
-- Circuit breaker pattern
-- Autonomous agent heartbeat loop
-- Semantic memory with vector search
-- Security scanning for skills
-- ClawHub skill marketplace
-- Configuration auto-reload
-- Smart build system with `start.bat`
-
----
-
-_This changelog follows [Keep a Changelog](https://keepachangelog.com/). For the full development history, see the Git log._
+*This changelog follows [Keep a Changelog](https://keepachangelog.com/).*

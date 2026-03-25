@@ -178,12 +178,17 @@ impl LsmStorageEngine {
         if self.sessions.insert(session_id.to_string()) {
             let mut reg_meta = HashMap::new();
             reg_meta.insert("session_id".to_string(), session_id.to_string());
-            let _ = self.db.add_with_content(
+            if let Err(e) = self.db.add_with_content(
                 "_registry",
                 session_id.as_bytes().to_vec(),
                 self.zero_embedding(),
                 Some(reg_meta),
-            );
+            ) {
+                warn!(
+                    "[memory::lsm] Failed to register session {}: {}",
+                    session_id, e
+                );
+            }
         }
 
         debug!("Appended message {} to session {}", message.id, session_id);
@@ -1088,7 +1093,9 @@ mod tests {
     #[test]
     fn test_lsm_engine_basic_operations() {
         let temp_dir = std::env::temp_dir().join("savant_memory_test_cortexa");
-        let _ = fs::create_dir_all(&temp_dir);
+        if let Err(e) = fs::create_dir_all(&temp_dir) {
+            warn!("[memory::lsm] Failed to create test temp dir: {}", e);
+        }
 
         let engine = LsmStorageEngine::with_defaults(&temp_dir).unwrap();
 
@@ -1099,7 +1106,9 @@ mod tests {
         assert_eq!(tail.len(), 1);
         assert_eq!(tail[0].content, "Hello, world!");
 
-        let _ = fs::remove_dir_all(&temp_dir);
+        if let Err(e) = fs::remove_dir_all(&temp_dir) {
+            warn!("[memory::lsm] Failed to clean up test temp dir: {}", e);
+        }
     }
 
     #[test]

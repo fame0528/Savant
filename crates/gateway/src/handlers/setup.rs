@@ -22,7 +22,7 @@ pub async fn setup_check_handler(State(_state): State<Arc<GatewayState>>) -> imp
     let ollama_url =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
 
-    match reqwest::Client::new()
+    match savant_core::net::secure_client()
         .get(format!("{}/api/tags", ollama_url))
         .timeout(std::time::Duration::from_secs(5))
         .send()
@@ -86,7 +86,7 @@ pub async fn setup_install_model_handler(
     let ollama_url =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
 
-    match reqwest::Client::new()
+    match savant_core::net::secure_client()
         .post(format!("{}/api/pull", ollama_url))
         .json(&serde_json::json!({
             "name": "qwen3-embedding:4b",

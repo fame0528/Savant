@@ -32,7 +32,13 @@ impl TempDirGuard {
 impl Drop for TempDirGuard {
     fn drop(&mut self) {
         if let Some(ref path) = self.path {
-            let _ = std::fs::remove_dir_all(path);
+            if let Err(e) = std::fs::remove_dir_all(path) {
+                tracing::warn!(
+                    "[skills::clawhub] Failed to remove temp directory {}: {}",
+                    path.display(),
+                    e
+                );
+            }
         }
     }
 }

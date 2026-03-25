@@ -105,7 +105,12 @@ impl TelegramAdapter {
                     let tx = tx.clone();
                     async move {
                         debug!("Received Telegram message: {:?}", msg.id);
-                        let _ = tx.send(msg);
+                        if let Err(e) = tx.send(msg) {
+                            tracing::warn!(
+                                "[channels::telegram] Failed to send message to handler: {:?}",
+                                e
+                            );
+                        }
                         respond(())
                     }
                 }))

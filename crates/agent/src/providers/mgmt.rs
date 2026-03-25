@@ -16,7 +16,7 @@ impl OpenRouterMgmt {
     }
 
     pub async fn create_key(&self, agent_name: &str) -> Result<String, SavantError> {
-        let client = reqwest::Client::new();
+        let client = savant_core::net::secure_client();
         let name = format!("Savant Agent: {}", agent_name);
 
         let response = client

@@ -142,35 +142,8 @@ impl CanvasManager {
                     version: state.version + 1,
                 }
             };
-            let _ = self.update_tx.send(event);
-        }
-
-        state.version += 1;
-
-        // Broadcast state diff
-        let diff = compute_diff(
-            &serde_json::to_value(&old_state).unwrap_or_default(),
-            &serde_json::to_value(&*state).unwrap_or_default(),
-            old_version,
-            state.version,
-        );
-        let _ = self.update_tx.send(CanvasEvent::StateDiff { diff });
-
-        Ok(state.version)
-    }
-
-    /// Removes elements by ID.
-    pub async fn remove_elements(&self, ids: Vec<String>) -> Result<u64, String> {
-        let mut state = self.state.write().await;
-        let old_version = state.version;
-        let old_state = state.clone();
-
-        for id in &ids {
-            if state.elements.remove(id).is_some() {
-                let _ = self.update_tx.send(CanvasEvent::ElementRemoved {
-                    id: id.clone(),
-                    version: state.version + 1,
-                });
+            if let Err(e) = self.update_tx.send(event) {
+                warn!("[canvas::a2ui] Failed to broadcast element event: {:?}", e);
             }
         }
 
@@ -183,7 +156,45 @@ impl CanvasManager {
             old_version,
             state.version,
         );
-        let _ = self.update_tx.send(CanvasEvent::StateDiff { diff });
+        if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
+            warn!("[canvas::a2ui] Failed to broadcast state diff: {:?}", e);
+        }
+
+        Ok(state.version)
+    }
+
+    /// Removes elements by ID.
+    pub async fn remove_elements(&self, ids: Vec<String>) -> Result<u64, String> {
+        let mut state = self.state.write().await;
+        let old_version = state.version;
+        let old_state = state.clone();
+
+        for id in &ids {
+            if state.elements.remove(id).is_some() {
+                if let Err(e) = self.update_tx.send(CanvasEvent::ElementRemoved {
+                    id: id.clone(),
+                    version: state.version + 1,
+                }) {
+                    warn!(
+                        "[canvas::a2ui] Failed to broadcast element removed event: {:?}",
+                        e
+                    );
+                }
+            }
+        }
+
+        state.version += 1;
+
+        // Broadcast state diff
+        let diff = compute_diff(
+            &serde_json::to_value(&old_state).unwrap_or_default(),
+            &serde_json::to_value(&*state).unwrap_or_default(),
+            old_version,
+            state.version,
+        );
+        if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
+            warn!("[canvas::a2ui] Failed to broadcast state diff: {:?}", e);
+        }
 
         Ok(state.version)
     }
@@ -204,7 +215,9 @@ impl CanvasManager {
             old_version,
             state.version,
         );
-        let _ = self.update_tx.send(CanvasEvent::StateDiff { diff });
+        if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
+            warn!("[canvas::a2ui] Failed to broadcast state diff: {:?}", e);
+        }
 
         Ok(state.version)
     }
@@ -253,7 +266,9 @@ async fn handle_a2ui_connection(socket: WebSocket, canvas: Arc<CanvasManager>) {
     };
 
     if let Ok(msg) = serde_json::to_string(&snapshot) {
-        let _ = tx.send(Message::Text(msg)).await;
+        if let Err(e) = tx.send(Message::Text(msg)).await {
+            warn!("[canvas::a2ui] Failed to send initial snapshot: {:?}", e);
+        }
     }
 
     // Subscribe to canvas updates
@@ -291,7 +306,9 @@ async fn handle_a2ui_connection(socket: WebSocket, canvas: Arc<CanvasManager>) {
                         code: "INVALID_COMMAND".to_string(),
                     };
                     if let Ok(msg) = serde_json::to_string(&error_event) {
-                        let _ = tx.send(Message::Text(msg)).await;
+                        if let Err(e) = tx.send(Message::Text(msg)).await {
+                            warn!("[canvas::a2ui] Failed to send error event: {:?}", e);
+                        }
                     }
                 }
             },
@@ -299,7 +316,9 @@ async fn handle_a2ui_connection(socket: WebSocket, canvas: Arc<CanvasManager>) {
                 debug!("A2UI: Received binary frame ({} bytes)", data.len());
             }
             Message::Ping(data) => {
-                let _ = tx.send(Message::Pong(data)).await;
+                if let Err(e) = tx.send(Message::Pong(data)).await {
+                    warn!("[canvas::a2ui] Failed to send pong response: {:?}", e);
+                }
             }
             Message::Pong(_) => {
                 debug!("A2UI: Received pong");

@@ -68,14 +68,24 @@ impl AgentKeyPair {
 
     pub fn save_to_file(&self, path: &PathBuf) -> Result<(), CryptoError> {
         let json = serde_json::to_string_pretty(self)?;
-        fs::write(path, json)?;
 
-        // Set restrictive permissions on Unix
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            let _ = std::fs::set_permissions(path, perms);
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(path)?;
+            f.write_all(json.as_bytes())?;
+            f.sync_all()?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            fs::write(path, json)?;
         }
 
         Ok(())
@@ -105,7 +115,9 @@ impl AgentKeyPair {
         }
 
         // Strategy 2: Load .env from current working directory
-        let _ = dotenvy::dotenv();
+        if let Err(e) = dotenvy::dotenv() {
+            tracing::warn!("[core::crypto] Failed to load .env from cwd: {}", e);
+        }
         if let Ok(secret_key) = std::env::var("SAVANT_MASTER_SECRET_KEY") {
             if let Ok(public_key) = std::env::var("SAVANT_MASTER_PUBLIC_KEY") {
                 let key_id =
@@ -124,7 +136,9 @@ impl AgentKeyPair {
             if let Some(exe_dir) = exe_path.parent() {
                 let env_path = exe_dir.join(".env");
                 if env_path.exists() {
-                    let _ = dotenvy::from_path(&env_path);
+                    if let Err(e) = dotenvy::from_path(&env_path) {
+                        tracing::warn!("[core::crypto] Failed to load .env from exe dir: {}", e);
+                    }
                     if let Ok(secret_key) = std::env::var("SAVANT_MASTER_SECRET_KEY") {
                         if let Ok(public_key) = std::env::var("SAVANT_MASTER_PUBLIC_KEY") {
                             let key_id = std::env::var("SAVANT_MASTER_KEY_ID")
@@ -160,7 +174,9 @@ impl AgentKeyPair {
         // Persist to config directory so it survives restarts
         if let Some(key_path) = Self::key_file_path() {
             if let Some(parent) = key_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    tracing::warn!("[core::crypto] Failed to create key directory: {}", e);
+                }
             }
             if let Err(e) = generated_key.save_to_file(&key_path) {
                 tracing::warn!("⚠️  Failed to persist master key to {:?}: {}", key_path, e);

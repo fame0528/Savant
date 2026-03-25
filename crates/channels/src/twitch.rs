@@ -83,19 +83,33 @@ impl TwitchAdapter {
                 backoff = std::time::Duration::from_secs(1);
 
                 // Authenticate
-                let _ = writer
+                if let Err(e) = writer
                     .write_all(format!("PASS {}\r\n", self.config.oauth_token).as_bytes())
-                    .await;
-                let _ = writer
+                    .await
+                {
+                    tracing::warn!("[channels] IRC write failed: {}", e);
+                }
+                if let Err(e) = writer
                     .write_all(format!("NICK {}\r\n", self.config.nickname).as_bytes())
-                    .await;
-                let _ = writer
+                    .await
+                {
+                    tracing::warn!("[channels] IRC write failed: {}", e);
+                }
+                if let Err(e) = writer
                     .write_all(format!("JOIN #{}\r\n", self.config.channel).as_bytes())
-                    .await;
-                let _ = writer
+                    .await
+                {
+                    tracing::warn!("[channels] IRC write failed: {}", e);
+                }
+                if let Err(e) = writer
                     .write_all("CAP REQ :twitch.tv/commands\r\n".as_bytes())
-                    .await;
-                let _ = writer.flush().await;
+                    .await
+                {
+                    tracing::warn!("[channels] IRC write failed: {}", e);
+                }
+                if let Err(e) = writer.flush().await {
+                    tracing::warn!("[channels] IRC flush failed: {}", e);
+                }
 
                 info!("[TWITCH] Connected to #{}", self.config.channel);
 
@@ -138,11 +152,17 @@ impl TwitchAdapter {
                     // Handle PING/PONG
                     if line.starts_with("PING") {
                         let pong = line.replace("PING", "PONG");
-                        let _ = writer
+                        if let Err(e) = writer
                             .lock()
                             .await
                             .write_all(format!("{}\r\n", pong).as_bytes())
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(
+                                "[channels::twitch] Failed to send PONG response: {}",
+                                e
+                            );
+                        }
                         continue;
                     }
 
@@ -170,7 +190,9 @@ impl TwitchAdapter {
                                     event_type: "chat.message".into(),
                                     payload: serde_json::to_string(&chat_msg).unwrap_or_default(),
                                 };
-                                let _ = self.nexus.event_bus.send(frame);
+                                if self.nexus.event_bus.send(frame).is_err() {
+                                    tracing::warn!("[channels::twitch] Event bus send failed");
+                                }
                             }
                         }
                     }

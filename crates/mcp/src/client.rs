@@ -1,5 +1,6 @@
 #![allow(clippy::disallowed_methods)] // serde_json::json! macro false positives
 
+use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
@@ -84,7 +85,7 @@ pub struct McpClient {
     /// Read half task handle
     read_task: Option<tokio::task::JoinHandle<()>>,
     /// Pending responses channel
-    responses: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
+    responses: Arc<DashMap<u64, tokio::sync::oneshot::Sender<Value>>>,
 }
 
 impl McpClient {
@@ -95,7 +96,7 @@ impl McpClient {
             connection: None,
             tools: Vec::new(),
             read_task: None,
-            responses: Arc::new(Mutex::new(HashMap::new())),
+            responses: Arc::new(DashMap::new()),
         }
     }
 
@@ -188,22 +189,23 @@ impl McpClient {
                 tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
             >,
         >,
-        responses: Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>>,
+        responses: Arc<DashMap<u64, tokio::sync::oneshot::Sender<Value>>>,
     ) {
         while let Some(Ok(msg)) = read.next().await {
             if let Message::Text(text) = msg {
                 match serde_json::from_str::<JsonRpcResponse>(&text) {
                     Ok(resp) => {
                         if let Some(id) = resp.id {
-                            let mut pending = responses.lock().await;
-                            if let Some(tx) = pending.remove(&id) {
+                            if let Some((_, tx)) = responses.remove(&id) {
                                 let value = resp.result.unwrap_or_else(|| {
                                     serde_json::json!({
                                         "error": resp.error.map(|e| e.message)
                                             .unwrap_or_else(|| "Unknown error".to_string())
                                     })
                                 });
-                                let _ = tx.send(value);
+                                if let Err(e) = tx.send(value) {
+                                    debug!("[mcp::client] Failed to forward MCP response: {:?}", e);
+                                }
                             }
                         }
                     }
@@ -244,10 +246,7 @@ impl McpClient {
 
             // Register response channel before sending
             let (tx, rx) = tokio::sync::oneshot::channel();
-            {
-                let mut pending = self.responses.lock().await;
-                pending.insert(id, tx);
-            }
+            self.responses.insert(id, tx);
 
             conn_guard
                 .write
@@ -263,16 +262,14 @@ impl McpClient {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(_)) => {
                 // Channel closed - remove from pending
-                let mut pending = self.responses.lock().await;
-                pending.remove(&request_id);
+                self.responses.remove(&request_id);
                 Err(SavantError::Unknown(
                     "MCP response channel closed".to_string(),
                 ))
             }
             Err(_) => {
                 // Timeout - remove from pending
-                let mut pending = self.responses.lock().await;
-                pending.remove(&request_id);
+                self.responses.remove(&request_id);
                 Err(SavantError::Unknown(format!(
                     "MCP request timed out (method: {})",
                     method
@@ -380,7 +377,12 @@ impl McpClient {
     pub async fn disconnect(&mut self) {
         if let Some(conn) = self.connection.take() {
             let mut conn_guard = conn.lock().await;
-            let _ = conn_guard.write.close().await;
+            if let Err(e) = conn_guard.write.close().await {
+                debug!(
+                    "[mcp::client] Failed to close write half of connection: {}",
+                    e
+                );
+            }
         }
         if let Some(task) = self.read_task.take() {
             task.abort();

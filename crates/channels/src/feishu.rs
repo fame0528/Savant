@@ -29,7 +29,7 @@ impl FeishuAdapter {
     pub fn new(config: FeishuConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
         Self {
             config,
-            http: reqwest::Client::new(),
+            http: savant_core::net::secure_client(),
             nexus,
             tenant_token: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -218,7 +218,9 @@ impl FeishuAdapter {
                                         payload: serde_json::to_string(&chat_msg)
                                             .unwrap_or_default(),
                                     };
-                                    let _ = nexus_out.event_bus.send(frame);
+                                    if let Err(e) = nexus_out.event_bus.send(frame) {
+                                        tracing::warn!("[channels] Event publish failed: {}", e);
+                                    }
                                 }
                             }
                         }

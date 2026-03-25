@@ -147,9 +147,16 @@ impl savant_core::traits::Tool for DockerSkillExecutor {
                         name,
                         DOCKER_EXEC_TIMEOUT_SECS
                     );
-                    let _ = docker
+                    if let Err(e) = docker
                         .kill_container(&name, Some(KillContainerOptions { signal: "SIGKILL" }))
-                        .await;
+                        .await
+                    {
+                        tracing::warn!(
+                            "[skills::docker] Failed to kill timed-out container {}: {}",
+                            name,
+                            e
+                        );
+                    }
                     return Err(SavantError::Unknown(format!(
                         "Docker execution timed out after {} seconds",
                         DOCKER_EXEC_TIMEOUT_SECS

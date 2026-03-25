@@ -1,6 +1,6 @@
 [package]
 name = "savant_mcp"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
 [dependencies]
@@ -17,4 +17,5 @@ futures = { workspace = true }
 serde = { workspace = true }
 axum = { version = "0.7", features = ["ws"] }
 async-trait = { workspace = true }
+dashmap = { workspace = true }
 url = "2.5"

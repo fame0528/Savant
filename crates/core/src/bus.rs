@@ -118,7 +118,9 @@ impl NexusBridge {
         // 🏰 Invalidate cache on sync (since it affects state)
         let mut cache = self.context_cache.write().await;
         *cache = None;
-        let _ = self.swarm_sync.send(delta);
+        if let Err(e) = self.swarm_sync.send(delta) {
+            warn!("[core::bus] Failed to broadcast swarm sync delta: {:?}", e);
+        }
     }
 
     pub async fn get_global_context(&self) -> String {
@@ -191,12 +193,14 @@ mod tests {
 
         // First call (cache miss)
         let start = Instant::now();
-        let _ = bridge.get_global_context().await;
+        let ctx = bridge.get_global_context().await;
         let duration_miss = start.elapsed();
+        drop(ctx);
 
         // Second call (cache hit)
         let start = Instant::now();
-        let _ = bridge.get_global_context().await;
+        let ctx = bridge.get_global_context().await;
+        drop(ctx);
         let duration_hit = start.elapsed();
 
         tracing::info!(

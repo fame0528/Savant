@@ -86,3 +86,9 @@ docs/SYSTEM-UPDATE-*.md
 docs/Ranking*.md
 docs/CHEATSHEET.md
 docs/prompts/
+
+# Dead files
+extracted_issues.txt
+audit_extract.py
+generate_full_report.py
+nul

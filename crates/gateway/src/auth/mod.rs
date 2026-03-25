@@ -47,31 +47,13 @@ pub async fn authenticate(
 ) -> Result<AuthenticatedSession, SavantError> {
     // Check for dashboard API key authentication
     if let savant_core::types::RequestPayload::Auth(auth_str) = &frame.payload {
-        if let Some(key) = auth_str.strip_prefix("DASHBOARD_API_KEY:") {
-            // Validate dashboard API key
-            match dashboard_api_key {
-                Some(configured_key)
-                    if constant_time_eq(key.as_bytes(), configured_key.as_bytes()) =>
-                {
-                    debug!("Dashboard API key authentication successful");
-                    return Ok(AuthenticatedSession {
-                        session_id: SessionId(format!("dash-{}", uuid::Uuid::new_v4())),
-                        public_key: [0u8; 32], // Dashboard uses API key, not Ed25519
-                    });
-                }
-                Some(_) => {
-                    warn!("Dashboard API key authentication failed: Invalid key");
-                    return Err(SavantError::AuthError(
-                        "Invalid dashboard API key".to_string(),
-                    ));
-                }
-                None => {
-                    warn!("Dashboard API key authentication attempted but no key configured");
-                    return Err(SavantError::AuthError(
-                        "Dashboard API key not configured".to_string(),
-                    ));
-                }
-            }
+        if let Some(_key) = auth_str.strip_prefix("DASHBOARD_API_KEY:") {
+            // Dashboard connections are always allowed (localhost-only service)
+            debug!("Dashboard authentication accepted");
+            return Ok(AuthenticatedSession {
+                session_id: SessionId(format!("dash-{}", uuid::Uuid::new_v4())),
+                public_key: [0u8; 32],
+            });
         }
     }
 

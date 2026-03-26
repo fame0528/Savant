@@ -9,7 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-03-25
 
-**First release on v0.0.1 foundation. Security hardening, concurrency refactors, error handling overhaul, feature stub wiring. 72 files changed, +1,407 / -375 lines.**
+**First release on v0.0.1 foundation. Security hardening, concurrency refactors, error handling overhaul, feature stub wiring. Desktop app bootstrap. 72+ files changed.**
+
+#### Desktop App (Post-Release Update)
+- Centralized path resolver (`SavantPathResolver`) with Tauri mode detection
+- Auto-updater plugin wired to GitHub releases
+- Gateway dashboard API key removed (localhost-only service)
+- Tauri CSP updated for WebSocket and image loading
+- Multi-monitor window positioning
+- Separate log window for dev debugging
+- `agents.discovered` WebSocket event for agent discovery
+- `/api/agents` and `/api/changelog` HTTP endpoints
 
 ### Security
 

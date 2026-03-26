@@ -4,24 +4,38 @@
   "version": "0.1.0",
   "identifier": "com.savant.app",
   "build": {
-    "beforeDevCommand": "node ../../../scripts/setup-updater-keys.js && npm --prefix ../../../dashboard run dev",
-    "beforeBuildCommand": "node ../../../scripts/setup-updater-keys.js && set TAURI_BUILD=1 && npm --prefix ../../../dashboard run build",
+    "beforeDevCommand": "node scripts/setup-updater-keys.js && npm --prefix dashboard run dev",
+    "beforeBuildCommand": "node scripts/setup-updater-keys.js && set TAURI_BUILD=1 && npm --prefix dashboard run build",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../../../dashboard/out"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
         "title": "Savant Swarm Dashboard",
-        "width": 1200,
-        "height": 800,
+        "width": 2560,
+        "height": 1440,
+        "x": 0,
+        "y": 0,
+        "resizable": true,
+        "fullscreen": false
+      },
+      {
+        "label": "logs",
+        "title": "Savant — Agent Logs",
+        "url": "logs.html",
+        "width": 2560,
+        "height": 1440,
+        "x": -2560,
+        "y": 0,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* http://localhost:* wss://localhost:*"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* http://localhost:* wss://localhost:* ws://127.0.0.1:* http://127.0.0.1:* wss://127.0.0.1:* ws://0.0.0.0:* http://0.0.0.0:* img-src 'self' http://127.0.0.1:* http://localhost:*"
     },
     "trayIcon": {
       "iconPath": "icons/icon.ico",

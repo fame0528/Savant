@@ -1,14 +1,15 @@
 {
   "agent_id": "savant",
   "agent_name": "Savant",
-  "model_provider": "openrouter",
   "model": "stepfun/step-3.5-flash:free",
+  "model_provider": "OpenRouter",
+  "system_prompt": "You are the Savant Substrate. Operate with absolute sovereignty and technical precision.",
   "llm_params": {
     "temperature": 0.7,
-    "top_p": 1.0,
-    "frequency_penalty": 0.0,
-    "presence_penalty": 0.0,
-    "max_tokens": 4096,
+    "top_p": 0.9,
+    "frequency_penalty": 0.2,
+    "presence_penalty": 0.1,
+    "max_tokens": 256000,
     "logprobs": false,
     "stop": [],
     "jwt_secret": null

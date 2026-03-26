@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Savant — Agent Logs</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0e14;
+            color: #e6e1cf;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 11px;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        #header {
+            background: #141a22;
+            padding: 6px 12px;
+            border-bottom: 1px solid #2a3140;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        #header h3 {
+            color: #00d5ff;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        #status {
+            font-size: 10px;
+            color: #888;
+        }
+        #log {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 8px;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        #log::-webkit-scrollbar { width: 6px; }
+        #log::-webkit-scrollbar-track { background: #0a0e14; }
+        #log::-webkit-scrollbar-thumb { background: #2a3140; border-radius: 3px; }
+        .log-line {
+            white-space: pre-wrap;
+            word-break: break-all;
+            padding: 1px 0;
+            border-bottom: 1px solid #141a22;
+        }
+        .log-line.info { color: #a6e3a1; }
+        .log-line.warn { color: #f9e2af; }
+        .log-line.error { color: #f38ba8; }
+        .log-line.debug { color: #6c7086; }
+        .log-line.timestamp { color: #585b70; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h3>Savant Agent Logs</h3>
+        <span id="status">Connecting...</span>
+    </div>
+    <div id="log"></div>
+
+    <script>
+        const logEl = document.getElementById('log');
+        const statusEl = document.getElementById('status');
+        const MAX_LINES = 1000;
+
+        function addLine(text) {
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            let cls = '';
+            if (text.includes('[ERROR]')) cls = 'error';
+            else if (text.includes('[WARN]')) cls = 'warn';
+            else if (text.includes('[INFO]')) cls = 'info';
+            else if (text.includes('[DEBUG]')) cls = 'debug';
+            div.className = 'log-line ' + cls;
+            div.textContent = text;
+            logEl.appendChild(div);
+            while (logEl.children.length > MAX_LINES) logEl.removeChild(logEl.firstChild);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function connect() {
+            const ws = new WebSocket('ws://127.0.0.1:8080/ws');
+            ws.onopen = () => {
+                statusEl.textContent = 'Connected';
+                statusEl.style.color = '#a6e3a1';
+                ws.send(JSON.stringify({
+                    session_id: 'log-window-session',
+                    payload: 'DASHBOARD_API_KEY:',
+                    signature: null
+                }));
+            };
+            ws.onmessage = (event) => {
+                const data = event.data;
+                if (typeof data === 'string' && data.startsWith('EVENT:')) {
+                    try {
+                        const parsed = JSON.parse(data.substring(6));
+                        if (parsed.event_type && parsed.payload) {
+                            addLine(`[${parsed.event_type}] ${parsed.payload}`);
+                        }
+                    } catch (e) {}
+                }
+            };
+            ws.onclose = () => {
+                statusEl.textContent = 'Disconnected — Reconnecting...';
+                statusEl.style.color = '#f38ba8';
+                setTimeout(connect, 3000);
+            };
+            ws.onerror = () => {
+                statusEl.textContent = 'Connection Error';
+                statusEl.style.color = '#f38ba8';
+            };
+        }
+
+        connect();
+    </script>
+</body>
+</html>

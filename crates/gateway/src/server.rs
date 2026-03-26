@@ -63,6 +63,7 @@ pub async fn start_gateway(
 
     let app = Router::new()
         .route("/ws", get(websocket_handler))
+        .route("/api/agents", get(agents_list_handler))
         .route("/api/agents/:name/image", get(agent_image_handler))
         .route(
             "/api/settings",
@@ -105,6 +106,7 @@ pub async fn start_gateway(
             "/ready",
             get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
         )
+        .route("/api/changelog", get(changelog_handler))
         .route(
             "/api/setup/check",
             get(crate::handlers::setup::setup_check_handler),
@@ -741,6 +743,74 @@ async fn models_get_handler() -> impl IntoResponse {
         "parameter_descriptors": parameter_descriptors
     }))
     .into_response()
+}
+
+/// GET /api/agents — Returns list of discovered agents
+async fn agents_list_handler() -> axum::response::Response {
+    // Scan the workspaces directory for agents
+    let mut agents = Vec::new();
+    let workspace_dir = std::env::current_dir()
+        .unwrap_or_default()
+        .join("workspaces");
+
+    if let Ok(entries) = std::fs::read_dir(&workspace_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .trim_start_matches("workspace-")
+                    .to_string();
+                if path.join("agent.toml").exists() || path.join("config.toml").exists() {
+                    agents.push(serde_json::json!({
+                        "id": name,
+                        "name": name,
+                        "status": "online"
+                    }));
+                }
+            }
+        }
+    }
+
+    // Also check the alternate workspaces path
+    let alt_dir = std::env::current_dir()
+        .unwrap_or_default()
+        .join("workspaces")
+        .join("agents");
+    if let Ok(entries) = std::fs::read_dir(&alt_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .trim_start_matches("workspace-")
+                    .to_string();
+                if !agents.iter().any(|a| a["id"] == name) {
+                    agents.push(serde_json::json!({
+                        "id": name,
+                        "name": name,
+                        "status": "online"
+                    }));
+                }
+            }
+        }
+    }
+
+    Json(serde_json::json!({ "agents": agents })).into_response()
+}
+
+/// GET /api/changelog — Returns the changelog markdown content
+async fn changelog_handler() -> axum::response::Response {
+    let content = std::fs::read_to_string("CHANGELOG.md")
+        .unwrap_or_else(|_| "# Changelog\n\nNo changelog found.".to_string());
+    axum::response::Response::builder()
+        .header("content-type", "text/markdown; charset=utf-8")
+        .body(axum::body::Body::from(content))
+        .unwrap()
 }
 
 #[cfg(test)]

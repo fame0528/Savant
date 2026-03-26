@@ -20,6 +20,15 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
 
+    // Auto-dismiss after 15s if no ignition event received
+    const timeout = setTimeout(() => {
+      setStatus("Gateway not responding — entering dashboard...");
+      setTimeout(() => {
+        setFadeOut(true);
+        setTimeout(onComplete, 600);
+      }, 1000);
+    }, 15000);
+
     const setupListener = async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event");
@@ -71,6 +80,7 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
     setupListener();
 
     return () => {
+      clearTimeout(timeout);
       if (unlisten) unlisten();
     };
   }, [onComplete]);

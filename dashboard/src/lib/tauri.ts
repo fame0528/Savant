@@ -6,7 +6,8 @@ import { listen } from "@tauri-apps/api/event";
  * Unifies communication between the Next.js frontend and the Rust substrate.
  */
 export const isTauri = (): boolean => {
-  return typeof window !== "undefined" && !!(window as any).__TAURI__;
+  if (typeof window === "undefined") return false;
+  return !!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__;
 };
 
 export const igniteSwarm = async (): Promise<string> => {

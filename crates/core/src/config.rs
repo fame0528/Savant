@@ -385,9 +385,46 @@ impl Config {
             .map_err(|e| SavantError::ConfigError(format!("Config load error: {}", e)))?;
 
         // Determine project root
-        if let Some(path) = config_file_path {
-            // Savant project root is typically one level up from config/savant.toml
-            if let Some(parent) = path.parent() {
+        // Priority: 1) SAVANT_PROJECT_ROOT env var, 2) config file location, 3) search up for Cargo.toml/.git
+
+        // Check for explicit project root override
+        if let Ok(env_root) = std::env::var("SAVANT_PROJECT_ROOT") {
+            let root_path = PathBuf::from(&env_root);
+            if root_path.exists() {
+                config.project_root = root_path;
+                tracing::info!(
+                    "config: Project root from SAVANT_PROJECT_ROOT: {:?}",
+                    config.project_root
+                );
+            }
+        } else if let Some(path) = config_file_path {
+            // If config is in ~/.savant/, don't use that as project root — search for actual project
+            let is_user_config = path.to_string_lossy().contains(".savant")
+                && path
+                    .parent()
+                    .map(|p| p.ends_with(".savant"))
+                    .unwrap_or(false);
+
+            if is_user_config {
+                // Installed app: search for dev project with Cargo.toml
+                if let Ok(mut dir) = std::env::current_dir() {
+                    for _ in 0..10 {
+                        if dir.join("Cargo.toml").exists() || dir.join(".git").exists() {
+                            config.project_root = dir;
+                            tracing::info!(
+                                "config: Found dev project root from installed location"
+                            );
+                            break;
+                        }
+                        if let Some(parent) = dir.parent() {
+                            dir = parent.to_path_buf();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                // If still pointing to ~/.savant, leave it — user should set SAVANT_PROJECT_ROOT
+            } else if let Some(parent) = path.parent() {
                 if parent.ends_with("config") {
                     config.project_root = parent.parent().unwrap_or(Path::new(".")).to_path_buf();
                 } else {

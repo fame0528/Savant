@@ -69,7 +69,10 @@ interface Insight {
 
 const getGatewayHost = () => {
   if (typeof window === "undefined") return "127.0.0.1";
-  return window.location.hostname || "127.0.0.1";
+  const host = window.location.hostname;
+  // In Tauri, hostname may be empty or a custom protocol — fall back to localhost
+  if (!host || host === "localhost" || host.includes("tauri")) return "127.0.0.1";
+  return host || "127.0.0.1";
 };
 const getGatewayPort = () => {
   if (typeof window !== "undefined") {
@@ -418,7 +421,18 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
       setTypingAgents(prev => { const next = new Set(prev); next.add(agentId); return next; });
       setStreamingContent(prev => { const next = new Map(prev); next.set(agentId, (next.get(agentId) || '') + (chunk.content || "")); return next; });
     } else if (type === "heartbeat") { /* ignore */ }
-    else if (type === "swarm_insight_history") {
+    else if (type === "agents.discovered") {
+      // Agent discovery — populate sidebar
+      const agentsList = evData.agents || [];
+      if (Array.isArray(agentsList) && agentsList.length > 0) {
+        setAgents(agentsList);
+        logger.info('Agents', `Discovered ${agentsList.length} agents`);
+        // Auto-select first agent if none selected
+        if (!activeAgent && agentsList[0]?.id) {
+          setActiveAgent(agentsList[0].id);
+        }
+      }
+    } else if (type === "swarm_insight_history") {
       const { history } = evData;
       if (Array.isArray(history)) {
         setCognitiveInsights(history.map((h: any) => ({ agent_id: h.agent_id, content: h.content, category: h.category, timestamp: h.timestamp })));
@@ -488,6 +502,23 @@ CollapsibleThoughts.displayName = 'CollapsibleThoughts';
       }));
       setIsReady(true);
       setIsMounted(true);
+
+      // Fallback: if no agents arrive via WS within 3s, fetch via HTTP
+      setTimeout(async () => {
+        try {
+          const resp = await fetch(`${getHttpUrl()}/api/agents`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.agents && data.agents.length > 0) {
+              logger.info('Agents', `HTTP fallback: found ${data.agents.length} agents`);
+              setAgents(data.agents);
+            }
+          }
+        } catch (e) {
+          logger.warn('Agents', 'HTTP agent list fetch failed', e);
+        }
+      }, 3000);
+
       const saved = localStorage.getItem('activeAgent');
       if (saved) {
         const norm = saved.toLowerCase().trim();

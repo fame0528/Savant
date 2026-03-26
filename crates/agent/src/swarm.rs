@@ -315,7 +315,40 @@ impl SwarmController {
                 }
             };
 
-            // 2. Select LLM Provider
+            // 2. Fetch model info from OpenRouter (universal model database)
+            let model_id_for_info = agent_cfg
+                .model
+                .clone()
+                .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
+
+            let or_master_key = std::env::var("OR_MASTER_KEY")
+                .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
+                .unwrap_or_default();
+
+            let model_info = crate::providers::fetch_openrouter_model_info(
+                &client,
+                &or_master_key,
+                &model_id_for_info,
+            )
+            .await;
+
+            if let Some(ref info) = model_info {
+                tracing::info!(
+                    "[{}] Model info loaded: context={}, max_completion={}, safe_max_tokens={}",
+                    agent_name,
+                    info.context_length.unwrap_or(0),
+                    info.max_completion_tokens.unwrap_or(0),
+                    info.safe_max_tokens()
+                );
+            } else {
+                tracing::warn!(
+                    "[{}] Could not fetch model info for '{}' — using defaults",
+                    agent_name,
+                    model_id_for_info
+                );
+            }
+
+            // 3. Select LLM Provider
             let base_provider: Box<dyn LlmProvider> = match agent_cfg.model_provider {
                 ModelProvider::OpenRouter => {
                     let model_id = agent_cfg
@@ -323,13 +356,6 @@ impl SwarmController {
                         .clone()
                         .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
                     let or_api_key = agent_cfg.api_key.clone().unwrap_or_default();
-                    // Discovery-based: fetch context window from OpenRouter API
-                    let context_window = crate::providers::fetch_openrouter_context_window(
-                        &client,
-                        &or_api_key,
-                        &model_id,
-                    )
-                    .await;
                     Box::new(OpenRouterProvider {
                         client: client.clone(),
                         api_key: or_api_key,
@@ -337,7 +363,8 @@ impl SwarmController {
                         agent_id: agent_cfg.agent_id.clone(),
                         agent_name: agent_cfg.agent_name.clone(),
                         llm_params: Some(agent_cfg.llm_params.clone()),
-                        context_window,
+                        context_window: model_info.as_ref().and_then(|m| m.context_length),
+                        max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                     })
                 }
                 ModelProvider::OpenAi => Box::new(OpenAiProvider {
@@ -350,6 +377,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Anthropic => Box::new(AnthropicProvider {
                     client: client.clone(),
@@ -361,6 +389,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Ollama => Box::new(OllamaProvider {
                     client: client.clone(),
@@ -385,6 +414,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Google => Box::new(GoogleProvider {
                     client: client.clone(),
@@ -396,6 +426,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Mistral => Box::new(MistralProvider {
                     client: client.clone(),
@@ -407,6 +438,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Together => Box::new(TogetherProvider {
                     client: client.clone(),
@@ -418,6 +450,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Deepseek => Box::new(DeepseekProvider {
                     client: client.clone(),
@@ -429,6 +462,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Cohere => Box::new(CohereProvider {
                     client: client.clone(),
@@ -440,6 +474,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Azure => Box::new(AzureProvider {
                     client: client.clone(),
@@ -454,6 +489,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Xai => Box::new(XaiProvider {
                     client: client.clone(),
@@ -465,6 +501,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Fireworks => Box::new(FireworksProvider {
                     client: client.clone(),
@@ -475,6 +512,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::Novita => Box::new(NovitaProvider {
                     client: client.clone(),
@@ -486,21 +524,15 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
+                    max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::LmStudio | ModelProvider::Perplexity | ModelProvider::Local => {
-                    // OpenRouter's model catalog is a superset — query it for context window
-                    // even when using a local/different provider
+                    // Use the model info already fetched from OpenRouter
                     let model_id = agent_cfg
                         .model
                         .clone()
                         .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
                     let or_api_key = agent_cfg.api_key.clone().unwrap_or_default();
-                    let context_window = crate::providers::fetch_openrouter_context_window(
-                        &client,
-                        &or_api_key,
-                        &model_id,
-                    )
-                    .await;
                     Box::new(OpenRouterProvider {
                         client: client.clone(),
                         api_key: or_api_key,
@@ -508,7 +540,8 @@ impl SwarmController {
                         agent_id: agent_cfg.agent_id.clone(),
                         agent_name: agent_cfg.agent_name.clone(),
                         llm_params: Some(agent_cfg.llm_params.clone()),
-                        context_window,
+                        context_window: model_info.as_ref().and_then(|m| m.context_length),
+                        max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                     })
                 }
             };

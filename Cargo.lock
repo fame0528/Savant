@@ -8423,6 +8423,7 @@ name = "savant-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "dotenvy",
  "savant_agent",
  "savant_core",

@@ -8,6 +8,7 @@ use reqwest::Client;
 use savant_core::error::SavantError;
 use savant_core::traits::LlmProvider;
 use savant_core::types::{ChatChunk, ChatMessage, LlmParams};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::pin::Pin;
 
@@ -222,6 +223,7 @@ pub struct OpenAiProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -245,7 +247,7 @@ impl LlmProvider for OpenAiProvider {
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
                 "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.2),
                 "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.1),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -263,14 +265,47 @@ impl LlmProvider for OpenAiProvider {
     }
 }
 
-/// Fetches the context window size for a model from the OpenRouter API.
-/// Discovery-based: queries `GET /api/v1/models/{model_id}` for the model's `context_length`.
-/// Returns None if the API call fails or the model is not found.
-pub async fn fetch_openrouter_context_window(
+/// All model properties fetched from the OpenRouter API.
+/// Used for dynamic configuration of ANY provider based on OpenRouter's model database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub context_length: Option<usize>,
+    pub max_completion_tokens: Option<usize>,
+    pub prompt_tokens_limit: Option<usize>,
+    pub completion_tokens_limit: Option<usize>,
+    pub supported_parameters: Vec<String>,
+    pub default_temperature: Option<f32>,
+    pub default_top_p: Option<f32>,
+    pub default_frequency_penalty: Option<f32>,
+    pub default_presence_penalty: Option<f32>,
+    pub is_moderated: Option<bool>,
+}
+
+impl ModelInfo {
+    /// Returns the safe max_tokens value for API requests.
+    /// Uses the model's max_completion_tokens if available,
+    /// otherwise falls back to 85% of context_length capped at 16K.
+    pub fn safe_max_tokens(&self) -> u32 {
+        if let Some(max_comp) = self.max_completion_tokens {
+            return max_comp as u32;
+        }
+        if let Some(cw) = self.context_length {
+            return ((cw as f64 * 0.85) as u32).min(16384);
+        }
+        4096
+    }
+}
+
+/// Fetches comprehensive model info from the OpenRouter API.
+/// Works for ANY model on OpenRouter, even if the user uses a different provider.
+pub async fn fetch_openrouter_model_info(
     client: &Client,
     api_key: &str,
     model_id: &str,
-) -> Option<usize> {
+) -> Option<ModelInfo> {
     let url = format!(
         "https://openrouter.ai/api/v1/models/{}",
         model_id.replace('/', "%2F")
@@ -283,17 +318,70 @@ pub async fn fetch_openrouter_context_window(
         .ok()?;
 
     let json: Value = response.json().await.ok()?;
-    let context_length = json["data"]["context_length"].as_u64()?;
-    if context_length > 0 {
-        tracing::info!(
-            "Discovered context window for {}: {} tokens",
-            model_id,
-            context_length
-        );
-        Some(context_length as usize)
-    } else {
-        None
-    }
+    let data = &json["data"];
+
+    let id = data["id"].as_str().unwrap_or(model_id).to_string();
+    let name = data["name"].as_str().unwrap_or(model_id).to_string();
+    let description = data["description"].as_str().map(|s| s.to_string());
+    let context_length = data["context_length"].as_u64().map(|v| v as usize);
+    let max_completion_tokens = data["top_provider"]["max_completion_tokens"]
+        .as_u64()
+        .map(|v| v as usize);
+    let prompt_tokens_limit = data["per_request_limits"]["prompt_tokens"]
+        .as_u64()
+        .map(|v| v as usize);
+    let completion_tokens_limit = data["per_request_limits"]["completion_tokens"]
+        .as_u64()
+        .map(|v| v as usize);
+    let is_moderated = data["top_provider"]["is_moderated"].as_bool();
+
+    let supported_parameters = data["supported_parameters"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let default_temperature = data["default_parameters"]["temperature"]
+        .as_f64()
+        .map(|v| v as f32);
+    let default_top_p = data["default_parameters"]["top_p"]
+        .as_f64()
+        .map(|v| v as f32);
+    let default_frequency_penalty = data["default_parameters"]["frequency_penalty"]
+        .as_f64()
+        .map(|v| v as f32);
+    let default_presence_penalty = data["default_parameters"]["presence_penalty"]
+        .as_f64()
+        .map(|v| v as f32);
+
+    let info = ModelInfo {
+        id,
+        name,
+        description,
+        context_length,
+        max_completion_tokens,
+        prompt_tokens_limit,
+        completion_tokens_limit,
+        supported_parameters,
+        default_temperature,
+        default_top_p,
+        default_frequency_penalty,
+        default_presence_penalty,
+        is_moderated,
+    };
+
+    tracing::info!(
+        "Model info for {}: context={}, max_completion={}, params={:?}",
+        model_id,
+        context_length.unwrap_or(0),
+        max_completion_tokens.unwrap_or(0),
+        info.supported_parameters
+    );
+
+    Some(info)
 }
 
 pub struct OpenRouterProvider {
@@ -304,6 +392,7 @@ pub struct OpenRouterProvider {
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
     pub context_window: Option<usize>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -314,6 +403,13 @@ impl LlmProvider for OpenRouterProvider {
         tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
+        // Auto-calculate max_tokens from the dynamically-fetched model info.
+        let max_tokens = self.max_completion_tokens.unwrap_or_else(|| {
+            self.context_window
+                .map(|cw| ((cw as f64 * 0.85) as u32).min(16384))
+                .unwrap_or(4096)
+        });
+
         let response = self
             .client
             .post("https://openrouter.ai/api/v1/chat/completions")
@@ -329,7 +425,7 @@ impl LlmProvider for OpenRouterProvider {
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(1.0),
                 "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.0),
                 "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.0),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096),
+                "max_tokens": max_tokens,
             }))
             .send()
             .await
@@ -475,6 +571,7 @@ pub struct AnthropicProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -495,7 +592,7 @@ impl LlmProvider for AnthropicProvider {
                 "messages": messages,
                 "tools": tools,
                 "stream": true,
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
             }))
@@ -644,6 +741,7 @@ pub struct GroqProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -667,7 +765,7 @@ impl LlmProvider for GroqProvider {
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
                 "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.2),
                 "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.1),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -697,6 +795,7 @@ pub struct GoogleProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -734,7 +833,7 @@ impl LlmProvider for GoogleProvider {
                 "generationConfig": {
                     "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                     "topP": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
-                    "maxOutputTokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                    "maxOutputTokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
                 }
             }))
             .send()
@@ -833,6 +932,7 @@ pub struct MistralProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -854,7 +954,7 @@ impl LlmProvider for MistralProvider {
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -880,6 +980,7 @@ pub struct TogetherProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -901,7 +1002,7 @@ impl LlmProvider for TogetherProvider {
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -927,6 +1028,7 @@ pub struct DeepseekProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -948,7 +1050,7 @@ impl LlmProvider for DeepseekProvider {
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -974,6 +1076,7 @@ pub struct CohereProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -1031,7 +1134,7 @@ impl LlmProvider for CohereProvider {
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -1123,6 +1226,7 @@ pub struct AzureProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -1152,7 +1256,7 @@ impl LlmProvider for AzureProvider {
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
                 "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.2),
                 "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.1),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -1178,6 +1282,7 @@ pub struct XaiProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -1201,7 +1306,7 @@ impl LlmProvider for XaiProvider {
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
                 "frequency_penalty": self.llm_params.as_ref().map(|p| p.frequency_penalty).unwrap_or(0.2),
                 "presence_penalty": self.llm_params.as_ref().map(|p| p.presence_penalty).unwrap_or(0.1),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -1227,6 +1332,7 @@ pub struct FireworksProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -1248,7 +1354,7 @@ impl LlmProvider for FireworksProvider {
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
@@ -1274,6 +1380,7 @@ pub struct NovitaProvider {
     pub agent_id: String,
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -1295,7 +1402,7 @@ impl LlmProvider for NovitaProvider {
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
                 "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
-                "max_tokens": self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(256000),
+                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await

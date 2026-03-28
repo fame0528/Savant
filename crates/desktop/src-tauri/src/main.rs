@@ -40,8 +40,8 @@ impl LogBridge {
             .create(true)
             .append(true)
             .open(&log_path)
-            .unwrap_or_else(|e| {
-                eprintln!("Failed to open log file {:?}: {}", log_path, e);
+            .unwrap_or_else(|_e| {
+                // No eprintln! in release — it spawns a console window on Windows
                 OpenOptions::new()
                     .create(true)
                     .append(true)
@@ -141,6 +141,17 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
         let _ = app_handle.emit("system-log-event", "  config: NOT FOUND (using defaults)");
         None
     };
+
+    // Set SAVANT_PROJECT_ROOT for Config::load_from to anchor project root
+    std::env::set_var("SAVANT_PROJECT_ROOT", &resolver.base_data_path);
+    info!(
+        "  SAVANT_PROJECT_ROOT set to: {:?}",
+        resolver.base_data_path
+    );
+    let _ = app_handle.emit(
+        "system-log-event",
+        &format!("  SAVANT_PROJECT_ROOT={:?}", resolver.base_data_path),
+    );
 
     // Step 2: Check environment
     info!("[2/5] Checking environment...");
@@ -283,11 +294,21 @@ fn main() {
                 .with(tracing_subscriber::EnvFilter::new(
                     "info,savant_desktop=debug,savant_agent=debug",
                 ))
-                .with(tracing_subscriber::fmt::layer())
+                .with({
+                    #[cfg(debug_assertions)]
+                    {
+                        tracing_subscriber::fmt::layer()
+                    }
+                    #[cfg(not(debug_assertions))]
+                    {
+                        tracing_subscriber::fmt::layer().with_writer(std::io::sink)
+                    }
+                })
                 .with(bridge)
                 .try_init()
             {
-                eprintln!("[desktop] Tracing init failed: {}", e);
+                // No eprintln! in release — it spawns a console window on Windows
+                let _ = e;
             }
 
             bootstrap_log("Tracing initialized");

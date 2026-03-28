@@ -506,6 +506,26 @@ impl CortexaDB {
         })
     }
 
+    /// Retrieve all memories in a collection without vector search.
+    /// Returns entries sorted by ID (insertion order).
+    pub fn get_all_in_collection(&self, collection: &str) -> Result<Vec<Memory>> {
+        let snapshot = self.inner.snapshot();
+        let entries = snapshot.state_machine().get_memories_in_collection(collection);
+
+        Ok(entries
+            .into_iter()
+            .map(|e| Memory {
+                id: e.id.0,
+                content: e.content.clone(),
+                collection: e.collection.clone(),
+                embedding: e.embedding.clone(),
+                metadata: e.metadata.clone(),
+                created_at: e.created_at,
+                importance: e.importance,
+            })
+            .collect())
+    }
+
     /// Access the underlying `CortexaDBStore` for advanced operations.
     pub fn store(&self) -> &CortexaDBStore {
         &self.inner

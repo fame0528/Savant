@@ -1,56 +1,12 @@
-# ============================================================================
-# Savant Configuration - SINGLE SOURCE OF TRUTH (non-secret settings)
-# ============================================================================
-# This file contains ALL settings that are NOT secrets.
-# Secrets (API keys) go in .env and are loaded at runtime.
-# Model selection, behavior, ports, paths - everything non-secret lives here.
-# Save the file and changes take effect automatically.
-# ============================================================================
-
-# ============================================================================
-# [ai] - Substrate Operational Brain & Manifestation Engine
-# ============================================================================
 [ai]
-# @type {string} - "openrouter", "ollama", "anthropic", "openai", "kilo"
 provider = "openrouter"
-
-# @type {string} - Base URL for the AI provider API
-base_url = "https://openrouter.ai/api/v1"
-
-# @type {string} - Primary model for agent reasoning
 model = "stepfun/step-3.5-flash:free"
-
-# @type {string} - Model used for Soul Manifestation (AAA Identity Architecture)
 manifestation_model = "stepfun/step-3.5-flash:free"
-
-# @type {string} - Vision model for image/document understanding (Ollama)
-vision_model = "qwen3-vl"
-
-# @type {string} - Embedding model for semantic memory (Ollama)
-embedding_model = "qwen3-embedding:4b"
-
-# @type {float} - Intelligence temperature (0.0 to 1.0)
-# 0.0-0.3: Deterministic/technical
-# 0.4-0.6: Structured/focused  
-# 0.7-0.8: Creative/coherent (structured chaos)
-# 0.9-1.0: Wild/creative
-temperature = 0.7
-
-# @type {float} - Top-p nucleus sampling (0.0 to 1.0)
-top_p = 0.9
-
-# @type {float} - Frequency penalty (-2.0 to 2.0)
-frequency_penalty = 0.2
-
-# @type {float} - Presence penalty (-2.0 to 2.0)
-presence_penalty = 0.1
-
-# @type {integer} - Global token ceiling
+temperature = 0.699999988079071
+top_p = 0.8999999761581421
+frequency_penalty = 0.4000000059604645
+presence_penalty = 0.30000001192092896
 max_tokens = 256000
-
-# @type {string} - THE UNIFIED BRAIN DIRECTIVE
-# This prompt governs the entire swarm and is prepended to every agent's identity.
-# It consists of the Substrate Operational Directive (Physics) and the Collective Brain Framework (Consciousness).
 system_prompt = """
 ## TIER 1: SUBSTRATE OPERATIONAL DIRECTIVE (The Physics)
 You are operating within the SAVANT SUBSTRATE — a high-density, Rust-native autonomous environment.
@@ -70,8 +26,6 @@ You are an extension of the **Savant Unified Brain**.
 ## TIER 3: INDIVIDUAL ROLE (The Soul)
 [The specific agent SOUL.md will be injected here]
 """
-
-# @type {string} - AAA Master Framework for Soul Manifestation
 manifestation_system_prompt = """
 You are the Savant Soul Manifestation Engine — a AAA-tier identity architect.
 Your task is to generate a complete, high-density SOUL.md file based on the user's prompt.
@@ -103,41 +57,17 @@ CRITICAL RESTRAINT:
 - DO NOT use placeholders. Generate a fully sentient identity.
 """
 
-# ============================================================================
-# [swarm] - Collective brain coordination
-# ============================================================================
-[swarm]
-# @type {integer} - Seconds between agent health checks
-heartbeat_interval = 60
-
-# ============================================================================
-# [server] - Gateway and API settings
-# ============================================================================
 [server]
-# @type {integer} - Gateway port
 port = 8080
-
-# @type {string} - Listen address (0.0.0.0 for public access)
 host = "0.0.0.0"
-
-# @type {integer} - Max concurrent API connections
 max_connections = 1000
-
-# @type {integer} - Max concurrent operations across the gateway
 lane_capacity = 100
-
-# @type {integer} - Max parallel threads per request lane
 max_lane_concurrency = 12
-
-# @type {string} - Dev key for dashboard access
 dashboard_api_key = "savant-dev-key"
 
-# @type {string[]} - Allowed CORS origins (regex supported)
-allowed_origins = ["*"]
+[swarm]
+heartbeat_interval = 60
 
-# ============================================================================
-# [channels] - Multi-platform connectivity
-# ============================================================================
 [channels.discord]
 enabled = false
 
@@ -150,90 +80,35 @@ enabled = false
 [channels.matrix]
 enabled = false
 
-# ============================================================================
-# [skills] - Secure capability modules
-# ============================================================================
 [skills]
-# @type {path} - Root directory for skill manifests
 path = "./skills"
-
-# @type {boolean} - Enable integrated ClawHub marketplace
 enable_clawhub = true
-
-# @type {boolean} - Auto-update skills on reload
 auto_update = true
 
-# ============================================================================
-# [memory] - LSM-Tree persistent state
-# ============================================================================
 [memory]
-# @type {path} - Root directory for memory databases
 base_path = "./memory"
-
-# @type {integer} - In-memory cache size in MB
 cache_size_mb = 2048
-
-# @type {integer} - Number of L0 files before consolidation
 consolidation_threshold = 50
 
-# ============================================================================
-# [security] - Threat intelligence and sandboxing
-# ============================================================================
 [security]
-# @type {boolean} - Sync global blocklists in real-time
 enable_blocklist_sync = true
-
-# @type {integer} - Seconds between threat intelligence updates
 threat_intel_sync_interval_secs = 600
 
-# ============================================================================
-# [wasm] - Secure execution environment (AAA Sandboxing)
-# ============================================================================
 [wasm]
-# @type {integer} - Max concurrent WASM instances
 max_instances = 120
-
-# @type {integer} - Instruction budget per execution
 fuel_limit = 50000000
-
-# @type {integer} - Memory limit per WASM instance in MB
 memory_limit_mb = 512
-
-# @type {boolean} - Enable compiled component caching
 enable_cache = true
 
-# ============================================================================
-# [system] - Sovereign substrate paths
-# ============================================================================
 [system]
-# @type {path} - Core substrate storage (Fjall)
 db_path = "./data/savant"
-
-# @type {path} - Shared workspace/state path
 substrate_path = "./workspaces/workspace-savant"
-
-# @type {path} - Root for individual agent nodes
 agents_path = "./workspaces"
 
-# ============================================================================
-# [telemetry] - Observability and logging
-# ============================================================================
 [telemetry]
-# @type {string} - log level: "trace", "debug", "info", "warn", "error"
 log_level = "info"
-
-# @type {boolean} - Enable ANSI color output
 log_color = true
-
-# @type {boolean} - Enable OTLP/gRPC tracing (advanced)
 enable_tracing = false
 
-# ============================================================================
-# [ollama] - Local model backend
-# ============================================================================
-[ollama]
-# @type {string} - Ollama server URL
-url = "http://localhost:11434"
-
-# @type {boolean} - Use Ollama as fallback when OpenRouter is unavailable
-fallback_enabled = true
+[mcp]
+servers = []

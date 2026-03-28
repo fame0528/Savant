@@ -39,6 +39,16 @@ impl FileLoggingMemoryBackend {
     ) -> Result<(), SavantError> {
         let md_path = self.workspace_path.join("LEARNINGS.md");
 
+        // Grounding filter — block fabrication, require environmental grounding
+        if !crate::learning::OutputFilter::is_grounded(learning_text) {
+            tracing::warn!(
+                "[{}] LEARNINGS.md write filtered (not grounded): {}",
+                agent_id,
+                &learning_text[..learning_text.len().min(100)]
+            );
+            return Ok(());
+        }
+
         // Get current UTC timestamp
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.9f UTC");
 

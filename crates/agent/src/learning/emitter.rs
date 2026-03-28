@@ -37,13 +37,22 @@ impl<M: MemoryBackend + Clone> LearningEmitter<M> {
         // 1. Initial Signal Processing
         let significance = self.calculate_significance(&content);
 
-        // 2. Filter Noise: Only capture signals with significance > 4
+        // 2. Filter Noise: Only capture signals with significance > 2
         // OR explicit category (which implies agent intentionality)
         // AAA: Variance Penalty (Phase 19) - If significance is borderline, we filter more strictly.
-        if significance <= 4 && suggested_category.is_none() {
+        if significance <= 2 && suggested_category.is_none() {
             debug!(
                 "Discarding low-signal learning (significance {}): {}",
                 significance, content
+            );
+            return Ok(());
+        }
+
+        // 2. Grounding filter — block fabrication, require environmental grounding
+        if !super::filter::OutputFilter::is_grounded(&content) {
+            tracing::warn!(
+                "Learning output filtered (not grounded): {}",
+                &content[..content.len().min(100)]
             );
             return Ok(());
         }

@@ -83,40 +83,17 @@
             logEl.scrollTop = logEl.scrollHeight;
         }
 
-        function connect() {
-            const ws = new WebSocket('ws://127.0.0.1:8080/ws');
-            ws.onopen = () => {
-                statusEl.textContent = 'Connected';
-                statusEl.style.color = '#a6e3a1';
-                ws.send(JSON.stringify({
-                    session_id: 'log-window-session',
-                    payload: 'DASHBOARD_API_KEY:',
-                    signature: null
-                }));
-            };
-            ws.onmessage = (event) => {
-                const data = event.data;
-                if (typeof data === 'string' && data.startsWith('EVENT:')) {
-                    try {
-                        const parsed = JSON.parse(data.substring(6));
-                        if (parsed.event_type && parsed.payload) {
-                            addLine(`[${parsed.event_type}] ${parsed.payload}`);
-                        }
-                    } catch (e) {}
-                }
-            };
-            ws.onclose = () => {
-                statusEl.textContent = 'Disconnected — Reconnecting...';
-                statusEl.style.color = '#f38ba8';
-                setTimeout(connect, 3000);
-            };
-            ws.onerror = () => {
-                statusEl.textContent = 'Connection Error';
-                statusEl.style.color = '#f38ba8';
-            };
-        }
+        statusEl.textContent = 'Listening (Tauri)';
+        statusEl.style.color = '#a6e3a1';
 
-        connect();
+        // Use Tauri event system to receive system logs
+        window.__TAURI__.event.listen('system-log-event', (event) => {
+            const logMsg = event.payload;
+            addLine(logMsg);
+        }).catch((e) => {
+            statusEl.textContent = 'Tauri event error: ' + e;
+            statusEl.style.color = '#f38ba8';
+        });
     </script>
 </body>
 </html>

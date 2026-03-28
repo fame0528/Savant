@@ -22,8 +22,13 @@ impl<M: MemoryBackend> AgentLoop<M> {
             .map(|s| s.0.clone())
             .unwrap_or_else(|| self.agent_id.clone());
 
-        let session_context = self.memory.retrieve(&effective_sid, user_input, 10).await?;
-        let mut current_history = session_context;
+        let mut current_history = if self.skip_memory_retrieval {
+            // Heartbeat mode: skip memory retrieval to prevent old messages
+            // from being recalled. The heartbeat prompt is self-contained.
+            Vec::new()
+        } else {
+            self.memory.retrieve(&effective_sid, user_input, 10).await?
+        };
         current_history.extend(history.to_vec());
 
         let mut messages = self.context.build_messages(current_history);

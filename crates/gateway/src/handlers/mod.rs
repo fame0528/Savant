@@ -442,6 +442,13 @@ async fn route_chat_message(
     // In production, this would route to specific agents based on logic
     let event_payload = serde_json::to_string(&message)?;
 
+    tracing::info!(
+        "📤 Routing chat.message to agents (role: {:?}, sender: {:?}, content: \"{}...\")",
+        message.role,
+        message.sender,
+        &message.content[..message.content.len().min(80)]
+    );
+
     nexus.publish("chat.message", &event_payload).await?;
 
     tracing::info!("📤 Chat message routed to agents");

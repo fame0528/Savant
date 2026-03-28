@@ -105,26 +105,10 @@ impl ALDEngine {
         Ok(())
     }
 
-    fn promote_to_agents(&self, block: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let agents_path = self.workspace_root.join("AGENTS.md");
-        let agents_content = fs::read_to_string(&agents_path)?;
-
-        let rule = block
-            .lines()
-            .find(|l| l.contains("Protocol") || l.contains("Rule"))
-            .unwrap_or("Maintain absolute protocol fidelity.");
-
-        if agents_content.contains(rule) {
-            return Ok(());
-        }
-
-        let updated = format!(
-            "{}\n- **{}**: Generated from S-ATLAS autonomous distillation.",
-            agents_content,
-            rule.trim()
-        );
-        fs::write(agents_path, updated)?;
-        info!("S-ATLAS: Promoted lesson to AGENTS.md");
+    fn promote_to_agents(&self, _block: &str) -> Result<(), Box<dyn std::error::Error>> {
+        // S-ATLAS distillation to AGENTS.md disabled — auto-generated artifacts
+        // were polluting the system prompt with diary/identity content.
+        // Distillations still flow to SOUL.md via promote_to_soul().
         Ok(())
     }
 }

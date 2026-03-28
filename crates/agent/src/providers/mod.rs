@@ -195,8 +195,27 @@ where
                     }
                 }
                 Err(e) => {
-                    tracing::error!("[{}] OpenRouter stream error: {}", agent_id, e);
-                    yield Err(e);
+                    tracing::warn!(
+                        "[{}] OpenRouter stream interrupted ({}): yielding partial response as complete",
+                        agent_id,
+                        e
+                    );
+                    // Connection dropped mid-stream — this is normal for long-lived SSE.
+                    // Yield the final chunk so the agent loop can continue with
+                    // whatever content was already received.
+                    yield Ok(ChatChunk {
+                        agent_name: agent_name.clone(),
+                        agent_id: agent_id.clone(),
+                        content: String::new(),
+                        is_final: true,
+                        session_id: None,
+                        channel: savant_core::types::AgentOutputChannel::Chat,
+                        logprob: None,
+                        is_telemetry: false,
+                        reasoning: None,
+                        tool_calls: None,
+                    });
+                    return;
                 }
             }
         }
@@ -546,7 +565,26 @@ where
                         }
                     }
                 }
-                Err(e) => yield Err(e),
+                Err(e) => {
+                    tracing::warn!(
+                        "[{}] Anthropic stream interrupted ({}): yielding partial response as complete",
+                        agent_id,
+                        e
+                    );
+                    yield Ok(ChatChunk {
+                        agent_name: agent_name.clone(),
+                        agent_id: agent_id.clone(),
+                        content: String::new(),
+                        is_final: true,
+                        session_id: None,
+                        channel: savant_core::types::AgentOutputChannel::Chat,
+                        logprob: None,
+                        is_telemetry: false,
+                        reasoning: None,
+                        tool_calls: None,
+                    });
+                    return;
+                }
             }
         }
         yield Ok(ChatChunk {
@@ -646,6 +684,8 @@ impl LlmProvider for OllamaProvider {
 
         let agent_name = self.agent_name.clone();
         let agent_id = self.agent_id.clone();
+        let final_name = agent_name.clone();
+        let final_id = agent_id.clone();
 
         Ok(Box::pin(stream! {
             let mut stream = stream;
@@ -715,12 +755,31 @@ impl LlmProvider for OllamaProvider {
                             }
                         }
                     }
-                    Err(e) => yield Err(e),
+                    Err(e) => {
+                        tracing::warn!(
+                            "[{}] Ollama stream interrupted ({}): yielding partial response as complete",
+                            agent_id,
+                            e
+                        );
+                        yield Ok(ChatChunk {
+                            agent_name: agent_name.clone(),
+                            agent_id: agent_id.clone(),
+                            content: String::new(),
+                            is_final: true,
+                            session_id: None,
+                            channel: savant_core::types::AgentOutputChannel::Chat,
+                            logprob: None,
+                            is_telemetry: false,
+                            reasoning: None,
+                            tool_calls: None,
+                        });
+                        return;
+                    }
                 }
             }
             yield Ok(ChatChunk {
-                agent_name,
-                agent_id,
+                agent_name: final_name,
+                agent_id: final_id,
                 content: String::new(),
                 is_final: true,
                 session_id: None,
@@ -903,7 +962,23 @@ where
                     }
                 }
                 Err(e) => {
-                    yield Err(e);
+                    tracing::warn!(
+                        "[{}] Google stream interrupted ({}): yielding partial response as complete",
+                        agent_id,
+                        e
+                    );
+                    yield Ok(ChatChunk {
+                        agent_name: agent_name.clone(),
+                        agent_id: agent_id.clone(),
+                        content: String::new(),
+                        is_final: true,
+                        session_id: None,
+                        channel: savant_core::types::AgentOutputChannel::Chat,
+                        logprob: None,
+                        is_telemetry: false,
+                        reasoning: None,
+                        tool_calls: None,
+                    });
                     return;
                 }
             }
@@ -1195,7 +1270,23 @@ where
                     }
                 }
                 Err(e) => {
-                    yield Err(e);
+                    tracing::warn!(
+                        "[{}] Cohere stream interrupted ({}): yielding partial response as complete",
+                        agent_id,
+                        e
+                    );
+                    yield Ok(ChatChunk {
+                        agent_name: agent_name.clone(),
+                        agent_id: agent_id.clone(),
+                        content: String::new(),
+                        is_final: true,
+                        session_id: None,
+                        channel: savant_core::types::AgentOutputChannel::Chat,
+                        logprob: None,
+                        is_telemetry: false,
+                        reasoning: None,
+                        tool_calls: None,
+                    });
                     return;
                 }
             }

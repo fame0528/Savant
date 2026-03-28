@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { DashboardProvider } from "@/context/DashboardContext";
+import DashboardShell from "@/components/DashboardShell";
 
 export const metadata: Metadata = {
   title: "Savant Swarm Controller",
@@ -32,7 +34,9 @@ export default function RootLayout({
         `}} />
       </head>
       <body>
-        {children}
+        <DashboardProvider>
+          <DashboardShell>{children}</DashboardShell>
+        </DashboardProvider>
       </body>
     </html>
   );

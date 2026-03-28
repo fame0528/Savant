@@ -190,8 +190,58 @@ impl MemoryBackend for AsyncMemoryBackend {
                         warn!(
                             session = %sid,
                             error = %e,
-                            "Failed to embed query, falling back to substring match"
+                            "Embedding failed — attempting Ollama auto-start and retry"
                         );
+                        // Self-heal: try to start Ollama and retry once
+                        if let Err(start_err) =
+                            savant_core::utils::ollama_embeddings::auto_start_ollama().await
+                        {
+                            warn!(
+                                session = %sid,
+                                "Failed to auto-start Ollama for retry: {}",
+                                start_err
+                            );
+                        }
+                        // Retry the embed after potential Ollama restart
+                        match emb_service.embed(&query_owned).await {
+                            Ok(query_embedding) => {
+                                match self.engine.semantic_search(&query_embedding, limit) {
+                                    Ok(search_results) => {
+                                        info!(
+                                            session = %sid,
+                                            results = search_results.len(),
+                                            "Semantic search returned results after Ollama restart"
+                                        );
+                                        let tail = self.engine.fetch_session_tail(&sid, limit * 3);
+                                        let mut seen_content = std::collections::HashSet::new();
+                                        for msg in tail {
+                                            let chat_msg = msg.to_chat();
+                                            let content_key = chat_msg.content.clone();
+                                            if seen_content.insert(content_key) {
+                                                results.push(chat_msg);
+                                                if results.len() >= limit {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e2) => {
+                                        warn!(
+                                            session = %sid,
+                                            error = %e2,
+                                            "Semantic search failed after retry"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e2) => {
+                                warn!(
+                                    session = %sid,
+                                    error = %e2,
+                                    "Embedding still failing after Ollama restart"
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -199,10 +249,23 @@ impl MemoryBackend for AsyncMemoryBackend {
 
         // 2. If no semantic results or no embeddings, use transcript tail
         if results.is_empty() {
-            let tail = self.engine.fetch_session_tail(&sid, limit);
+            let tail = self.engine.fetch_session_tail(&sid, limit * 2); // fetch extra for decay filtering
+            let now = chrono::Utc::now().timestamp_millis();
+            let lambda = 0.03_f64;
+            let min_relevance = 0.1_f64;
             results = tail
                 .into_iter()
-                .map(|msg: AgentMessage| msg.to_chat())
+                .filter(|msg| {
+                    // Temporal decay: filter messages older than ~30 days
+                    if msg.timestamp <= 0 {
+                        return true;
+                    }
+                    let age_hours = (now - msg.timestamp) as f64 / 3_600_000.0;
+                    let decay = (-lambda * age_hours).exp();
+                    decay >= min_relevance
+                })
+                .take(limit)
+                .map(|msg| msg.to_chat())
                 .collect();
         }
 

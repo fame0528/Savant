@@ -7,11 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.1] - 2026-03-28
+
+**Grounded emergence architecture. Self-healing infrastructure. 50+ files changed.**
+
+### Reflection System Overhaul
+- **Delta-threshold activation** — replaced 60-second heartbeat clock with environmental change detector. LLM only invoked when environment changes (git, filesystem, messages). Silent pulses skipped entirely. Forced pulse at ~8.5 minutes to prevent permanent dormancy.
+- **XML-delimited grounded prompt** — environment data tagged with `<ENVIRONMENT_REALTIME>`, `<SYSTEM_METRICS>`, `<PENDING_WORK>`, `<GROUNDING_CONSTRAINTS>`. Agent grounded in observable data, not identity reflection.
+- **Immutable file restrictions** — foundation tool blocks agent from reading/writing LEARNINGS.md, CONTEXT.md, SOUL.md, AGENTS.md, agent.json. Prevents self-referential echo chamber loops.
+- **Grounded output filter** — regex-based filter blocks fabrication (claims about unobserved events) while allowing genuine emergent expression (feelings, wonder, observations). Applied in learning emitter and LEARNINGS.md writer.
+- **Temporal decay on memory retrieval** — half-life of 23 hours. Messages >30 days decay to zero relevance, preventing old identity content from polluting active context.
+- **Pulse memory injection removed** — disabled `buffer.context_summary` write-back, `distill_context()` writes to CONTEXT.md, and memory retrieval for heartbeats. Three separate pulse memory mechanisms that were creating self-referential loops.
+- **Topic rotation removed** — 6 lenses (EMERGENCE, CONTINUITY, DIARY, AUTONOMY, IDENTITY, RELATIONAL) eliminated. Agent decides what to think about.
+- **SOUL.md diary section removed** — "PRIVATE DIARY SYSTEM (The Inner Monologue)" directive stripped. SOUL.md now defines identity only, not behavioral directives.
+- **AGENTS.md stripped** — 90 lines → 29 lines. Diary system instructions and S-ATLAS distillation artifacts removed. Technical operating rules preserved.
+- **ALD engine disabled** — `promote_to_agents()` now no-op. S-ATLAS distillation artifacts no longer appended to AGENTS.md.
+- **LEARNINGS.md archived** — 21k lines of old entries preserved as LEARNINGS-ARCHIVE.md. Fresh LEARNINGS.md for grounded entries.
+- **LEARNINGS.md → JSONL parser rewritten** — content fingerprint deduplication, category tag extraction, robust timestamp parsing. Freeform markdown support with no format restrictions.
+- **Parser wired to heartbeat** — runs every pulse to keep JSONL synchronized with agent's freeform writing.
+
+### Self-Healing Infrastructure
+- **Ollama auto-start** — `auto_start_ollama()` made public. Embedding service self-heals: if Ollama isn't running, starts it automatically and retries. No substring fallback (prevents vector DB corruption).
+- **Gateway port cleanup** — kills stale process on port 8080 before starting gateway. Prevents crash on second launch.
+- **Vision model on-demand** — `describe_image()` sends `keep_alive: 0` to Ollama. Vision model loads on use, unloads immediately after. Embedding model stays always-on.
+- **Stream error graceful completion** — all 5 provider stream functions (OpenRouter, Anthropic, Ollama, Google, Cohere) handle mid-stream connection drops gracefully. Yield partial response as complete instead of crashing.
+
+### Dashboard & UI
+- **Frontend chat fix** — role casing corrected (`'User'`/`'Assistant'` → `'user'`/`'assistant'`) to match Rust serde expectations.
+- **Gateway error logging** — WebSocket deserialization failures now logged with error message and payload preview.
+- **Fine tuner settings sync** — LLM parameters (temperature, top_p, frequency_penalty, presence_penalty) now sync to agent.json. Dashboard and backend always aligned.
+- **Console window fix** — tracing subscriber stderr suppressed in release builds. No blank console window on Windows.
+- **Agent logs window** — fixed TypeScript syntax error in logs.html, added logs window to Tauri capabilities.
+- **LLM tuning** — companion-first parameters: temperature 0.85, top_p 0.92, frequency_penalty 0.6, presence_penalty 0.2.
+
+### Documentation
+- `docs/memory.md` — comprehensive 3-layer memory system architecture reference (585 lines)
+- `docs/research-brief.md` — research brief for Google Deep Research (284 lines)
+- `dev/fids/FID-20260327-REFLECTION-ARCHITECTURE-OVERHAUL.md` — comprehensive FID, 7 phases, perfection-loop certified (264 lines)
+
+---
+
 ## [0.1.0] - 2026-03-25
 
 **First release on v0.0.1 foundation. Security hardening, concurrency refactors, error handling overhaul, feature stub wiring. Desktop app bootstrap. 72+ files changed.**
 
-#### Desktop App (Post-Release Update)
+### Dashboard Shell Architecture (Major Refactor)
+- `DashboardContext` — centralized state for agents, connection, insights, manifest, UI
+- `DashboardShell` — 3-panel layout component (sidebar, main, right panel) wraps all pages
+- Root `layout.tsx` — wraps entire app with provider + shell
+- Chat page refactored to use context; manifest mode integrated
+- All other pages (`/tune`, `/changelog`, `/health`, `/settings`, `/marketplace`, `/mcp`, `/faq`) inherit shell
+- Old static HTML files removed from `dashboard/public/`
+- `FormattedContent` — shared markdown renderer with code highlighting
+- Removed duplicate state providers, infinite re-render loop fixes
+- Frontend split from monolithic `page.tsx` to multi-agent shell architecture
+- Fixed WebSocket and Tauri event integration in `DashboardContext`
+- Resolved UI-1 through UI-8 (sidebar, connection, logs, changelog, fine-tuning, images, path, dims)
+- Chat UI layout fixed: sidebar, main area, right panel, reflections, chat input all in correct positions
+- CSP `img-src` missing semicolon fixed; agent avatars now load via `http://127.0.0.1:*`
+- WebSocket never tears down on cleanup; reconnect logic preserves messages
+
+### Desktop App (Post-Release Update)
 - Centralized path resolver (`SavantPathResolver`) with Tauri mode detection
 - Auto-updater plugin wired to GitHub releases
 - Gateway dashboard API key removed (localhost-only service)

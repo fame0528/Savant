@@ -12,6 +12,55 @@ use savant_core::crypto::AgentKeyPair;
 use savant_core::db::Storage;
 use savant_gateway::server::start_gateway;
 
+/// Kills any process using the specified port.
+/// On Windows, uses PowerShell. On Unix, uses lsof.
+/// Best-effort: logs warnings on failure but doesn't block startup.
+async fn kill_port_process(port: u16) {
+    // Check if port is in use
+    if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+        return; // Port is free, nothing to do
+    }
+
+    warn!("[ignition] Port {} is in use — attempting to free it", port);
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = tokio::process::Command::new("powershell")
+            .args([
+                "-Command",
+                &format!(
+                    "Get-NetTCPConnection -LocalPort {} -ErrorAction SilentlyContinue | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force }}",
+                    port
+                ),
+            ])
+            .output()
+            .await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = tokio::process::Command::new("sh")
+            .args([
+                "-c",
+                &format!("lsof -ti :{} | xargs kill -9 2>/dev/null", port),
+            ])
+            .output()
+            .await;
+    }
+
+    // Wait a moment for the process to release the port
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+        info!("[ignition] Port {} freed successfully", port);
+    } else {
+        warn!(
+            "[ignition] Port {} still in use after cleanup attempt",
+            port
+        );
+    }
+}
+
 /// 🧬 Savant Ignition Outcome
 /// Holds the live handlers for the entire swarm ecosystem.
 pub struct SwarmIgnition {
@@ -135,6 +184,8 @@ impl IgnitionService {
         info!("🚀 Swarm Controller online and synchronized");
 
         // 7. Gateway (Async Background)
+        // Kill any stale process on the gateway port before starting
+        kill_port_process(config.server.port).await;
         let g_config = config.clone();
         let g_nexus = nexus.clone();
         let g_storage = storage.clone();

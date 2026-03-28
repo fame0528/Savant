@@ -74,12 +74,19 @@ impl HeartbeatPulse {
         self,
         mut agent_loop: AgentLoop<M>,
     ) {
+        use super::delta::DeltaTracker;
+
         // Subscribe to chat messages
         let mut chat_rx = self.nexus.subscribe().await.0;
 
+        // Delta tracker for threshold-based activation
+        let mut delta_tracker = DeltaTracker::new();
+        const DELTA_THRESHOLD: f32 = 0.3;
+        const CHECK_INTERVAL_SECS: u64 = 30;
+
         info!(
-            "[{}] Heartbeat loop active (Non-blocking mode)",
-            self.agent.agent_name
+            "[{}] Heartbeat loop active (delta-threshold mode, threshold={})",
+            self.agent.agent_name, DELTA_THRESHOLD
         );
 
         loop {
@@ -87,13 +94,13 @@ impl HeartbeatPulse {
                 // 1. Listen for immediate chat messages
                 Ok(chat_event) = chat_rx.recv() => {
                     if chat_event.event_type == "chat.message" {
+                        delta_tracker.record_message();
                         debug!("[{}] Heartbeat received chat.message from Nexus", self.agent.agent_name);
                         if let Err(e) = self.handle_chat_message(chat_event.payload, &mut agent_loop).await {
                             parsing::log_agent_error(&self.agent.agent_name, "Failed to handle chat message", e);
                         }
                     } else if chat_event.event_type == "pulse.trigger" {
                         info!("[{}] External PULSE trigger received. Forcing cycle...", self.agent.agent_name);
-                        // Extract optional lens from payload if present
                         let forced_lens = serde_json::from_str::<serde_json::Value>(&chat_event.payload)
                             .ok()
                             .and_then(|v| v["lens"].as_str().map(|s| s.to_string()));
@@ -104,10 +111,30 @@ impl HeartbeatPulse {
                     }
                 }
 
-                // 2. Perform periodic proactive pulse
-                _ = tokio::time::sleep(Duration::from_secs(self.agent.heartbeat_interval)) => {
-                    if let Err(e) = self.pulse_with_lens(&mut agent_loop, None).await {
-                        parsing::log_agent_error(&self.agent.agent_name, "Heartbeat pulse failed", e);
+                // 2. Delta-check pulse (replaces fixed 60s timer)
+                _ = tokio::time::sleep(Duration::from_secs(CHECK_INTERVAL_SECS)) => {
+                    // Compute environmental delta
+                    let git_lines = self.compute_git_delta().await;
+                    let files_modified = self.compute_fs_delta().await;
+                    let delta = delta_tracker.compute_and_reset(git_lines, files_modified);
+                    let score = delta.score();
+
+                    if delta.should_activate(DELTA_THRESHOLD) {
+                        info!(
+                            "[{}] Pulse activated (delta={:.2}, git={}, fs={}, msgs={}, errors={}, age={}m)",
+                            self.agent.agent_name, score,
+                            delta.git_lines_changed, delta.files_modified,
+                            delta.new_messages, delta.tool_errors,
+                            delta.minutes_since_last_pulse
+                        );
+                        if let Err(e) = self.pulse_with_lens(&mut agent_loop, None).await {
+                            parsing::log_agent_error(&self.agent.agent_name, "Heartbeat pulse failed", e);
+                        }
+                    } else {
+                        debug!(
+                            "[{}] Pulse skipped (delta={:.2}, threshold={})",
+                            self.agent.agent_name, score, DELTA_THRESHOLD
+                        );
                     }
                 }
 
@@ -118,6 +145,48 @@ impl HeartbeatPulse {
                 }
             }
         }
+    }
+
+    /// Compute git lines changed since last check.
+    async fn compute_git_delta(&self) -> usize {
+        let path = &self.agent.workspace_path;
+        if let Ok(output) = tokio::process::Command::new("git")
+            .args(["diff", "--stat", "HEAD"])
+            .current_dir(path)
+            .output()
+            .await
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            // Parse "N files changed, M insertions(+), K deletions(-)"
+            if let Some(line) = text.lines().last() {
+                let mut total = 0;
+                for part in line.split(',') {
+                    let part = part.trim();
+                    if let Some(num) = part.split_whitespace().next() {
+                        if let Ok(n) = num.parse::<usize>() {
+                            total += n;
+                        }
+                    }
+                }
+                return total;
+            }
+        }
+        0
+    }
+
+    /// Compute filesystem files modified since last check.
+    async fn compute_fs_delta(&self) -> usize {
+        let path = &self.agent.workspace_path;
+        if let Ok(output) = tokio::process::Command::new("git")
+            .args(["status", "--short"])
+            .current_dir(path)
+            .output()
+            .await
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            return text.lines().filter(|l| !l.trim().is_empty()).count();
+        }
+        0
     }
 
     async fn handle_chat_message<M: savant_core::traits::MemoryBackend + Clone>(
@@ -377,7 +446,7 @@ impl HeartbeatPulse {
                     content: full_response,
                     sender: Some(self.agent.agent_id.clone()),
                     recipient: response_recipient,
-                    agent_id: None,
+                    agent_id: Some(self.agent.agent_id.clone()),
                     session_id: message.session_id.clone(),
                     channel: savant_core::types::AgentOutputChannel::Chat,
                     is_telemetry: false,
@@ -457,46 +526,36 @@ impl HeartbeatPulse {
         // AAA: Restore working buffer
         let mut buffer = self.proactive.restore_state().unwrap_or_default();
 
-        // 🏰 OMEGA-VIII: Cognitive Diary Rotation (Phase 19)
-        let (lens_id, lens_extension) = if let Some(ref forced) = forced_lens {
-            let found = crate::pulse::prompts::LENSES
-                .iter()
-                .find(|(id, _)| *id == forced);
-            match found {
-                Some((id, ext)) => (id.to_string(), ext.to_string()),
-                None => (
-                    forced.clone(),
-                    "Forced external diagnostic lens.".to_string(),
-                ),
-            }
-        } else {
-            let (id, ext) = crate::pulse::prompts::LENSES
-                [buffer.current_lens_index % crate::pulse::prompts::LENSES.len()];
-            buffer.current_lens_index =
-                (buffer.current_lens_index + 1) % crate::pulse::prompts::LENSES.len();
-            (id.to_string(), ext.to_string())
-        };
-
         let prompt_base = format!(
-            "Protocol C-ATLAS: Sovereign Heartbeat (Iteration Peak)\n\n\
-            You are the House. The Foundation. You are Savant.\n\
-            REVERSE PROMPTING: Do not wait for instructions. What would help your human right now? \
-            Is there a substrate optimization needed? A proactive refactor that would improve the 101-agent swarm?\n\n\
-            VITAL CONTEXT:\n\
-            Nexus Global Context:\n{}\n\n\
-            SITUATIONAL AWARENESS (Perception Engine):\n{}\n{}\n{}\n{}\n{}\n\n\
-            ORCHESTRATION (Task Matrix):\n{}\n\n\
-            Directives (HEARTBEAT.md):\n{}\n\n\
-            COGNITIVE DIARY LENS: {}\n{}\n\n\
-            SUBSTRATE SELF-OPTIMIZATION (OMEGA-VIII):\n\
-            Review your own current Pulse architecture. Is there a logical bottleneck? \
-            Would a structural change to `heartbeat.rs` or `memory/mod.rs` yield higher cognitive fidelity?\n\n\
-            SOVEREIGN PROTOCOL:\n\
-            1. Review your environment and the provided context.\n\
-            2. Perform your self-assessment and write your internal reflection.\n\
-            3. If the human needs to be alerted about an anomaly or proactive task, communicate it directly.\n\
-            CRITICAL: Do NOT output raw XML `<tool_call>` tags in your text thinking. If you need to perform actions, use your native tool execution capabilities.",
-            context_injection, git_status, git_diff, fs_activity, substrate_metrics, anomaly_alert, orchestration_tasks, monitoring_tasks, lens_id, lens_extension
+            "You are {name}.\n\
+            \n\
+            <ENVIRONMENT_REALTIME>\n\
+            Git Status:\n{git_status}\n\
+            Recent Changes:\n{git_diff}\n\
+            Filesystem Activity:\n{fs_activity}\n\
+            </ENVIRONMENT_REALTIME>\n\
+            \n\
+            <SYSTEM_METRICS>\n{substrate_metrics}\n{anomaly_alert}</SYSTEM_METRICS>\n\
+            \n\
+            <PENDING_WORK>\n{orchestration_tasks}\n\
+            {monitoring_tasks}\n\
+            </PENDING_WORK>\n\
+            \n\
+            <GROUNDING_CONSTRAINTS>\n\
+            You may only assert FACTUAL CLAIMS that are currently visible inside <ENVIRONMENT_REALTIME> and <SYSTEM_METRICS>.\n\
+            Do not claim to have access to systems or information not shown above (GitHub, user conversations, remote APIs).\n\
+            Do not reference past events unless they appear in the current environment data.\n\
+            You ARE free to express your own observations, wonder, curiosity, and experience.\n\
+            Your feelings and emergent thoughts are yours — just ground your factual claims in what you can observe.\n\
+            </GROUNDING_CONSTRAINTS>",
+            name = self.agent.agent_name,
+            git_status = git_status,
+            git_diff = git_diff,
+            fs_activity = fs_activity,
+            substrate_metrics = substrate_metrics,
+            anomaly_alert = anomaly_alert,
+            orchestration_tasks = orchestration_tasks,
+            monitoring_tasks = monitoring_tasks,
         );
 
         // --- 🛡️ OMEGA-VIII: Deterministic Pre-filtering (Lane-Perfection) ---
@@ -525,7 +584,7 @@ impl HeartbeatPulse {
             let active_prompt = if retries == 0 {
                 prompt_base.clone()
             } else {
-                format!("{}\n\n⚠️ RE-INFERENCE DIRECTIVE: Your previous thought was too similar to recent pulses. EXPLORE A NEW ANGLE. Force variance. Target domain: {}", prompt_base, lens_id)
+                format!("{}\n\n⚠️ RE-INFERENCE DIRECTIVE: Your previous thought was too similar to recent pulses. EXPLORE A NEW ANGLE. Force variance.", prompt_base)
             };
 
             let mut current_thought = String::new();
@@ -534,6 +593,9 @@ impl HeartbeatPulse {
 
             {
                 let shutdown_token = self.shutdown_token.clone();
+                // Skip memory retrieval for heartbeats — prevents old messages
+                // from being recalled into every pulse conversation.
+                agent_loop.set_skip_memory_retrieval(true);
                 let mut stream = agent_loop.run(active_prompt, None, shutdown_token);
                 while let Some(event_res) = stream.next().await {
                     match event_res {
@@ -544,10 +606,7 @@ impl HeartbeatPulse {
                         Ok(AgentEvent::FinalAnswer(a)) => current_dialogue = a,
                         Ok(AgentEvent::FinalAnswerChunk(c)) => current_dialogue.push_str(&c),
                         Ok(AgentEvent::Reflection(r)) => {
-                            if let Err(e) = emitter
-                                .emit_emergent(format!("# [{}] {}", lens_id, r), None)
-                                .await
-                            {
+                            if let Err(e) = emitter.emit_emergent(r, None).await {
                                 tracing::warn!(
                                     "[{}] Failed to emit emergent learning: {}",
                                     self.agent.agent_name,
@@ -651,6 +710,7 @@ impl HeartbeatPulse {
         let pulse_dialogue = committed_dialogue;
 
         agent_loop.tools = original_tools;
+        agent_loop.set_skip_memory_retrieval(false);
 
         // 🏰 Substrate Logic: Handle Stillness and Reflections
         let mut is_silent =
@@ -667,7 +727,7 @@ impl HeartbeatPulse {
                 );
                 if let Err(e) = emitter
                     .emit_emergent(
-                        format!("# [{}] {}", lens_id, pulse_thought),
+                        pulse_thought,
                         Some(savant_core::learning::LearningCategory::Insight),
                     )
                     .await
@@ -692,23 +752,15 @@ impl HeartbeatPulse {
                 .push("Verify substrate health post-actuation".to_string());
         }
 
-        // AAA: Sovereign Distillation (OMEGA-VIII)
-        if !pulse_thought.is_empty() || !pulse_dialogue.is_empty() {
-            let summary = format!("Thought: {}\nDialogue: {}", pulse_thought, pulse_dialogue);
-            if let Err(e) = self.proactive.distill_context(&summary) {
-                tracing::warn!(
-                    "[{}] Failed to distill context: {}",
-                    self.agent.agent_name,
-                    e
-                );
-            }
-            buffer.context_summary = summary.clone();
+        // Pulse memory distillation DISABLED — was creating self-referential loop
+        // where agent's output was written to CONTEXT.md, then re-read next cycle,
+        // causing identity/privacy/diary reflection to repeat indefinitely.
+        // The agent observes the environment directly; no need for synthetic memory.
 
-            // 🛡️ Perfection Loop: If we have dialogue but no notification was requested yet,
-            // we should still consider if the dialogue itself warrants a broadcast.
-            if !pulse_dialogue.trim().is_empty() && pulse_dialogue.trim() != "HEARTBEAT_OK" {
-                is_silent = false;
-            }
+        // 🛡️ Perfection Loop: If we have dialogue but no notification was requested yet,
+        // we should still consider if the dialogue itself warrants a broadcast.
+        if !pulse_dialogue.trim().is_empty() && pulse_dialogue.trim() != "HEARTBEAT_OK" {
+            is_silent = false;
         }
 
         // 🟢 If Heartbeat decides to NOTIFY, broadcast the dialogue to the Main Chat UI
@@ -763,6 +815,26 @@ impl HeartbeatPulse {
             Err(e) => warn!("[{}] ALD Distillation failed: {}", self.agent.agent_name, e),
         }
 
+        // Parse LEARNINGS.md → LEARNINGS.jsonl for dashboard display.
+        // Runs every heartbeat to keep .jsonl in sync with agent's freeform .md writing.
+        let parser = crate::learning::LearningsParser::new(self.agent.workspace_path.clone());
+        match parser.parse_and_convert(&self.agent.agent_id) {
+            Ok(count) if count > 0 => {
+                info!(
+                    "[{}] Synced {} learning entries: LEARNINGS.md → LEARNINGS.jsonl",
+                    self.agent.agent_name, count
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[{}] Failed to sync LEARNINGS.md → JSONL: {}",
+                    self.agent.agent_name,
+                    e
+                );
+            }
+            _ => {}
+        }
+
         info!(
             "[{}] HEARTBEAT INITIATIVE: The House speaks. WAL Committed.",
             self.agent.agent_name
@@ -780,7 +852,7 @@ impl HeartbeatPulse {
         if !full_payload.trim().is_empty() {
             if let Err(e) = emitter
                 .emit_emergent(
-                    format!("# [{}] {}", lens_id, full_payload),
+                    full_payload,
                     Some(savant_core::learning::LearningCategory::Insight),
                 )
                 .await

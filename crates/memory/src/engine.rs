@@ -73,7 +73,27 @@ impl MemoryEnclave {
             vector_config.dimensions = emb_dims;
         }
 
-        let vector = SemanticVectorEngine::new(storage_path.as_ref(), vector_config)?;
+        // Attempt with a clone first to preserve `vector_config` for possible retry
+        let first_try_config = vector_config.clone();
+        let vector = match SemanticVectorEngine::new(storage_path.as_ref(), first_try_config) {
+            Ok(v) => v,
+            Err(e @ MemoryError::VectorInitFailed(_)) => {
+                // Potential dimension mismatch from old persistence; clear and retry once
+                let vector_dir = storage_path.as_ref().join("vector");
+                if vector_dir.exists() {
+                    warn!(
+                        "Clearing stale vector index at {:?} due to init error: {}",
+                        vector_dir, e
+                    );
+                    let _ = std::fs::remove_dir_all(&vector_dir);
+                    // Retry with original `vector_config` (which may have corrected dimensions)
+                    SemanticVectorEngine::new(storage_path.as_ref(), vector_config)?
+                } else {
+                    return Err(e);
+                }
+            }
+            Err(other) => return Err(other),
+        };
 
         Ok(Arc::new(Self {
             lsm,

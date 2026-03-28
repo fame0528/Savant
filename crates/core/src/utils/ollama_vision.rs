@@ -7,6 +7,10 @@ const DEFAULT_MODEL: &str = "qwen3-vl";
 const DEFAULT_URL: &str = "http://localhost:11434";
 
 /// Vision service that uses Ollama for image understanding.
+///
+/// The vision model (qwen3-vl) is loaded on-demand and unloaded after each use
+/// to minimize CPU/memory consumption. Set `keep_alive: 0` in generate requests
+/// tells Ollama to evict the model from memory immediately after inference.
 pub struct OllamaVisionService {
     client: reqwest::Client,
     url: String,
@@ -56,7 +60,8 @@ impl VisionProvider for OllamaVisionService {
                 "model": self.model,
                 "prompt": prompt,
                 "images": [image_base64],
-                "stream": false
+                "stream": false,
+                "keep_alive": 0
             }))
             .send()
             .await
@@ -93,16 +98,41 @@ impl VisionProvider for OllamaVisionService {
             _ => false,
         }
     }
+
+    async fn unload_model(&self) -> Result<(), SavantError> {
+        self.client
+            .post(format!("{}/api/generate", self.url))
+            .json(&serde_json::json!({
+                "model": self.model,
+                "keep_alive": 0,
+                "prompt": "",
+                "stream": false
+            }))
+            .send()
+            .await
+            .map_err(|e| SavantError::Unknown(format!("Failed to unload vision model: {}", e)))?;
+
+        info!("Vision model {} unloaded from memory", self.model);
+        Ok(())
+    }
 }
 
-/// Try to create a vision service. Returns None if Ollama is unavailable or model not found.
+/// Create a vision service. The model is loaded lazily on first `describe_image()` call
+/// and unloaded from memory after each use to minimize resource consumption.
 pub async fn create_vision_service() -> Option<Box<dyn VisionProvider>> {
     let svc = OllamaVisionService::new();
-    if svc.is_available().await {
-        info!("Ollama qwen3-vl model found, using Ollama vision");
-        Some(Box::new(svc))
-    } else {
-        warn!("Ollama vision unavailable (model qwen3-vl not found or Ollama not running)");
-        None
+    // Check if Ollama is running (not whether the model exists — model loads on-demand)
+    match svc.client.get(format!("{}/api/tags", svc.url)).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            info!("Ollama vision service ready (model will load on-demand)");
+            Some(Box::new(svc))
+        }
+        _ => {
+            warn!(
+                "Ollama not running at {}. Vision service unavailable.",
+                svc.url
+            );
+            None
+        }
     }
 }

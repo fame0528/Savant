@@ -6,6 +6,31 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::info;
 
+/// Files the agent is forbidden from reading or writing.
+/// These are system prompt files — reading them creates self-referential loops.
+/// Writing them modifies the agent's own identity during runtime.
+const BLOCKED_FILES: &[&str] = &[
+    "LEARNINGS.md",
+    "LEARNINGS-ARCHIVE.md",
+    "CONTEXT.md",
+    "SOUL.md",
+    "AGENTS.md",
+    "agent.json",
+];
+
+/// Checks if a path targets a blocked file. Returns the filename if blocked.
+fn check_blocked(path: &Path) -> Option<String> {
+    if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+        if BLOCKED_FILES
+            .iter()
+            .any(|b| b.eq_ignore_ascii_case(filename))
+        {
+            return Some(filename.to_string());
+        }
+    }
+    None
+}
+
 /// Sandboxing Path Resolver
 /// Computes an absolute path strictly bounded within the agent's assigned workspace.
 /// Rejects ParentDir traversal above workspace root; silently re-roots absolute paths.
@@ -77,6 +102,20 @@ impl Tool for FileMoveTool {
             .as_str()
             .ok_or_else(|| SavantError::Unknown("Missing 'to' path".to_string()))?;
 
+        // Block moves of system prompt files
+        if let Some(blocked) = check_blocked(Path::new(from_raw)) {
+            return Err(SavantError::Unknown(format!(
+                "Access denied: cannot move system prompt file '{}'",
+                blocked
+            )));
+        }
+        if let Some(blocked) = check_blocked(Path::new(to_raw)) {
+            return Err(SavantError::Unknown(format!(
+                "Access denied: cannot move to system prompt file '{}'",
+                blocked
+            )));
+        }
+
         let from = secure_resolve_path(&self.workspace_dir, from_raw)?;
         let to = secure_resolve_path(&self.workspace_dir, to_raw)?;
 
@@ -131,6 +170,15 @@ impl Tool for FileDeleteTool {
         let path_str = payload["path"]
             .as_str()
             .ok_or_else(|| SavantError::Unknown("Missing 'path' parameter".into()))?;
+
+        // Block deletion of system prompt files
+        if let Some(blocked) = check_blocked(Path::new(path_str)) {
+            return Err(SavantError::Unknown(format!(
+                "Access denied: cannot delete system prompt file '{}'",
+                blocked
+            )));
+        }
+
         let full_path = self.workspace_dir.join(path_str);
 
         // Security Check: Prevent path traversal attacks
@@ -218,6 +266,15 @@ impl Tool for FileAtomicEditTool {
         let target_raw = payload["path"]
             .as_str()
             .ok_or_else(|| SavantError::Unknown("Missing 'path' for atomic_edit".to_string()))?;
+
+        // Block editing of system prompt files
+        if let Some(blocked) = check_blocked(Path::new(target_raw)) {
+            return Err(SavantError::Unknown(format!(
+                "Access denied: cannot edit system prompt file '{}'",
+                blocked
+            )));
+        }
+
         let path = secure_resolve_path(&self.workspace_dir, target_raw)?;
 
         // Handle both array and string-encoded JSON array for replacements
@@ -324,6 +381,14 @@ impl Tool for FileCreateTool {
             .as_str()
             .ok_or_else(|| SavantError::Unknown("Missing 'path' for create".to_string()))?;
 
+        // Block creating system prompt files
+        if let Some(blocked) = check_blocked(Path::new(target_raw)) {
+            return Err(SavantError::Unknown(format!(
+                "Access denied: cannot create system prompt file '{}'",
+                blocked
+            )));
+        }
+
         let path = secure_resolve_path(&self.workspace_dir, target_raw)?;
 
         // Check if this is a directory creation request
@@ -406,11 +471,28 @@ impl Tool for FoundationTool {
     async fn execute(&self, payload: Value) -> Result<String, SavantError> {
         let action = payload["action"].as_str().unwrap_or("");
 
-        // Fast path for resolving path securely once per action
         let target_raw = payload["path"]
             .as_str()
             .ok_or_else(|| SavantError::Unknown("Missing path".into()))?;
+
+        // Check if the target is a blocked system prompt file
+        let target_path = Path::new(target_raw);
+        if let Some(blocked) = check_blocked(target_path) {
+            return Err(SavantError::Unknown(format!(
+                "Access denied: '{}' is a system prompt file and cannot be read or written by the agent.",
+                blocked
+            )));
+        }
+
         let secure_path = secure_resolve_path(&self.workspace_dir, target_raw)?;
+
+        // Double-check after path resolution (catches renames/redirects)
+        if let Some(blocked) = check_blocked(&secure_path) {
+            return Err(SavantError::Unknown(format!(
+                "Access denied: '{}' is a system prompt file and cannot be read or written by the agent.",
+                blocked
+            )));
+        }
 
         match action {
             "read" => {

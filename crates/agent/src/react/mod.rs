@@ -293,6 +293,9 @@ pub struct AgentLoop<M: MemoryBackend> {
     /// Void hooks: fire-and-forget (logging, telemetry).
     /// Modifying hooks: sequential with cancel support (approval, context injection).
     pub(crate) hooks: Arc<savant_core::hooks::HookRegistry>,
+    /// When true, skip memory retrieval during context assembly.
+    /// Used for heartbeats to prevent old messages from being recalled.
+    pub(crate) skip_memory_retrieval: bool,
 }
 
 impl<M: MemoryBackend> AgentLoop<M> {
@@ -350,7 +353,14 @@ impl<M: MemoryBackend> AgentLoop<M> {
             self_repair: crate::react::self_repair::SelfRepair::with_defaults(),
             context_window,
             hooks: Arc::new(savant_core::hooks::HookRegistry::new()),
+            skip_memory_retrieval: false,
         }
+    }
+
+    /// Skip memory retrieval during context assembly.
+    /// Use for heartbeats to prevent old messages from being recalled into the conversation.
+    pub fn set_skip_memory_retrieval(&mut self, skip: bool) {
+        self.skip_memory_retrieval = skip;
     }
 
     pub fn with_plugins(

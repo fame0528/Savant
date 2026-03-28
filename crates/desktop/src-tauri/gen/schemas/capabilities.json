@@ -1,1 +1,1 @@
-{"main-capability":{"identifier":"main-capability","description":"Capability for the main window","local":true,"windows":["main"],"permissions":["core:default","core:event:default","core:window:default","core:app:default","updater:default"]}}
+{"main-capability":{"identifier":"main-capability","description":"Capability for all Savant windows","local":true,"windows":["main","logs"],"permissions":["core:default","core:event:default","core:window:default","core:app:default","updater:default"]}}

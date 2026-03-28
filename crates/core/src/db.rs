@@ -175,17 +175,13 @@ impl Storage {
     ) -> Result<Vec<ChatMessage>, SavantError> {
         let coll = collection_name(agent_id);
 
-        let hits = self
+        let memories = self
             .db
-            .search_in_collection(&coll, self.zero_embedding(), MAX_BATCH_SIZE, None)
+            .get_all_in_collection(&coll)
             .map_err(|e| SavantError::StorageError(e.to_string()))?;
 
-        let mut entries: Vec<(u64, ChatMessage)> = Vec::with_capacity(hits.len());
-        for hit in &hits {
-            let mem = match self.db.get_memory(hit.id) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
+        let mut entries: Vec<(u64, ChatMessage)> = Vec::with_capacity(memories.len());
+        for mem in &memories {
             let ts = mem
                 .metadata
                 .get("timestamp")
@@ -218,28 +214,24 @@ impl Storage {
     pub fn prune_history(&self, agent_id: &str, keep_last: usize) -> Result<(), SavantError> {
         let coll = collection_name(agent_id);
 
-        let hits = self
+        let memories = self
             .db
-            .search_in_collection(&coll, self.zero_embedding(), MAX_BATCH_SIZE, None)
+            .get_all_in_collection(&coll)
             .map_err(|e| SavantError::StorageError(e.to_string()))?;
 
-        if hits.len() <= keep_last {
+        if memories.len() <= keep_last {
             return Ok(());
         }
 
         // Gather timestamps for sorting
-        let mut entries: Vec<(u64, u64)> = Vec::with_capacity(hits.len());
-        for hit in &hits {
-            let mem = match self.db.get_memory(hit.id) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
+        let mut entries: Vec<(u64, u64)> = Vec::with_capacity(memories.len());
+        for mem in &memories {
             let ts = mem
                 .metadata
                 .get("timestamp")
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
-            entries.push((ts, hit.id));
+            entries.push((ts, mem.id));
         }
 
         entries.sort_by(|a, b| a.0.cmp(&b.0)); // oldest first

@@ -74,4 +74,21 @@ impl EmergentLearning {
             metadata: HashMap::new(),
         }
     }
+
+    pub fn with_timestamp(
+        agent_id: String,
+        category: LearningCategory,
+        content: String,
+        significance: u8,
+        timestamp: String,
+    ) -> Self {
+        Self {
+            timestamp,
+            agent_id,
+            category,
+            content,
+            significance,
+            metadata: HashMap::new(),
+        }
+    }
 }

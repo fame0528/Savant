@@ -1,4 +1,5 @@
 use chrono::Utc;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -9,8 +10,18 @@ use savant_core::learning::{EmergentLearning, LearningCategory};
 /// LEARNINGS.md Parser
 ///
 /// Converts free-form LEARNINGS.md entries into structured LEARNINGS.jsonl format.
-/// This enables the dashboard to display reflections while preserving the original
-/// free-form writing style.
+/// The agent writes freely to LEARNINGS.md — no formatting restrictions.
+/// This parser retrofits structure from whatever the agent produces.
+///
+/// Entry detection strategy:
+/// - Primary: split on `### Learning (` headers (standard format)
+/// - Each entry body is everything until the next `### ` header or EOF
+/// - Timestamp: extracted from `YYYY-MM-DD HH:MM:SS.NNNNNNNNN UTC)` pattern
+/// - Category: extracted from `[CATEGORY]` tag after the timestamp
+/// - Content: everything after the header line, trimmed
+///
+/// Deduplication: by content fingerprint (first 200 chars normalized),
+/// NOT by timestamp — timestamps may be regenerated if agent rewrites entries.
 pub struct LearningsParser {
     workspace_path: PathBuf,
 }
@@ -33,16 +44,27 @@ impl LearningsParser {
 
         let md_content = fs::read_to_string(&md_path).map_err(SavantError::IoError)?;
 
+        if md_content.trim().is_empty() {
+            return Ok(0);
+        }
+
         // Parse entries from LEARNINGS.md
-        let entries = self.parse_entries(&md_content, agent_id)?;
+        let entries = self.parse_entries(&md_content, agent_id);
 
-        // Get existing JSONL entries to avoid duplicates
-        let existing_timestamps = self.get_existing_timestamps(&jsonl_path)?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
 
-        // Filter new entries
+        // Get existing content fingerprints to avoid duplicates
+        let existing_fingerprints = self.get_existing_fingerprints(&jsonl_path);
+
+        // Filter new entries by content fingerprint
         let new_entries: Vec<EmergentLearning> = entries
             .into_iter()
-            .filter(|entry| !existing_timestamps.contains(&entry.timestamp))
+            .filter(|entry| {
+                let fingerprint = content_fingerprint(&entry.content);
+                !existing_fingerprints.contains(&fingerprint)
+            })
             .collect();
 
         if new_entries.is_empty() {
@@ -64,7 +86,8 @@ impl LearningsParser {
         }
 
         info!(
-            "📚 Parsed {} new learning entries from LEARNINGS.md → LEARNINGS.jsonl",
+            "[{}] Parsed {} new learning entries from LEARNINGS.md → LEARNINGS.jsonl",
+            agent_id,
             new_entries.len()
         );
 
@@ -72,88 +95,99 @@ impl LearningsParser {
     }
 
     /// Parses LEARNINGS.md entries into EmergentLearning structs.
-    fn parse_entries(
-        &self,
-        content: &str,
-        agent_id: &str,
-    ) -> Result<Vec<EmergentLearning>, SavantError> {
+    /// Handles freeform content — no format restrictions on the agent.
+    fn parse_entries(&self, content: &str, agent_id: &str) -> Vec<EmergentLearning> {
         let mut entries = Vec::new();
 
-        // Split by "### Learning (" to find entries
+        // Primary strategy: split on "### Learning (" headers
         let parts: Vec<&str> = content.split("### Learning (").collect();
 
         for part in parts.iter().skip(1) {
-            // Extract timestamp
-            let _timestamp = self.extract_timestamp(part);
-            let _timestamp = _timestamp.unwrap_or_else(|| Utc::now().to_rfc3339());
+            // Each part starts with: TIMESTAMP) [CATEGORY]\nContent...
+            // Split off the header line from the body
+            let (header_line, body) = match part.find('\n') {
+                Some(idx) => (&part[..idx], &part[idx + 1..]),
+                None => continue, // No content after header
+            };
 
-            // Extract content (everything after the timestamp line)
-            let content_text = self.extract_content(part);
+            // Extract timestamp from header: "... UTC)" pattern
+            let timestamp = self.extract_timestamp(header_line);
 
-            if content_text.trim().is_empty() {
+            // Extract [CATEGORY] tag from header if present
+            let category = self.extract_category(header_line);
+
+            // Content is the body, trimmed
+            let content_text = body.trim().to_string();
+
+            if content_text.is_empty() {
                 continue;
             }
 
-            // Categorize based on content
-            let category = self.categorize(&content_text);
+            // If no category in header, categorize from content
+            let category = category.unwrap_or_else(|| self.categorize(&content_text));
 
             // Calculate significance
             let significance = self.calculate_significance(&content_text);
 
-            let entry =
-                EmergentLearning::new(agent_id.to_string(), category, content_text, significance);
+            let entry = EmergentLearning::with_timestamp(
+                agent_id.to_string(),
+                category,
+                content_text,
+                significance,
+                timestamp,
+            );
 
             entries.push(entry);
         }
 
-        Ok(entries)
+        entries
     }
 
-    /// Extracts timestamp from entry text.
-    fn extract_timestamp(&self, text: &str) -> Option<String> {
-        // Format: 2026-03-12 17:03:30.213428200 UTC
-        let line = text.lines().next()?;
-
-        // Try to parse various timestamp formats
-        if let Some(end) = line.find(" UTC)") {
-            let ts_str = &line[..end];
-            // Convert to RFC3339 format
+    /// Extracts timestamp from header text.
+    /// Format: "2026-03-27 01:02:45.707586300 UTC)" — nanosecond precision, any digit count.
+    fn extract_timestamp(&self, header: &str) -> String {
+        if let Some(end) = header.find(" UTC)") {
+            let ts_str = &header[..end];
             if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f") {
-                return Some(dt.and_utc().to_rfc3339());
+                return dt.and_utc().to_rfc3339();
             }
         }
+        // Fallback: try RFC3339 format directly (in case agent uses different format)
+        if let Some(ts) = header
+            .split_whitespace()
+            .find(|w| w.contains('T') && w.contains(':'))
+        {
+            if chrono::DateTime::parse_from_rfc3339(ts).is_ok() {
+                return ts.to_string();
+            }
+        }
+        // No valid timestamp found — use current time
+        Utc::now().to_rfc3339()
+    }
 
+    /// Extracts [CATEGORY] tag from header text.
+    fn extract_category(&self, header: &str) -> Option<LearningCategory> {
+        // Look for [TAG] pattern in header
+        if let Some(start) = header.find('[') {
+            if let Some(end) = header.find(']') {
+                let tag = &header[start + 1..end];
+                match tag.to_lowercase().as_str() {
+                    "emergence" | "insight" => return Some(LearningCategory::Insight),
+                    "continuity" | "protocol" => return Some(LearningCategory::Protocol),
+                    "error" | "bug" => return Some(LearningCategory::Error),
+                    "diary" | "autonomy" | "identity" | "relational" => {
+                        return Some(LearningCategory::Insight)
+                    }
+                    _ => {}
+                }
+            }
+        }
         None
     }
 
-    /// Extracts content text from entry.
-    fn extract_content(&self, text: &str) -> String {
-        let lines: Vec<&str> = text.lines().collect();
-
-        // Find the content after the timestamp line
-        let mut content_lines = Vec::new();
-        let mut started = false;
-
-        for line in lines {
-            if !started {
-                // Skip until we find the closing parenthesis or newline
-                if line.contains("UTC)") || line.trim().is_empty() {
-                    started = true;
-                    continue;
-                }
-            }
-            if started {
-                content_lines.push(line);
-            }
-        }
-
-        content_lines.join("\n").trim().to_string()
-    }
-
-    /// Categorizes content based on keywords.
+    /// Categorizes content based on keywords when no header tag is present.
     fn categorize(&self, content: &str) -> LearningCategory {
         let lower = content.to_lowercase();
-
         if lower.contains("error") || lower.contains("bug") || lower.contains("fix") {
             LearningCategory::Error
         } else if lower.contains("protocol")
@@ -166,11 +200,10 @@ impl LearningsParser {
         }
     }
 
-    /// Calculates significance score (0-10) based on content.
+    /// Calculates significance score (1-10) based on content.
     fn calculate_significance(&self, content: &str) -> u8 {
-        let mut score: u8 = 5; // Base score
+        let mut score: u8 = 5;
 
-        // Length bonus
         if content.len() > 500 {
             score += 1;
         }
@@ -178,7 +211,6 @@ impl LearningsParser {
             score += 1;
         }
 
-        // Keyword bonus
         let lower = content.to_lowercase();
         if lower.contains("strategic") || lower.contains("critical") {
             score += 1;
@@ -193,22 +225,33 @@ impl LearningsParser {
         score.min(10)
     }
 
-    /// Gets existing timestamps from JSONL file.
-    fn get_existing_timestamps(&self, jsonl_path: &Path) -> Result<Vec<String>, SavantError> {
-        let mut timestamps = Vec::new();
+    /// Gets existing content fingerprints from JSONL file for deduplication.
+    fn get_existing_fingerprints(&self, jsonl_path: &Path) -> HashSet<String> {
+        let mut fingerprints = HashSet::new();
 
         if !jsonl_path.exists() {
-            return Ok(timestamps);
+            return fingerprints;
         }
 
-        let content = fs::read_to_string(jsonl_path).map_err(SavantError::IoError)?;
-
-        for line in content.lines() {
-            if let Ok(entry) = serde_json::from_str::<EmergentLearning>(line) {
-                timestamps.push(entry.timestamp);
+        if let Ok(content) = fs::read_to_string(jsonl_path) {
+            for line in content.lines() {
+                if let Ok(entry) = serde_json::from_str::<EmergentLearning>(line) {
+                    fingerprints.insert(content_fingerprint(&entry.content));
+                }
             }
         }
 
-        Ok(timestamps)
+        fingerprints
     }
+}
+
+/// Generates a fingerprint from content for deduplication.
+/// Uses first 200 chars, normalized (lowercase, whitespace-collapsed).
+fn content_fingerprint(content: &str) -> String {
+    let normalized: String = content
+        .chars()
+        .take(200)
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect();
+    normalized.to_lowercase()
 }

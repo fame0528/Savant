@@ -58,6 +58,9 @@ pub trait VisionProvider: Send + Sync {
 
     /// Check if the vision model is available.
     async fn is_available(&self) -> bool;
+
+    /// Unload the vision model from memory to free resources.
+    async fn unload_model(&self) -> Result<(), SavantError>;
 }
 
 /// Memory Backend Trait (LSM-tree / Vector / KV)

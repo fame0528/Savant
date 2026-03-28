@@ -173,6 +173,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     let session_id = session_context.session_id.clone();
     tracing::info!("Session authenticated: {}", session_id.0);
 
+    // 1b. Send session assignment to client (formal handshake)
+    // The client MUST receive this session ID before sending any messages,
+    // because the gateway validates frame.session_id against the assigned session.
+    let session_event = savant_core::types::EventFrame {
+        event_type: "session.assigned".to_string(),
+        payload: serde_json::json!({ "session_id": session_id.0 }).to_string(),
+    };
+    if let Ok(msg) = serde_json::to_string(&session_event) {
+        if let Err(e) = sender.send(Message::Text(format!("EVENT:{}", msg))).await {
+            tracing::error!("[gateway] Failed to send session.assigned event: {}", e);
+            return;
+        }
+        tracing::info!("[gateway] Session assigned: {}", session_id.0);
+    }
+
     // 2. Sovereign Handshake Ignition: Send current agents immediately upon auth
     // This ensures zero-latency sidebar population for the Dashboard.
     let initial_agents = state.nexus.shared_memory.get("system.agents");
@@ -359,8 +374,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         async move {
             while let Some(msg_result) = receiver.next().await {
                 match msg_result {
-                    Ok(Message::Text(text)) => {
-                        if let Ok(frame) = serde_json::from_str::<RequestFrame>(&text) {
+                    Ok(Message::Text(text)) => match serde_json::from_str::<RequestFrame>(&text) {
+                        Ok(frame) => {
                             if frame.session_id == session_id {
                                 crate::handlers::handle_message(
                                     frame,
@@ -372,9 +387,22 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                                     }),
                                 )
                                 .await;
+                            } else {
+                                tracing::warn!(
+                                        "[gateway] Session ID mismatch: expected {}, got {}. Message dropped.",
+                                        session_id.0,
+                                        frame.session_id.0
+                                    );
                             }
                         }
-                    }
+                        Err(e) => {
+                            tracing::warn!(
+                                    "[gateway] Failed to deserialize WebSocket message: {}. Payload: {}",
+                                    e,
+                                    &text[..text.len().min(200)]
+                                );
+                        }
+                    },
                     Ok(Message::Ping(_data)) => {
                         // Axum handles Ping→Pong automatically
                     }
@@ -517,12 +545,68 @@ async fn agent_image_handler(
 }
 
 /// GET /api/settings - Returns current system settings
+/// Updates agent.json files with LLM parameters (temperature, top_p, etc.)
+/// This ensures the running agent providers pick up the new values.
+fn sync_llm_params_to_agents(
+    agents_dir: &std::path::Path,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    frequency_penalty: Option<f32>,
+    presence_penalty: Option<f32>,
+) {
+    let Ok(entries) = std::fs::read_dir(agents_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let agent_json = entry.path().join("agent.json");
+        if !agent_json.exists() {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&agent_json) else {
+            continue;
+        };
+        let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) else {
+            continue;
+        };
+
+        let mut changed = false;
+        if let Some(v) = temperature {
+            json["llm_params"]["temperature"] = serde_json::json!(v);
+            changed = true;
+        }
+        if let Some(v) = top_p {
+            json["llm_params"]["top_p"] = serde_json::json!(v);
+            changed = true;
+        }
+        if let Some(v) = frequency_penalty {
+            json["llm_params"]["frequency_penalty"] = serde_json::json!(v);
+            changed = true;
+        }
+        if let Some(v) = presence_penalty {
+            json["llm_params"]["presence_penalty"] = serde_json::json!(v);
+            changed = true;
+        }
+
+        if changed {
+            if let Ok(updated) = serde_json::to_string_pretty(&json) {
+                if let Err(e) = std::fs::write(&agent_json, updated) {
+                    tracing::warn!("[gateway] Failed to write agent.json LLM params: {}", e);
+                }
+            }
+        }
+    }
+}
+
 async fn settings_get_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let config = &state.config;
     let agents_dir = std::path::PathBuf::from(&config.system.agents_path);
 
-    // Find first agent's model config
+    // Find first agent's model config + LLM params
     let mut chat_model = String::new();
+    let mut temperature = config.ai.temperature;
+    let mut top_p = config.ai.top_p;
+    let mut frequency_penalty = config.ai.frequency_penalty;
+    let mut presence_penalty = config.ai.presence_penalty;
     let embedding_model =
         std::env::var("OLLAMA_EMBED_MODEL").unwrap_or_else(|_| "qwen3-embedding:4b".to_string());
     let vision_model =
@@ -535,6 +619,20 @@ async fn settings_get_handler(State(state): State<Arc<GatewayState>>) -> impl In
                 if let Ok(content) = std::fs::read_to_string(&agent_json) {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                         chat_model = json["model"].as_str().unwrap_or("").to_string();
+                        // Read LLM params from agent.json (source of truth)
+                        if let Some(params) = json.get("llm_params") {
+                            temperature =
+                                params["temperature"].as_f64().unwrap_or(temperature as f64) as f32;
+                            top_p = params["top_p"].as_f64().unwrap_or(top_p as f64) as f32;
+                            frequency_penalty = params["frequency_penalty"]
+                                .as_f64()
+                                .unwrap_or(frequency_penalty as f64)
+                                as f32;
+                            presence_penalty = params["presence_penalty"]
+                                .as_f64()
+                                .unwrap_or(presence_penalty as f64)
+                                as f32;
+                        }
                     }
                 }
                 break;
@@ -553,10 +651,10 @@ async fn settings_get_handler(State(state): State<Arc<GatewayState>>) -> impl In
         "gateway_port": config.server.port,
         "agents_path": config.system.agents_path,
         "db_path": config.system.db_path,
-        "temperature": config.ai.temperature,
-        "top_p": config.ai.top_p,
-        "frequency_penalty": config.ai.frequency_penalty,
-        "presence_penalty": config.ai.presence_penalty,
+        "temperature": temperature,
+        "top_p": top_p,
+        "frequency_penalty": frequency_penalty,
+        "presence_penalty": presence_penalty,
     });
 
     Json(settings)
@@ -673,6 +771,16 @@ async fn settings_post_handler(
             )
                 .into_response();
         }
+
+        // Sync LLM params to agent.json so running providers pick up changes
+        let agents_dir = std::path::PathBuf::from(&state.config.system.agents_path);
+        sync_llm_params_to_agents(
+            &agents_dir,
+            update.temperature,
+            update.top_p,
+            update.frequency_penalty,
+            update.presence_penalty,
+        );
 
         // Notify the Swarm via Nexus
         if let Err(e) = state
@@ -804,9 +912,10 @@ async fn agents_list_handler() -> axum::response::Response {
 }
 
 /// GET /api/changelog — Returns the changelog markdown content
-async fn changelog_handler() -> axum::response::Response {
-    let content = std::fs::read_to_string("CHANGELOG.md")
-        .unwrap_or_else(|_| "# Changelog\n\nNo changelog found.".to_string());
+async fn changelog_handler(State(state): State<Arc<GatewayState>>) -> axum::response::Response {
+    let changelog_path = state.config.project_root.join("CHANGELOG.md");
+    let content = std::fs::read_to_string(&changelog_path)
+        .unwrap_or_else(|_| "# Changelog\n\nNo changelog found at project root.".to_string());
     axum::response::Response::builder()
         .header("content-type", "text/markdown; charset=utf-8")
         .body(axum::body::Body::from(content))

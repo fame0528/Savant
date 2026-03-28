@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 const CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(1000) {
     Some(v) => v,
@@ -15,7 +15,7 @@ const DEFAULT_MODEL: &str = "qwen3-embedding:4b";
 const DEFAULT_URL: &str = "http://localhost:11434";
 
 /// Embedding service that uses Ollama for high-quality embeddings.
-/// Falls back to local fastembed if Ollama is unavailable.
+/// No fallback — Ollama must be running or the system fails.
 pub struct OllamaEmbeddingService {
     client: reqwest::Client,
     url: String,
@@ -86,8 +86,6 @@ impl OllamaEmbeddingService {
     }
 
     pub fn dimensions(&self) -> usize {
-        // qwen3-embedding:4b outputs 2560 dimensions
-        // (varies by model, but we'll detect at runtime if needed)
         2560
     }
 }
@@ -133,47 +131,201 @@ impl EmbeddingProvider for OllamaEmbeddingService {
     }
 }
 
-/// Tries Ollama first, falls back to fastembed if Ollama is unavailable.
-pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, SavantError> {
-    // Try Ollama first
-    let ollama = OllamaEmbeddingService::new()?;
-    // Quick health check
-    match ollama
-        .client
-        .get(format!("{}/api/tags", ollama.url))
-        .send()
-        .await
+/// Attempts to find the Ollama executable on the system.
+fn find_ollama_executable() -> Option<std::path::PathBuf> {
+    // Windows common install locations
+    #[cfg(target_os = "windows")]
     {
-        Ok(resp) if resp.status().is_success() => {
-            // Check if the embedding model is available
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                let models = body["models"].as_array().cloned().unwrap_or_default();
-                let has_model = models
-                    .iter()
-                    .any(|m| m["name"].as_str().unwrap_or("").contains("qwen3-embedding"));
-                if has_model {
-                    info!("Ollama qwen3-embedding model found, using Ollama embeddings");
-                    return Ok(Box::new(ollama));
-                } else {
-                    warn!("Ollama running but qwen3-embedding model not found. Pull it with: ollama pull qwen3-embedding:4b");
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let candidates = [
+                format!("{}\\Programs\\Ollama\\ollama.exe", local_app_data),
+                format!("{}\\Ollama\\ollama.exe", local_app_data),
+            ];
+            for candidate in &candidates {
+                let path = std::path::Path::new(candidate);
+                if path.exists() {
+                    return Some(path.to_path_buf());
                 }
             }
         }
-        _ => {
-            warn!(
-                "Ollama not available at {}, falling back to fastembed",
-                ollama.url
-            );
+    }
+
+    // Linux/macOS common locations
+    #[cfg(not(target_os = "windows"))]
+    {
+        let candidates = ["/usr/local/bin/ollama", "/usr/bin/ollama"];
+        for candidate in &candidates {
+            let path = std::path::Path::new(candidate);
+            if path.exists() {
+                return Some(path.to_path_buf());
+            }
         }
     }
 
-    // Fallback to fastembed
-    info!("Falling back to fastembed (AllMiniLML6V2)");
-    match super::embeddings::EmbeddingService::new() {
-        Ok(svc) => Ok(Box::new(svc)),
-        Err(e) => Err(SavantError::Unknown(format!(
-            "Both Ollama and fastembed failed: {}",
-            e
-        ))),
+    // Try PATH via spawning 'ollama --version'
+    let test = std::process::Command::new("ollama")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if test.is_ok() {
+        return Some(std::path::PathBuf::from("ollama"));
     }
+
+    None
+}
+
+/// Attempts to start the Ollama server process.
+/// Used for self-healing: when embeddings fail mid-session, call this then retry.
+pub async fn auto_start_ollama() -> Result<(), SavantError> {
+    let ollama_path = find_ollama_executable().ok_or_else(|| {
+        SavantError::Unknown(
+            "Ollama executable not found. Install from https://ollama.com/download".to_string(),
+        )
+    })?;
+
+    info!("Starting Ollama server: {}", ollama_path.display());
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new(&ollama_path)
+            .arg("serve")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| SavantError::Unknown(format!("Failed to start Ollama: {}", e)))?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new(&ollama_path)
+            .arg("serve")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| SavantError::Unknown(format!("Failed to start Ollama: {}", e)))?;
+    }
+
+    // Wait for Ollama to become ready (up to 30 seconds)
+    info!("Waiting for Ollama server to become ready...");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| SavantError::Unknown(format!("HTTP client error: {}", e)))?;
+
+    let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
+    for i in 0..6 {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        match client.get(format!("{}/api/tags", url)).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                info!("Ollama server is ready (took {}s)", (i + 1) * 5);
+                return Ok(());
+            }
+            _ => {
+                info!("Ollama not ready yet, retrying... ({}/6)", i + 1);
+            }
+        }
+    }
+
+    Err(SavantError::Unknown(
+        "Ollama server started but did not become ready within 30 seconds".to_string(),
+    ))
+}
+
+/// Checks if the required embedding model is available, pulls if needed.
+async fn ensure_model(client: &reqwest::Client, url: &str, model: &str) -> Result<(), SavantError> {
+    let resp = client
+        .get(format!("{}/api/tags", url))
+        .send()
+        .await
+        .map_err(|e| SavantError::Unknown(format!("Failed to query Ollama models: {}", e)))?;
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| SavantError::Unknown(format!("Failed to parse Ollama response: {}", e)))?;
+
+    let models = body["models"].as_array().cloned().unwrap_or_default();
+    let has_model = models
+        .iter()
+        .any(|m| m["name"].as_str().unwrap_or("").contains("qwen3-embedding"));
+
+    if has_model {
+        info!("Embedding model {} found in Ollama", model);
+        return Ok(());
+    }
+
+    warn!("Embedding model {} not found. Pulling...", model);
+    let pull_resp = client
+        .post(format!("{}/api/pull", url))
+        .json(&serde_json::json!({ "model": model }))
+        .send()
+        .await
+        .map_err(|e| SavantError::Unknown(format!("Failed to pull model: {}", e)))?;
+
+    if !pull_resp.status().is_success() {
+        return Err(SavantError::Unknown(format!(
+            "Failed to pull model {}: HTTP {}",
+            model,
+            pull_resp.status()
+        )));
+    }
+
+    info!("Model {} pulled successfully", model);
+    Ok(())
+}
+
+/// Creates the embedding service. Ollama is REQUIRED — no fallback.
+///
+/// Startup sequence:
+/// 1. Check if Ollama is running
+/// 2. If not, try to auto-start it
+/// 3. Wait for Ollama to be ready
+/// 4. Check if embedding model exists, pull if needed
+/// 5. Return Ollama embedding service
+///
+/// If any step fails, returns a hard error. No silent fallback.
+pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, SavantError> {
+    let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
+    let model = std::env::var("OLLAMA_EMBED_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+    let client = crate::net::secure_client();
+
+    // Step 1: Check if Ollama is already running
+    let ollama_running = match client.get(format!("{}/api/tags", url)).send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    };
+
+    if !ollama_running {
+        // Step 2: Try to auto-start Ollama
+        warn!("Ollama not available at {}. Attempting auto-start...", url);
+        match auto_start_ollama().await {
+            Ok(()) => info!("Ollama auto-started successfully"),
+            Err(e) => {
+                error!("CRITICAL: Cannot start Ollama: {}", e);
+                error!("Ollama is required for vector embeddings. The system cannot function without it.");
+                error!("Install from: https://ollama.com/download");
+                error!("Then run: ollama pull qwen3-embedding:4b");
+                return Err(SavantError::Unknown(format!(
+                    "Ollama is not running and could not be auto-started: {}. \
+                     Install Ollama from https://ollama.com/download and run: ollama pull qwen3-embedding:4b",
+                    e
+                )));
+            }
+        }
+    }
+
+    // Step 3: Ensure the embedding model is available
+    ensure_model(&client, &url, &model).await?;
+
+    // Step 4: Create and return the Ollama embedding service
+    let ollama = OllamaEmbeddingService::with_config(&url, &model);
+    info!(
+        "Ollama embedding service initialized (model={}, dims=2560)",
+        model
+    );
+    Ok(Box::new(ollama))
 }

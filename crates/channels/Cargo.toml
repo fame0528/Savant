@@ -11,7 +11,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
-bb8 = "0.8"
+bb8 = "0.9"
 futures = { workspace = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
 dashmap = "6.0"

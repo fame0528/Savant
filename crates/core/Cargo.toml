@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fastembed = "5.12.1"
+fastembed = "5.13.3"
 notify = "8.2.0"
 pulldown-cmark = "0.13.1"
 rusqlite = { version = "0.38.0", features = ["bundled"] }

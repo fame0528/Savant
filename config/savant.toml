@@ -142,3 +142,6 @@ circuit_breaker_max_depth = 10
 circuit_breaker_max_api_calls = 100
 circuit_breaker_max_cost_usd = 5.0
 credential_broker_ttl_secs = 300
+
+[proactive]
+reflection_interval_secs = 60

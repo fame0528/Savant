@@ -5,6 +5,13 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::debug;
 
+/// A single prior heartbeat thought, stored for continuity across pulses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentThought {
+    pub timestamp: i64,
+    pub content: String,
+}
+
 /// Protocol C-ATLAS: Proactive Session-State WAL
 /// Ensures zero-latency recovery of agent decisions and preferences.
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -18,6 +25,10 @@ pub struct WorkingBuffer {
     pub current_lens_index: usize,
     pub last_reflection_hashes: Vec<u64>,
     pub ald_watermark: u64,
+    #[serde(default)]
+    pub recent_thoughts: Vec<RecentThought>,
+    #[serde(default)]
+    pub last_reflection_time: Option<i64>,
 }
 
 pub struct ProactivePartner {

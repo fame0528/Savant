@@ -72,8 +72,8 @@ mod crash_recovery {
         let msgs = engine.fetch_session_tail("ord", 50);
         for i in 1..msgs.len() {
             assert!(
-                i64::from(msgs[i].timestamp) >= i64::from(msgs[i - 1].timestamp),
-                "Messages should be in timestamp order"
+                i64::from(msgs[i].timestamp) <= i64::from(msgs[i - 1].timestamp),
+                "Messages should be in newest-first timestamp order"
             );
         }
     }

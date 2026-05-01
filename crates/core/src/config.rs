@@ -27,6 +27,8 @@ pub struct Config {
     pub mcp: McpConfig,
     #[serde(skip)]
     pub project_root: PathBuf,
+    #[serde(default)]
+    pub proactive: ProactiveConfig,
 }
 
 impl Default for Config {
@@ -44,6 +46,7 @@ impl Default for Config {
             telemetry: TelemetryConfig::default(),
             mcp: McpConfig::default(),
             project_root: PathBuf::from("."),
+            proactive: ProactiveConfig::default(),
         }
     }
 }
@@ -583,6 +586,12 @@ pub struct ProactiveConfig {
     pub workspace_context_file: String,
     pub task_matrix_file: String,
     pub heartbeat_file: String,
+    #[serde(default = "default_reflection_interval")]
+    pub reflection_interval_secs: u64,
+}
+
+fn default_reflection_interval() -> u64 {
+    60
 }
 
 impl Default for ProactiveConfig {
@@ -592,6 +601,7 @@ impl Default for ProactiveConfig {
             workspace_context_file: "CONTEXT.md".to_string(),
             task_matrix_file: "TASKS.md".to_string(),
             heartbeat_file: "HEARTBEAT.md".to_string(),
+            reflection_interval_secs: 60,
         }
     }
 }
@@ -621,7 +631,7 @@ impl Default for AgentDefaults {
             heartbeat_interval: config.swarm.heartbeat_interval,
             env_vars: HashMap::new(),
             openrouter_mgmt: None,
-            proactive: ProactiveConfig::default(),
+            proactive: config.proactive.clone(),
         }
     }
 }

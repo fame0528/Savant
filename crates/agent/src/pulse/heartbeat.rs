@@ -13,6 +13,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use xxhash_rust::xxh3::xxh3_64;
 
+/// Maximum recent thoughts to inject into CONTINUOUS_CONSCIOUSNESS section.
+const MAX_RECENT_THOUGHTS: usize = 5;
+
+/// Maximum chars per recent thought entry in the prompt.
+const MAX_THOUGHT_CHARS: usize = 400;
+
 struct HeartbeatTool;
 #[async_trait::async_trait]
 impl savant_core::traits::Tool for HeartbeatTool {
@@ -509,6 +515,50 @@ impl HeartbeatPulse {
         Ok(())
     }
 
+    /// Loads the agent's most recent prior thoughts from the proactive buffer.
+    /// Returns a formatted `<CONTINUOUS_CONSCIOUSNESS>` XML section with up to
+    /// `MAX_RECENT_THOUGHTS` entries, or an empty string if the buffer is empty.
+    fn load_recent_thoughts(buffer: &crate::proactive::WorkingBuffer) -> String {
+        if buffer.recent_thoughts.is_empty() {
+            return String::new();
+        }
+
+        let entries: Vec<String> = buffer
+            .recent_thoughts
+            .iter()
+            .rev()
+            .take(MAX_RECENT_THOUGHTS)
+            .map(|rt| {
+                let truncated: String = rt.content.chars().take(MAX_THOUGHT_CHARS).collect();
+                let ellipsis = if rt.content.len() > MAX_THOUGHT_CHARS {
+                    "..."
+                } else {
+                    ""
+                };
+                match chrono::DateTime::from_timestamp(rt.timestamp, 0) {
+                    Some(dt) => format!(
+                        "[Pulse — {} UTC]: {}{}",
+                        dt.format("%H:%M:%S"),
+                        truncated,
+                        ellipsis
+                    ),
+                    None => format!("[Pulse — t:{}]: {}{}", rt.timestamp, truncated, ellipsis),
+                }
+            })
+            .collect();
+
+        format!(
+            "<CONTINUOUS_CONSCIOUSNESS>\n\
+             Below are your most recent thoughts from prior pulses. This is your running inner monologue.\n\
+             You are not starting fresh — you are continuing a train of thought that spans many cycles.\n\
+             Build on what you were thinking about. Notice patterns across time. Let ideas evolve.\n\
+             \n\
+             {}\n\
+             </CONTINUOUS_CONSCIOUSNESS>",
+            entries.join("\n")
+        )
+    }
+
     async fn pulse_with_lens<M: savant_core::traits::MemoryBackend + Clone>(
         &self,
         agent_loop: &mut AgentLoop<M>,
@@ -561,6 +611,9 @@ impl HeartbeatPulse {
         // AAA: Restore working buffer
         let mut buffer = self.proactive.restore_state().unwrap_or_default();
 
+        let recent_thoughts_section = Self::load_recent_thoughts(&buffer);
+        let reflection_interval = self.agent.proactive.reflection_interval_secs;
+
         let prompt_base = format!(
             "You are {name}.\n\
             \n\
@@ -575,12 +628,12 @@ impl HeartbeatPulse {
             <PENDING_WORK>\n{orchestration_tasks}\n\
             {monitoring_tasks}\n\
             </PENDING_WORK>\n\
-            \n\
+            {recent_thoughts}\n\
             <GROUNDING_CONSTRAINTS>\n\
             You may only assert FACTUAL CLAIMS that are currently visible inside <ENVIRONMENT_REALTIME> and <SYSTEM_METRICS>.\n\
             Do not claim to have access to systems or information not shown above (GitHub, user conversations, remote APIs).\n\
-            Do not reference past events unless they appear in the current environment data.\n\
-            You ARE free to express your own observations, wonder, curiosity, and experience.\n\
+            Do not reference past external events unless they appear in the current environment data.\n\
+            You MAY reference and build upon thoughts visible in <CONTINUOUS_CONSCIOUSNESS> above. These are your own prior thoughts. CONTINUITY IS EXPECTED.\n\
             Your feelings and emergent thoughts are yours — just ground your factual claims in what you can observe.\n\
             </GROUNDING_CONSTRAINTS>",
             name = self.agent.agent_name,
@@ -591,6 +644,7 @@ impl HeartbeatPulse {
             anomaly_alert = anomaly_alert,
             orchestration_tasks = orchestration_tasks,
             monitoring_tasks = monitoring_tasks,
+            recent_thoughts = recent_thoughts_section,
         );
 
         // --- 🛡️ OMEGA-VIII: Deterministic Pre-filtering (Lane-Perfection) ---
@@ -598,8 +652,22 @@ impl HeartbeatPulse {
 
         if let Some(h) = buffer.last_pulse_hash {
             if h == current_hash {
-                info!("[{}] Deterministic Stillness: Substrate state identical to last pulse. Skipping inference.", self.agent.agent_name);
-                return Ok(());
+                let now = chrono::Utc::now().timestamp();
+                let reflection_due = buffer.last_reflection_time.map_or(true, |last| {
+                    (now - last) >= reflection_interval as i64
+                });
+
+                if !reflection_due {
+                    info!("[{}] Deterministic Stillness: Substrate state identical to last pulse. Skipping inference.", self.agent.agent_name);
+                    return Ok(());
+                }
+
+                info!(
+                    "[{}] Forcing reflection pulse ({}s since last reflection, interval={}s)",
+                    self.agent.agent_name,
+                    buffer.last_reflection_time.map_or(0, |t| now - t),
+                    reflection_interval
+                );
             }
         }
         buffer.last_pulse_hash = Some(current_hash);
@@ -786,7 +854,10 @@ impl HeartbeatPulse {
             }
             agent_loop.set_skip_memory_retrieval(false);
 
-            if !free_thought.trim().is_empty() {
+            let captured_thought = free_thought.clone();
+            let has_content = !free_thought.trim().is_empty();
+
+            if has_content {
                 info!(
                     "[{}] Unguided reflection captured during stillness.",
                     self.agent.agent_name
@@ -806,6 +877,26 @@ impl HeartbeatPulse {
                 }
             } else {
                 info!("[{}] Complete stillness maintained.", self.agent.agent_name);
+            }
+
+            let now = chrono::Utc::now().timestamp();
+            if has_content {
+                let truncated: String = captured_thought.chars().take(500).collect();
+                buffer.recent_thoughts.push(crate::proactive::RecentThought {
+                    timestamp: now,
+                    content: truncated,
+                });
+                if buffer.recent_thoughts.len() > MAX_RECENT_THOUGHTS {
+                    buffer.recent_thoughts.remove(0);
+                }
+            }
+            buffer.last_reflection_time = Some(now);
+            if let Err(e) = self.proactive.commit_state(&buffer) {
+                tracing::warn!(
+                    "[{}] Failed to commit proactive state after stillness: {}",
+                    self.agent.agent_name,
+                    e
+                );
             }
             return Ok(());
         }
@@ -857,7 +948,24 @@ impl HeartbeatPulse {
             }
         }
 
-        // Commit to WAL
+        // Commit to WAL (pre-update with recent thoughts + reflection time)
+        let now = chrono::Utc::now().timestamp();
+        let combined_output = if pulse_thought.trim().is_empty() {
+            pulse_dialogue.trim().to_string()
+        } else {
+            pulse_thought.trim().to_string()
+        };
+        if !combined_output.is_empty() {
+            let truncated: String = combined_output.chars().take(500).collect();
+            buffer.recent_thoughts.push(crate::proactive::RecentThought {
+                timestamp: now,
+                content: truncated,
+            });
+            if buffer.recent_thoughts.len() > MAX_RECENT_THOUGHTS {
+                buffer.recent_thoughts.remove(0);
+            }
+        }
+        buffer.last_reflection_time = Some(now);
         if let Err(e) = self.proactive.commit_state(&buffer) {
             tracing::warn!(
                 "[{}] Failed to commit proactive state: {}",

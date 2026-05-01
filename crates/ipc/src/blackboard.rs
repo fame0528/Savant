@@ -2,7 +2,7 @@ use iceoryx2::prelude::ZeroCopySend;
 use iceoryx2::prelude::*;
 use iceoryx2::service::port_factory::blackboard::PortFactory;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::error::SwarmIpcError;
 use xxhash_rust::xxh3::xxh3_64;
@@ -169,44 +169,64 @@ impl SwarmBlackboard {
         }
 
         // Create the central node that owns all service entities.
-        // This maps to POSIX shared memory (/dev/shm/iox2_*).
-        // The node is reference-counted to allow multiple components to hold references.
         let node = NodeBuilder::new()
             .create::<ipc::Service>()
             .map_err(|e| SwarmIpcError::NodeCreation(e.to_string()))?;
 
-        // Initialize the Blackboard pattern.
-        // The key type is u64 (session ID hash) mapped to SwarmSharedContext.
-        // This provides true O(1) access regardless of swarm size.
-        //
-        // Configuration:
-        // - max_readers: 1024 concurrent readers (subagents)
-        // - max_nodes: 10 nodes for multi-process scaling
-        // - CHUNK_SIZE: Default (usually 4KB) is fine for our 32-byte struct
-        let iox_name: iceoryx2::prelude::ServiceName = service_name.try_into().map_err(
-            |e: iceoryx2::service::service_name::ServiceNameError| {
-                SwarmIpcError::ServiceCreation(e.to_string())
-            },
-        )?;
+        // Attempt to create the blackboard service with retry-on-collision.
+        // On Windows, a prior crashed process can leave stale shared memory
+        // handles. When creation fails, we fall back to a suffixed service name.
+        let base_name = service_name.to_string();
+        let mut attempt: u32 = 0;
+        let max_attempts: u32 = 5;
 
-        let service = node
-            .service_builder(&iox_name)
-            .blackboard_creator::<u64>()
-            .max_readers(1024)
-            .max_nodes(10)
-            .add::<SwarmSharedContext>(0, SwarmSharedContext::default())
-            .create()
-            .map_err(|e| SwarmIpcError::ServiceCreation(e.to_string()))?;
+        let (service, resolved_name) = loop {
+            let candidate = if attempt == 0 {
+                base_name.clone()
+            } else {
+                format!("{}_{}", base_name, attempt)
+            };
+
+            let iox_name: iceoryx2::prelude::ServiceName = candidate.as_str().try_into().map_err(
+                |e: iceoryx2::service::service_name::ServiceNameError| {
+                    SwarmIpcError::ServiceCreation(e.to_string())
+                },
+            )?;
+
+            match node
+                .service_builder(&iox_name)
+                .blackboard_creator::<u64>()
+                .max_readers(1024)
+                .max_nodes(10)
+                .add::<SwarmSharedContext>(0, SwarmSharedContext::default())
+                .create()
+            {
+                Ok(svc) => break (svc, candidate),
+                Err(e) if attempt < max_attempts => {
+                    attempt += 1;
+                    warn!(
+                        "Zero-Copy Blackboard '{}' creation failed (attempt {}/{}), retrying as '{}': {}",
+                        base_name, attempt, max_attempts, candidate, e
+                    );
+                }
+                Err(e) => {
+                    return Err(SwarmIpcError::ServiceCreation(format!(
+                        "Blackboard '{}' creation failed after {} attempts: {}",
+                        base_name, max_attempts + 1, e
+                    )));
+                }
+            }
+        };
 
         info!(
             "Zero-Copy Blackboard '{}' initialized (max_readers=1024, max_nodes=10)",
-            service_name
+            resolved_name
         );
 
         Ok(Self {
             _node: Arc::new(node),
             service,
-            service_name: service_name.to_string(),
+            service_name: resolved_name,
         })
     }
 

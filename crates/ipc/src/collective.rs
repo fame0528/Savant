@@ -1,7 +1,7 @@
 use iceoryx2::prelude::*;
 use iceoryx2::service::port_factory::blackboard::PortFactory;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 use crate::error::SwarmIpcError;
 
 /// Individual Agent Entry in the Collective Blackboard.
@@ -101,23 +101,52 @@ impl CollectiveBlackboard {
             .create::<ipc::Service>()
             .map_err(|e| SwarmIpcError::NodeCreation(e.to_string()))?;
 
-        let iox_name: iceoryx2::prelude::ServiceName = service_name.try_into()
-            .map_err(|e: iceoryx2::service::service_name::ServiceNameError| SwarmIpcError::ServiceCreation(e.to_string()))?;
+        // Retry-with-suffix on collision. Stale shared memory from a prior
+        // crashed process can cause create() to fail on Windows.
+        let base_name = service_name.to_string();
+        let mut attempt: u32 = 0;
+        let max_attempts: u32 = 5;
 
-        let mut builder = node
-            .service_builder(&iox_name)
-            .blackboard_creator::<u64>()
-            .max_readers(1024)
-            .max_nodes(128) // Support one node per agent if needed
-            .add::<GlobalState>(0, GlobalState::default());
+        let service = loop {
+            let candidate = if attempt == 0 {
+                base_name.clone()
+            } else {
+                format!("{}_{}", base_name, attempt)
+            };
 
-        // Reserve entries 1 through 128 for individual agents
-        for i in 1..=128 {
-            builder = builder.add::<AgentEntry>(i as u64, AgentEntry::default());
-        }
+            let iox_name: iceoryx2::prelude::ServiceName = candidate.as_str().try_into()
+                .map_err(|e: iceoryx2::service::service_name::ServiceNameError| SwarmIpcError::ServiceCreation(e.to_string()))?;
 
-        let service = builder.create()
-            .map_err(|e| SwarmIpcError::ServiceCreation(e.to_string()))?;
+            let mut builder = node
+                .service_builder(&iox_name)
+                .blackboard_creator::<u64>()
+                .max_readers(1024)
+                .max_nodes(128)
+                .add::<GlobalState>(0, GlobalState::default());
+
+            for i in 1..=128 {
+                builder = builder.add::<AgentEntry>(i as u64, AgentEntry::default());
+            }
+
+            match builder.create() {
+                Ok(svc) => break svc,
+                Err(e) if attempt < max_attempts => {
+                    attempt += 1;
+                    warn!(
+                        "Collective Blackboard '{}' creation failed (attempt {}/{}), retrying as '{}': {}",
+                        base_name, attempt, max_attempts, candidate, e
+                    );
+                }
+                Err(e) => {
+                    return Err(SwarmIpcError::ServiceCreation(format!(
+                        "Collective Blackboard '{}' creation failed after {} attempts: {}",
+                        base_name, max_attempts + 1, e
+                    )));
+                }
+            }
+        };
+
+        info!("Distributed Collective Blackboard initialized.");
 
         Ok(Self {
             _node: Arc::new(node),

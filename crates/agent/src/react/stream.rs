@@ -279,9 +279,6 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         "shell", "foundation", "memory_search", "memory_append",
                         "web_search", "web_fetch", "task_matrix", "settings",
                         "librarian", "web_projection", "tool_call", "final_answer",
-                        // Generic tool/function tags
-                        "tool", "function", "parameter", "arguments", "name",
-                        "input", "output", "result", "response",
                     ];
 
                     while let Some(chunk_res) = llm_stream.next().await {
@@ -359,7 +356,11 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                 let is_thought = THOUGHT_TAGS.iter().any(|(_, et)| *et == end_tag);
                                                 if is_thought {
                                                     let thought_part = &fragment_buffer[..pos];
-                                                    if !thought_part.is_empty() { yield Ok(AgentEvent::Thought(thought_part.to_string())); }
+                                                    if !thought_part.is_empty() {
+                                                        yield Ok(AgentEvent::Thought(thought_part.to_string()));
+                                                        // Also emit as FinalAnswerChunk so the user sees the thinking content
+                                                        yield Ok(AgentEvent::FinalAnswerChunk(thought_part.to_string()));
+                                                    }
                                                 }
                                                 // Push closing tag to full_trace for action parsing
                                                 full_trace.push_str(&fragment_buffer[..pos + end_tag.len()]);
@@ -378,7 +379,25 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                         }
                                     }
                                 }
-                                if chunk.is_final { break; }
+                                if chunk.is_final {
+                                    // Flush any remaining fragment buffer content before breaking
+                                    if !fragment_buffer.is_empty() {
+                                        if in_hidden_tag {
+                                            // Check if it's a thought tag - emit as both Thought and FinalAnswerChunk
+                                            let is_thought = THOUGHT_TAGS.iter().any(|(_, et)| hidden_tag_name.contains(et));
+                                            if is_thought && !fragment_buffer.trim().is_empty() {
+                                                yield Ok(AgentEvent::Thought(fragment_buffer.clone()));
+                                                yield Ok(AgentEvent::FinalAnswerChunk(fragment_buffer.clone()));
+                                            } else {
+                                                full_trace.push_str(&fragment_buffer);
+                                            }
+                                        } else if !fragment_buffer.trim().is_empty() {
+                                            clean_answer.push_str(&fragment_buffer);
+                                            yield Ok(AgentEvent::FinalAnswerChunk(fragment_buffer.clone()));
+                                        }
+                                    }
+                                    break;
+                                }
                             }
                             Err(e) => {
                                 // Finalize turn state before error return

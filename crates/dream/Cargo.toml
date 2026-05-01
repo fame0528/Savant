@@ -1,0 +1,21 @@
+[package]
+name = "savant_dream"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+savant_core = { path = "../core" }
+savant_memory = { path = "../memory" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = { workspace = true }
+dashmap = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

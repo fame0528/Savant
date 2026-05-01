@@ -21,6 +21,7 @@ mod lsm_engine;
 pub mod models;
 pub mod notifications;
 pub mod promotion;
+pub mod reflective;
 pub mod safety;
 mod vector_engine;
 
@@ -37,6 +38,7 @@ pub use models::{
 };
 pub use notifications::{MemoryNotification, NotificationChannel};
 pub use promotion::{PersonalityTraits, PromotionEngine, PromotionMetrics};
+pub use reflective::{Concept, ReflectiveMemory, Relation};
 pub use savant_core::utils::embeddings::EmbeddingService;
 // Safety verification module is conditionally compiled with kani feature
 #[cfg(feature = "kani")]

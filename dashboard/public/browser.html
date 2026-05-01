@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Savant — Agent Browser</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0e14;
+            color: #e6e1cf;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 11px;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        #header {
+            background: #141a22;
+            padding: 6px 12px;
+            border-bottom: 1px solid #2a3140;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        #header h3 {
+            color: #00d5ff;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        #status {
+            font-size: 10px;
+            color: #888;
+        }
+        #status.connected { color: #00d5ff; }
+        #status.disconnected { color: #ff4444; }
+        #content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        #content h1 {
+            color: #00d5ff;
+            font-size: 24px;
+            margin-bottom: 12px;
+        }
+        #content p {
+            color: #888;
+            font-size: 12px;
+            text-align: center;
+            max-width: 500px;
+            line-height: 1.6;
+        }
+        #content .hint {
+            margin-top: 20px;
+            padding: 8px 16px;
+            background: #1a2030;
+            border: 1px solid #2a3140;
+            border-radius: 4px;
+            color: #aaa;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h3>Savant — Agent Browser</h3>
+        <span id="status">Initializing...</span>
+    </div>
+    <div id="content">
+        <h1>&#x1f310; Browser Ready</h1>
+        <p>
+            This window is controlled by the Savant agent swarm.
+            Navigate to any URL using the Dashboard browser panel
+            or let an agent browse on your behalf.
+        </p>
+        <div class="hint">
+            Use the Dashboard browser panel for controls, or say
+            &quot;open the browser&quot; to your agent.
+        </div>
+    </div>
+    <script>
+        // Monitor Tauri connection status
+        const statusEl = document.getElementById('status');
+
+        function updateStatus(connected) {
+            statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+            statusEl.className = connected ? 'connected' : 'disconnected';
+        }
+
+        // Try to listen for Tauri events
+        if (typeof window.__TAURI__ !== 'undefined') {
+            updateStatus(true);
+
+            // Listen for system log events to confirm connectivity
+            window.__TAURI__.event.listen('system-log-event', function(event) {
+                // Connected — events are flowing
+                updateStatus(true);
+            });
+        } else {
+            // Not in Tauri context (dev mode or standalone)
+            updateStatus(false);
+        }
+
+        // Log page load
+        console.log('[browser] browser.html loaded');
+    </script>
+</body>
+</html>

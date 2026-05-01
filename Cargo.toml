@@ -10,9 +10,10 @@ members = [
     "crates/cli",
     "crates/ipc",
     "crates/cognitive",
-    "crates/memory", "crates/panopticon",
+    "crates/memory", "crates/dream", "crates/panopticon",
     "crates/security",
     "crates/echo",
+    "crates/browser",
     "crates/desktop/src-tauri",
 ]
 resolver = "2"
@@ -40,6 +41,7 @@ bytecheck = "0.8.0"
 rend = "0.5"
 half = { version = "2.7", features = ["rand_distr"] }
 savant_memory = { path = "crates/memory" }
+savant_dream = { path = "crates/dream" }
 savant_core = { path = "crates/core" }
 savant_gateway = { path = "crates/gateway" }
 savant_skills = { path = "crates/skills" }
@@ -52,6 +54,7 @@ savant_security = { path = "crates/security" }
 savant_channels = { path = "crates/channels" }
 savant_canvas = { path = "crates/canvas" }
 savant_panopticon = { path = "crates/panopticon" }
+savant_browser = { path = "crates/browser" }
 dashmap = "6.1.0"
 libc = "0.2"
 num_cpus = "1.16"

@@ -53,6 +53,9 @@ pub enum SavantError {
     #[error("Unsupported operation: {0}")]
     Unsupported(String),
 
+    #[error("Circuit breaker tripped: {0}")]
+    CircuitBreakerTripped(String),
+
     #[error("Unknown error: {0}")]
     Unknown(String),
 }

@@ -13,6 +13,7 @@ savant_memory = { workspace = true }
 savant_security = { workspace = true }
 savant_echo = { workspace = true }
 savant_gateway = { workspace = true }
+savant_dream = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 zstd = "0.13"
@@ -43,6 +44,7 @@ wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 pqcrypto-dilithium = "0.5"
 pqcrypto-traits = "0.3"
+sysinfo = "0.33"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

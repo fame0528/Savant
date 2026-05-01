@@ -306,15 +306,19 @@ pub struct ModelInfo {
 impl ModelInfo {
     /// Returns the safe max_tokens value for API requests.
     /// Uses the model's max_completion_tokens if available,
-    /// otherwise falls back to 85% of context_length capped at 16K.
+    /// otherwise falls back to 85% of context_length.
     pub fn safe_max_tokens(&self) -> u32 {
         if let Some(max_comp) = self.max_completion_tokens {
-            return max_comp as u32;
+            if max_comp > 0 {
+                return max_comp as u32;
+            }
         }
         if let Some(cw) = self.context_length {
-            return ((cw as f64 * 0.85) as u32).min(16384);
+            if cw > 0 {
+                return (cw as f64 * 0.85) as u32;
+            }
         }
-        4096
+        32768
     }
 }
 

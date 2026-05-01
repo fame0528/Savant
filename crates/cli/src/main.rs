@@ -21,9 +21,9 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for DebugLogLayer {
         event.record(&mut visitor);
         let meta = event.metadata();
         let msg = format!("[{}] {}", meta.level(), visitor.message);
-        if let Err(e) = savant_core::bus::debug_log_sender().send(msg) {
-            tracing::warn!("[cli] Failed to send debug log message: {}", e);
-        }
+        // Silently ignore send errors — no receivers is expected before gateway connects.
+        // Do NOT log here: it would trigger this layer recursively.
+        let _ = savant_core::bus::debug_log_sender().send(msg);
     }
 }
 

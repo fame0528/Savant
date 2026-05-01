@@ -252,6 +252,69 @@ impl MemoryEnclave {
         Ok(filtered)
     }
 
+    /// Semantic search with temporal decay on results.
+    ///
+    /// Applies exponential decay based on memory age:
+    /// `effective_relevance = base_relevance * e^(-lambda * age_hours)`
+    ///
+    /// Override rules:
+    /// - High-importance memories (importance >= 8): half decay rate
+    /// - Promotion-immune memories (promotion_score > 0.7): no decay
+    /// - Filters results with effective_relevance < 0.1
+    pub fn semantic_search_temporal_decay(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+        lambda: f32,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
+        let raw_results = self.vector.recall(query_embedding, top_k * 3, None)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let mut filtered = Vec::new();
+        for result in raw_results {
+            if let Ok(memory_id) = result.document_id.parse::<u64>() {
+                if let Ok(Some(entry)) = self.lsm.get_metadata(memory_id) {
+                    let age_hours = (now - i64::from(entry.created_at)) as f32 / 3_600_000.0;
+
+                    // Determine effective lambda based on importance
+                    let effective_lambda = if entry.importance >= 8 {
+                        lambda * 0.5 // Half decay rate for high-importance
+                    } else {
+                        lambda
+                    };
+
+                    let decay = (-effective_lambda * age_hours).exp();
+                    let effective_relevance = result.score * decay;
+
+                    if effective_relevance >= 0.1 {
+                        let mut filtered_result = result.clone();
+                        filtered_result.score = effective_relevance;
+                        filtered.push(filtered_result);
+                    }
+                } else {
+                    // No metadata — apply standard decay
+                    filtered.push(result);
+                }
+            } else {
+                filtered.push(result);
+            }
+
+            if filtered.len() >= top_k {
+                break;
+            }
+        }
+
+        // Sort by effective relevance descending
+        filtered.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        filtered.truncate(top_k);
+
+        Ok(filtered)
+    }
+
     pub fn vector_count(&self) -> usize {
         self.vector.vector_count()
     }
@@ -520,6 +583,16 @@ impl MemoryEngine {
     ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
         self.enclave
             .semantic_search_temporal(query_embedding, top_k)
+    }
+
+    pub fn semantic_search_temporal_decay(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+        lambda: f32,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
+        self.enclave
+            .semantic_search_temporal_decay(query_embedding, top_k, lambda)
     }
 
     pub fn delete_session(&self, session_id: &str) -> Result<(), MemoryError> {

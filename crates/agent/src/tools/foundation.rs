@@ -36,6 +36,30 @@ fn check_blocked(path: &Path) -> Option<String> {
 /// Rejects ParentDir traversal above workspace root; silently re-roots absolute paths.
 pub(crate) fn secure_resolve_path(workspace: &Path, target: &str) -> Result<PathBuf, SavantError> {
     let target_path = Path::new(target);
+
+    // If the target is an absolute path, validate it's under an allowed root
+    // (project root or workspace). The project root is two levels above the workspace
+    // (workspaces/workspace-name -> workspaces -> project_root).
+    if target_path.is_absolute() {
+        let canonical = target_path
+            .canonicalize()
+            .unwrap_or_else(|_| target_path.to_path_buf());
+        let project_root = workspace
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap_or(workspace);
+
+        // Allow access to project root and below
+        if canonical.starts_with(project_root) {
+            return Ok(canonical);
+        }
+
+        return Err(SavantError::Unknown(format!(
+            "Access denied: path '{}' is outside the project directory.",
+            target
+        )));
+    }
+
     let mut resolved = workspace.to_path_buf();
 
     for component in target_path.components() {
@@ -49,7 +73,6 @@ pub(crate) fn secure_resolve_path(workspace: &Path, target: &str) -> Result<Path
                 resolved.pop();
             }
             std::path::Component::Normal(c) => resolved.push(c),
-            // Ignore RootDir and Prefix to silently re-root absolute path attacks
             _ => {}
         }
     }

@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
   "description": "Capability for all Savant windows",
-  "windows": ["main", "logs"],
+  "windows": ["main", "logs", "browser"],
   "permissions": [
     "core:default",
     "core:event:default",

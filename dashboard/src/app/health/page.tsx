@@ -1,15 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useDashboard } from "@/context/DashboardContext";
 import styles from "./health.module.css";
-
-interface HealthMetric {
-  label: string;
-  value: string;
-  status: "ok" | "warn" | "error";
-  detail?: string;
-}
 
 interface AgentHealth {
   id: string;
@@ -20,109 +14,66 @@ interface AgentHealth {
 }
 
 export default function HealthPage() {
-  const [metrics, setMetrics] = useState<HealthMetric[]>([]);
+  const ctx = useDashboard();
   const [agents, setAgents] = useState<AgentHealth[]>([]);
-  const [connected, setConnected] = useState(false);
-  const socketRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [gatewayLatency, setGatewayLatency] = useState<number | null>(null);
 
-  const getWsUrl = () => {
-    if (typeof window !== "undefined") {
-      const envUrl = process.env.NEXT_PUBLIC_WS_URL;
-      if (envUrl) return envUrl;
-      const host = window.location.hostname || "127.0.0.1";
-      const port = process.env.NEXT_PUBLIC_GATEWAY_PORT || "8080";
-      return `ws://${host}:${port}/ws`;
-    }
-    return "";
-  };
+  // Use shared WebSocket connection status from DashboardContext
+  const connected = ctx.connectionStatus === 'NOMINAL';
 
-  const wsUrl = getWsUrl();
-
-  const healthMetrics: HealthMetric[] = [
-    { label: "WebSocket", value: connected ? "Connected" : "Disconnected", status: connected ? "ok" : "error" },
-    { label: "Dashboard", value: "Running", status: "ok", detail: "Next.js 16" },
-    { label: "Protocol", value: "WebSocket", status: "ok", detail: "Savant ControlFrame" },
-    { label: "Auto Key Mgmt", value: "OpenRouter", status: "ok", detail: "Free models only" },
-  ];
-
+  // Fetch agent health via HTTP API as fallback/primary
   useEffect(() => {
-    if (!wsUrl) return;
-
-    let shouldReconnect = true;
-
-    const connect = () => {
-      if (!shouldReconnect) return;
-      const ws = new WebSocket(wsUrl);
-      socketRef.current = ws;
-
-      ws.onopen = () => {
-        setConnected(true);
-        ws.send(JSON.stringify({
-          request_id: "health-init",
-          session_id: "dashboard-session",
-          payload: { type: "SwarmMonitor", data: {} },
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const raw = event.data;
-          let data: any;
-          if (typeof raw === 'string' && raw.startsWith("EVENT:")) {
-            data = JSON.parse(raw.substring(6));
-          } else {
-            data = JSON.parse(raw);
-          }
-          const payload = typeof data.payload === 'string' ? JSON.parse(data.payload) : data.payload;
-          const eventType = data.event_type || data.event || data.type || payload?.type;
-
-          if (eventType === "SWARM_STATUS") {
-            const swarmData = payload?.data || data.data || data;
-            const agentList = (swarmData.agents || []).map((a: Record<string, string>) => ({
-              id: a.id || a.agent_id || "",
-              name: a.name || a.agent_name || "Unknown",
-              status: a.status || "Unknown",
-              memory: a.memory || "—",
-              lastActive: a.lastActive || a.last_active || "—",
-            }));
-            setAgents(agentList);
-          }
-        } catch {
-          // Ignore parse errors
+    const fetchHealth = async () => {
+      try {
+        const start = Date.now();
+        const resp = await fetch(`http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:${process.env.NEXT_PUBLIC_GATEWAY_PORT || 8080}/api/agents`);
+        setGatewayLatency(Date.now() - start);
+        if (resp.ok) {
+          const data = await resp.json();
+          const agentList = Array.isArray(data) ? data : (data.agents || []);
+          setAgents(agentList.map((a: Record<string, any>) => ({
+            id: a.id || a.agent_id || "",
+            name: a.name || a.agent_name || "Unknown",
+            status: a.status || "Unknown",
+            memory: a.memory || "—",
+            lastActive: a.lastActive || a.last_active || "—",
+          })));
         }
-      };
-
-      ws.onclose = () => {
-        setConnected(false);
-        socketRef.current = null;
-        if (shouldReconnect) {
-          reconnectTimerRef.current = setTimeout(connect, 3000);
-        }
-      };
-
-      ws.onerror = () => {
-        setConnected(false);
-      };
+      } catch {
+        // Gateway may not have /api/agents endpoint — agents will show as empty
+      }
     };
 
-    connect();
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
-    setMetrics(healthMetrics);
+  // Also listen for agent.discovered events from shared WebSocket
+  useEffect(() => {
+    if (ctx.agents.length > 0) {
+      setAgents(ctx.agents.map((a: any) => ({
+        id: a.id || "",
+        name: a.name || "Unknown",
+        status: "Active",
+        memory: "—",
+        lastActive: "—",
+      })));
+    }
+  }, [ctx.agents]);
 
-    return () => {
-      shouldReconnect = false;
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      if (socketRef.current) { socketRef.current.close(); socketRef.current = null; }
-    };
-  }, [wsUrl]);
+  const metrics = [
+    { label: "Gateway WebSocket", value: connected ? "Connected" : "Disconnected", status: connected ? "ok" as const : "error" as const },
+    { label: "Gateway Latency", value: gatewayLatency !== null ? `${gatewayLatency}ms` : "—", status: gatewayLatency !== null && gatewayLatency < 100 ? "ok" as const : gatewayLatency !== null ? "warn" as const : "error" as const },
+    { label: "Gateway HTTP", value: `Port ${process.env.NEXT_PUBLIC_GATEWAY_PORT || 8080}`, status: "ok" as const },
+    { label: "Dashboard", value: "Running", status: "ok" as const, detail: "Next.js 16" },
+    { label: "Protocol", value: "WebSocket", status: "ok" as const, detail: "Savant ControlFrame" },
+    { label: "Key Management", value: "OpenRouter", status: "ok" as const, detail: "Free models only" },
+  ];
 
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <Link href="/" className={styles.backLink}>
-          ← Back to Dashboard
-        </Link>
         <h1 className={styles.title}>System Health</h1>
         <span
           className={styles.status}

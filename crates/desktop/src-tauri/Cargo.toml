@@ -12,6 +12,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 savant_core = { workspace = true }
 savant_agent = { workspace = true }
+savant_browser = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 dotenvy = "0.15"

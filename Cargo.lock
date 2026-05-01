@@ -5951,6 +5951,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntapi"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3b335231dfd352ffb0f8017f3b6027a4917f7df785ea2143d8af2adc66980ae"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8426,6 +8435,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "savant_agent",
+ "savant_browser",
  "savant_core",
  "serde",
  "serde_json",
@@ -8459,6 +8469,7 @@ dependencies = [
  "rusqlite",
  "savant_cognitive",
  "savant_core",
+ "savant_dream",
  "savant_echo",
  "savant_gateway",
  "savant_ipc",
@@ -8470,6 +8481,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sysinfo",
  "tempfile",
  "thiserror 1.0.69",
  "tiktoken-rs 0.5.9",
@@ -8481,6 +8493,27 @@ dependencies = [
  "wasmtime-wasi",
  "xxhash-rust",
  "zstd",
+]
+
+[[package]]
+name = "savant_browser"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap",
+ "rusqlite",
+ "savant_core",
+ "savant_memory",
+ "savant_security",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -8613,6 +8646,24 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "savant_dream"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dashmap",
+ "futures",
+ "rand 0.8.5",
+ "savant_core",
+ "savant_memory",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -8754,12 +8805,16 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "bytecheck",
+ "chrono",
  "ed25519-dalek",
  "pqcrypto-dilithium",
  "pqcrypto-traits",
  "rand 0.8.5",
  "rand_core 0.6.4",
  "rkyv",
+ "savant_core",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -9834,6 +9889,20 @@ dependencies = [
  "libc",
  "thiserror 1.0.69",
  "walkdir",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fc858248ea01b66f19d8e8a6d55f41deaf91e9d495246fd01368d99935c6c01"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+ "memchr",
+ "ntapi",
+ "rayon",
+ "windows 0.56.0",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@
   "identifier": "com.savant.app",
   "build": {
     "beforeDevCommand": "node scripts/setup-updater-keys.js && npm --prefix dashboard run dev",
-    "beforeBuildCommand": "node scripts/setup-updater-keys.js && set TAURI_BUILD=1 && npm --prefix dashboard run build",
+    "beforeBuildCommand": "node scripts/setup-updater-keys.js",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../../../dashboard/out"
   },
@@ -29,6 +29,17 @@
         "width": 2560,
         "height": 1440,
         "x": -2560,
+        "y": 0,
+        "resizable": true,
+        "fullscreen": false
+      },
+      {
+        "label": "browser",
+        "title": "Savant — Agent Browser",
+        "url": "browser.html",
+        "width": 2560,
+        "height": 1440,
+        "x": 5120,
         "y": 0,
         "resizable": true,
         "fullscreen": false

@@ -1,7 +1,7 @@
 [ai]
 provider = "openrouter"
-model = "stepfun/step-3.5-flash:free"
-manifestation_model = "stepfun/step-3.5-flash:free"
+model = "qwen/qwen3.6-plus:free"
+manifestation_model = "qwen/qwen3.6-plus:free"
 temperature = 0.699999988079071
 top_p = 0.8999999761581421
 frequency_penalty = 0.4000000059604645
@@ -112,3 +112,33 @@ enable_tracing = false
 
 [mcp]
 servers = []
+
+# Continuous Awareness Architecture
+[consciousness]
+# Dream Engine (Oneiros)
+dream_enabled = true
+dream_nrem_duration_secs = 300
+dream_rem_duration_secs = 180
+dream_idle_threshold = 0.1
+dream_idle_minutes = 10
+dream_vendi_threshold = 0.3
+
+# Global Workspace (Executive Monitor)
+workspace_tick_ms = 100
+workspace_max_tick_ms = 5000
+
+# Streaming Context Manager (Semantic Window)
+streaming_enabled = true
+streaming_window_size = 50
+streaming_eviction_pct = 20
+streaming_session_threshold_mins = 30
+
+# Temporal Decay
+temporal_decay_lambda = 0.03
+consolidation_interval_mins = 15
+
+# Safety Framework
+circuit_breaker_max_depth = 10
+circuit_breaker_max_api_calls = 100
+circuit_breaker_max_cost_usd = 5.0
+credential_broker_ttl_secs = 300

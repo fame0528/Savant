@@ -57,6 +57,18 @@ const getGatewayPort = () => {
 
 const getHttpUrl = () => `http://${getGatewayHost()}:${getGatewayPort()}`;
 
+// Page header configuration
+const PAGE_HEADERS: Record<string, { sub: string; title: string }> = {
+  '/tune': { sub: 'AI Configuration', title: 'FINE-TUNING' },
+  '/changelog': { sub: 'System Updates', title: 'CHANGELOG' },
+  '/settings': { sub: 'System Configuration', title: 'SETTINGS' },
+  '/marketplace': { sub: 'Agent Marketplace', title: 'MARKETPLACE' },
+  '/mcp': { sub: 'Model Context Protocol', title: 'MCP SERVERS' },
+  '/health': { sub: 'System Diagnostics', title: 'SYSTEM HEALTH' },
+  '/faq': { sub: 'Frequently Asked Questions', title: 'FAQ' },
+  '/browser': { sub: 'Web Navigation', title: 'BROWSER' },
+};
+
 export default function DashboardShell({ children }: { children: ReactNode }) {
   const ctx = useDashboard();
   const {
@@ -151,6 +163,21 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
       return "--:--";
     }
   };
+
+  // Determine header content based on current page
+  const pageHeader = PAGE_HEADERS[pathname];
+  const headerSubtitle = pageHeader
+    ? pageHeader.sub
+    : isManifestMode
+      ? 'Soul Manifestation Engine'
+      : activeAgent
+        ? 'Agent Lane'
+        : 'Swarm Broadcast';
+  const headerTitle = pageHeader
+    ? pageHeader.title
+    : isManifestMode
+      ? (ctx.manifestName || 'SOUL MANIFESTATION')
+      : (ctx.agents.find(a => a.id === activeAgent)?.name || (activeAgent === null ? 'SAVANT' : activeAgent?.toUpperCase() || 'SAVANT'));
 
   return (
     <>
@@ -254,6 +281,78 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
                 </div>
               </Link>
 
+              <Link href="/settings" style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className={styles.agentTab}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Settings"
+                  title="Settings"
+                  style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
+                  <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>⚙️</span>
+                  {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px' }}>Settings</span>}
+                </div>
+              </Link>
+
+              <Link href="/marketplace" style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className={styles.agentTab}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Marketplace"
+                  title="Marketplace"
+                  style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
+                  <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>🏪</span>
+                  {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px' }}>Marketplace</span>}
+                </div>
+              </Link>
+
+              <Link href="/mcp" style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className={styles.agentTab}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="MCP"
+                  title="MCP"
+                  style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
+                  <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>🔌</span>
+                  {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px' }}>MCP</span>}
+                </div>
+              </Link>
+
+              <Link href="/health" style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className={styles.agentTab}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Health"
+                  title="Health"
+                  style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
+                  <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>💓</span>
+                  {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px' }}>Health</span>}
+                </div>
+              </Link>
+
+              <Link href="/faq" style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className={styles.agentTab}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="FAQ"
+                  title="FAQ"
+                  style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
+                  <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>❓</span>
+                  {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px' }}>FAQ</span>}
+                </div>
+              </Link>
+
+              <Link href="/browser" style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className={styles.agentTab}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Browser"
+                  title="Browser"
+                  style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
+                  <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>🌐</span>
+                  {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px' }}>Browser</span>}
+                </div>
+              </Link>
+
               {ctx.agents.length > 0 && !isCollapsed && <div style={{ fontSize: '11px', fontWeight: 800, letterSpacing: '2px', color: 'var(--accent)', opacity: 0.5, padding: '16px 16px 4px', textTransform: 'uppercase' }}>Agents</div>}
               {ctx.agents.length > 0 && isCollapsed && <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />}
 
@@ -294,10 +393,10 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               <div>
                 <div style={{ opacity: 0.5, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '2px' }}>
-                  {isManifestMode ? 'Soul Manifestation Engine' : (activeAgent ? 'Agent Lane' : 'Swarm Broadcast')}
+                  {headerSubtitle}
                 </div>
                 <div style={{ color: 'var(--accent)', fontWeight: 800, fontSize: '18px' }}>
-                  {isManifestMode ? (ctx.manifestName || 'SOUL MANIFESTATION') : (ctx.agents.find(a => a.id === activeAgent)?.name || (activeAgent === null ? 'SAVANT' : activeAgent?.toUpperCase() || 'SAVANT'))}
+                  {headerTitle}
                 </div>
               </div>
             </div>

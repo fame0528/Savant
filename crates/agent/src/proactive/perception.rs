@@ -1,10 +1,14 @@
 //! OMEGA-VIII: Perception Engine (Context Hydration)
 //!
 //! Provides high-fidelity awareness of environment variance
-//! (Git changes, FS activity) to the proactive heartbeat.
+//! (Git changes, FS activity, real system metrics) to the proactive heartbeat.
+//!
+//! All metrics are sourced from deterministic sysinfo crate — the agent
+//! cannot hallucinate system state because it receives exact numbers.
 
 use std::path::Path;
 use std::process::Command;
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 /// Perception configuration with tunable thresholds.
 pub struct PerceptionConfig {
@@ -115,36 +119,38 @@ impl PerceptionEngine {
         }
     }
 
-    /// OMEGA-VIII: High-Fidelity Substrate Metrics (Phase 5)
+    /// Deterministic substrate metrics via sysinfo crate.
+    /// Returns exact memory and CPU values — the agent cannot hallucinate.
     pub fn get_substrate_metrics() -> String {
-        #[cfg(target_os = "windows")]
-        {
-            let output = Command::new("powershell")
-                .args(["-NoProfile", "-Command", "Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | ConvertTo-Json"])
-                .output();
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing()
+                .with_memory(MemoryRefreshKind::everything())
+                .with_cpu(CpuRefreshKind::everything()),
+        );
 
-            match output {
-                Ok(out) if out.status.success() => {
-                    let s = String::from_utf8_lossy(&out.stdout);
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-                        let free = v["FreePhysicalMemory"].as_u64().unwrap_or(0) / 1024; // KB to MB
-                        let total = v["TotalVisibleMemorySize"].as_u64().unwrap_or(0) / 1024; // KB to MB
-                        let used = total.saturating_sub(free);
-                        let usage_pct = if total > 0 {
-                            (used as f64 / total as f64) * 100.0
-                        } else {
-                            0.0
-                        };
-                        return format!(
-                            "Substrate Metrics (OS):\n- Memory: {}MB / {}MB ({:.1}%)",
-                            used, total, usage_pct
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
+        // Refresh CPU to get accurate usage (needs a small interval)
+        sys.refresh_cpu_all();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        sys.refresh_cpu_all();
 
-        "Substrate metrics (OS) unavailable.".to_string()
+        let total_mem = sys.total_memory();
+        let used_mem = sys.used_memory();
+        let mem_pct = if total_mem > 0 {
+            (used_mem as f64 / total_mem as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let cpu_usage = sys.global_cpu_usage();
+
+        let total_mb = total_mem / (1024 * 1024);
+        let used_mb = used_mem / (1024 * 1024);
+
+        format!(
+            "Substrate Metrics (deterministic):\n\
+            - Memory: {}MB / {}MB ({:.1}%)\n\
+            - CPU: {:.1}%",
+            used_mb, total_mb, mem_pct, cpu_usage
+        )
     }
 }

@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-04-02
+
+**Continuous Awareness Architecture. Bridging the AI Consciousness Gap. 18 new source files.**
+
+### Oneiros Dream Engine (New Crate: `savant_dream`)
+- **NREM phase** — structured replay of recent episodic memories, deduplication, contradiction detection/resolution. Queries last 24h of messages via `iter_recent_messages()`.
+- **REM phase** — adversarial latent space exploration via random probe vectors, cross-domain concept recombination. Vendi Score filtering ensures diversity.
+- **Vendi Score module** — diversity metric using pairwise distance variance. Embedding-based and text-based (Jaccard) variants. Score = variance / (1 + variance).
+- **Dream scheduler** — triggers NREM/REM cycles during idle periods (delta < 0.1 for 10+ minutes). Atomic `IS_DREAMING` flag coordinates with heartbeat pulse. Yields immediately when environment becomes active.
+- **Dream output filter** — content quality checks (min length, alpha ratio). Taint tags for NREM (trust=0.7) and REM (trust=0.5) outputs. Standard grounding filter applied before LEARNINGS.md entry.
+- **`iter_recent_messages(hours)`** — new method on `LsmStorageEngine` for time-windowed message iteration.
+
+### Global Workspace / Executive Monitor (New Module: `agent::workspace`)
+- **`WorkspaceSlot`** — signals compete for broadcast attention with computed salience scores.
+- **`ExecutiveMonitor`** — continuous selection-broadcast cycle with adaptive tick rate (100ms active, exponential backoff to 5s during stillness). Broadcasts highest-salience signal to all registered listeners.
+- **Salience computation** — recency (30%) + novelty (30%) + task relevance (40%). Word-overlap similarity for novelty detection.
+- **Broadcast channel** — `tokio::sync::broadcast` for subscriber pattern. Named listener registration.
+
+### Semantic Window Manager (New Module: `agent::semantic_window`)
+- **Context scoring** — role weight (System > User > Assistant), recency, keyword overlap. System messages and SOUL.md references are pinned (never evicted).
+- **Sliding window** — configurable max turns (default 50). Evicts lowest-scoring non-pinned entries when exceeding threshold (default 20% eviction).
+- **Window result** — retained + evicted message lists for downstream processing.
+
+### Continuous Agent Safety Framework (New Module: `security::continuous`)
+- **Taint tracing** — `TaintTag` struct with source, trust level, provenance chain. Predefined levels: external_web (0.2), user_file (0.5), dream (0.5), nrem_replay (0.7), system (1.0). Compound operation takes minimum trust of sources. `requires_human_verification()` for trust < 0.3.
+- **Dynamic credential broker** — `CredentialBroker` wraps `.env` loading, issues `EphemeralToken` per-task with configurable TTL. Tokens auto-expire. `revoke_task_tokens()` on completion. `cleanup_expired()` for periodic maintenance.
+- **Deterministic circuit breakers** — `CircuitBreaker` tracks recursion depth, API call count, cumulative cost per task. Standard (depth=10, calls=100, $5) and LongRunning (depth=50, calls=1000, $50) task classes. Instant termination via `SavantError::CircuitBreakerTripped`. Trip log for audit.
+- **Lock-free trip detection** — scoped read locks prevent deadlocks. Trip reason computed inside lock scope, `record_trip` called after lock release.
+
+### Temporal Decay + Reflective Memory
+- **`semantic_search_temporal_decay()`** — new method on `MemoryEnclave` and `MemoryEngine`. Applies `e^(-lambda * age_hours)` to search results. High-importance memories (>= 8) get half decay rate. Filters results with effective_relevance < 0.1.
+- **Reflective memory layer** — `ReflectiveMemory` struct with `Concept` nodes and `Relation` edges. Deduplication by ID. Label substring search. Relation lookup by concept ID.
+
+### Configuration
+- **`[consciousness]` section** in `config/savant.toml` — 22 configurable parameters for dream engine, workspace, streaming, temporal decay, and safety framework.
+- **`SavantError::CircuitBreakerTripped`** — new error variant in `savant_core`.
+
+### Integration
+- **Heartbeat pulse is dream-aware** — checks `IS_DREAMING` atomic flag before pulse activation. Skips pulse if dream cycle is active. Publishes delta score to watch channel for dream scheduler.
+- **Dream crate added to workspace** — `savant_dream` in `Cargo.toml` members + workspace dependencies.
+
+### Test Coverage
+- **24 new tests** in `savant_dream` (vendi, nrem, rem, filter, scheduler)
+- **26 tests** in `savant_security` (12 existing + 14 new: taint, circuit_breaker, credentials)
+- **New modules compile with 0 errors, 0 warnings from new code**
+
+---
+
 ## [0.1.1] - 2026-03-28
 
 **Grounded emergence architecture. Self-healing infrastructure. 50+ files changed.**

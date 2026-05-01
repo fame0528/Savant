@@ -33,6 +33,19 @@
             font-size: 10px;
             color: #888;
         }
+        #copy-btn {
+            background: #2a3140;
+            color: #00d5ff;
+            border: 1px solid #3a4150;
+            padding: 3px 10px;
+            font-family: inherit;
+            font-size: 10px;
+            cursor: pointer;
+            border-radius: 3px;
+            transition: background 0.15s;
+        }
+        #copy-btn:hover { background: #3a4150; }
+        #copy-btn:active { background: #00d5ff; color: #0a0e14; }
         #log {
             flex: 1;
             overflow-y: auto;
@@ -59,7 +72,10 @@
 <body>
     <div id="header">
         <h3>Savant Agent Logs</h3>
-        <span id="status">Connecting...</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <button id="copy-btn" onclick="copyAllLogs()">Copy All</button>
+            <span id="status">Connecting...</span>
+        </div>
     </div>
     <div id="log"></div>
 
@@ -94,6 +110,22 @@
             statusEl.textContent = 'Tauri event error: ' + e;
             statusEl.style.color = '#f38ba8';
         });
+
+        function copyAllLogs() {
+            const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
+            navigator.clipboard.writeText(lines).then(() => {
+                const btn = document.getElementById('copy-btn');
+                const orig = btn.textContent;
+                btn.textContent = 'COPIED';
+                btn.style.background = '#00d5ff';
+                btn.style.color = '#0a0e14';
+                setTimeout(() => {
+                    btn.textContent = orig;
+                    btn.style.background = '';
+                    btn.style.color = '';
+                }, 2000);
+            });
+        }
     </script>
 </body>
 </html>

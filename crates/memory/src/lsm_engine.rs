@@ -233,6 +233,15 @@ impl LsmStorageEngine {
         all_msgs.into_iter()
     }
 
+    /// Iterates over messages from the last N hours across all sessions.
+    /// Used by the NREM dream phase for structured memory replay.
+    pub fn iter_recent_messages(&self, hours: u64) -> Vec<AgentMessage> {
+        let cutoff = chrono::Utc::now().timestamp() - (hours as i64 * 3600);
+        self.iter_all_messages()
+            .filter(|msg| i64::from(msg.timestamp) >= cutoff)
+            .collect()
+    }
+
     /// Inserts a MemoryEntry into the metadata collection.
     pub fn insert_metadata(
         &self,

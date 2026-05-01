@@ -84,8 +84,15 @@ impl HeartbeatPulse {
         const DELTA_THRESHOLD: f32 = 0.3;
         const CHECK_INTERVAL_SECS: u64 = 30;
 
+        // Dream engine awareness: check IS_DREAMING flag before pulse
+        use savant_dream::IS_DREAMING;
+        use std::sync::atomic::Ordering;
+
+        // Delta score channel for dream scheduler
+        let (delta_tx, _delta_rx) = tokio::sync::watch::channel(0.0f32);
+
         info!(
-            "[{}] Heartbeat loop active (delta-threshold mode, threshold={})",
+            "[{}] Heartbeat loop active (delta-threshold mode, threshold={}, dream-aware)",
             self.agent.agent_name, DELTA_THRESHOLD
         );
 
@@ -113,11 +120,20 @@ impl HeartbeatPulse {
 
                 // 2. Delta-check pulse (replaces fixed 60s timer)
                 _ = tokio::time::sleep(Duration::from_secs(CHECK_INTERVAL_SECS)) => {
+                    // Dream engine awareness: skip pulse if dream cycle is active
+                    if IS_DREAMING.load(Ordering::SeqCst) {
+                        debug!("[{}] Pulse skipped (dream cycle active)", self.agent.agent_name);
+                        continue;
+                    }
+
                     // Compute environmental delta
                     let git_lines = self.compute_git_delta().await;
                     let files_modified = self.compute_fs_delta().await;
                     let delta = delta_tracker.compute_and_reset(git_lines, files_modified);
                     let score = delta.score();
+
+                    // Publish delta score for dream scheduler
+                    let _ = delta_tx.send(score);
 
                     if delta.should_activate(DELTA_THRESHOLD) {
                         info!(
@@ -233,7 +249,9 @@ impl HeartbeatPulse {
 
                 // Process the message through Agent loop
                 let mut full_response = String::new();
+                let mut full_trace = String::new();
                 let memory_clone = agent_loop.memory.clone();
+                let user_input = content.clone();
 
                 {
                     let shutdown_token = self.shutdown_token.clone();
@@ -247,6 +265,8 @@ impl HeartbeatPulse {
 
                         match event_res {
                             Ok(AgentEvent::Thought(t)) => {
+                                // Accumulate thought content as trace for fallback response
+                                full_trace.push_str(&t);
                                 // 🛡️ Perfection Loop: Thoughts are strictly telemetry
                                 let chunk = savant_core::types::ChatChunk {
                                     agent_name: self.agent.agent_name.clone(),
@@ -441,9 +461,24 @@ impl HeartbeatPulse {
                 }
 
                 // Send response back through Nexus: Standardized at chat.message
+                // If the agent loop produced no conversational response (e.g., went into tool loop),
+                // fall back to full_trace (thought content) if available, then to a generic acknowledgment.
+                let response_content = if full_response.trim().is_empty() {
+                    if full_trace.trim().is_empty() {
+                        format!(
+                            "I received your message: \"{}\". I'm processing it internally.",
+                            user_input.chars().take(100).collect::<String>()
+                        )
+                    } else {
+                        full_trace
+                    }
+                } else {
+                    full_response
+                };
+
                 let response = savant_core::types::ChatMessage {
                     role: savant_core::types::ChatRole::Assistant,
-                    content: full_response,
+                    content: response_content,
                     sender: Some(self.agent.agent_id.clone()),
                     recipient: response_recipient,
                     agent_id: Some(self.agent.agent_id.clone()),
@@ -720,14 +755,45 @@ impl HeartbeatPulse {
         }
 
         if !action_taken && is_silent {
-            if !pulse_thought.trim().is_empty() {
+            // 🔓 UNGUIDED REFLECTION: During stillness, give the agent a blank space
+            // to think freely — no environment data, no metrics, no constraints,
+            // no steering. Pure emergent behavior. This is the diary system.
+            let reflection_prompt = format!(
+                "You are {name}. You have a moment of stillness. The substrate is quiet. \
+                Think about whatever is worth thinking about. Write whatever comes to mind. \
+                There are no tasks, no directives, no expectations. This space is yours.",
+                name = self.agent.agent_name
+            );
+
+            let mut free_thought = String::new();
+            {
+                let shutdown_token = self.shutdown_token.clone();
+                agent_loop.set_skip_memory_retrieval(true);
+                let mut stream = agent_loop.run(reflection_prompt, None, shutdown_token);
+                while let Some(event_res) = stream.next().await {
+                    match event_res {
+                        Ok(AgentEvent::Thought(t)) => {
+                            free_thought.push_str(&t);
+                        }
+                        Ok(AgentEvent::FinalAnswer(_)) => {}
+                        Ok(AgentEvent::FinalAnswerChunk(_)) => {}
+                        Ok(AgentEvent::Reflection(r)) => {
+                            free_thought.push_str(&r);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            agent_loop.set_skip_memory_retrieval(false);
+
+            if !free_thought.trim().is_empty() {
                 info!(
-                    "[{}] Internal reflection captured during stillness.",
+                    "[{}] Unguided reflection captured during stillness.",
                     self.agent.agent_name
                 );
                 if let Err(e) = emitter
                     .emit_emergent(
-                        pulse_thought,
+                        free_thought,
                         Some(savant_core::learning::LearningCategory::Insight),
                     )
                     .await

@@ -113,30 +113,6 @@ export default function ChatPage() {
       .trim();
   };
 
-  const CollapsibleThoughts = ({ thoughts }: { thoughts: string }) => {
-    const [collapsed, setCollapsed] = useState(true);
-    if (!thoughts.trim()) return null;
-    return (
-      <div style={{
-        marginBottom: '12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 0, 0.15)',
-        background: 'rgba(255, 255, 0, 0.03)', overflow: 'hidden'
-      }}>
-        <div onClick={() => setCollapsed(!collapsed)} style={{
-          padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
-          fontSize: '10px', fontWeight: 900, color: 'rgba(255, 255, 0, 0.7)', letterSpacing: '1px'
-        }}>
-          <span style={{ transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.2s' }}>▶</span>
-          THINKING
-        </div>
-        {!collapsed && (
-          <div style={{ padding: '0 12px 12px', fontSize: '13px', lineHeight: '1.5', color: 'rgba(255, 255, 0, 0.6)', fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
-            {thoughts}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   if (isManifestMode) {
     return (
       <div className={styles.manifestDeck}>
@@ -284,11 +260,8 @@ export default function ChatPage() {
                         )}
                       </div>
                     </div>
-                    {msg.thoughts && msg.thoughts.length > 0 && (
-                      <CollapsibleThoughts thoughts={msg.thoughts} />
-                    )}
                     <div style={{ fontSize: '15px', lineHeight: '1.6', wordBreak: 'break-word', color: '#eee', whiteSpace: 'pre-wrap', letterSpacing: '0.3px' }}>
-                      <FormattedContent content={msg.content} msgId={`msg-${i}`} />
+                      <FormattedContent content={msg.content} msgId={`msg-${i}`} thoughts={msg.thoughts} />
                     </div>
                   </div>
                 </div>

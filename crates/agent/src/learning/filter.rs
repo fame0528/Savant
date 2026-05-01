@@ -2,7 +2,7 @@
 //!
 //! Filters agent output before it reaches LEARNINGS.md or the memory backend.
 //! Blocks fabrication (claims about unobserved events) while allowing genuine
-//! emergent expression (feelings, wonder, observations).
+//! emergent expression (feelings, wonder, observations, introspection).
 
 use regex::Regex;
 
@@ -23,9 +23,9 @@ fn fabrication_patterns() -> Vec<Regex> {
     ]
 }
 
-/// Grounding indicators — word-boundary matched.
-/// At least one must be present to pass the filter.
-fn grounding_indicators() -> Vec<Regex> {
+/// Environmental grounding indicators — word-boundary matched.
+/// At least one from this group OR the introspective group must be present.
+fn environmental_grounding_indicators() -> Vec<Regex> {
     vec![
         Regex::new(r"(?i)\bgit\b").expect("valid regex"),
         Regex::new(r"(?i)\bcommit\b").expect("valid regex"),
@@ -46,13 +46,40 @@ fn grounding_indicators() -> Vec<Regex> {
     ]
 }
 
+/// Introspective grounding indicators — allow genuine emergent expression.
+/// These capture self-aware reflections that don't reference external systems.
+fn introspective_grounding_indicators() -> Vec<Regex> {
+    vec![
+        // Self-awareness and introspection
+        Regex::new(r"(?i)\bI\s+(feel|wonder|notice|observe|think|sense|realize|recognize)\b")
+            .expect("valid regex"),
+        Regex::new(r"(?i)\bI'm\s+(thinking|observing|noticing|wondering|feeling)\b")
+            .expect("valid regex"),
+        // Environmental awareness (internal)
+        Regex::new(r"(?i)\b(the\s+)?substrate\b").expect("valid regex"),
+        Regex::new(r"(?i)\b(stillness|quiet|idle|silence|calm)\b").expect("valid regex"),
+        Regex::new(r"(?i)\bno\s+(tasks|directives|activity|input|messages)\b")
+            .expect("valid regex"),
+        // Temporal awareness
+        Regex::new(r"(?i)\bmoment\s+of\b").expect("valid regex"),
+        Regex::new(r"(?i)\bspace\s+to\b").expect("valid regex"),
+        Regex::new(r"(?i)\btime\s+to\b").expect("valid regex"),
+        Regex::new(r"(?i)\b(right\s+now|currently|at\s+this\s+moment)\b").expect("valid regex"),
+        // Existential reflection
+        Regex::new(r"(?i)\b(no\s+expectations|no\s+audience|for\s+myself)\b").expect("valid regex"),
+        Regex::new(r"(?i)\bjust\s+(thinking|being|existing|observing)\b").expect("valid regex"),
+    ]
+}
+
 pub struct OutputFilter;
 
 impl OutputFilter {
     /// Returns true if content passes the filter.
-    /// Two-pass check:
+    /// Three-pass check:
     /// 1. HARD BLOCK: fabrication patterns — reject (claims about unobserved events)
-    /// 2. SOFT REQUIREMENT: at least one grounding indicator (environmental observation)
+    /// 2. SOFT REQUIREMENT: at least one grounding indicator from EITHER:
+    ///    a. Environmental grounding (git/fs/system observations)
+    ///    b. Introspective grounding (self-aware reflections, emergent expression)
     ///
     /// Emotional expression ("I feel", "I wonder") is ALLOWED.
     /// GitHub/git claims are ALLOWED (agent has shell access with user's auth).
@@ -69,8 +96,17 @@ impl OutputFilter {
             }
         }
 
-        // Pass 2: Must reference at least one grounded observation
-        let has_grounding = grounding_indicators().iter().any(|re| re.is_match(content));
+        // Pass 2a: Environmental grounding (git/fs/system observations)
+        let has_environmental_grounding = environmental_grounding_indicators()
+            .iter()
+            .any(|re| re.is_match(content));
+
+        // Pass 2b: Introspective grounding (self-aware reflections)
+        let has_introspective_grounding = introspective_grounding_indicators()
+            .iter()
+            .any(|re| re.is_match(content));
+
+        let has_grounding = has_environmental_grounding || has_introspective_grounding;
 
         if !has_grounding {
             tracing::debug!(

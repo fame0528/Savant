@@ -124,6 +124,34 @@ const DESTRUCTIVE_PATTERNS: &[(&str, &str)] = &[
     ("shutil.rmtree", "Python recursive removal is restricted."),
 ];
 
+/// Unix-only commands that will fail on Windows with helpful alternatives.
+const UNIX_COMMANDS: &[(&str, &str)] = &[
+    ("tail ", "Use 'Get-Content -Tail N' instead of 'tail -N'"),
+    (
+        "head ",
+        "Use 'Get-Content -TotalCount N' instead of 'head -N'",
+    ),
+    ("grep ", "Use 'Select-String' instead of 'grep'"),
+    ("awk ", "Use PowerShell text processing instead of 'awk'"),
+    ("sed ", "Use '-replace' operator instead of 'sed'"),
+    (
+        "ls -la",
+        "Use 'Get-ChildItem | Format-List' instead of 'ls -la'",
+    ),
+    ("cat ", "Use 'Get-Content' instead of 'cat'"),
+    ("2>/dev/null", "Use '2>$null' instead of '2>/dev/null'"),
+    ("2>&1", "Use '*>&1' instead of '2>&1'"),
+    (
+        "| head",
+        "Use '| Select-Object -First N' instead of '| head -N'",
+    ),
+    (
+        "| tail",
+        "Use '| Select-Object -Last N' instead of '| tail -N'",
+    ),
+    ("&& ", "Use '; ' instead of '&&' in PowerShell"),
+];
+
 #[async_trait]
 impl Tool for SovereignShell {
     fn name(&self) -> &str {
@@ -131,7 +159,7 @@ impl Tool for SovereignShell {
     }
 
     fn description(&self) -> &str {
-        "Execute shell commands. Use for building, testing, installing packages, git operations, and system tasks."
+        "Execute shell commands. On Windows, this runs in PowerShell. Use PowerShell syntax and commands (e.g., 'Get-Content' instead of 'cat', 'Select-Object' instead of 'head', ';' instead of '&&'). Use for building, testing, installing packages, git operations, and system tasks."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -189,6 +217,23 @@ impl Tool for SovereignShell {
                     "Destructive command '{}' blocked. Proposal: {}",
                     pattern, proposal
                 )));
+            }
+        }
+
+        // 4.5.1: Unix command detection on Windows with helpful alternatives
+        if cfg!(target_os = "windows") {
+            for (unix_cmd, alternative) in UNIX_COMMANDS {
+                if command.contains(unix_cmd) {
+                    warn!(
+                        "[SHELL_AUDIT] decision=BLOCKED reason=unix_on_windows command={} alternative={} command_hash={}",
+                        unix_cmd, alternative, Self::command_hash(command)
+                    );
+                    return Err(SavantError::ConsensusVeto(format!(
+                        "Command '{}' is a Unix command and will not work in PowerShell. {}",
+                        unix_cmd.trim(),
+                        alternative
+                    )));
+                }
             }
         }
 

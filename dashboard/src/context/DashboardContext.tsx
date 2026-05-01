@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { isTauri, igniteSwarm } from "@/lib/tauri";
 import { logger } from "@/lib/logger";
 import dayjs from "dayjs";
@@ -199,6 +200,7 @@ const CollapsibleThoughts = React.memo(({ thoughts }: { thoughts: string }) => {
 // ─── Provider Component ─────────────────────────────────────────────────
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   // UI state
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [isManifestMode, setIsManifestMode] = useState(false);
@@ -319,6 +321,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } else if (!isManifest) {
       localStorage.removeItem('activeAgent');
     }
+    // Navigate to chat page so sidebar clicks always bring user back to chat
+    router.push('/');
     if (socketRef.current?.readyState === WebSocket.OPEN && !isManifest && sessionIdRef.current) {
       const laneKey = normalizedId || "global";
       if (!syncedLanes.has(laneKey)) {
@@ -329,7 +333,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         setSyncedLanes(prev => new Set(prev).add(laneKey));
       }
     }
-  }, [syncedLanes]);
+  }, [syncedLanes, router]);
 
   const processEvent = (type: string, evData: any) => {
     if (type === "session.assigned") {

@@ -33,7 +33,7 @@ tokio-util = "0.7"
 rusqlite = { version = "0.38.0", features = ["chrono"] }
 futures = "0.3"
 async-trait = "0.1"
-axum = { version = "0.7", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros"] }
 cortexadb-core = { path = "lib/cortexadb/crates/cortexadb-core" }
 rkyv = { version = "0.8.15", features = ["bytecheck", "little_endian", "unaligned"] }
 ruvector-core = "2.0.5"

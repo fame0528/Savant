@@ -15,7 +15,7 @@ notify-debouncer-mini = "0.4.1"
 
 # WebAssembly & Compilation
 wasmtime = { workspace = true }
-wit-bindgen = "0.24"
+wit-bindgen = "0.51"
 
 # Telemetry & Math for Circuit Breaker
 tracing = "0.1"

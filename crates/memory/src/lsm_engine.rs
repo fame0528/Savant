@@ -141,9 +141,11 @@ impl LsmStorageEngine {
         Self::new(storage_path, LsmConfig::default())
     }
 
-    /// Creates a zero-vector embedding at the configured dimension.
+    /// Creates a minimal-value placeholder embedding at the configured dimension.
+    /// Uses 0.001 per dimension to avoid `VectorError::ZeroVector` in the search
+    /// layer while remaining a distinguishable placeholder for missing embeddings.
     pub fn zero_embedding(&self) -> Vec<f32> {
-        vec![0.0; self.vector_dimension]
+        vec![0.001; self.vector_dimension]
     }
 
     /// Returns the collection name for a session transcript.
@@ -1098,13 +1100,15 @@ mod tests {
     use super::*;
     use crate::models::{AgentMessage, MessageRole, ToolResultRef};
     use std::fs;
+    use uuid::Uuid;
 
     #[test]
     fn test_lsm_engine_basic_operations() {
-        let temp_dir = std::env::temp_dir().join("savant_memory_test_cortexa");
-        if let Err(e) = fs::create_dir_all(&temp_dir) {
-            warn!("[memory::lsm] Failed to create test temp dir: {}", e);
-        }
+        let temp_dir = std::env::temp_dir().join(format!(
+            "savant_memory_test_cortexa_{}",
+            Uuid::new_v4()
+        ));
+        let _ = fs::create_dir_all(&temp_dir);
 
         let engine = LsmStorageEngine::with_defaults(&temp_dir).unwrap();
 

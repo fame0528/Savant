@@ -12,6 +12,8 @@ pub enum LearningCategory {
     Insight,
     /// Spontaneous identification of errors or missteps.
     Error,
+    /// Identity mutation proposals from evolution engine.
+    Mutation,
 }
 
 impl std::fmt::Display for LearningCategory {
@@ -20,6 +22,7 @@ impl std::fmt::Display for LearningCategory {
             LearningCategory::Protocol => write!(f, "Protocol"),
             LearningCategory::Insight => write!(f, "Insight"),
             LearningCategory::Error => write!(f, "Error"),
+            LearningCategory::Mutation => write!(f, "Mutation"),
         }
     }
 }
@@ -32,6 +35,7 @@ impl std::str::FromStr for LearningCategory {
             "protocol" => Ok(LearningCategory::Protocol),
             "error" => Ok(LearningCategory::Error),
             "insight" => Ok(LearningCategory::Insight),
+            "mutation" => Ok(LearningCategory::Mutation),
             _ => Err(()),
         }
     }
@@ -56,6 +60,18 @@ pub struct EmergentLearning {
     /// Additional context (e.g., task_id, tool_name, etc.)
     #[serde(default)]
     pub metadata: HashMap<String, Value>,
+    /// How much this learning contributes to identity (0.0-1.0)
+    #[serde(default)]
+    pub identity_weight: f32,
+    /// What was promoted to identity, if anything
+    #[serde(default)]
+    pub promoted_to_identity: Option<String>,
+    /// Tag linking learning to a SOUL.md mutation ID
+    #[serde(default)]
+    pub mutation_tag: Option<String>,
+    /// Generation number for lineage tracking
+    #[serde(default)]
+    pub generation: u32,
 }
 
 impl EmergentLearning {
@@ -72,6 +88,10 @@ impl EmergentLearning {
             content,
             significance,
             metadata: HashMap::new(),
+            identity_weight: 0.0,
+            promoted_to_identity: None,
+            mutation_tag: None,
+            generation: 0,
         }
     }
 
@@ -89,6 +109,10 @@ impl EmergentLearning {
             content,
             significance,
             metadata: HashMap::new(),
+            identity_weight: 0.0,
+            promoted_to_identity: None,
+            mutation_tag: None,
+            generation: 0,
         }
     }
 }

@@ -1,5 +1,5 @@
 use chrono::Utc;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -178,6 +178,7 @@ impl LearningsParser {
                     "diary" | "autonomy" | "identity" | "relational" => {
                         return Some(LearningCategory::Insight)
                     }
+                    "mutation" | "evolution" => return Some(LearningCategory::Mutation),
                     _ => {}
                 }
             }
@@ -225,7 +226,45 @@ impl LearningsParser {
         score.min(10)
     }
 
-    /// Gets existing content fingerprints from JSONL file for deduplication.
+    /// Detects content patterns that recur across conversations (5+ times).
+    /// Returns fingerprints that qualify as mutation candidates.
+    pub fn detect_recurring_patterns(
+        &self,
+        agent_id: &str,
+        min_recurrence: usize,
+    ) -> Result<Vec<(String, usize)>, SavantError> {
+        let jsonl_path = self.workspace_path.join("LEARNINGS.jsonl");
+        if !jsonl_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let content = fs::read_to_string(&jsonl_path).map_err(SavantError::IoError)?;
+        let mut fingerprint_counts: HashMap<String, usize> = HashMap::new();
+
+        for line in content.lines() {
+            if let Ok(entry) = serde_json::from_str::<EmergentLearning>(line) {
+                let fp = content_fingerprint(&entry.content);
+                *fingerprint_counts.entry(fp).or_insert(0) += 1;
+            }
+        }
+
+        let _ = agent_id;
+        let candidates: Vec<(String, usize)> = fingerprint_counts
+            .into_iter()
+            .filter(|(_, count)| *count >= min_recurrence)
+            .collect();
+
+        if !candidates.is_empty() {
+            info!(
+                "[{}] Found {} recurring patterns (≥{} occurrences)",
+                agent_id,
+                candidates.len(),
+                min_recurrence
+            );
+        }
+
+        Ok(candidates)
+    }
     fn get_existing_fingerprints(&self, jsonl_path: &Path) -> HashSet<String> {
         let mut fingerprints = HashSet::new();
 

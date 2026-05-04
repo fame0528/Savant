@@ -25,6 +25,7 @@ pub struct Config {
     pub system: SystemConfig,
     pub telemetry: TelemetryConfig,
     pub mcp: McpConfig,
+    pub evolution: EvolutionConfig,
     #[serde(skip)]
     pub project_root: PathBuf,
     #[serde(default)]
@@ -45,6 +46,7 @@ impl Default for Config {
             system: SystemConfig::default(),
             telemetry: TelemetryConfig::default(),
             mcp: McpConfig::default(),
+            evolution: EvolutionConfig::default(),
             project_root: PathBuf::from("."),
             proactive: ProactiveConfig::default(),
         }
@@ -317,6 +319,72 @@ impl Default for TelemetryConfig {
             log_level: "info".to_string(),
             log_color: true,
             enable_tracing: false,
+        }
+    }
+}
+
+// ============================================================================
+// Evolution Configuration (Per-Agent Lifetime Personality Evolution)
+// ============================================================================
+
+/// Controls the personality evolution system.
+/// Each agent independently evolves its SOUL.md based on user interactions.
+/// Default is OFF (opt-in) — set enabled=true to activate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionConfig {
+    /// Master toggle: false = no evolution, agent behaves as static/pre-evolution
+    #[serde(default)]
+    pub enabled: bool,
+    /// How frequently the agent proposes mutations (0.0-1.0, lower = rarer)
+    #[serde(default = "EvolutionConfig::default_mutation_rate")]
+    pub mutation_rate: f32,
+    /// Require explicit user approval for all mutations
+    #[serde(default = "EvolutionConfig::default_require_approval")]
+    pub require_approval: bool,
+    /// SOUL.md sections that the mutation engine CANNOT touch (e.g. "Core Laws")
+    #[serde(default)]
+    pub immutable_sections: Vec<String>,
+    /// Hard cap on mutation proposals per 7-day rolling window
+    #[serde(default = "EvolutionConfig::default_max_mutations_per_week")]
+    pub max_mutations_per_week: u32,
+    /// Maximum allowed Euclidean distance from baseline OCEAN before auto-block
+    #[serde(default = "EvolutionConfig::default_drift_limit")]
+    pub drift_limit: f32,
+    /// Days to wait after a mutation before that section can mutate again
+    #[serde(default = "EvolutionConfig::default_digestion_cooldown_days")]
+    pub digestion_cooldown_days: u32,
+    /// Minimum conversation sessions before mutation engine activates
+    #[serde(default = "EvolutionConfig::default_min_conversations")]
+    pub min_conversations_before_evolution: u32,
+    /// OCEAN Euclidean distance below which two agents trigger a convergence warning
+    #[serde(default = "EvolutionConfig::default_divergence_threshold")]
+    pub divergence_threshold: f32,
+}
+
+impl EvolutionConfig {
+    fn default_mutation_rate() -> f32 { 0.3 }
+    fn default_require_approval() -> bool { true }
+    fn default_max_mutations_per_week() -> u32 { 2 }
+    fn default_drift_limit() -> f32 { 0.15 }
+    fn default_digestion_cooldown_days() -> u32 { 7 }
+    fn default_min_conversations() -> u32 { 50 }
+    fn default_divergence_threshold() -> f32 { 0.1 }
+}
+
+impl Default for EvolutionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mutation_rate: Self::default_mutation_rate(),
+            require_approval: Self::default_require_approval(),
+            immutable_sections: vec![
+                "Core Laws".to_string(),
+            ],
+            max_mutations_per_week: Self::default_max_mutations_per_week(),
+            drift_limit: Self::default_drift_limit(),
+            digestion_cooldown_days: Self::default_digestion_cooldown_days(),
+            min_conversations_before_evolution: Self::default_min_conversations(),
+            divergence_threshold: Self::default_divergence_threshold(),
         }
     }
 }

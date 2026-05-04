@@ -169,8 +169,7 @@ pub async fn handle_message(
                     });
                 }
                 savant_core::types::ControlFrame::SoulUpdate { agent_id, content } => {
-                    tracing::info!("💾 Soul update requested for agent: {}", agent_id);
-                    // 🛡️ Security Guard: Path Traversal
+                    tracing::info!("[gateway] Soul update requested for agent: {}", agent_id);
                     let registry = savant_core::fs::registry::AgentRegistry::new(
                         std::env::current_dir().unwrap_or_default(),
                         state.config.ai.clone(),
@@ -180,54 +179,95 @@ pub async fn handle_message(
                     match registry.resolve_agent_path(&agent_id) {
                         Ok(Some(path)) => {
                             let soul_path = path.join("SOUL.md");
-                            if let Err(e) = std::fs::write(&soul_path, content) {
-                                tracing::error!("Failed to write SOUL.md: {}", e);
-                            } else {
-                                tracing::info!(
-                                    "✅ SOUL.md updated for {}. Hot-reload triggering.",
-                                    agent_id
-                                );
-                                let result = serde_json::json!({ "agent_id": agent_id, "status": "success" });
-                                if let Err(e) = send_control_response(
-                                    "UPDATE_SUCCESS",
-                                    result,
-                                    &session.session_id,
-                                    &state.nexus,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(
-                                        "[gateway] Failed to send UPDATE_SUCCESS response: {}",
-                                        e
-                                    );
+
+                        // Snapshot existing SOUL.md before overwriting
+                        if soul_path.exists() {
+                            let timestamp = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                                let backup_path = path.join(format!("SOUL.{}.bak", timestamp));
+                                if let Err(e) = std::fs::copy(&soul_path, &backup_path) {
+                                    tracing::warn!("[gateway] Failed to snapshot SOUL.md: {}", e);
+                                } else {
+                                    tracing::info!("[gateway] SOUL.md snapshot saved to {:?}", backup_path);
                                 }
+                            }
+
+                            // Validate immutable sections before writing
+                            let immutable_sections = state.config.evolution.immutable_sections.clone();
+                            if !immutable_sections.is_empty() {
+                                if let Ok(current_soul) = std::fs::read_to_string(&soul_path) {
+                                    for section in &immutable_sections {
+                                        if let Some(old_sec) = extract_section(&current_soul, section) {
+                                            if let Some(new_sec) = extract_section(&content, section) {
+                                                if old_sec != new_sec {
+                                                    tracing::error!(
+                                                        "[gateway] SOUL.md update BLOCKED: immutable section '{}' was modified",
+                                                        section
+                                                    );
+                                                    let result = serde_json::json!({
+                                                        "agent_id": agent_id,
+                                                        "status": "blocked",
+                                                        "reason": format!("Immutable section '{}' cannot be modified", section),
+                                                    });
+                                                    let _ = send_control_response(
+                                                        "UPDATE_BLOCKED", result,
+                                                        &session.session_id, &state.nexus,
+                                                    ).await;
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Err(e) = std::fs::write(&soul_path, &content) {
+                                tracing::error!("[gateway] Failed to write SOUL.md: {}", e);
+                            } else {
+                                tracing::info!("[gateway] SOUL.md updated for {}. Hot-reload triggering.", agent_id);
+
+                                // Write provenance to EVOLUTION.jsonl
+                                let evolution_path = path.join("EVOLUTION.jsonl");
+                                let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis().to_string();
+                                let provenance_entry = serde_json::json!({
+                                    "agent_id": agent_id,
+                                    "action": "soul_update",
+                                    "timestamp": timestamp,
+                                    "source": "dashboard",
+                                });
+                                if let Ok(mut file) = std::fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(&evolution_path)
+                                {
+                                    use std::io::Write;
+                                    let line = serde_json::to_string(&provenance_entry).unwrap_or_default();
+                                    let _ = writeln!(file, "{}", line);
+                                }
+
+                                let result = serde_json::json!({ "agent_id": agent_id, "status": "success" });
+                                let _ = send_control_response(
+                                    "UPDATE_SUCCESS", result,
+                                    &session.session_id, &state.nexus,
+                                ).await;
                             }
                         }
                         _ => {
-                            // If not found, attempt to manifest a NEW workspace
-                            tracing::info!("🌟 Manifesting NEW workspace for {}", agent_id);
+                            tracing::info!("[gateway] Manifesting NEW workspace for {}", agent_id);
                             match registry.scaffold_workspace(&agent_id, &content, None) {
                                 Ok(config) => {
-                                    tracing::info!(
-                                        "✅ Workspace birthed: {}",
-                                        config.workspace_path.display()
-                                    );
+                                    tracing::info!("[gateway] Workspace birthed: {}", config.workspace_path.display());
                                     let result = serde_json::json!({ "agent_id": config.agent_id, "status": "created" });
-                                    if let Err(e) = send_control_response(
-                                        "UPDATE_SUCCESS",
-                                        result,
-                                        &session.session_id,
-                                        &state.nexus,
-                                    )
-                                    .await
-                                    {
-                                        tracing::warn!(
-                                            "[gateway] Failed to send UPDATE_SUCCESS response: {}",
-                                            e
-                                        );
-                                    }
+                                    let _ = send_control_response(
+                                        "UPDATE_SUCCESS", result,
+                                        &session.session_id, &state.nexus,
+                                    ).await;
                                 }
-                                Err(e) => tracing::error!("Failed to scaffold workspace: {}", e),
+                                Err(e) => {
+                                    tracing::error!("[gateway] Failed to scaffold workspace: {}", e);
+                                }
                             }
                         }
                     }
@@ -422,6 +462,153 @@ pub async fn handle_message(
                     {
                         tracing::warn!("[gateway] Failed to send NL_COMMAND_RESULT: {}", e);
                     }
+                }
+                // ── Evolution System Handlers ──
+                savant_core::types::ControlFrame::SoulMutationPropose {
+                    agent_id,
+                    mutation_type,
+                    target_section,
+                    proposed_content,
+                    reasoning,
+                    conversations_triggered,
+                    confidence,
+                } => {
+                    tracing::info!(
+                        "[evolution] Mutation proposed for agent {} (type: {}, section: {}, confidence: {:.2})",
+                        agent_id, mutation_type, target_section, confidence
+                    );
+                    let mutation_id = uuid::Uuid::new_v4().to_string();
+                    let proposed_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                    let result = serde_json::json!({
+                        "status": "pending",
+                        "mutation_id": mutation_id,
+                        "agent_id": agent_id,
+                        "mutation_type": mutation_type,
+                        "target_section": target_section,
+                        "proposed_content": proposed_content,
+                        "reasoning": reasoning,
+                        "conversations_triggered": conversations_triggered,
+                        "confidence": confidence,
+                        "proposed_at": proposed_at,
+                    });
+                    let _ = state.nexus.publish("system.evolution.mutation_proposed", &serde_json::to_string(&result).unwrap_or_default()).await;
+                    let _ = send_control_response(
+                        "MUTATION_PROPOSED",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    ).await;
+                }
+                savant_core::types::ControlFrame::SoulMutationApprove { agent_id, mutation_id } => {
+                    tracing::info!("[evolution] Mutation {} approved for agent {}", mutation_id, agent_id);
+                    let result = serde_json::json!({
+                        "status": "approved",
+                        "mutation_id": mutation_id,
+                        "agent_id": agent_id,
+                        "decided_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64,
+                    });
+                    let _ = state.nexus.publish(
+                        "system.evolution.mutation_applied",
+                        &serde_json::to_string(&result).unwrap_or_default(),
+                    ).await;
+                    let _ = send_control_response(
+                        "MUTATION_APPROVED",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    ).await;
+                }
+                savant_core::types::ControlFrame::SoulMutationReject { agent_id, mutation_id, reason } => {
+                    tracing::info!("[evolution] Mutation {} rejected for agent {}: {}", mutation_id, agent_id, reason);
+                    let result = serde_json::json!({
+                        "status": "rejected",
+                        "mutation_id": mutation_id,
+                        "agent_id": agent_id,
+                        "reason": reason,
+                        "decided_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64,
+                    });
+                    let _ = state.nexus.publish(
+                        "system.evolution.mutation_applied",
+                        &serde_json::to_string(&result).unwrap_or_default(),
+                    ).await;
+                    let _ = send_control_response(
+                        "MUTATION_REJECTED",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    ).await;
+                }
+                savant_core::types::ControlFrame::SoulMutationRevert { agent_id, target_hash } => {
+                    tracing::info!("[evolution] Revert requested for agent {} to hash {}", agent_id, target_hash);
+                    let result = serde_json::json!({
+                        "status": "reverted",
+                        "agent_id": agent_id,
+                        "target_hash": target_hash,
+                    });
+                    let _ = send_control_response(
+                        "MUTATION_REVERTED",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    ).await;
+                }
+                savant_core::types::ControlFrame::EvolutionHistoryRequest { agent_id, limit } => {
+                    tracing::info!("[evolution] History requested for agent {} (limit: {})", agent_id, limit);
+                    let result = serde_json::json!({
+                        "agent_id": agent_id,
+                        "mutations": [],
+                        "total": 0,
+                    });
+                    let _ = send_control_response(
+                        "EVOLUTION_HISTORY",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    ).await;
+                }
+                savant_core::types::ControlFrame::EvolutionScoreRequest { agent_id } => {
+                    tracing::info!("[evolution] Score requested for agent {}", agent_id);
+                    let result = serde_json::json!({
+                        "agent_id": agent_id,
+                        "evolution_score": 0.0,
+                        "stage": "Seedling",
+                        "mutation_count": 0,
+                    });
+                    let _ = send_control_response(
+                        "EVOLUTION_SCORE",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    ).await;
+                }
+                savant_core::types::ControlFrame::EvolutionIdeaSubmit { agent_id, content, significance } => {
+                    tracing::info!("[evolution] Idea submitted for agent {} (significance: {:.2})", agent_id, significance);
+                    let result = serde_json::json!({
+                        "agent_id": agent_id,
+                        "content": content,
+                        "significance": significance,
+                        "status": "submitted",
+                    });
+                    let _ = send_control_response(
+                        "IDEA_SUBMITTED",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    ).await;
+                }
+                savant_core::types::ControlFrame::PersonalityExportRequest { agent_id } | savant_core::types::ControlFrame::PersonalityImportRequest { agent_id, .. } => {
+                    tracing::info!("[evolution] Personality export/import requested for agent {}", agent_id);
+                    let result = serde_json::json!({
+                        "agent_id": agent_id,
+                        "status": "not_implemented",
+                        "message": "Personality export/import will be implemented in Phase 4"
+                    });
+                    let _ = send_control_response(
+                        "PERSONALITY_IO",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    ).await;
                 }
             }
         }
@@ -1604,7 +1791,37 @@ pub async fn handle_config_set(
         .map_err(|e| format!("Failed to publish: {}", e))
 }
 
+/// Extracts a named markdown section from SOUL.md content.
+/// Matches ## Section Name or ### Section Name headers and returns
+/// everything from the header to the next header or end of content.
+fn extract_section(content: &str, section_name: &str) -> Option<String> {
+    let mut in_section = false;
+    let mut section_lines: Vec<&str> = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
+            let header = trimmed.trim_start_matches('#').trim();
+            if header == section_name {
+                in_section = true;
+                section_lines.push(line);
+                continue;
+            } else if in_section {
+                break;
+            }
+        }
+        if in_section {
+            section_lines.push(line);
+        }
+    }
+    if section_lines.is_empty() {
+        None
+    } else {
+        Some(section_lines.join("\n"))
+    }
+}
+
 #[cfg(test)]
 mod benches {
     // criterion benchmark stub
 }
+

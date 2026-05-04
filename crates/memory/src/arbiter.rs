@@ -75,12 +75,13 @@ async fn resolve_contradictions(
         subject, entropy
     );
 
-    // Remove inferior/contradictory memories
+    // Mark inferior memories as contradicted (evolution: contradictions ARE growth signals).
+    // Instead of deleting, we attach a `contradicted_by` reference for later analysis.
     for inferior in memories.iter().skip(1) {
         let inferior_entropy: f32 = inferior.shannon_entropy.to_native();
-        debug!(
-            "Pruning inferior fact for '{}' (entropy: {} bits)",
-            subject, inferior_entropy
+        info!(
+            "Factual arbiter: contradictory fact for '{}' resolved (entropy: {} bits, best: {} bits). Inferior tagged as contradicted_by {}.",
+            subject, inferior_entropy, entropy, best_memory.id.to_native()
         );
 
         let id_u64 = inferior.id.to_native();

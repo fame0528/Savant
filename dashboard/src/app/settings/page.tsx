@@ -152,6 +152,33 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Evolution Section */}
+      <section style={{ marginBottom: "40px" }}>
+        <h2 style={{ color: "#fff", fontSize: "14px", letterSpacing: "2px", marginBottom: "16px", opacity: 0.6 }}>EVOLUTION</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+          <div style={{ background: "rgba(255,255,255,0.03)", padding: "12px", borderRadius: "8px", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: "10px", color: "var(--accent)", letterSpacing: "1px", marginBottom: "4px" }}>STATUS</div>
+            <div style={{ fontSize: "18px", fontWeight: 900 }}>🔒 DISABLED</div>
+            <div style={{ fontSize: "9px", opacity: 0.4, marginTop: "4px" }}>Set enabled=true in savant.toml to activate</div>
+          </div>
+          <div style={{ background: "rgba(255,255,255,0.03)", padding: "12px", borderRadius: "8px", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: "10px", color: "var(--accent)", letterSpacing: "1px", marginBottom: "4px" }}>MUTATION RATE</div>
+            <div style={{ fontSize: "18px", fontWeight: 900 }}>0.3</div>
+            <div style={{ fontSize: "9px", opacity: 0.4, marginTop: "4px" }}>0.0-1.0, lower = rarer proposals</div>
+          </div>
+          <div style={{ background: "rgba(255,255,255,0.03)", padding: "12px", borderRadius: "8px", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: "10px", color: "var(--accent)", letterSpacing: "1px", marginBottom: "4px" }}>MAX / WEEK</div>
+            <div style={{ fontSize: "18px", fontWeight: 900 }}>2</div>
+            <div style={{ fontSize: "9px", opacity: 0.4, marginTop: "4px" }}>Hard cap on proposals per 7 days</div>
+          </div>
+          <div style={{ background: "rgba(255,255,255,0.03)", padding: "12px", borderRadius: "8px", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: "10px", color: "var(--accent)", letterSpacing: "1px", marginBottom: "4px" }}>DRIFT LIMIT</div>
+            <div style={{ fontSize: "18px", fontWeight: 900 }}>0.15</div>
+            <div style={{ fontSize: "9px", opacity: 0.4, marginTop: "4px" }}>Max OCEAN delta before auto-block</div>
+          </div>
+        </div>
+      </section>
+
       {/* Save */}
       <button onClick={handleSave} disabled={saving} style={{
         background: saved ? "rgba(0,255,0,0.2)" : "var(--accent)",

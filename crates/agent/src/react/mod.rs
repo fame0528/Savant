@@ -334,6 +334,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                 TokenBudget::new(context_window),
                 skills_list,
                 substrate_prompt,
+                crate::proactive::perception::PerceptionEngine::get_substrate_metrics(),
             ),
             plugin_host: None,
             plugins: Vec::new(),

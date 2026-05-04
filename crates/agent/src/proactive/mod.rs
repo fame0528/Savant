@@ -29,6 +29,27 @@ pub struct WorkingBuffer {
     pub recent_thoughts: Vec<RecentThought>,
     #[serde(default)]
     pub last_reflection_time: Option<i64>,
+    /// Pending evolution mutation proposals awaiting user review
+    #[serde(default)]
+    pub pending_mutations: Vec<String>,
+    /// Current OCEAN personality snapshot
+    #[serde(default)]
+    pub current_personality_o: f32,
+    #[serde(default)]
+    pub current_personality_c: f32,
+    #[serde(default)]
+    pub current_personality_e: f32,
+    #[serde(default)]
+    pub current_personality_a: f32,
+    #[serde(default)]
+    pub current_personality_n: f32,
+    /// Growth metrics for evolution tracking
+    #[serde(default)]
+    pub total_pulses: u64,
+    #[serde(default)]
+    pub total_learnings: u64,
+    #[serde(default)]
+    pub self_modification_count: u64,
 }
 
 pub struct ProactivePartner {

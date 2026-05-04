@@ -7,7 +7,7 @@ use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
 use savant_core::error::SavantError;
 use savant_core::traits::LlmProvider;
-use savant_core::types::{ChatChunk, ChatMessage, LlmParams};
+use savant_core::types::{ChatChunk, ChatMessage, ChatRole, LlmParams};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::pin::Pin;
@@ -620,24 +620,49 @@ pub struct AnthropicProvider {
 impl LlmProvider for AnthropicProvider {
     async fn stream_completion(
         &self,
-        messages: Vec<ChatMessage>,
+        mut messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
+        let anthropic_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| {
+                let mut m = serde_json::json!({
+                    "role": match msg.role {
+                        ChatRole::System => "system",
+                        ChatRole::User => "user",
+                        ChatRole::Assistant => "assistant",
+                        _ => "user",
+                    },
+                    "content": msg.content,
+                });
+                if i == 0 || i >= messages.len().saturating_sub(4) {
+                    m["cache_control"] = serde_json::json!({"type": "ephemeral"});
+                }
+                m
+            })
+            .collect();
+
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
+            "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
+            "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+            "stream": true,
+            "messages": anthropic_messages,
+        });
+
+        if !tools.is_empty() {
+            body["tools"] = serde_json::json!(tools);
+        }
+
         let response = self
             .client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
-            .json(&json!({
-                "model": self.model,
-                "messages": messages,
-                "tools": tools,
-                "stream": true,
-                "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
-                "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| classify_http_error(e, "Anthropic"))?;

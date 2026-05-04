@@ -7,8 +7,8 @@ use tokio::fs;
 use tracing::info;
 
 /// Files the agent is forbidden from reading or writing.
-/// These are system prompt files — reading them creates self-referential loops.
-/// Writing them modifies the agent's own identity during runtime.
+/// SOUL.md is blocked for direct access — mutations go through the Evolution system.
+/// SOUL.proposed.md is allowed as a staging area for mutation proposals.
 const BLOCKED_FILES: &[&str] = &[
     "LEARNINGS.md",
     "LEARNINGS-ARCHIVE.md",
@@ -18,9 +18,19 @@ const BLOCKED_FILES: &[&str] = &[
     "agent.json",
 ];
 
+/// Evolution staging files the agent CAN access for proposing mutations.
+const EVOLUTION_STAGING_FILES: &[&str] = &[
+    "SOUL.proposed.md",
+];
+
 /// Checks if a path targets a blocked file. Returns the filename if blocked.
+/// Evolution staging files (SOUL.proposed.md) are exempt from blocking.
 fn check_blocked(path: &Path) -> Option<String> {
     if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+        // Allow evolution staging files
+        if EVOLUTION_STAGING_FILES.iter().any(|s| s.eq_ignore_ascii_case(filename)) {
+            return None;
+        }
         if BLOCKED_FILES
             .iter()
             .any(|b| b.eq_ignore_ascii_case(filename))
@@ -28,7 +38,7 @@ fn check_blocked(path: &Path) -> Option<String> {
             return Some(filename.to_string());
         }
     }
-    None
+    Some(path.to_string_lossy().to_string())
 }
 
 /// Sandboxing Path Resolver

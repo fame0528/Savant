@@ -46,6 +46,7 @@ pub struct SwarmConfig {
     pub skills_path: std::path::PathBuf,
     pub blackboard_name: String,
     pub collective_name: String,
+    pub config_file: Option<std::path::PathBuf>,
 }
 
 impl Default for SwarmConfig {
@@ -56,6 +57,7 @@ impl Default for SwarmConfig {
             skills_path: std::path::PathBuf::from(SKILLS_PATH_DEFAULT),
             blackboard_name: "savant_swarm".to_string(),
             collective_name: "savant_collective".to_string(),
+            config_file: None,
         }
     }
 }
@@ -268,6 +270,12 @@ impl SwarmController {
         let echo_host = self.echo_host.clone();
         let collective = self.collective_blackboard.clone();
         let mcp_servers = self.mcp_servers.clone();
+        let browser_config = self
+            .config
+            .config_file
+            .as_deref()
+            .and_then(savant_browser::BrowserConfig::from_config_file)
+            .unwrap_or_default();
 
         // Assign a unique index for consensus voting (sequential 1-128)
         let mut agent_index = self.agent_index_counter.fetch_add(1, Ordering::SeqCst);
@@ -604,6 +612,20 @@ impl SwarmController {
             agent_tools.push(Arc::new(crate::tools::TaskMatrixTool::new(
                 agent_cfg.workspace_path.clone(),
                 agent_cfg.proactive.clone(),
+            )));
+            let browser_config = browser_config.clone();
+            agent_tools.push(Arc::new(crate::tools::BrowserTool::new(
+                browser_config,
+            )));
+            agent_tools.push(Arc::new(crate::tools::ToolForgeTool::new(
+                std::path::PathBuf::from("skills/forge"),
+                savant_toolforge::SharedToolRegistry::new(),
+                std::sync::Arc::new(
+                    savant_toolforge::ProvenanceTracker::new(
+                        &std::path::PathBuf::from("skills/forge/.provenance.jsonl"),
+                    )
+                    .expect("Failed to initialize provenance tracker"),
+                ),
             )));
 
             // Discover and register MCP tools from configured servers

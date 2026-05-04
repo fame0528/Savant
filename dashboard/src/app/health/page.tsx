@@ -69,6 +69,8 @@ export default function HealthPage() {
     { label: "Dashboard", value: "Running", status: "ok" as const, detail: "Next.js 16" },
     { label: "Protocol", value: "WebSocket", status: "ok" as const, detail: "Savant ControlFrame" },
     { label: "Key Management", value: "OpenRouter", status: "ok" as const, detail: "Free models only" },
+    { label: "Evolution System", value: (ctx.evolutionScore as any)?.stage || "Awaiting enable", status: "ok" as const, detail: (ctx.evolutionScore as any) ? `Score: ${(ctx.evolutionScore as any).evolution_score?.toFixed(1)}` : "Opt-in in savant.toml" },
+    { label: "Mutations", value: `${ctx.mutationHistory?.length || 0} total`, status: "ok" as const, detail: `${ctx.proposedMutations?.length || 0} pending` },
   ];
 
   return (

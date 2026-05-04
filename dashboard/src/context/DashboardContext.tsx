@@ -50,6 +50,13 @@ export interface DashboardState {
   copiedId: string | null;
   showSplash: boolean;
   
+  // Evolution state
+  proposedMutations: unknown[];
+  mutationHistory: unknown[];
+  evolutionScore: unknown | null;
+  traitSnapshots: unknown[];
+  isEvolutionMode: boolean;
+  
   // Data state
   agents: Agent[];
   laneMessages: Record<string, Message[]>;
@@ -97,6 +104,11 @@ export interface DashboardState {
   setTypingAgents: (set: Set<string>) => void;
   setSyncedLanes: (set: Set<string>) => void;
   setCollapsedInsights: (set: Set<string>) => void;
+  setIsEvolutionMode: (b: boolean) => void;
+  setProposedMutations: (m: unknown[]) => void;
+  setMutationHistory: (h: unknown[]) => void;
+  setEvolutionScore: (s: unknown | null) => void;
+  setTraitSnapshots: (s: unknown[]) => void;
   
   // Helpers
    handleLaneSwitch: (laneId: string | null, isManifest?: boolean) => void;
@@ -219,6 +231,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [debugPaused, setDebugPaused] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(true);
+
+  // Evolution state
+  const [isEvolutionMode, setIsEvolutionMode] = useState(false);
+  const [proposedMutations, setProposedMutations] = useState<unknown[]>([]);
+  const [mutationHistory, setMutationHistory] = useState<unknown[]>([]);
+  const [evolutionScore, setEvolutionScore] = useState<unknown | null>(null);
+  const [traitSnapshots, setTraitSnapshots] = useState<unknown[]>([]);
   
   // Data state
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -481,6 +500,32 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         category: 'insight',
         timestamp: new Date().toISOString()
       }, ...prev].slice(0, 100));
+    }
+    // ── Evolution System Events ──
+    else if (type === "system.evolution.mutation_proposed" || type === "MUTATION_PROPOSED") {
+      setProposedMutations(prev => [evData, ...prev]);
+    }
+    else if (type === "system.evolution.mutation_applied" || type === "MUTATION_APPROVED") {
+      setProposedMutations(prev => prev.filter((m: any) => m.mutation_id !== evData.mutation_id));
+      setMutationHistory(prev => [evData, ...prev]);
+    }
+    else if (type === "system.evolution.mutation_rejected" || type === "MUTATION_REJECTED") {
+      setProposedMutations(prev => prev.filter((m: any) => m.mutation_id !== evData.mutation_id));
+    }
+    else if (type === "agent.personality.updated") {
+      setTraitSnapshots(prev => [evData, ...prev].slice(0, 50));
+    }
+    else if (type === "agent.ocen.traits") {
+      setTraitSnapshots(prev => [evData, ...prev].slice(0, 50));
+    }
+    else if (type === "EVOLUTION_SCORE" || type === "agent.evolution.stats") {
+      setEvolutionScore(evData);
+    }
+    else if (type === "MUTATION_REVERTED") {
+      // Refresh evolution state after revert
+    }
+    else if (type === "EVOLUTION_HISTORY") {
+      setMutationHistory(evData.mutations || []);
     }
   };
 
@@ -747,6 +792,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     debugPaused, setDebugPaused,
     copiedId, setCopiedId,
     showSplash, setShowSplash,
+    isEvolutionMode, setIsEvolutionMode,
+    proposedMutations, setProposedMutations,
+    mutationHistory, setMutationHistory,
+    evolutionScore, setEvolutionScore,
+    traitSnapshots, setTraitSnapshots,
     agents, setAgents,
     laneMessages, setLaneMessages,
     cognitiveInsights, setCognitiveInsights,

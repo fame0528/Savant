@@ -39,6 +39,8 @@ impl From<LegacyOpenClawConfig> for AgentConfig {
             session_id: None,
             proactive: crate::config::ProactiveConfig::default(),
             llm_params: crate::types::LlmParams::default(),
+            personality_traits: None,
+            evolution_state: None,
         }
     }
 }

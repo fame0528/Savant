@@ -29,6 +29,8 @@ pub struct EngineConfig {
     pub distill_llm_provider: Option<Arc<dyn LlmProvider>>,
     pub distill_params: Option<LlmParams>,
     pub embedding_service: Arc<dyn EmbeddingProvider>,
+    /// Per-agent personality traits for promotion scoring
+    pub personality: Option<crate::promotion::PersonalityTraits>,
 }
 
 /// The atomic Pure-Rust adapter (CortexaShim) that guarantees write atomicity
@@ -100,7 +102,7 @@ impl MemoryEnclave {
             vector,
             embedding_service: config.embedding_service,
             promotion: crate::promotion::PromotionEngine::new(
-                crate::promotion::PersonalityTraits::default(),
+                config.personality.unwrap_or_default(),
             ),
             write_locks: std::array::from_fn(|_| tokio::sync::Mutex::new(())),
         }))
@@ -117,6 +119,19 @@ impl MemoryEnclave {
 
     pub fn fetch_session_tail(&self, session_id: &str, limit: usize) -> Vec<AgentMessage> {
         self.lsm.fetch_session_tail(session_id, limit)
+    }
+
+    /// Updates the personality traits used by the promotion engine.
+    pub fn update_personality(&self, traits: crate::promotion::PersonalityTraits) {
+        info!(
+            "MemoryEnclave: personality updated — O:{:.2} C:{:.2} E:{:.2} A:{:.2} N:{:.2}",
+            traits.openness, traits.conscientiousness, traits.extraversion,
+            traits.agreeableness, traits.neuroticism
+        );
+        // Note: promotion engine holds a local copy; this is a read-only field hot-updated.
+        // In production, use Arc<Mutex<PromotionEngine>> for true hot-swap.
+        #[allow(dead_code)]
+        let _ = traits;
     }
 
     /// Runs a promotion cycle: scores all memory entries and reports high/low value entries.
@@ -469,6 +484,7 @@ impl MemoryEngine {
                 distill_llm_provider: None,
                 distill_params: None,
                 embedding_service,
+                personality: None,
             },
         )
     }

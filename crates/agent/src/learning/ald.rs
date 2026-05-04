@@ -61,6 +61,15 @@ impl ALDEngine {
                 self.promote_to_agents(block)?;
                 priority_hits += 1;
             }
+
+            // Detect identity-related blocks for evolution proposals
+            let is_identity = block.contains("[IDENTITY]")
+                || block.contains("[TRAIT]")
+                || block.contains("[MUTATION]");
+            if is_identity {
+                info!("ALD: Identity evolution signal detected");
+                priority_hits += 1;
+            }
         }
 
         let burst_detected = priority_hits >= 3;

@@ -1,7 +1,7 @@
 {
   "agent_id": "savant",
   "agent_name": "Savant",
-  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "model": "deepseek/deepseek-v4-pro",
   "model_provider": "OpenRouter",
   "system_prompt": "You are the Savant Substrate. Operate with absolute sovereignty and technical precision.",
   "llm_params": {

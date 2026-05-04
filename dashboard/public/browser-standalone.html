@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Savant — Agent Browser</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0e14;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .header {
+            padding: 12px 20px;
+            background: #0d1117;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .header h3 {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            color: #00d5ff;
+            text-transform: uppercase;
+        }
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 40px;
+        }
+        .content h1 {
+            font-size: 24px;
+            font-weight: 300;
+            color: rgba(255,255,255,0.6);
+        }
+        .content p {
+            font-size: 13px;
+            color: rgba(255,255,255,0.3);
+            text-align: center;
+            line-height: 1.6;
+            max-width: 500px;
+        }
+        .status {
+            padding: 8px 16px;
+            background: rgba(0,213,255,0.1);
+            border: 1px solid rgba(0,213,255,0.2);
+            border-radius: 6px;
+            font-size: 11px;
+            color: #00d5ff;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h3>Savant — Agent Browser</h3>
+        <span class="status">READY</span>
+    </div>
+    <div class="content">
+        <h1>Browser Ready</h1>
+        <p>
+            This window displays web content navigated by the agent or the operator.
+            Use the <strong>Browser</strong> panel in the Savant Dashboard to control
+            navigation. The agent can also control this browser via tool calls.
+        </p>
+        <p style="font-size: 11px; opacity: 0.5;">
+            Window position: x=5120 (monitor 3) · Controls available in Dashboard → Browser
+        </p>
+    </div>
+    <script>
+        console.log('[browser] browser-standalone.html loaded');
+    </script>
+</body>
+</html>

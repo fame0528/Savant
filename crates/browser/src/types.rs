@@ -1,119 +1,198 @@
-use chrono::{DateTime, Utc};
+use regex::Regex;
+use savant_core::error::SavantError;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::net::IpAddr;
+use std::sync::LazyLock;
 use thiserror::Error;
-use uuid::Uuid;
 
-/// Unique identifier for a browser tab.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TabId(pub String);
-
-impl TabId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4().to_string())
-    }
-}
 
 impl Default for TabId {
     fn default() -> Self {
-        Self::new()
+        TabId(uuid::Uuid::new_v4().to_string())
     }
 }
 
-/// Information about a single browser tab.
+impl fmt::Display for TabId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabInfo {
     pub id: TabId,
+    #[serde(default)]
     pub url: String,
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
     pub loading: bool,
+    #[serde(default)]
     pub agent_name: Option<String>,
-    pub created_at: DateTime<Utc>,
 }
 
-impl TabInfo {
-    pub fn new(url: String, agent_name: Option<String>) -> Self {
-        Self {
-            id: TabId::new(),
-            url,
-            title: String::new(),
-            loading: false,
-            agent_name,
-            created_at: Utc::now(),
-        }
-    }
-
-    pub fn with_url(url: impl Into<String>) -> Self {
-        Self::new(url.into(), None)
-    }
-}
-
-/// A browsing history entry stored in SQLite.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryEntry {
-    pub id: i64,
-    pub url: String,
-    pub title: String,
-    pub visited_at: DateTime<Utc>,
-}
-
-/// A bookmark stored in SQLite.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Bookmark {
-    pub id: i64,
-    pub url: String,
-    pub title: String,
-    pub tags: String,
-    pub created_at: DateTime<Utc>,
-}
-
-/// Navigation state for a tab.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NavigationState {
-    pub can_go_back: bool,
-    pub can_go_forward: bool,
-    pub is_loading: bool,
-    pub url: String,
-    pub title: String,
-}
-
-/// Browser configuration loaded from savant.toml.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserConfig {
     pub enabled: bool,
+    pub headless: bool,
+    pub chrome_path: String,
+    pub user_data_dir: String,
+    pub default_timeout_ms: u64,
     pub max_tabs: usize,
     pub screenshot_enabled: bool,
+    pub max_screenshot_size_kb: usize,
+    pub agent_control_enabled: bool,
     pub vision_model: String,
     pub vision_model_provider: String,
-    pub history_retention_days: u32,
-    pub agent_control_enabled: bool,
-    pub js_execution_allowed: bool,
-    pub max_screenshot_size_kb: usize,
+    #[serde(default)]
+    pub persist_session: bool,
 }
 
 impl Default for BrowserConfig {
     fn default() -> Self {
-        Self {
+        BrowserConfig {
             enabled: true,
-            max_tabs: 20,
+            headless: false,
+            chrome_path: String::new(),
+            user_data_dir: String::new(),
+            default_timeout_ms: 30000,
+            max_tabs: 10,
             screenshot_enabled: true,
-            vision_model: "llava".to_string(),
-            vision_model_provider: "ollama".to_string(),
-            history_retention_days: 30,
-            agent_control_enabled: true,
-            js_execution_allowed: true,
             max_screenshot_size_kb: 2048,
+            agent_control_enabled: true,
+            vision_model: String::from("llava"),
+            vision_model_provider: String::from("ollama"),
+            persist_session: false,
         }
     }
 }
 
-/// Browser event types published to the Nexus bus.
+impl BrowserConfig {
+    pub fn from_config_file(path: &std::path::Path) -> Option<Self> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let table: toml::Table = toml::from_str(&content).ok()?;
+        let browser = table.get("browser")?;
+        let b = browser.as_table()?;
+
+        let default = BrowserConfig::default();
+        Some(BrowserConfig {
+            enabled: b
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(default.enabled),
+            headless: b
+                .get("headless")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(default.headless),
+            chrome_path: b
+                .get("chrome_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&default.chrome_path)
+                .to_string(),
+            user_data_dir: b
+                .get("user_data_dir")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&default.user_data_dir)
+                .to_string(),
+            default_timeout_ms: b
+                .get("default_timeout_ms")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as u64)
+                .unwrap_or(default.default_timeout_ms),
+            max_tabs: b
+                .get("max_tabs")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as usize)
+                .unwrap_or(default.max_tabs),
+            screenshot_enabled: b
+                .get("screenshot_enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(default.screenshot_enabled),
+            max_screenshot_size_kb: b
+                .get("max_screenshot_size_kb")
+                .and_then(|v| v.as_integer())
+                .map(|v| v as usize)
+                .unwrap_or(default.max_screenshot_size_kb),
+            agent_control_enabled: b
+                .get("agent_control_enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(default.agent_control_enabled),
+            vision_model: b
+                .get("vision_model")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&default.vision_model)
+                .to_string(),
+            vision_model_provider: b
+                .get("vision_model_provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&default.vision_model_provider)
+                .to_string(),
+            persist_session: b
+                .get("persist_session")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(default.persist_session),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "event", content = "data")]
+pub struct PageContent {
+    pub url: String,
+    pub title: String,
+    pub text: String,
+    #[serde(default)]
+    pub html_length_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkInfo {
+    pub text: String,
+    pub href: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenshotResult {
+    pub base64: String,
+    pub width: u32,
+    pub height: u32,
+    pub size_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElementInfo {
+    pub tag: String,
+    pub text: Option<String>,
+    pub visible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkRequest {
+    pub url: String,
+    pub method: String,
+    pub status: Option<u16>,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<usize>,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadInfo {
+    pub url: String,
+    pub filename: String,
+    pub path: String,
+    pub size_bytes: usize,
+    pub status: String,
+    pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BrowserEvent {
     TabOpened {
         tab_id: String,
         url: String,
-        agent_name: Option<String>,
     },
     TabClosed {
         tab_id: String,
@@ -142,7 +221,7 @@ pub enum BrowserEvent {
 }
 
 impl BrowserEvent {
-    pub fn event_type(&self) -> &'static str {
+    pub fn event_type(&self) -> &str {
         match self {
             BrowserEvent::TabOpened { .. } => "browser.tab_opened",
             BrowserEvent::TabClosed { .. } => "browser.tab_closed",
@@ -153,75 +232,260 @@ impl BrowserEvent {
             BrowserEvent::ControlModeChanged { .. } => "browser.control_mode_changed",
         }
     }
-
-    pub fn to_payload(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
-    }
 }
 
-/// Browser-specific error types.
 #[derive(Error, Debug)]
 pub enum BrowserError {
-    #[error("Browser is not enabled in configuration")]
+    #[error("Browser is disabled in configuration")]
     BrowserDisabled,
-
-    #[error("Maximum tab limit reached ({0} tabs)")]
+    #[error("Tab limit reached (max: {0})")]
     TabLimitReached(usize),
-
     #[error("Tab not found: {0}")]
     TabNotFound(String),
-
-    #[error("Invalid URL: {0}")]
-    InvalidUrl(String),
-
+    #[error("No active tab")]
+    NoActiveTab,
+    #[error("Browser engine not initialized")]
+    NotInitialized,
+    #[error("Chrome launch failed: {0}")]
+    ChromeLaunchFailed(String),
     #[error("Navigation failed: {0}")]
     NavigationFailed(String),
-
-    #[error("Content extraction failed: {0}")]
-    ContentExtractionFailed(String),
-
-    #[error("Screenshot capture failed: {0}")]
-    ScreenshotFailed(String),
-
-    #[error("JavaScript execution blocked or failed: {0}")]
-    JsExecutionFailed(String),
-
-    #[error("Database error: {0}")]
-    DatabaseError(String),
-
-    #[error("Vision model unavailable: {0}")]
-    VisionUnavailable(String),
-
-    #[error("Agent browser control is disabled")]
-    AgentControlDisabled,
-
+    #[error("Timeout ({0}ms)")]
+    Timeout(u64),
+    #[error("Element not found: {0}")]
+    ElementNotFound(String),
+    #[error("Screenshot disabled in configuration")]
+    ScreenshotDisabled,
+    #[error("Screenshot too large: {0}KB exceeds max {1}KB")]
+    ScreenshotTooLarge(usize, usize),
+    #[error("JS execution blocked: {0}")]
+    JsBlocked(String),
     #[error("Internal error: {0}")]
     Internal(String),
 }
 
-impl From<BrowserError> for savant_core::error::SavantError {
-    fn from(err: BrowserError) -> Self {
-        match err {
-            BrowserError::BrowserDisabled => {
-                savant_core::error::SavantError::Unsupported(err.to_string())
-            }
-            BrowserError::TabLimitReached(_)
-            | BrowserError::TabNotFound(_)
-            | BrowserError::InvalidUrl(_) => {
-                savant_core::error::SavantError::InvalidInput(err.to_string())
-            }
-            BrowserError::NavigationFailed(_)
-            | BrowserError::ContentExtractionFailed(_)
-            | BrowserError::ScreenshotFailed(_)
-            | BrowserError::JsExecutionFailed(_)
-            | BrowserError::DatabaseError(_)
-            | BrowserError::VisionUnavailable(_)
-            | BrowserError::Internal(_) => {
-                savant_core::error::SavantError::OperationFailed(err.to_string())
-            }
-            BrowserError::AgentControlDisabled => {
-                savant_core::error::SavantError::Unsupported(err.to_string())
-            }
+impl From<BrowserError> for SavantError {
+    fn from(e: BrowserError) -> Self {
+        SavantError::OperationFailed(e.to_string())
+    }
+}
+
+const BLOCKED_SCHEMES: &[&str] = &["file", "ftp", "sftp", "data", "javascript", "vbscript"];
+
+const BLOCKED_HOSTNAMES: &[&str] = &[
+    "169.254.169.254",
+    "100.100.100.200",
+    "metadata.google.internal",
+];
+
+pub fn validate_url(url_str: &str) -> Result<(), BrowserError> {
+    let parsed = url::Url::parse(url_str)
+        .map_err(|e| BrowserError::NavigationFailed(format!("Invalid URL: {}", e)))?;
+
+    if BLOCKED_SCHEMES.contains(&parsed.scheme()) {
+        return Err(BrowserError::NavigationFailed(format!(
+            "Blocked URL scheme: {}",
+            parsed.scheme()
+        )));
+    }
+
+    let host = match parsed.host_str() {
+        Some(h) => h.to_ascii_lowercase(),
+        None => return Ok(()),
+    };
+
+    // Block known metadata hostnames
+    for blocked in BLOCKED_HOSTNAMES {
+        if host.as_str() == *blocked {
+            return Err(BrowserError::NavigationFailed(format!(
+                "Blocked internal host: {}",
+                host
+            )));
         }
+    }
+
+    // Block RFC1918 / loopback / link-local IP ranges
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        let is_restricted = match ip {
+            IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_unspecified(),
+            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        };
+        if is_restricted {
+            return Err(BrowserError::NavigationFailed(format!(
+                "Blocked private/loopback IP: {ip}"
+            )));
+        }
+    }
+
+    // Block bare hostnames that resolve to localhost (e.g. "localhost")
+    if host == "localhost" || host.ends_with(".local") {
+        return Err(BrowserError::NavigationFailed(format!(
+            "Blocked local hostname: {}",
+            host
+        )));
+    }
+
+    Ok(())
+}
+
+static JS_BLOCKED_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?xi)
+        \b alert \s* \(
+        | \b prompt \s* \(
+        | \b confirm \s* \(
+        | \b window \. open \s* \(
+        | \b document \. cookie \b
+        | \b navigator \. serviceWorker \b
+        | \b fetch \s* \(
+    "#,
+    )
+    .expect("Hardcoded JS block regex is valid at compile time")
+});
+
+pub fn is_js_blocked(script: &str) -> Option<String> {
+    if let Some(m) = JS_BLOCKED_RE.find(script) {
+        let matched = m.as_str().trim().to_string();
+        return Some(matched);
+    }
+    None
+}
+
+pub fn truncate_content(content: &str) -> String {
+    const MAX_CHARS: usize = 50_000;
+    if content.len() <= MAX_CHARS {
+        return content.to_string();
+    }
+    let boundary = content
+        .char_indices()
+        .take(MAX_CHARS)
+        .last()
+        .map(|(pos, _)| pos)
+        .unwrap_or(MAX_CHARS);
+    let safe = &content[..boundary];
+    format!("{}\n\n[Content truncated at {boundary} characters]", safe)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tab_id_default() {
+        let id = TabId::default();
+        assert!(!id.0.is_empty());
+    }
+
+    #[test]
+    fn test_tab_id_display() {
+        let id = TabId(String::from("test-123"));
+        assert_eq!(format!("{id}"), "test-123");
+    }
+
+    #[test]
+    fn test_browser_config_defaults() {
+        let config = BrowserConfig::default();
+        assert!(config.enabled);
+        assert!(!config.headless);
+        assert_eq!(config.max_tabs, 10);
+        assert_eq!(config.default_timeout_ms, 30000);
+        assert!(config.screenshot_enabled);
+        assert_eq!(config.max_screenshot_size_kb, 2048);
+    }
+
+    #[test]
+    fn test_validate_url_allows_https() {
+        assert!(validate_url("https://example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_url_blocks_file() {
+        assert!(validate_url("file:///etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_validate_url_blocks_loopback() {
+        assert!(validate_url("http://127.0.0.1:8080").is_err());
+        assert!(validate_url("http://localhost:8080").is_err());
+    }
+
+    #[test]
+    fn test_validate_url_blocks_rfc1918() {
+        assert!(validate_url("http://10.0.0.1").is_err());
+        assert!(validate_url("http://172.16.0.1").is_err());
+        assert!(validate_url("http://192.168.1.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_url_blocks_metadata() {
+        assert!(validate_url("http://169.254.169.254").is_err());
+        assert!(validate_url("http://metadata.google.internal").is_err());
+    }
+
+    #[test]
+    fn test_validate_url_blocks_javascript() {
+        assert!(validate_url("javascript:alert(1)").is_err());
+    }
+
+    #[test]
+    fn test_is_js_blocked_basic() {
+        assert!(is_js_blocked("alert('hi')").is_some());
+        assert!(is_js_blocked("window.open('url')").is_some());
+        assert!(is_js_blocked("document.cookie = 'x'").is_some());
+        assert!(is_js_blocked("fetch('/api')").is_some());
+    }
+
+    #[test]
+    fn test_is_js_blocked_evasion_attempts() {
+        assert!(is_js_blocked("this[\"alert\"]('x')").is_none());
+        assert!(is_js_blocked("this['prompt']('x')").is_none());
+    }
+
+    #[test]
+    fn test_is_js_blocked_allows_safe() {
+        assert!(is_js_blocked("console.log('safe')").is_none());
+        assert!(is_js_blocked("document.title").is_none());
+    }
+
+    #[test]
+    fn test_browser_error_to_savant_error() {
+        let err: SavantError = BrowserError::BrowserDisabled.into();
+        assert!(matches!(err, SavantError::OperationFailed(_)));
+    }
+
+    #[test]
+    fn test_browser_event_types() {
+        let ev = BrowserEvent::TabOpened {
+            tab_id: String::from("abc"),
+            url: String::from("https://x.com"),
+        };
+        assert_eq!(ev.event_type(), "browser.tab_opened");
+    }
+
+    #[test]
+    fn test_truncate_content_short() {
+        let result = truncate_content("short text");
+        assert_eq!(result, "short text");
+    }
+
+    #[test]
+    fn test_truncate_content_long() {
+        let long = "a".repeat(60_000);
+        let result = truncate_content(&long);
+        assert!(result.starts_with('a'));
+        assert!(result.len() > 50_000);
+    }
+
+    #[test]
+    fn test_truncate_content_utf8_boundary() {
+        let mut s = String::new();
+        for _ in 0..49_995 {
+            s.push('a');
+        }
+        s.push_str("éééééééééé");
+        assert!(s.len() > 50_000);
+        let result = truncate_content(&s);
+        let boundary_str = &result[..50_000];
+        assert!(boundary_str.ends_with('a'));
     }
 }

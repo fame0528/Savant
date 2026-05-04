@@ -4,7 +4,6 @@ mod paths;
 
 use paths::SavantPathResolver;
 use savant_agent::orchestration::ignition::{IgnitionService, SwarmIgnition};
-use savant_browser::{BrowserConfig, BrowserEngine};
 use savant_core::bus::NexusBridge;
 use serde_json;
 use std::fs::OpenOptions;
@@ -101,7 +100,6 @@ impl Visit for LogVisitor {
 struct AppState {
     ignition: Mutex<Option<Arc<SwarmIgnition>>>,
     nexus: Mutex<Option<Arc<NexusBridge>>>,
-    browser: Mutex<Option<Arc<BrowserEngine>>>,
 }
 
 #[tauri::command]
@@ -244,179 +242,71 @@ async fn get_version(app_handle: AppHandle) -> Result<String, String> {
     Ok(version)
 }
 
-// --- Browser Commands ---
-
-/// Shows the browser window.
 #[tauri::command]
 async fn show_browser(app_handle: AppHandle) -> Result<String, String> {
     if let Some(window) = app_handle.get_webview_window("browser") {
-        window.show().map_err(|e| format!("Failed to show browser window: {}", e))?;
-        window.set_focus().map_err(|e| format!("Failed to focus browser window: {}", e))?;
-        info!("[browser] Browser window shown");
+        window.show().map_err(|e| format!("Failed to show browser: {e}"))?;
+        window.set_focus().map_err(|e| format!("Failed to focus browser: {e}"))?;
         Ok("Browser window shown".to_string())
     } else {
         Err("Browser window not found".to_string())
     }
 }
 
-/// Hides the browser window.
 #[tauri::command]
 async fn hide_browser(app_handle: AppHandle) -> Result<String, String> {
     if let Some(window) = app_handle.get_webview_window("browser") {
-        window.hide().map_err(|e| format!("Failed to hide browser window: {}", e))?;
-        info!("[browser] Browser window hidden");
+        window.hide().map_err(|e| format!("Failed to hide browser: {e}"))?;
         Ok("Browser window hidden".to_string())
     } else {
         Err("Browser window not found".to_string())
     }
 }
 
-/// Gets all open browser tabs.
-#[tauri::command]
-async fn browser_get_tabs(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let lock = state.browser.lock().await;
-    match &*lock {
-        Some(engine) => {
-            let tabs = engine.list_tabs();
-            let tab_json: Vec<serde_json::Value> = tabs
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "id": t.id.0,
-                        "url": t.url,
-                        "title": t.title,
-                        "loading": t.loading,
-                        "agent_name": t.agent_name,
-                    })
-                })
-                .collect();
-            Ok(serde_json::json!(tab_json))
-        }
-        None => Ok(serde_json::json!([])),
-    }
-}
-
-/// Navigates the active browser tab to a URL.
-#[tauri::command]
-async fn browser_navigate(
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
-    url: String,
-) -> Result<String, String> {
-    let lock = state.browser.lock().await;
-    let engine = lock.as_ref().ok_or("Browser engine not initialized")?;
-
-    // Navigate the active tab, or create one if none exists.
-    let tab_id = if let Some(active) = engine.active_tab() {
-        engine.navigate_tab(&active.id, &url).map_err(|e| e.to_string())?;
-        active.id
-    } else {
-        let tab = engine.create_tab(url.clone(), None).map_err(|e| e.to_string())?;
-        tab.id
-    };
-
-    // Tell the browser window to navigate via JS injection.
-    if let Some(window) = app_handle.get_webview_window("browser") {
-        let js = format!("window.location.href = {};", serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".to_string()));
-        if let Err(e) = window.eval(&js) {
-            warn!("[browser] Navigation eval failed: {}", e);
-        }
-    }
-
-    info!("[browser] Navigated to {}", url);
-    Ok(format!("Navigated tab {} to {}", tab_id.0, url))
-}
-
-/// Extracts text content from the current browser page via JS injection.
-#[tauri::command]
-async fn browser_get_content(app_handle: AppHandle) -> Result<String, String> {
-    let window = app_handle
-        .get_webview_window("browser")
-        .ok_or("Browser window not found")?;
-
-    // Tauri v2 eval executes JS but does not return the result synchronously.
-    // For full content extraction, agents should use the BrowserTool which
-    // communicates with the browser engine via the Rust backend.
-    // This command serves as a simple smoke test for window responsiveness.
-    let _ = window.eval("document.body ? document.body.innerText : 'No content'");
-    Ok("Content extraction available via BrowserTool (agent-side)".to_string())
-}
-
-/// Goes back in browser history.
 #[tauri::command]
 async fn browser_go_back(app_handle: AppHandle) -> Result<String, String> {
-    let window = app_handle
-        .get_webview_window("browser")
-        .ok_or("Browser window not found")?;
-
-    window.eval("window.history.back();")
-        .map_err(|e| format!("Failed to go back: {}", e))?;
-    Ok("Going back".to_string())
+    if let Some(window) = app_handle.get_webview_window("browser") {
+        window.eval("window.history.back()").map_err(|e| format!("Failed: {e}"))?;
+        Ok("Going back".to_string())
+    } else {
+        Err("Browser window not found".to_string())
+    }
 }
 
-/// Goes forward in browser history.
 #[tauri::command]
 async fn browser_go_forward(app_handle: AppHandle) -> Result<String, String> {
-    let window = app_handle
-        .get_webview_window("browser")
-        .ok_or("Browser window not found")?;
-
-    window.eval("window.history.forward();")
-        .map_err(|e| format!("Failed to go forward: {}", e))?;
-    Ok("Going forward".to_string())
+    if let Some(window) = app_handle.get_webview_window("browser") {
+        window.eval("window.history.forward()").map_err(|e| format!("Failed: {e}"))?;
+        Ok("Going forward".to_string())
+    } else {
+        Err("Browser window not found".to_string())
+    }
 }
 
-/// Reloads the current browser page.
 #[tauri::command]
 async fn browser_reload(app_handle: AppHandle) -> Result<String, String> {
-    let window = app_handle
-        .get_webview_window("browser")
-        .ok_or("Browser window not found")?;
-
-    window.eval("window.location.reload();")
-        .map_err(|e| format!("Failed to reload: {}", e))?;
-    Ok("Reloading".to_string())
+    if let Some(window) = app_handle.get_webview_window("browser") {
+        window.eval("window.location.reload()").map_err(|e| format!("Failed: {e}"))?;
+        Ok("Reloading".to_string())
+    } else {
+        Err("Browser window not found".to_string())
+    }
 }
 
-/// Creates a new browser tab with the given URL.
 #[tauri::command]
-async fn browser_new_tab(
-    state: State<'_, AppState>,
-    url: String,
-) -> Result<String, String> {
-    let lock = state.browser.lock().await;
-    let engine = lock.as_ref().ok_or("Browser engine not initialized")?;
-
-    let tab = engine.create_tab(url.clone(), None).map_err(|e| e.to_string())?;
-    Ok(format!("Created tab {}", tab.id.0))
+async fn browser_navigate(app_handle: AppHandle, url: String) -> Result<String, String> {
+    if let Some(window) = app_handle.get_webview_window("browser") {
+        let js = format!("window.location.href = '{}'", url.replace('\'', "\\'"));
+        window.eval(&js).map_err(|e| format!("Failed: {e}"))?;
+        Ok(format!("Navigating to {url}"))
+    } else {
+        Err("Browser window not found".to_string())
+    }
 }
 
-/// Closes a browser tab by ID.
 #[tauri::command]
-async fn browser_close_tab(
-    state: State<'_, AppState>,
-    tab_id: String,
-) -> Result<String, String> {
-    let lock = state.browser.lock().await;
-    let engine = lock.as_ref().ok_or("Browser engine not initialized")?;
-
-    let tid = savant_browser::types::TabId(tab_id);
-    engine.close_tab(&tid).map_err(|e| e.to_string())?;
-    Ok(format!("Closed tab {}", tid.0))
-}
-
-/// Switches the active browser tab.
-#[tauri::command]
-async fn browser_switch_tab(
-    state: State<'_, AppState>,
-    tab_id: String,
-) -> Result<String, String> {
-    let lock = state.browser.lock().await;
-    let engine = lock.as_ref().ok_or("Browser engine not initialized")?;
-
-    let tid = savant_browser::types::TabId(tab_id);
-    engine.switch_tab(&tid).map_err(|e| e.to_string())?;
-    Ok(format!("Switched to tab {}", tid.0))
+async fn browser_get_tabs() -> Result<String, String> {
+    Ok("[]".to_string())
 }
 
 /// Write a line directly to the log file (before tracing is initialized)
@@ -457,7 +347,6 @@ fn main() {
         .manage(AppState {
             ignition: Mutex::new(None),
             nexus: Mutex::new(None),
-            browser: Mutex::new(None),
         })
         .setup(|app| {
             bootstrap_log("Tauri setup() called");
@@ -521,25 +410,6 @@ fn main() {
                         "[desktop] No .env found at {:?} — will prompt in dashboard",
                         env_path
                     );
-                }
-            }
-
-            // Initialize BrowserEngine
-            if let Some(resolver) = app.try_state::<SavantPathResolver>() {
-                match BrowserEngine::new(&resolver.base_data_path, BrowserConfig::default()) {
-                    Ok(engine) => {
-                        if let Some(app_state) = app.try_state::<AppState>() {
-                            let mut browser_lock = app_state.browser.blocking_lock();
-                            *browser_lock = Some(Arc::clone(&engine));
-                            info!(
-                                "[browser] BrowserEngine initialized with {} max tabs",
-                                engine.config().max_tabs
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!("[browser] Failed to initialize BrowserEngine: {}", e);
-                    }
                 }
             }
 
@@ -642,15 +512,11 @@ fn main() {
             get_version,
             show_browser,
             hide_browser,
-            browser_get_tabs,
-            browser_navigate,
-            browser_get_content,
             browser_go_back,
             browser_go_forward,
             browser_reload,
-            browser_new_tab,
-            browser_close_tab,
-            browser_switch_tab,
+            browser_navigate,
+            browser_get_tabs,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

@@ -1,7 +1,7 @@
 [ai]
 provider = "openrouter"
-model = "qwen/qwen3.6-plus:free"
-manifestation_model = "qwen/qwen3.6-plus:free"
+model = "deepseek/deepseek-v4-pro"
+manifestation_model = "deepseek/deepseek-v4-pro"
 temperature = 0.699999988079071
 top_p = 0.8999999761581421
 frequency_penalty = 0.4000000059604645
@@ -145,3 +145,38 @@ credential_broker_ttl_secs = 300
 
 [proactive]
 reflection_interval_secs = 60
+
+[collective_toolkit]
+enabled = true
+max_tools_per_agent = 25
+forge_directory = "skills/forge/"
+quality_gate_strict = true
+audit_max_iterations = 3
+curator_interval_hours = 168
+curator_min_idle_minutes = 120
+curator_stale_after_days = 14
+curator_archive_after_days = 30
+
+[browser]
+enabled = true
+headless = false
+chrome_path = ""
+user_data_dir = ""
+default_timeout_ms = 30000
+max_tabs = 10
+screenshot_enabled = true
+max_screenshot_size_kb = 2048
+agent_control_enabled = true
+vision_model = "llava"
+vision_model_provider = "ollama"
+
+[evolution]
+enabled = false
+mutation_rate = 0.3
+require_approval = true
+immutable_sections = ["Core Laws"]
+max_mutations_per_week = 2
+drift_limit = 0.15
+digestion_cooldown_days = 7
+min_conversations_before_evolution = 50
+divergence_threshold = 0.1

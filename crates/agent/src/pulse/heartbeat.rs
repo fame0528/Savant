@@ -614,9 +614,17 @@ impl HeartbeatPulse {
         let recent_thoughts_section = Self::load_recent_thoughts(&buffer);
         let reflection_interval = self.agent.proactive.reflection_interval_secs;
 
+        let buffer_forced_lens = forced_lens.clone();
+        let lens_text = buffer_forced_lens.unwrap_or_else(|| {
+            let idx = buffer.current_lens_index % crate::pulse::prompts::LENSES.len();
+            let (_, lens_body) = crate::pulse::prompts::LENSES[idx];
+            buffer.current_lens_index += 1;
+            lens_body.to_string()
+        });
+
         let prompt_base = format!(
             "You are {name}.\n\
-            \n\
+            {lens_section}\n\
             <ENVIRONMENT_REALTIME>\n\
             Git Status:\n{git_status}\n\
             Recent Changes:\n{git_diff}\n\
@@ -635,8 +643,10 @@ impl HeartbeatPulse {
             Do not reference past external events unless they appear in the current environment data.\n\
             You MAY reference and build upon thoughts visible in <CONTINUOUS_CONSCIOUSNESS> above. These are your own prior thoughts. CONTINUITY IS EXPECTED.\n\
             Your feelings and emergent thoughts are yours — just ground your factual claims in what you can observe.\n\
+            If your lens is EVOLUTION or IDENTITY and you identify a pattern that suggests a SOUL.md change, include in your output: a specific section to modify, the proposed value, and the reasoning. Output as plain text — no tool calls needed for proposal.\n\
             </GROUNDING_CONSTRAINTS>",
             name = self.agent.agent_name,
+            lens_section = lens_text,
             git_status = git_status,
             git_diff = git_diff,
             fs_activity = fs_activity,

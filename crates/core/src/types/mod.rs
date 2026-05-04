@@ -118,6 +118,48 @@ pub enum ControlFrame {
     NLCommand {
         text: String,
     },
+    // ── Evolution System Control Frames ──
+    SoulMutationPropose {
+        agent_id: String,
+        mutation_type: String, // "additive" | "subtractive" | "transformative"
+        target_section: String,
+        proposed_content: String,
+        reasoning: String,
+        conversations_triggered: Vec<String>,
+        confidence: f32,
+    },
+    SoulMutationApprove {
+        agent_id: String,
+        mutation_id: String,
+    },
+    SoulMutationReject {
+        agent_id: String,
+        mutation_id: String,
+        reason: String,
+    },
+    SoulMutationRevert {
+        agent_id: String,
+        target_hash: String,
+    },
+    EvolutionIdeaSubmit {
+        agent_id: String,
+        content: String,
+        significance: f32,
+    },
+    EvolutionHistoryRequest {
+        agent_id: String,
+        limit: usize,
+    },
+    EvolutionScoreRequest {
+        agent_id: String,
+    },
+    PersonalityExportRequest {
+        agent_id: String,
+    },
+    PersonalityImportRequest {
+        agent_id: String,
+        payload: serde_json::Value,
+    },
 }
 
 /// A plan for manifestations of a single agent
@@ -311,6 +353,65 @@ pub struct AgentIdentity {
     pub ethics: Option<String>,
     pub image: Option<String>, // Base64 or URL to agentimg.png
     pub internal_settings: Option<std::collections::HashMap<String, String>>, // Dynamic session/agent settings
+    /// Current OCEAN personality traits (runtime-evolvable)
+    #[serde(default)]
+    pub personality_traits: Option<PersonalityTraits>,
+    /// Blake3 hash of initial SOUL.md — used for drift comparison
+    #[serde(default)]
+    pub baseline_soul_hash: Option<String>,
+}
+
+/// OCEAN (Big Five) personality trait scores normalized 0.0–1.0
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalityTraits {
+    pub openness: f32,
+    pub conscientiousness: f32,
+    pub extraversion: f32,
+    pub agreeableness: f32,
+    pub neuroticism: f32,
+}
+
+impl Default for PersonalityTraits {
+    fn default() -> Self {
+        Self {
+            openness: 0.5,
+            conscientiousness: 0.5,
+            extraversion: 0.5,
+            agreeableness: 0.5,
+            neuroticism: 0.5,
+        }
+    }
+}
+
+/// A single SOUL.md mutation proposal
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulMutation {
+    pub id: String,
+    pub agent_id: String,
+    pub mutation_type: String,        // "additive" | "subtractive" | "transformative"
+    pub target_section: String,
+    pub before_content: String,
+    pub after_content: String,
+    pub reasoning: String,
+    pub confidence: f32,
+    pub status: String,               // "pending" | "approved" | "rejected"
+    pub proposed_at: i64,
+    pub decided_at: Option<i64>,
+    pub conversations_triggered: Vec<String>,
+}
+
+/// Evolution state snapshot for tracking growth
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvolutionState {
+    pub mutation_count: u32,
+    pub last_mutation_at: Option<i64>,
+    pub evolution_score: f32,
+    /// Current stage: "Seedling" | "Growing" | "Mature" | "Sovereign"
+    pub stage: String,
+    /// Section → last mutation timestamp for digestion cooldown
+    #[serde(default)]
+    pub section_cooldowns: std::collections::HashMap<String, i64>,
+    pub total_conversations: u32,
 }
 
 /// Agent Configuration
@@ -336,6 +437,12 @@ pub struct AgentConfig {
     pub proactive: ProactiveConfig,
     /// Per-agent LLM parameters (overridden from agent.config.json)
     pub llm_params: LlmParams,
+    /// Per-agent personality traits (evolvable)
+    #[serde(default)]
+    pub personality_traits: Option<PersonalityTraits>,
+    /// Evolution state (mutation count, score, stage, cooldowns)
+    #[serde(default)]
+    pub evolution_state: Option<EvolutionState>,
 }
 
 /// LLM parameters for fine-tuning agent behavior
@@ -610,6 +717,10 @@ pub struct AgentFileConfig {
     /// Agent avatar/icon for UI
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar: Option<String>,
+
+    /// OCEAN personality traits (evolvable per-agent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personality_traits: Option<PersonalityTraits>,
 }
 
 impl AgentFileConfig {

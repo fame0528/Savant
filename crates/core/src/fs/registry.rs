@@ -196,6 +196,20 @@ impl AgentRegistry {
         let user_context = fs::read_to_string(workspace_path_resolved.join("USER.md")).ok();
         let metadata = fs::read_to_string(workspace_path_resolved.join("IDENTITY.md")).ok();
 
+        // Compute baseline SOUL hash for drift comparison
+        let baseline_soul_hash = if !soul.is_empty() {
+            let hash = blake3::hash(soul.as_bytes());
+            Some(hash.to_hex().to_string())
+        } else {
+            None
+        };
+
+        // Seed EVOLUTION.jsonl if not present in workspace
+        let evolution_path = workspace_path_resolved.join("EVOLUTION.jsonl");
+        if !evolution_path.exists() {
+            let _ = fs::write(&evolution_path, "");
+        }
+
         let config = AgentConfig {
             agent_id: file_config
                 .agent_id
@@ -236,11 +250,15 @@ impl AgentRegistry {
                 ethics: None,
                 image: None,
                 internal_settings: None,
+                personality_traits: file_config.personality_traits.clone(),
+                baseline_soul_hash: baseline_soul_hash.clone(),
             }),
             parent_id: None,
             session_id: None,
             proactive: crate::config::ProactiveConfig::default(),
             llm_params: crate::types::LlmParams::from_config(&self.ai_config),
+            personality_traits: None,
+            evolution_state: None,
         };
 
         // Write agent config to workspace
@@ -264,6 +282,7 @@ impl AgentRegistry {
             },
             description: None,
             avatar: None,
+            personality_traits: None,
         };
 
         let content = serde_json::to_string_pretty(&file_config)
@@ -419,6 +438,8 @@ This is your private space. Your diary. Your inner monologue.
             session_id: None,
             proactive: crate::config::ProactiveConfig::default(),
             llm_params: crate::types::LlmParams::from_config(&self.ai_config),
+            personality_traits: None,
+            evolution_state: None,
         };
 
         // Write agent.json if it doesn't exist
@@ -442,12 +463,13 @@ This is your private space. Your diary. Your inner monologue.
                 } else {
                     Some(config.env_vars.clone())
                 },
-                description: None,
-                avatar: None,
-            };
-            let content = serde_json::to_string_pretty(&file_config)
-                .map_err(|e| SavantError::ConfigError(e.to_string()))?;
-            fs::write(&config_path, content).map_err(SavantError::IoError)?;
+            description: None,
+            avatar: None,
+            personality_traits: None,
+        };
+        let content = serde_json::to_string_pretty(&file_config)
+            .map_err(|e| SavantError::ConfigError(e.to_string()))?;
+        fs::write(&config_path, content).map_err(SavantError::IoError)?;
         }
 
         // Write SOUL.md if it doesn't exist

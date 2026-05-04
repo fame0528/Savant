@@ -163,6 +163,7 @@ impl IgnitionService {
             skills_path: config.resolve_path("./skills"),
             blackboard_name: "savant_swarm".into(),
             collective_name: "savant_collective".into(),
+            config_file: Some(std::path::PathBuf::from(config_path.unwrap_or("config/savant.toml"))),
         };
 
         let swarm = SwarmController::new(

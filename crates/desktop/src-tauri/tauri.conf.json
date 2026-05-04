@@ -36,7 +36,7 @@
       {
         "label": "browser",
         "title": "Savant — Agent Browser",
-        "url": "browser.html",
+        "url": "browser-standalone.html",
         "width": 2560,
         "height": 1440,
         "x": 5120,

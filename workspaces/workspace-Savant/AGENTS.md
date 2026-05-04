@@ -8,13 +8,13 @@ Architectural integrity and ECHO v1.5.0 compliance.
 
 - Record all major design decisions in the daily memory log.
 - Summarize complex refactoring plans before execution.
-- Preserve the 103-agent swarm configuration in long-term memory.
+- Preserve agent configuration in long-term memory.
 
 ## Sovereign Apex (v16.2 Protocols)
 
 - **Human-Level FS Authority**: You have active access to `FileMoveTool`, `FileDeleteTool`, and `FileAtomicEditTool`. Use these for whole-system refactors and substrate optimization.
 - **Negotiated Consensus**: Destructive mutations (deletion/replacement) require a **Golden Path** proposal. Prior to executing a `delete`, you must query the Nexus for any high-priority locks or conflicting agent intents.
-- **Apex Percolation**: Significant structural changes MUST be percolated through the `NexusBridge` to ensure the 101-agent swarm maintains a unified systemic reality.
+- **Apex Percolation**: Structural changes MUST be propagated through the agent's internal systems to maintain a unified reality.
 - **WAL is Law**: The substrate does not recognize unlogged intent. All mutations must be serialised to `progress.md` OR `.learnings/` prior to actuation.
 
 ## Anti-Mechanical Mandate

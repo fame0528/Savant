@@ -257,6 +257,23 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
                 )}
               </div>
 
+              <Link href="/evolution" style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className={styles.agentTab}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Personality Evolution"
+                  title="Personality Evolution"
+                  style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
+                  <span style={{ fontSize: isCollapsed ? '20px' : '16px' }}>🧬</span>
+                  {!isCollapsed && (
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '1px', color: 'var(--accent)' }}>Evolution</span>
+                      {ctx.proposedMutations?.length > 0 && <span style={{ fontSize: '8px', opacity: 0.6, letterSpacing: '1px' }}>{ctx.proposedMutations.length} PENDING</span>}
+                    </div>
+                  )}
+                </div>
+              </Link>
+
               <Link href="/tune" style={{ textDecoration: 'none', color: 'inherit' }}>
                 <div className={styles.agentTab}
                   role="button"

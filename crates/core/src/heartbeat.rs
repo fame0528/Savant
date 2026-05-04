@@ -68,4 +68,27 @@ impl HeartbeatScheduler {
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
         self.event_tx.subscribe()
     }
+
+    /// Registers the EvolvePulse cron job (runs every N hours for self-reflection).
+    pub async fn register_evolve_pulse(&self) -> Result<(), SavantError> {
+        self.add_task(HeartbeatTask {
+            id: "evolve_pulse".to_string(),
+            schedule: "0 */4 * * * *".to_string(),
+            command: "EVOLVE_PULSE".to_string(),
+            last_run: None,
+            next_run: None,
+        })
+        .await
+    }
+
+    pub async fn register_weekly_digest(&self) -> Result<(), SavantError> {
+        self.add_task(HeartbeatTask {
+            id: "weekly_evolution_digest".to_string(),
+            schedule: "0 0 9 * * Mon *".to_string(),
+            command: "WEEKLY_EVOLUTION_DIGEST".to_string(),
+            last_run: None,
+            next_run: None,
+        })
+        .await
+    }
 }

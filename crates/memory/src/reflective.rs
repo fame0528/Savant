@@ -16,16 +16,31 @@ pub struct Concept {
     pub label: String,
     /// Source memory entry IDs that contributed to this concept.
     pub source_entries: Vec<u64>,
+    /// Concept type for decay and promotion behavior.
+    #[serde(default)]
+    pub concept_type: ConceptType,
     /// Creation timestamp.
     pub created_at: i64,
     /// Last access timestamp.
     pub last_accessed: i64,
 }
 
+/// Classification of concept for memory lifecycle management.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub enum ConceptType {
+    /// Ephemeral observation — normal decay
+    #[default]
+    Episodic,
+    /// Derived knowledge — slower decay
+    Semantic,
+    /// Core identity concept — immortal, never decays
+    Identity,
+}
+
 /// A relation between two concepts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relation {
-    /// Type of relation (e.g., "is_a", "part_of", "contradicts").
+    /// Type of relation (e.g., "is_a", "part_of", "contradicts", "evolved_into", "superseded_by").
     pub relation_type: String,
     /// Strength of the relation [0.0, 1.0].
     pub weight: f32,

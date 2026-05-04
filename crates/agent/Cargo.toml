@@ -14,6 +14,8 @@ savant_security = { workspace = true }
 savant_echo = { workspace = true }
 savant_gateway = { workspace = true }
 savant_dream = { workspace = true }
+savant_browser = { workspace = true }
+savant_toolforge = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 zstd = "0.13"

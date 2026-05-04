@@ -14,6 +14,9 @@ export default function ChatPage() {
   const {
     activeAgent,
     isManifestMode,
+    isEvolutionMode, setIsEvolutionMode,
+    proposedMutations, mutationHistory,
+    evolutionScore,
     laneMessages,
     streamingContent,
     streamingThoughts,
@@ -175,6 +178,67 @@ export default function ChatPage() {
           <button className={styles.manifestButton} style={{ background: 'transparent', border: '1px solid var(--border)', color: '#fff' }} onClick={() => handleLaneSwitch(null, false)}>ABORT</button>
           <button className={styles.manifestButton} onClick={handleManifestSubmit} disabled={isGenerating || !manifestPrompt}>{isGenerating ? "EXPLODING..." : "Generate"}</button>
           <button className={styles.manifestButton} onClick={handleManifestCommit} disabled={manifestMetrics.depth < 40} style={{ background: '#fff', color: '#000' }}>COMMIT TO REGISTRY</button>
+        </div>
+      </div>
+    );
+  }
+
+  // EVOLUTION MODE
+  if (isEvolutionMode) {
+    return (
+      <div className={styles.manifestDeck}>
+        <div className={styles.manifestHeader}>
+          <h2 style={{ color: 'var(--accent)', letterSpacing: '2px' }}>PERSONALITY EVOLUTION</h2>
+          <div style={{ opacity: 0.5, fontSize: '10px' }}>
+            {evolutionScore ? `Stage: ${(evolutionScore as any).stage || 'Seedling'} | Score: ${(evolutionScore as any).evolution_score || 0}` : 'Evolution tracking active'}
+          </div>
+        </div>
+
+        <div style={{ width: '100%', marginTop: '12px' }}>
+          <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', opacity: 0.7, marginBottom: '8px' }}>
+            Pending Mutations ({proposedMutations.length})
+          </h3>
+          {proposedMutations.length === 0 && (
+            <div style={{ opacity: 0.3, fontSize: '12px', padding: '24px', textAlign: 'center' }}>
+              No pending mutations. The agent will propose changes as it learns from interactions.
+            </div>
+          )}
+          {proposedMutations.map((m: any, i: number) => (
+            <div key={i} style={{
+              background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)',
+              borderRadius: '4px', padding: '12px', marginBottom: '8px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span style={{ fontSize: '10px', fontWeight: 800, opacity: 0.7 }}>
+                  {m.mutation_type?.toUpperCase()} — {m.target_section}
+                </span>
+                <span style={{ fontSize: '10px', opacity: 0.4 }}>Confidence: {(m.confidence * 100).toFixed(0)}%</span>
+              </div>
+              <div style={{ fontSize: '11px', opacity: 0.6, marginBottom: '8px', maxHeight: '60px', overflow: 'hidden' }}>
+                {m.reasoning?.slice(0, 200)}
+              </div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  className={styles.manifestButton}
+                  style={{ background: '#fff', color: '#000', fontSize: '10px', padding: '4px 12px' }}
+                  onClick={() => sendControlFrame('SoulMutationApprove', { agent_id: m.agent_id, mutation_id: m.mutation_id })}
+                >
+                  Approve
+                </button>
+                <button
+                  className={styles.manifestButton}
+                  style={{ background: 'transparent', border: '1px solid var(--border)', color: '#fff', fontSize: '10px', padding: '4px 12px' }}
+                  onClick={() => sendControlFrame('SoulMutationReject', { agent_id: m.agent_id, mutation_id: m.mutation_id, reason: 'User rejected' })}
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+          <button className={styles.manifestButton} style={{ background: 'transparent', border: '1px solid var(--border)', color: '#fff' }} onClick={() => setIsEvolutionMode(false)}>CLOSE</button>
         </div>
       </div>
     );

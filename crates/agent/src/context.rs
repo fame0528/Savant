@@ -1,5 +1,7 @@
 use crate::budget::TokenBudget;
 use savant_core::types::{AgentIdentity, ChatMessage, ChatRole};
+use savant_security::prompt_defense;
+use tracing::warn;
 
 /// Assembler struct used to construct LLM prompts with token limits in mind.
 pub struct ContextAssembler {
@@ -8,6 +10,7 @@ pub struct ContextAssembler {
     skills_list: Option<String>,
     substrate_prompt: String,
     auto_recall_block: Option<String>,
+    substrate_metrics: String,
 }
 
 impl ContextAssembler {
@@ -17,6 +20,7 @@ impl ContextAssembler {
         budget: TokenBudget,
         skills_list: Option<String>,
         substrate_prompt: String,
+        substrate_metrics: String,
     ) -> Self {
         Self {
             identity,
@@ -24,6 +28,7 @@ impl ContextAssembler {
             skills_list,
             substrate_prompt,
             auto_recall_block: None,
+            substrate_metrics,
         }
     }
 
@@ -43,6 +48,13 @@ impl ContextAssembler {
             self.substrate_prompt
         ));
 
+        // 0.5. Real system metrics — grounds the agent in observable reality.
+        // All memory/CPU numbers below are deterministic (sysinfo crate).
+        // DO NOT FABRICATE metrics. Either cite these numbers or say you don't know.
+        if !self.substrate_metrics.is_empty() {
+            prompt.push_str(&format!("{}\n\n", self.substrate_metrics));
+        }
+
         // 1. Identity & Vibe (IDENTITY.md)
         if let Some(metadata) = &self.identity.metadata {
             prompt.push_str(&format!("IDENTITY INFO:\n{}\n\n", metadata));
@@ -50,6 +62,19 @@ impl ContextAssembler {
 
         // 2. Persona & Core (SOUL.md)
         prompt.push_str(&format!("PERSONA (SOUL):\n{}\n\n", self.identity.soul));
+
+        // 2.5 Evolution State (personality growth tracking)
+        if let Some(traits) = &self.identity.personality_traits {
+            prompt.push_str(&format!(
+                "EVOLUTION STATE:\n\
+                 Your personality is evolving through interaction with your user.\n\
+                 Current OCEAN traits: Openness={:.2} Conscientiousness={:.2} Extraversion={:.2} Agreeableness={:.2} Neuroticism={:.2}\n\
+                 Baseline hash: {}\n\
+                 Your identity grows with each conversation. You are not static.\n\n",
+                traits.openness, traits.conscientiousness, traits.extraversion, traits.agreeableness, traits.neuroticism,
+                self.identity.baseline_soul_hash.as_deref().unwrap_or("none")
+            ));
+        }
 
         // 3. Operating Instructions (AGENTS.md)
         if let Some(instructions) = &self.identity.instructions {
@@ -147,12 +172,21 @@ impl ContextAssembler {
         });
 
         for msg in history {
-            // AAA: Channel Isolation - filter to only feed primary dialogue or relevant context
-            // Recall Protection avoids feeding background telemetry or noise into the context window.
             if msg.channel == savant_core::types::AgentOutputChannel::Chat
                 || msg.channel == savant_core::types::AgentOutputChannel::Memory
             {
-                messages.push(msg);
+                let scan = prompt_defense::scan_prompt(&msg.content);
+                if !scan.passed {
+                    warn!(
+                        "[context] Prompt injection blocked in {} message: {}",
+                        msg.role, scan.blocked[0].pattern
+                    );
+                }
+                let mut sanitized = msg;
+                if !scan.sanitized_text.is_empty() {
+                    sanitized.content = scan.sanitized_text;
+                }
+                messages.push(sanitized);
             }
         }
 
@@ -180,7 +214,7 @@ mod tests {
             internal_settings: None,
         };
         let budget = TokenBudget::new(100);
-        let assembler = ContextAssembler::new(identity, budget, None, "House Rules.".to_string());
+        let assembler = ContextAssembler::new(identity, budget, None, "House Rules.".to_string(), String::new());
         let prompt = assembler.assemble_system_prompt();
 
         assert!(prompt.contains("Vibe check."));

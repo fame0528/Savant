@@ -15,7 +15,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
-axum = { version = "0.7", features = ["ws"] }
+axum = { version = "0.8", features = ["ws"] }
 async-trait = { workspace = true }
 dashmap = { workspace = true }
 url = "2.5"

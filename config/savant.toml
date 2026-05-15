@@ -1,7 +1,7 @@
 [ai]
-provider = "openrouter"
-model = "deepseek/deepseek-v4-pro"
-manifestation_model = "deepseek/deepseek-v4-pro"
+provider = "ollama"
+model = "gemma4"
+manifestation_model = "gemma4"
 temperature = 0.699999988079071
 top_p = 0.8999999761581421
 frequency_penalty = 0.4000000059604645
@@ -167,8 +167,9 @@ max_tabs = 10
 screenshot_enabled = true
 max_screenshot_size_kb = 2048
 agent_control_enabled = true
-vision_model = "llava"
+vision_model = "gemma4"
 vision_model_provider = "ollama"
+embedding_model = "gemma4"
 
 [evolution]
 enabled = false
@@ -180,3 +181,10 @@ drift_limit = 0.15
 digestion_cooldown_days = 7
 min_conversations_before_evolution = 50
 divergence_threshold = 0.1
+
+[obsidian]
+enabled = true
+vault_path = ""
+sync_interval_secs = 300
+max_files = 15000
+cold_storage_days = 90

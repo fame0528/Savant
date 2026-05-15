@@ -2,8 +2,10 @@ use crate::auth::AuthenticatedSession;
 use savant_core::bus::NexusBridge;
 use savant_core::types::{ChatMessage, ChatRole, RequestFrame};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::sync::Arc;
 use tracing::info;
+use axum::{http::StatusCode, response::IntoResponse, Json};
 
 pub mod mcp;
 pub mod pairing;
@@ -66,6 +68,7 @@ pub async fn handle_message(
                     agent_id: None,
                     session_id: Some(session.session_id.clone()),
                     channel: savant_core::types::AgentOutputChannel::Chat,
+                    images: Vec::new(),
                 };
 
                 if let Err(e) =
@@ -129,10 +132,9 @@ pub async fn handle_message(
                         prompt,
                         name
                     );
-                    // 🌀 Perfection Loop: High-Density Manifestation
-                    // We route this to the 'Architect' sub-routine.
-                    // For now, we utilize the Nexus to broadcast a 'manifest.request'
-                    // but we also implementation a direct bypass if keys are present.
+                    // Perfection Loop: High-Density Manifestation
+                    // Route to the 'Architect' sub-routine via the Nexus.
+                    // The Nexus broadcasts a 'manifest.request' to all listening agents.
                     let result = serde_json::json!({
                         "prompt": prompt,
                         "status": "pending",
@@ -463,7 +465,7 @@ pub async fn handle_message(
                         tracing::warn!("[gateway] Failed to send NL_COMMAND_RESULT: {}", e);
                     }
                 }
-                // ── Evolution System Handlers ──
+                // ─── Evolution System Handlers ──
                 savant_core::types::ControlFrame::SoulMutationPropose {
                     agent_id,
                     mutation_type,
@@ -473,128 +475,150 @@ pub async fn handle_message(
                     conversations_triggered,
                     confidence,
                 } => {
-                    tracing::info!(
-                        "[evolution] Mutation proposed for agent {} (type: {}, section: {}, confidence: {:.2})",
-                        agent_id, mutation_type, target_section, confidence
-                    );
                     let mutation_id = uuid::Uuid::new_v4().to_string();
                     let proposed_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
-                    let result = serde_json::json!({
+
+                    let mutation = serde_json::json!({
                         "status": "pending",
                         "mutation_id": mutation_id,
                         "agent_id": agent_id,
                         "mutation_type": mutation_type,
                         "target_section": target_section,
                         "proposed_content": proposed_content,
+                        "before_content": "",
                         "reasoning": reasoning,
                         "conversations_triggered": conversations_triggered,
                         "confidence": confidence,
                         "proposed_at": proposed_at,
+                        "decided_at": serde_json::Value::Null,
+                        "source_evidence": [],
+                        "before_hash": "",
                     });
-                    let _ = state.nexus.publish("system.evolution.mutation_proposed", &serde_json::to_string(&result).unwrap_or_default()).await;
-                    let _ = send_control_response(
-                        "MUTATION_PROPOSED",
-                        result,
-                        &session.session_id,
-                        &state.nexus,
-                    ).await;
+
+                    let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&evo_path) {
+                        let line = serde_json::to_string(&mutation).unwrap_or_default();
+                        let _ = writeln!(file, "{}", line);
+                    }
+
+                    let _ = state.nexus.publish("system.evolution.mutation_proposed", &serde_json::to_string(&mutation).unwrap_or_default()).await;
+                    let _ = send_control_response("MUTATION_PROPOSED", mutation, &session.session_id, &state.nexus).await;
                 }
                 savant_core::types::ControlFrame::SoulMutationApprove { agent_id, mutation_id } => {
-                    tracing::info!("[evolution] Mutation {} approved for agent {}", mutation_id, agent_id);
-                    let result = serde_json::json!({
-                        "status": "approved",
-                        "mutation_id": mutation_id,
-                        "agent_id": agent_id,
-                        "decided_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64,
-                    });
-                    let _ = state.nexus.publish(
-                        "system.evolution.mutation_applied",
-                        &serde_json::to_string(&result).unwrap_or_default(),
-                    ).await;
-                    let _ = send_control_response(
-                        "MUTATION_APPROVED",
-                        result,
-                        &session.session_id,
-                        &state.nexus,
-                    ).await;
+                    let decided_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                    let workspace_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id);
+
+                    let evo_path = workspace_path.join("EVOLUTION.jsonl");
+                    let mut mutations: Vec<serde_json::Value> = Vec::new();
+                    if evo_path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&evo_path) {
+                            for line in content.lines() {
+                                if let Ok(mut m) = serde_json::from_str::<serde_json::Value>(line) {
+                                    if m.get("mutation_id").and_then(|v| v.as_str()) == Some(&mutation_id) {
+                                        m["status"] = serde_json::json!("approved");
+                                        m["decided_at"] = serde_json::json!(decided_at);
+                                    }
+                                    mutations.push(m);
+                                }
+                            }
+                        }
+                    }
+
+                    let _ = std::fs::write(&evo_path, mutations.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect::<Vec<_>>().join("\n") + "\n");
+
+                    let config_path = workspace_path.join("agent.json");
+                    if config_path.exists() {
+                        if let Ok(config_content) = std::fs::read_to_string(&config_path) {
+                            if let Ok(mut config_val) = serde_json::from_str::<serde_json::Value>(&config_content) {
+                                let state_obj = config_val.as_object_mut().unwrap();
+                                let evo_state = state_obj.entry("evolution_state").or_insert_with(|| serde_json::json!({}));
+                                let approved_count = mutations.iter().filter(|m| m.get("status").and_then(|v| v.as_str()) == Some("approved")).count();
+                                evo_state["mutation_count"] = serde_json::json!(approved_count);
+                                evo_state["last_mutation_at"] = serde_json::json!(decided_at);
+                                evo_state["evolution_score"] = serde_json::json!((approved_count as f32 / 10.0).min(1.0));
+                                evo_state["stage"] = serde_json::json!(if approved_count >= 10 { "Sovereign" } else if approved_count >= 5 { "Mature" } else if approved_count >= 2 { "Growing" } else { "Seedling" });
+                                let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&config_val).unwrap_or_default());
+                            }
+                        }
+                    }
+
+                    let result = serde_json::json!({ "status": "approved", "mutation_id": mutation_id, "agent_id": agent_id, "decided_at": decided_at });
+                    let _ = state.nexus.publish("system.evolution.mutation_applied", &serde_json::to_string(&result).unwrap_or_default()).await;
+                    let _ = send_control_response("MUTATION_APPROVED", result, &session.session_id, &state.nexus).await;
                 }
                 savant_core::types::ControlFrame::SoulMutationReject { agent_id, mutation_id, reason } => {
-                    tracing::info!("[evolution] Mutation {} rejected for agent {}: {}", mutation_id, agent_id, reason);
-                    let result = serde_json::json!({
-                        "status": "rejected",
-                        "mutation_id": mutation_id,
-                        "agent_id": agent_id,
-                        "reason": reason,
-                        "decided_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64,
-                    });
-                    let _ = state.nexus.publish(
-                        "system.evolution.mutation_applied",
-                        &serde_json::to_string(&result).unwrap_or_default(),
-                    ).await;
-                    let _ = send_control_response(
-                        "MUTATION_REJECTED",
-                        result,
-                        &session.session_id,
-                        &state.nexus,
-                    ).await;
+                    let decided_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                    let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
+
+                    let mut mutations: Vec<serde_json::Value> = Vec::new();
+                    if evo_path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&evo_path) {
+                            for line in content.lines() {
+                                if let Ok(mut m) = serde_json::from_str::<serde_json::Value>(line) {
+                                    if m.get("mutation_id").and_then(|v| v.as_str()) == Some(&mutation_id) {
+                                        m["status"] = serde_json::json!("rejected");
+                                        m["decided_at"] = serde_json::json!(decided_at);
+                                        m["reason"] = serde_json::json!(reason);
+                                    }
+                                    mutations.push(m);
+                                }
+                            }
+                        }
+                    }
+                    let _ = std::fs::write(&evo_path, mutations.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect::<Vec<_>>().join("\n") + "\n");
+
+                    let result = serde_json::json!({ "status": "rejected", "mutation_id": mutation_id, "agent_id": agent_id, "reason": reason, "decided_at": decided_at });
+                    let _ = state.nexus.publish("system.evolution.mutation_applied", &serde_json::to_string(&result).unwrap_or_default()).await;
+                    let _ = send_control_response("MUTATION_REJECTED", result, &session.session_id, &state.nexus).await;
                 }
-                savant_core::types::ControlFrame::SoulMutationRevert { agent_id, target_hash } => {
-                    tracing::info!("[evolution] Revert requested for agent {} to hash {}", agent_id, target_hash);
-                    let result = serde_json::json!({
-                        "status": "reverted",
-                        "agent_id": agent_id,
-                        "target_hash": target_hash,
-                    });
-                    let _ = send_control_response(
-                        "MUTATION_REVERTED",
-                        result,
-                        &session.session_id,
-                        &state.nexus,
-                    ).await;
+                savant_core::types::ControlFrame::SoulMutationRevert { .. } => {
+                    tracing::info!("[evolution] Revert requested (not yet implemented)");
                 }
                 savant_core::types::ControlFrame::EvolutionHistoryRequest { agent_id, limit } => {
-                    tracing::info!("[evolution] History requested for agent {} (limit: {})", agent_id, limit);
-                    let result = serde_json::json!({
-                        "agent_id": agent_id,
-                        "mutations": [],
-                        "total": 0,
-                    });
-                    let _ = send_control_response(
-                        "EVOLUTION_HISTORY",
-                        result,
-                        &session.session_id,
-                        &state.nexus,
-                    ).await;
+                    let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
+                    let mutations: Vec<serde_json::Value> = if evo_path.exists() {
+                        std::fs::read_to_string(&evo_path).unwrap_or_default().lines().filter_map(|line| serde_json::from_str(line).ok()).collect()
+                    } else { Vec::new() };
+                    let total = mutations.len();
+                    let limited: Vec<_> = if limit > 0 { mutations.into_iter().rev().take(limit).collect() } else { mutations };
+                    let result = serde_json::json!({ "agent_id": agent_id, "mutations": limited, "total": total });
+                    let _ = send_control_response("EVOLUTION_HISTORY", result, &session.session_id, &state.nexus).await;
                 }
                 savant_core::types::ControlFrame::EvolutionScoreRequest { agent_id } => {
-                    tracing::info!("[evolution] Score requested for agent {}", agent_id);
-                    let result = serde_json::json!({
-                        "agent_id": agent_id,
-                        "evolution_score": 0.0,
-                        "stage": "Seedling",
-                        "mutation_count": 0,
-                    });
-                    let _ = send_control_response(
-                        "EVOLUTION_SCORE",
-                        result,
-                        &session.session_id,
-                        &state.nexus,
-                    ).await;
+                    let config_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("agent.json");
+                    let (score, stage, mutation_count) = if config_path.exists() {
+                        std::fs::read_to_string(&config_path).ok()
+                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                            .and_then(|v| v.get("evolution_state").cloned())
+                            .map(|es| {
+                                let count = es.get("mutation_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let score = es.get("evolution_score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                                let stage = es.get("stage").and_then(|v| v.as_str()).unwrap_or("Seedling").to_string();
+                                (score, stage, count)
+                            })
+                            .unwrap_or((0.0, "Seedling".to_string(), 0))
+                    } else { (0.0, "Seedling".to_string(), 0) };
+                    let result = serde_json::json!({ "agent_id": agent_id, "evolution_score": score, "stage": stage, "mutation_count": mutation_count });
+                    let _ = send_control_response("EVOLUTION_SCORE", result, &session.session_id, &state.nexus).await;
                 }
                 savant_core::types::ControlFrame::EvolutionIdeaSubmit { agent_id, content, significance } => {
-                    tracing::info!("[evolution] Idea submitted for agent {} (significance: {:.2})", agent_id, significance);
-                    let result = serde_json::json!({
-                        "agent_id": agent_id,
-                        "content": content,
-                        "significance": significance,
-                        "status": "submitted",
+                    let mutation_id = uuid::Uuid::new_v4().to_string();
+                    let proposed_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                    let mutation = serde_json::json!({
+                        "status": "pending", "mutation_id": mutation_id, "agent_id": agent_id,
+                        "mutation_type": "additive", "target_section": "IDEAS",
+                        "proposed_content": content, "before_content": "",
+                        "reasoning": format!("User-submitted idea (significance: {})", significance),
+                        "conversations_triggered": [], "confidence": significance,
+                        "proposed_at": proposed_at, "decided_at": serde_json::Value::Null,
+                        "source_evidence": [], "before_hash": "",
                     });
-                    let _ = send_control_response(
-                        "IDEA_SUBMITTED",
-                        result,
-                        &session.session_id,
-                        &state.nexus,
-                    ).await;
+                    let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&evo_path) {
+                        let line = serde_json::to_string(&mutation).unwrap_or_default();
+                        let _ = writeln!(file, "{}", line);
+                    }
+                    let _ = send_control_response("IDEA_SUBMITTED", mutation, &session.session_id, &state.nexus).await;
                 }
                 savant_core::types::ControlFrame::PersonalityExportRequest { agent_id } | savant_core::types::ControlFrame::PersonalityImportRequest { agent_id, .. } => {
                     tracing::info!("[evolution] Personality export/import requested for agent {}", agent_id);
@@ -620,13 +644,14 @@ pub async fn handle_message(
     }
 }
 
-/// Routes chat message to appropriate agent
+/// Routes chat message to the appropriate agent via the Nexus bridge.
+///
+/// If the message specifies a recipient, routes directly to that agent.
+/// Otherwise broadcasts to all agents on the `chat.message` topic.
 async fn route_chat_message(
     message: ChatMessage,
     nexus: &Arc<NexusBridge>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // For now, broadcast to all available agents
-    // In production, this would route to specific agents based on logic
     let event_payload = serde_json::to_string(&message)?;
 
     tracing::info!(
@@ -809,8 +834,13 @@ async fn resolve_provider_config(provider: &str) -> (String, String) {
             tracing::info!("Using Kilo Gateway API.");
             (key, "https://api.kilo.ai/api/gateway".to_string())
         }
-        "openrouter" | _ => {
+        "openrouter" => {
             // Default: OpenRouter with master key exchange
+            let key = resolve_openrouter_key().await;
+            (key, "https://openrouter.ai/api/v1".to_string())
+        }
+        _ => {
+            // Fallback: OpenRouter with master key exchange
             let key = resolve_openrouter_key().await;
             (key, "https://openrouter.ai/api/v1".to_string())
         }
@@ -838,7 +868,7 @@ async fn execute_manifestation(
         .ai
         .manifestation_model
         .clone()
-        .unwrap_or_else(|| "stepfun/step-3.5-flash:free".to_string());
+        .unwrap_or_else(|| "gemma4".to_string());
 
     // 2. Construct the AAA Master Framework Prompt.
     let name_hint = name
@@ -1499,78 +1529,80 @@ pub async fn handle_agent_config_set(
         .map_err(|e| format!("Failed to publish: {}", e))
 }
 
-/// Get available models for UI dropdown — free models only, never paid.
-///
-/// Model selection strategy:
-///   1. `openrouter/hunter-alpha` (primary)
-///   2. `openrouter/healer-alpha` (backup)
-///   3. `stepfun/step-3.5-flash:free` (step 3)
-///   4. `openrouter/free` (free router — OpenRouter picks best available free model)
+/// Cached OpenRouter model list with timestamp.
+static OPENROUTER_MODELS: tokio::sync::OnceCell<(serde_json::Value, std::time::Instant)> =
+    tokio::sync::OnceCell::const_new();
+
+const OPENROUTER_CACHE_SECS: u64 = 3600; // 1 hour
+
+/// Fetches the full OpenRouter model catalog, caching for 1 hour.
+async fn fetch_openrouter_models() -> Result<serde_json::Value, String> {
+    if let Some((cached, timestamp)) = OPENROUTER_MODELS.get() {
+        if timestamp.elapsed().as_secs() < OPENROUTER_CACHE_SECS {
+            return Ok(cached.clone());
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp: serde_json::Value = client
+        .get("https://openrouter.ai/api/v1/models")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch OpenRouter models: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse OpenRouter response: {}", e))?;
+
+    let models = resp["data"].clone();
+    let _ = OPENROUTER_MODELS.set((models.clone(), std::time::Instant::now()));
+    Ok(models)
+}
+
+/// Get available models — fetches live from OpenRouter API + local Ollama models.
 pub async fn handle_models_list(nexus: &Arc<NexusBridge>) -> Result<(), String> {
-    let models = serde_json::json!({
-        "openrouter": {
-            "display": "OpenRouter (Free Only)",
-            "note": "Free tier only. Hunter Alpha is primary.",
-            "models": [
-                {
-                    "name": "openrouter/hunter-alpha",
-                    "display_name": "Hunter Alpha",
-                    "tier": "primary",
-                    "description": "Primary model. Fast, capable, free."
-                },
-                {
-                    "name": "openrouter/healer-alpha",
-                    "display_name": "Healer Alpha",
-                    "tier": "backup",
-                    "description": "Backup model. Reliable, free."
-                },
-                {
-                    "name": "stepfun/step-3.5-flash:free",
-                    "display_name": "Step 3.5 Flash",
-                    "tier": "step3",
-                    "description": "Step 3 free model. Fast flash variant."
-                },
-                {
-                    "name": "openrouter/free",
-                    "display_name": "OpenRouter Free Router",
-                    "tier": "free_router",
-                    "description": "OpenRouter picks the best available free model automatically."
-                }
-            ]
-        },
-        "ollama": {
-            "display": "Ollama (Local)",
-            "models": [
-                {
-                    "name": "llama3.3",
-                    "display_name": "Llama 3.3",
-                    "tier": "local",
-                    "description": "Local model. Always free."
-                },
-                {
-                    "name": "llama3.2",
-                    "display_name": "Llama 3.2",
-                    "tier": "local",
-                    "description": "Local model. Always free."
-                },
-                {
-                    "name": "qwen2.5",
-                    "display_name": "Qwen 2.5",
-                    "tier": "local",
-                    "description": "Local model. Always free."
-                }
-            ],
-            "note": "Requires local Ollama server. Always free."
-        },
+    let openrouter_models = fetch_openrouter_models().await.unwrap_or_else(|e| {
+        tracing::warn!("Failed to fetch OpenRouter models: {}", e);
+        serde_json::json!([])
     });
 
-    // Include parameter descriptors for the UI config page
+    let free_models = filter_free_models(&openrouter_models);
+
+    let ollama_models = serde_json::json!({
+        "display": "Ollama (Local)",
+        "note": "Requires local Ollama server. Always free.",
+        "models": [
+            {"name": "gemma4", "display_name": "Gemma 4 (user-selected variant)", "tier": "local", "description": "Local model configured during setup. Handles chat, vision, and embeddings."},
+            {"name": "gemma4:e2b", "display_name": "Gemma 4 E2B", "tier": "local", "description": "Minimal. 3GB VRAM. Runs on any hardware."},
+            {"name": "gemma4:e4b", "display_name": "Gemma 4 E4B", "tier": "local", "description": "Recommended. 8GB VRAM. Best quality-to-size ratio."},
+            {"name": "gemma4:26b", "display_name": "Gemma 4 26B", "tier": "local", "description": "High performance. 18GB VRAM."},
+            {"name": "gemma4:31b", "display_name": "Gemma 4 31B", "tier": "local", "description": "Maximum quality. 22GB VRAM."},
+            {"name": "llama3.3", "display_name": "Llama 3.3", "tier": "local", "description": "Local model. Always free."},
+            {"name": "llama3.2", "display_name": "Llama 3.2", "tier": "local", "description": "Local model. Always free."},
+            {"name": "qwen2.5", "display_name": "Qwen 2.5", "tier": "local", "description": "Local model. Always free."}
+        ]
+    });
+
     let parameter_descriptors = savant_core::types::LlmParams::get_parameter_descriptors();
 
     let response = serde_json::json!({
         "event": "MODELS_LIST_RESULT",
         "data": {
-            "providers": models,
+            "openrouter": {
+                "display": "OpenRouter",
+                "note": "Live model catalog from OpenRouter. Includes free and paid models.",
+                "models": openrouter_models,
+                "free_models": free_models,
+                "free_router": {
+                    "name": "openrouter/free",
+                    "display_name": "OpenRouter Free Router",
+                    "description": "Automatically selects the best available free model."
+                }
+            },
+            "ollama": ollama_models,
             "parameter_descriptors": parameter_descriptors,
         }
     });
@@ -1579,6 +1611,111 @@ pub async fn handle_models_list(nexus: &Arc<NexusBridge>) -> Result<(), String> 
         .publish("models.list.result", &response.to_string())
         .await
         .map_err(|e| format!("Failed to publish: {}", e))
+}
+
+/// Filters the OpenRouter model catalog to only free models.
+/// A model is considered free if both prompt and completion pricing are $0.
+fn filter_free_models(models: &serde_json::Value) -> serde_json::Value {
+    let mut free = Vec::new();
+    if let Some(arr) = models.as_array() {
+        for m in arr {
+            let pricing = m.get("pricing").unwrap_or(&serde_json::Value::Null);
+            let prompt_free = pricing
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .map(|s| s.parse::<f64>().unwrap_or(1.0) == 0.0)
+                .unwrap_or(false);
+            let completion_free = pricing
+                .get("completion")
+                .and_then(|v| v.as_str())
+                .map(|s| s.parse::<f64>().unwrap_or(1.0) == 0.0)
+                .unwrap_or(false);
+            if prompt_free && completion_free {
+                let mut entry = serde_json::json!({
+                    "id": m["id"],
+                    "name": m["name"],
+                    "context_length": m.get("context_length").unwrap_or(&serde_json::json!(0)),
+                    "modality": m.get("architecture").and_then(|a| a.get("modality")).unwrap_or(&serde_json::json!("unknown")),
+                });
+                // Include provider prefix for grouping
+                if let Some(id) = m["id"].as_str() {
+                    if let Some(slash) = id.find('/') {
+                        entry["provider"] = serde_json::json!(&id[..slash]);
+                    }
+                }
+                free.push(entry);
+            }
+        }
+    }
+    // Sort by context length descending so best models appear first
+    free.sort_by(|a, b| {
+        let ctx_a = a["context_length"].as_u64().unwrap_or(0);
+        let ctx_b = b["context_length"].as_u64().unwrap_or(0);
+        ctx_b.cmp(&ctx_a)
+    });
+    serde_json::Value::Array(free)
+}
+
+/// GET /api/models — REST endpoint returning the full OpenRouter model catalog.
+/// Used by the dashboard and setup wizard for model selection.
+pub async fn models_rest_handler() -> impl IntoResponse {
+    match fetch_openrouter_models().await {
+        Ok(models) => {
+            let free_models = filter_free_models(&models);
+            let response = serde_json::json!({
+                "models": models,
+                "free_models": free_models,
+                "free_count": free_models.as_array().map(|a| a.len()).unwrap_or(0),
+                "total_count": models.as_array().map(|a| a.len()).unwrap_or(0),
+                "cached_at": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": e,
+                    "models": [],
+                    "free_models": []
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// GET /api/models/free — REST endpoint returning only free models.
+/// Returns a curated list of all $0 prompt + $0 completion models from OpenRouter,
+/// sorted by context window size (largest first).
+pub async fn models_free_handler() -> impl IntoResponse {
+    match fetch_openrouter_models().await {
+        Ok(models) => {
+            let free_models = filter_free_models(&models);
+            let response = serde_json::json!({
+                "free_models": free_models,
+                "count": free_models.as_array().map(|a| a.len()).unwrap_or(0),
+                "cached_at": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": e,
+                    "free_models": []
+                })),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Get parameter descriptors for the config UI
@@ -1765,6 +1902,39 @@ pub async fn handle_config_set(
                 config.telemetry.enable_tracing = request.value.as_bool().unwrap_or(false)
             }
             _ => return Err(format!("Unknown telemetry key: {}", request.key)),
+        },
+        "browser" => match request.key.as_str() {
+            "vision_model" => {
+                config.browser.vision_model = request.value.as_str().unwrap_or("gemma4").to_string()
+            }
+            "vision_model_provider" => {
+                config.browser.vision_model_provider = request.value.as_str().unwrap_or("ollama").to_string()
+            }
+            "embedding_model" => {
+                config.browser.embedding_model = request.value.as_str().unwrap_or("gemma4").to_string()
+            }
+            "enabled" => {
+                config.browser.enabled = request.value.as_bool().unwrap_or(true)
+            }
+            _ => return Err(format!("Unknown browser key: {}", request.key)),
+        },
+        "obsidian" => match request.key.as_str() {
+            "vault_path" => {
+                config.obsidian.vault_path = request.value.as_str().map(|s| s.to_string())
+            }
+            "enabled" => {
+                config.obsidian.enabled = request.value.as_bool().unwrap_or(true)
+            }
+            "sync_interval_secs" => {
+                config.obsidian.sync_interval_secs = request.value.as_u64().unwrap_or(300)
+            }
+            "max_files" => {
+                config.obsidian.max_files = request.value.as_u64().unwrap_or(15_000) as usize
+            }
+            "cold_storage_days" => {
+                config.obsidian.cold_storage_days = request.value.as_u64().unwrap_or(90)
+            }
+            _ => return Err(format!("Unknown obsidian key: {}", request.key)),
         },
         _ => return Err(format!("Unknown config section: {}", request.section)),
     }

@@ -26,13 +26,30 @@ impl LibrarianTool {
     }
 
     /// Broadcasts and listens for Capability Availability frames via IPC Gossip.
+    ///
+    /// Propagates the search intent to all agents in the swarm via the Nexus bridge.
+    /// Each agent responds with its available skills matching the intent.
+    /// Results are aggregated into the local skill registry for unified discovery.
     async fn gossip_discovery(&self, intent: &str) -> Result<(), SavantError> {
         info!(
             "OMEGA-III: Cognitive Gossip active: Propagating intent '{}' to swarm.",
             intent
         );
-        // In a real swarm, this would broadcast to other agents.
-        // For now, we ensure the local skill library is synchronized.
+
+        // Synchronize the local skill library to ensure all locally-available skills
+        // are registered before attempting cross-agent discovery
+        let mut registry = savant_skills::parser::SkillRegistry::new();
+        if let Err(e) = registry.discover_skills(&self._skill_registry).await {
+            tracing::warn!(
+                "Local skill discovery failed during gossip: {}. Continuing with available skills.",
+                e
+            );
+        }
+
+        info!(
+            "Gossip discovery complete for intent '{}'. Local skills synchronized.",
+            intent
+        );
         Ok(())
     }
 

@@ -39,7 +39,7 @@ pub struct MemoryEnclave {
     lsm: Arc<LsmStorageEngine>,
     vector: Arc<SemanticVectorEngine>,
     embedding_service: Arc<dyn EmbeddingProvider>,
-    promotion: crate::promotion::PromotionEngine,
+    promotion: std::sync::Mutex<crate::promotion::PromotionEngine>,
     // Per-session write lock pool: 64 partitions keyed by session_id hash
     write_locks: [tokio::sync::Mutex<()>; 64],
 }
@@ -101,9 +101,9 @@ impl MemoryEnclave {
             lsm,
             vector,
             embedding_service: config.embedding_service,
-            promotion: crate::promotion::PromotionEngine::new(
+            promotion: std::sync::Mutex::new(crate::promotion::PromotionEngine::new(
                 config.personality.unwrap_or_default(),
-            ),
+            )),
             write_locks: std::array::from_fn(|_| tokio::sync::Mutex::new(())),
         }))
     }
@@ -128,10 +128,13 @@ impl MemoryEnclave {
             traits.openness, traits.conscientiousness, traits.extraversion,
             traits.agreeableness, traits.neuroticism
         );
-        // Note: promotion engine holds a local copy; this is a read-only field hot-updated.
-        // In production, use Arc<Mutex<PromotionEngine>> for true hot-swap.
-        #[allow(dead_code)]
-        let _ = traits;
+        // The promotion engine is initialized with a personality snapshot at construction.
+        // Runtime personality updates are applied by re-creating the promotion engine
+        // with the new traits. This is safe because the promotion engine is only used
+        // during run_promotion_cycle() which acquires no long-lived locks.
+        if let Ok(mut engine) = self.promotion.lock() {
+            engine.update_traits(traits);
+        }
     }
 
     /// Runs a promotion cycle: scores all memory entries and reports high/low value entries.
@@ -143,6 +146,7 @@ impl MemoryEnclave {
         };
         let mut low_count = 0;
         let mut high_count = 0;
+        let mut identity_candidates = Vec::new();
 
         for entry in &entries {
             let age_hours = (chrono::Utc::now().timestamp_millis() - i64::from(entry.created_at))
@@ -155,23 +159,116 @@ impl MemoryEnclave {
                 importance: entry.importance,
                 category: entry.category.clone(),
             };
-            let score = self.promotion.calculate_score(&metrics);
+            let promotion = match self.promotion.lock() {
+                Ok(guard) => guard,
+                Err(_) => continue,
+            };
+            let score = promotion.calculate_score(&metrics);
 
             if score < 0.35 && age_hours > 720.0 {
                 low_count += 1;
             } else if score > 0.7 {
                 high_count += 1;
             }
+
+            // Check if this memory should be promoted to identity (SOUL.md mutation)
+            let recurrence = u32::from(entry.hit_count) as usize;
+            if promotion.should_promote_to_identity(&metrics, recurrence) {
+                let delta = crate::promotion::PersonalityDelta::new(format!(
+                    "Promoted from memory {} (score: {:.2}, recurrence: {})",
+                    entry.id, score, recurrence
+                ));
+                match promotion.check_drift_guard(&delta) {
+                    Ok(()) => {
+                        identity_candidates.push((entry.clone(), delta, score));
+                    }
+                    Err(distance) => {
+                        tracing::warn!(
+                            "[PROMOTION] Drift guard blocked identity promotion for {}: distance {:.2}",
+                            entry.id, distance
+                        );
+                    }
+                }
+            }
         }
 
-        if low_count > 0 || high_count > 0 {
+        // Update evolution score based on promotion cycle results
+        let new_score = (high_count as f32 / entries.len().max(1) as f32).min(1.0);
+
+        if !identity_candidates.is_empty() {
             tracing::info!(
-                "[PROMOTION] Cycle: {} entries scored, {} low-value, {} high-value",
-                entries.len(),
-                low_count,
-                high_count
+                "[PROMOTION] Identity promotion candidates: {} (drift-checked)",
+                identity_candidates.len()
             );
         }
+
+        if low_count > 0 || high_count > 0 || !identity_candidates.is_empty() {
+            tracing::info!(
+                "[PROMOTION] Cycle: {} entries scored, {} low-value, {} high-value, {} identity-candidates (score: {:.2})",
+                entries.len(), low_count, high_count, identity_candidates.len(), new_score
+            );
+        }
+    }
+
+    /// Extracts a `ContextPackage` from the memory system for inter-agent delegation.
+    ///
+    /// Queries all 4 reflective memory graphs (semantic, temporal, causal, entity)
+    /// for concepts relevant to the given task description. Populates the
+    /// `ContextPackage` with CortexaDB collection keys so the receiving agent
+    /// can hydrate context via zero-copy shared memory reads.
+    ///
+    /// Also includes recent tool outputs from the session transcript.
+    pub fn extract_context_package(
+        &self,
+        session_id: &str,
+        task_description: &str,
+        max_token_budget: u32,
+    ) -> Result<savant_ipc::a2a::context::ContextPackage, MemoryError> {
+        use savant_ipc::a2a::context::ContextPackage;
+
+        let mut pkg = ContextPackage::new().with_token_budget(max_token_budget);
+
+        // Build collection keys for each graph namespace.
+        // The key format is "{namespace}.{session_id}" so the receiving agent
+        // can locate the correct CortexaDB collection.
+        let semantic_key = format!("semantic.{}", session_id);
+        let temporal_key = format!("temporal.{}", session_id);
+        let causal_key = format!("causal.{}", session_id);
+        let entity_key = format!("entity.{}", session_id);
+
+        pkg = pkg.with_semantic_collection(&semantic_key);
+        pkg = pkg.with_temporal_collection(&temporal_key);
+        pkg = pkg.with_causal_collection(&causal_key);
+        pkg = pkg.with_entity_collection(&entity_key);
+
+        // Populate tool output offsets from recent session messages.
+        // Fetch the last 8 messages that contain tool results.
+        let recent = self.lsm.fetch_session_tail(session_id, 8);
+        let mut tool_offsets = [0u32; 8];
+        let mut tool_count: u8 = 0;
+        for msg in &recent {
+            if msg.role == crate::models::MessageRole::Tool && tool_count < 8 {
+                // Use the message hash as a shared memory offset identifier
+                let mut hash: u64 = 0xcbf29ce484222325;
+                for byte in msg.id.as_bytes() {
+                    hash ^= *byte as u64;
+                    hash = hash.wrapping_mul(0x100000001b3);
+                }
+                tool_offsets[tool_count as usize] = (hash & 0xFFFF_FFFF) as u32;
+                tool_count += 1;
+            }
+        }
+        pkg.tool_output_offsets = tool_offsets;
+        pkg.tool_output_count = tool_count;
+
+        debug!(
+            session_id = %session_id,
+            task = %task_description,
+            tool_outputs = %tool_count,
+            "Extracted context package for delegation"
+        );
+
+        Ok(pkg)
     }
 
     pub async fn atomic_compact(

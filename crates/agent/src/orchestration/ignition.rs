@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use pqcrypto_dilithium::dilithium2;
 use std::sync::Arc;
+use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 use crate::manager::AgentManager;
@@ -11,6 +12,7 @@ use savant_core::config::Config;
 use savant_core::crypto::AgentKeyPair;
 use savant_core::db::Storage;
 use savant_gateway::server::start_gateway;
+use savant_obsidian::{ColdStorageManager, OutboxWorker, VaultWatcher, VaultWriter};
 
 /// Kills any process using the specified port.
 /// On Windows, uses PowerShell. On Unix, uses lsof.
@@ -184,7 +186,71 @@ impl IgnitionService {
         let swarm = Arc::new(swarm);
         info!("🚀 Swarm Controller online and synchronized");
 
-        // 7. Gateway (Async Background)
+        // 7. Obsidian Vault Projection Worker (always active by default)
+        if config.obsidian.enabled {
+            let obsidian_config = config.obsidian.clone();
+            let obsidian_enclave = swarm.engine().enclave();
+            let obsidian_nexus = nexus.clone();
+            let agents_path = config.resolve_path(&config.system.agents_path);
+
+            let vault_path = obsidian_config
+                .resolved_vault_path(&agents_path);
+
+            // Outbox worker owns VaultWriter + ColdStorageManager
+            let writer = VaultWriter::new(
+                vault_path.clone(),
+                Some(Arc::clone(&obsidian_enclave)),
+                obsidian_config.clone(),
+                "savant".to_string(),
+            );
+            let cold_storage = ColdStorageManager::new(vault_path.clone(), obsidian_config.clone());
+            let (outbox_shutdown_tx, outbox_shutdown_rx) = watch::channel(false);
+            let outbox = OutboxWorker::new(
+                vault_path.clone(),
+                writer,
+                cold_storage,
+                obsidian_config.clone(),
+                Some(Arc::clone(&obsidian_enclave)),
+                agents_path.clone(),
+                outbox_shutdown_rx,
+            );
+            let outbox_handle = tokio::spawn({
+                let vault_path = vault_path.clone();
+                async move {
+                    info!(
+                        "[obsidian] Vault projection worker starting at {}",
+                        vault_path.display()
+                    );
+                    outbox.run().await;
+                }
+            });
+
+            // Vault watcher owns its own reference to enclave + nexus
+            let (watcher_shutdown_tx, watcher_shutdown_rx) = watch::channel(false);
+            let watcher = VaultWatcher::new(
+                vault_path.clone(),
+                obsidian_config,
+                Some(Arc::clone(&obsidian_nexus)),
+                Some(Arc::clone(&obsidian_enclave)),
+                watcher_shutdown_rx,
+            );
+            let watcher_handle = tokio::spawn({
+                let vault_path = vault_path.clone();
+                async move {
+                    info!("[obsidian] Vault watcher starting at {}", vault_path.display());
+                    if let Err(e) = watcher.run().await {
+                        warn!("[obsidian] Vault watcher error: {e}");
+                    }
+                }
+            });
+
+            // Store shutdown senders so they can be used for graceful shutdown
+            let _ = (outbox_shutdown_tx, watcher_shutdown_tx, outbox_handle, watcher_handle);
+
+            info!("[obsidian] Vault projection workers enabled at {}", vault_path.display());
+        }
+
+        // 8. Gateway (Async Background)
         // Kill any stale process on the gateway port before starting
         kill_port_process(config.server.port).await;
         let g_config = config.clone();

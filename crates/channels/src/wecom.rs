@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -42,7 +43,7 @@ impl WeComAdapter {
 
         let resp: serde_json::Value = self
             .http
-            .get(&format!(
+            .get(format!(
                 "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={}&corpsecret={}",
                 self.config.corp_id, self.config.corp_secret
             ))
@@ -69,7 +70,7 @@ impl WeComAdapter {
 
         let resp: serde_json::Value = self
             .http
-            .post(&format!(
+            .post(format!(
                 "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={}",
                 token
             ))
@@ -107,7 +108,7 @@ impl WeComAdapter {
                         let is_assistant = payload["role"].as_str() == Some("Assistant");
                         let is_for = payload["recipient"]
                             .as_str()
-                            .map_or(false, |r| r.starts_with("wecom:"));
+                            .is_some_and(|r| r.starts_with("wecom:"));
                         if is_assistant || is_for {
                             let session_id = payload["session_id"].as_str().unwrap_or("");
                             if let Some(user_id) = session_id.strip_prefix("wecom:") {

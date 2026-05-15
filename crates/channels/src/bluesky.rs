@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -124,7 +125,7 @@ impl BlueskyAdapter {
                     if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
                         if p["recipient"]
                             .as_str()
-                            .map_or(false, |r| r.starts_with("bluesky:"))
+                            .is_some_and(|r| r.starts_with("bluesky:"))
                             && p["role"].as_str() == Some("Assistant")
                         {
                             let text = p["content"].as_str().unwrap_or("");

@@ -665,8 +665,8 @@ mod tests {
     #[test]
     fn test_mcp_client_pool_new() {
         let _pool = McpClientPool::new();
-        // Just verify it creates without panicking
-        assert!(true);
+        // Verify it creates without panicking — pool is ready for use
+        assert!(_pool.discovery.try_lock().is_ok());
     }
 
     #[test]

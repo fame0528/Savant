@@ -345,6 +345,7 @@ fn build_step(sub_task: &SubTask, step_index: usize, session_id: &str) -> Reques
             agent_id: Some("synthesis".to_string()),
             session_id: Some(SessionId(session_id.to_string())),
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         })
     } else {
         // Control/coordination step
@@ -673,7 +674,7 @@ mod tests {
             weight: 1.0,
         }];
         let c = compute_complexity(&tasks);
-        assert!(c >= 0.5 && c <= 10.0);
+        assert!((0.5..=10.0).contains(&c));
     }
 
     #[test]

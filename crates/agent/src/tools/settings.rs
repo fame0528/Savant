@@ -78,7 +78,7 @@ impl Tool for SettingsTool {
 
         let mut settings = self
             .read_settings()
-            .map_err(|e| SavantError::OperationFailed(e))?;
+            .map_err(SavantError::OperationFailed)?;
 
         match action {
             "list" => {
@@ -114,7 +114,7 @@ impl Tool for SettingsTool {
 
                 settings.insert(key.to_string(), value.to_string());
                 self.write_settings(&settings)
-                    .map_err(|e| SavantError::OperationFailed(e))?;
+                    .map_err(SavantError::OperationFailed)?;
 
                 Ok(format!("Successfully updated setting: {} = {}", key, value))
             }

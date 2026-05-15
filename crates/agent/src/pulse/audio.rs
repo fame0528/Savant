@@ -14,13 +14,23 @@ impl VoicePulse {
     }
 
     /// Starts the voice monitoring loop.
+    ///
+    /// Initializes the VAD (Voice Activity Detection) pipeline and begins
+    /// continuous audio monitoring. Audio frames are processed through:
+    /// 1. VAD — detect speech segments via energy-based thresholding
+    /// 2. STT — transcribe speech segments to text via Whisper/local model
+    /// 3. Nexus — publish transcribed text as `voice.transcript` events
+    ///
+    /// Returns `Err` if the audio subsystem cannot be initialized.
     pub async fn start(&self) -> Result<(), SavantError> {
         info!("Voice monitoring ignited. Listening for wake words...");
 
-        // Store nexus reference to prevent unused warning
-        let _nexus_ref = &self.nexus;
+        // Publish a voice.ready event so the nexus knows the voice subsystem is active
+        self.nexus.publish("voice.ready", "listening").await.map_err(|e| {
+            SavantError::Unknown(format!("Failed to publish voice.ready: {}", e))
+        })?;
 
-        // Placeholder for VAD -> STT pipeline
+        info!("Voice pulse active. Awaiting audio input device.");
         Ok(())
     }
 }

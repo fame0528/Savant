@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -118,9 +119,9 @@ impl EventHandler for Handler {
         let session_id =
             savant_core::session::SessionMapper::map("discord", &msg.channel_id.to_string());
 
-        // 🛡️ WAL-Strict Ingestion:
-        // In a full implementation, we'd commit to a specific memory backend here.
-        // For now, we package it as an EventFrame for the Nexus bridge.
+        // WAL-Strict Ingestion:
+        // Package as an EventFrame for the Nexus bridge. The Nexus routes
+        // the message to the appropriate agent based on session mapping.
         let chat_message = ChatMessage {
             is_telemetry: false,
             role: ChatRole::User,
@@ -130,6 +131,7 @@ impl EventHandler for Handler {
             agent_id: None,
             session_id: Some(session_id),
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         };
 
         let event = EventFrame {

@@ -620,7 +620,7 @@ pub struct AnthropicProvider {
 impl LlmProvider for AnthropicProvider {
     async fn stream_completion(
         &self,
-        mut messages: Vec<ChatMessage>,
+        messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {

@@ -2,6 +2,11 @@
 //!
 //! Replays recent episodic memories, compresses redundant entries,
 //! resolves contradictions, and writes consolidated results to persistent storage.
+//!
+//! # Relevance-Conditioned Logarithmic Decay
+//! Memory weights decrease logarithmically from last access:
+//! `w(t) = w0 * log(e + t) * spike_factor(access_count)`
+//! Below threshold → cold storage eligible. Spikes on re-access or re-linking.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -18,14 +23,71 @@ pub struct NremResult {
     pub consolidated: usize,
     /// Number of contradictions resolved.
     pub contradictions_resolved: usize,
+    /// IDs of memories marked for cold storage (below decay threshold).
+    pub cold_storage_eligible: Vec<u64>,
     /// Duration in milliseconds.
     pub duration_ms: u64,
 }
+
+/// Consolidation event emitted to the vault outbox after NREM Phase 3.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConsolidationEvent {
+    /// Unique event identifier.
+    pub event_id: String,
+    /// IDs of memories that were consolidated (deduplicated/compressed).
+    pub consolidated_ids: Vec<u64>,
+    /// IDs of memories archived to cold storage (below decay threshold).
+    pub archived_ids: Vec<u64>,
+    /// New synthesis generated from consolidation (if any).
+    pub new_synthesis: Option<String>,
+    /// Timestamp of the consolidation event.
+    pub timestamp: i64,
+}
+
+/// Relevance-conditioned logarithmic decay function.
+///
+/// Weight decreases logarithmically from last access time.
+/// `w(t) = w0 * ln(e + t_hours) * spike_factor(access_count)`
+///
+/// The spike factor resets weight toward original on re-access or re-linking:
+/// `spike_factor(n) = 1.0 + 0.2 * ln(1 + n)` where n = access_count
+///
+/// Below threshold → cold storage eligible.
+pub fn compute_decay_weight(
+    initial_weight: f32,
+    age_hours: f32,
+    access_count: u32,
+    referenced_by_others: bool,
+) -> f32 {
+    // Logarithmic decay: weight decreases slowly over time
+    let decay_factor = (1.0 + age_hours).ln().max(0.01);
+
+    // Spike factor: re-access or re-linking pushes weight back up
+    let spike = 1.0 + 0.2 * (1.0 + access_count as f32).ln();
+
+    // Reference bonus: memories linked by others are more relevant
+    let reference_bonus = if referenced_by_others { 1.3 } else { 1.0 };
+
+    // Normalized: divide by decay, multiply by spike and reference
+    let weight = initial_weight / decay_factor.max(1.0) * spike * reference_bonus;
+
+    weight.clamp(0.01, 1.0)
+}
+
+/// Determines if a memory weight is below the cold storage threshold.
+pub fn is_cold_storage_eligible(weight: f32, threshold: f32) -> bool {
+    weight < threshold
+}
+
+/// Default decay threshold for cold storage eligibility.
+pub const DEFAULT_DECAY_THRESHOLD: f32 = 0.15;
 
 /// NREM controller for structured memory replay and consolidation.
 pub struct NremController {
     /// Hours of episodic memory to replay.
     pub replay_window_hours: u64,
+    /// Decay threshold below which memories are cold-storage eligible.
+    pub decay_threshold: f32,
 }
 
 impl NremController {
@@ -33,6 +95,15 @@ impl NremController {
     pub fn new(replay_window_hours: u64) -> Self {
         Self {
             replay_window_hours,
+            decay_threshold: DEFAULT_DECAY_THRESHOLD,
+        }
+    }
+
+    /// Creates a NREM controller with custom decay threshold.
+    pub fn with_decay_threshold(replay_window_hours: u64, decay_threshold: f32) -> Self {
+        Self {
+            replay_window_hours,
+            decay_threshold,
         }
     }
 
@@ -47,12 +118,15 @@ impl NremController {
     /// 1. Fetch recent messages from all sessions (last N hours)
     /// 2. Deduplicate consecutive identical messages
     /// 3. Detect and resolve contradictions (keep newer + higher importance)
-    /// 4. Write consolidated results back to memory
-    pub async fn run(&self, memory: &Arc<MemoryEngine>) -> Result<NremResult, super::DreamError> {
+    /// 4. Apply relevance-conditioned logarithmic decay to memory weights
+    /// 5. Mark below-threshold memories as cold-storage eligible
+    /// 6. Write consolidated results back to memory
+    /// 7. Emit ConsolidationEvent to outbox for vault projection
+    pub async fn run(&self, memory: &Arc<MemoryEngine>) -> Result<(NremResult, Option<ConsolidationEvent>), super::DreamError> {
         let start = Instant::now();
         info!(
-            "[NREM] Starting consolidation cycle (window={}h)",
-            self.replay_window_hours
+            "[NREM] Starting consolidation cycle (window={}h, decay_threshold={:.2})",
+            self.replay_window_hours, self.decay_threshold
         );
 
         // Fetch all messages across sessions
@@ -63,15 +137,17 @@ impl NremController {
 
         if messages.is_empty() {
             debug!("[NREM] No messages to consolidate");
-            return Ok(NremResult {
+            return Ok((NremResult {
                 scanned: 0,
                 consolidated: 0,
                 contradictions_resolved: 0,
+                cold_storage_eligible: Vec::new(),
                 duration_ms: start.elapsed().as_millis() as u64,
-            });
+            }, None));
         }
 
         let scanned = messages.len();
+        let now_ms = chrono::Utc::now().timestamp_millis();
 
         // Phase 1: Deduplicate consecutive identical messages
         let mut deduped = Vec::with_capacity(messages.len());
@@ -96,7 +172,48 @@ impl NremController {
         let consolidated = resolved.len();
         let contradictions_resolved = contradictions.len();
 
-        // Phase 4: Write consolidated results back
+        // Phase 4: Apply relevance-conditioned logarithmic decay
+        let mut cold_storage_ids = Vec::new();
+        let mut consolidated_ids = Vec::new();
+
+        for msg in &resolved {
+            let age_hours = (now_ms - i64::from(msg.timestamp)) as f32 / 3_600_000.0;
+
+            // For AgentMessage, we use content length as a proxy for importance
+            // and tool_calls count as a proxy for access/references
+            let content_importance = (msg.content.len().min(1000) as f32) / 1000.0;
+            let access_count = msg.tool_calls.len() as u32;
+            let referenced = !msg.tool_calls.is_empty() || !msg.tool_results.is_empty();
+
+            let weight = compute_decay_weight(
+                content_importance,
+                age_hours,
+                access_count,
+                referenced,
+            );
+
+            if is_cold_storage_eligible(weight, self.decay_threshold) {
+                if let Ok(id_val) = msg.id.parse::<u64>() {
+                    cold_storage_ids.push(id_val);
+                }
+            }
+
+            if !msg.tool_calls.is_empty() {
+                if let Ok(id_val) = msg.id.parse::<u64>() {
+                    consolidated_ids.push(id_val);
+                }
+            }
+        }
+
+        if !cold_storage_ids.is_empty() {
+            info!(
+                "[NREM] {} memories below decay threshold ({:.2}) — cold storage eligible",
+                cold_storage_ids.len(),
+                self.decay_threshold
+            );
+        }
+
+        // Phase 5: Write consolidated results back
         // Group by session and compact each session
         let mut sessions: std::collections::HashMap<String, Vec<savant_memory::AgentMessage>> =
             std::collections::HashMap::new();
@@ -119,16 +236,44 @@ impl NremController {
 
         let duration_ms = start.elapsed().as_millis() as u64;
         info!(
-            "[NREM] Complete: {} scanned, {} consolidated, {} contradictions resolved ({}ms)",
-            scanned, consolidated, contradictions_resolved, duration_ms
+            "[NREM] Complete: {} scanned, {} consolidated, {} contradictions resolved, {} cold-storage eligible ({}ms)",
+            scanned, consolidated, contradictions_resolved, cold_storage_ids.len(), duration_ms
         );
 
-        Ok(NremResult {
+        // Phase 6: Emit ConsolidationEvent to outbox for vault projection
+        let consolidation_event = if !consolidated_ids.is_empty() || !cold_storage_ids.is_empty() {
+            let event = ConsolidationEvent {
+                event_id: uuid::Uuid::new_v4().to_string(),
+                consolidated_ids: consolidated_ids.clone(),
+                archived_ids: cold_storage_ids.clone(),
+                new_synthesis: if contradictions_resolved > 0 {
+                    Some(format!(
+                        "Resolved {} contradictions across {} sessions",
+                        contradictions_resolved,
+                        sessions.len()
+                    ))
+                } else {
+                    None
+                },
+                timestamp: chrono::Utc::now().timestamp(),
+            };
+            info!(
+                "[NREM] Emitting ConsolidationEvent: {} consolidated, {} archived",
+                event.consolidated_ids.len(),
+                event.archived_ids.len()
+            );
+            Some(event)
+        } else {
+            None
+        };
+
+        Ok((NremResult {
             scanned,
             consolidated: dedup_count,
             contradictions_resolved,
+            cold_storage_eligible: cold_storage_ids,
             duration_ms,
-        })
+        }, consolidation_event))
     }
 }
 
@@ -245,5 +390,59 @@ mod tests {
     fn test_nrem_controller_default() {
         let controller = NremController::default_controller();
         assert_eq!(controller.replay_window_hours, 24);
+    }
+
+    #[test]
+    fn test_decay_weight_no_decay() {
+        // New memory (age=0), no accesses → should have high weight
+        let weight = compute_decay_weight(1.0, 0.0, 0, false);
+        assert!(weight > 0.5, "Fresh memory should have high weight, got {}", weight);
+    }
+
+    #[test]
+    fn test_decay_weight_old_memory() {
+        // Very old memory (1 year), no accesses → should have low weight
+        let weight = compute_decay_weight(1.0, 8760.0, 0, false);
+        assert!(weight < 0.3, "Old memory should have low weight, got {}", weight);
+    }
+
+    #[test]
+    fn test_decay_weight_spike_on_access() {
+        // Old memory but frequently accessed → spike factor kicks in
+        let weight_no_access = compute_decay_weight(1.0, 100.0, 0, false);
+        let weight_with_access = compute_decay_weight(1.0, 100.0, 10, false);
+        assert!(
+            weight_with_access > weight_no_access,
+            "Frequently accessed memory should spike: {} > {}",
+            weight_with_access,
+            weight_no_access
+        );
+    }
+
+    #[test]
+    fn test_decay_weight_referenced_bonus() {
+        // Referenced memory should have higher weight
+        let weight_unreferenced = compute_decay_weight(1.0, 50.0, 0, false);
+        let weight_referenced = compute_decay_weight(1.0, 50.0, 0, true);
+        assert!(
+            weight_referenced > weight_unreferenced,
+            "Referenced memory should have bonus: {} > {}",
+            weight_referenced,
+            weight_unreferenced
+        );
+    }
+
+    #[test]
+    fn test_cold_storage_eligible() {
+        assert!(is_cold_storage_eligible(0.1, 0.15));
+        assert!(!is_cold_storage_eligible(0.5, 0.15));
+        assert!(!is_cold_storage_eligible(0.15, 0.15)); // At threshold = not eligible
+    }
+
+    #[test]
+    fn test_controller_custom_decay_threshold() {
+        let controller = NremController::with_decay_threshold(48, 0.25);
+        assert_eq!(controller.replay_window_hours, 48);
+        assert!((controller.decay_threshold - 0.25).abs() < f32::EPSILON);
     }
 }

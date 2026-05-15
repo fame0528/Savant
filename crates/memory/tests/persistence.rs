@@ -1,6 +1,8 @@
 //! Memory persistence and integration tests.
 //! Tests message append/retrieve, ordering, delete cascade, and limit retrieval.
 
+#![allow(clippy::disallowed_methods)]
+
 use std::sync::Arc;
 use std::time::Instant;
 

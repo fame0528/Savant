@@ -1,7 +1,8 @@
 use iceoryx2::prelude::ZeroCopySend;
 use iceoryx2::prelude::*;
 use iceoryx2::service::port_factory::blackboard::PortFactory;
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::error::SwarmIpcError;
@@ -143,6 +144,7 @@ pub struct SwarmBlackboard {
     _node: Arc<Node<ipc::Service>>,
     service: PortFactory<ipc::Service, u64>,
     service_name: String,
+    active_sessions: Arc<RwLock<HashSet<u64>>>,
 }
 
 impl SwarmBlackboard {
@@ -227,6 +229,7 @@ impl SwarmBlackboard {
             _node: Arc::new(node),
             service,
             service_name: resolved_name,
+            active_sessions: Arc::new(RwLock::new(HashSet::new())),
         })
     }
 
@@ -268,6 +271,11 @@ impl SwarmBlackboard {
             })?;
 
         entry.update_with_copy(context);
+
+        // Track this session as active
+        if let Ok(mut sessions) = self.active_sessions.write() {
+            sessions.insert(session_id);
+        }
 
         debug!(session_id = %session_id, "Published context to blackboard");
         Ok(())
@@ -337,6 +345,11 @@ impl SwarmBlackboard {
         };
         self.publish_context(session_id, death_signal)?;
 
+        // Remove from active session tracking
+        if let Ok(mut sessions) = self.active_sessions.write() {
+            sessions.remove(&session_id);
+        }
+
         debug!(session_id = %session_id, "Death Signal published to session");
         Ok(true)
     }
@@ -348,12 +361,12 @@ impl SwarmBlackboard {
 
     /// Returns statistics about the blackboard (for monitoring/debugging).
     ///
-    /// Note: `active_sessions` is a placeholder (returns 0) because iceoryx2
-    /// does not expose subscriber count without iterating all samples.
-    /// `max_capacity` reflects the configured subscriber limit.
+    /// `active_sessions` reflects the number of sessions that have written context
+    /// and not yet been deleted. `max_capacity` reflects the configured subscriber limit.
     pub fn stats(&self) -> BlackboardStats {
+        let count = self.active_sessions.read().map(|s| s.len()).unwrap_or(0);
         BlackboardStats {
-            active_sessions: 0,
+            active_sessions: count,
             max_capacity: 1024,
             service_name: self.service_name.clone(),
         }
@@ -385,6 +398,310 @@ pub struct BlackboardStats {
     pub active_sessions: usize,
     pub max_capacity: usize,
     pub service_name: String,
+}
+
+// ============================================================================
+// Capability Blackboard Extension
+// ============================================================================
+// The following provides a higher-level capability registry for AgentCards,
+// using a separate iceoryx2 blackboard service keyed by agent_id hash.
+// This enables the Orchestrator to discover agent capabilities at runtime
+// rather than relying on filesystem scanning.
+
+/// Registry for AgentCard capability advertisements.
+///
+/// Uses a separate iceoryx2 blackboard service keyed by agent_id hash
+/// (u64). Each entry is a 192-byte AgentCard from the `a2a` module.
+///
+/// The Orchestrator scans this registry to find the best agent for a
+/// delegated task using semantic similarity + pressure scoring + skill
+/// verification.
+pub struct CapabilityRegistry {
+    _node: Arc<Node<ipc::Service>>,
+    service: PortFactory<ipc::Service, u64>,
+    service_name: String,
+    registered_ids: Arc<RwLock<HashSet<u64>>>,
+}
+
+impl CapabilityRegistry {
+    /// Creates a new capability registry for AgentCard advertisements.
+    ///
+    /// `max_agents` controls the maximum number of concurrent agent registrations.
+    /// Each agent occupies one slot keyed by its FNV-1a hash.
+    pub fn new(service_name: &str, max_agents: usize) -> Result<Self, SwarmIpcError> {
+        if service_name.is_empty() || service_name.len() > 255 {
+            return Err(SwarmIpcError::InvalidServiceName(format!(
+                "Service name must be 1-255 characters, got {}",
+                service_name.len()
+            )));
+        }
+        if max_agents == 0 || max_agents > 128 {
+            return Err(SwarmIpcError::InvalidServiceName(format!(
+                "max_agents must be 1-128, got {}",
+                max_agents
+            )));
+        }
+
+        let node = NodeBuilder::new()
+            .create::<ipc::Service>()
+            .map_err(|e| SwarmIpcError::NodeCreation(e.to_string()))?;
+
+        let base_name = service_name.to_string();
+        let mut attempt: u32 = 0;
+        let max_attempts: u32 = 5;
+
+        let service = loop {
+            let candidate = if attempt == 0 {
+                base_name.clone()
+            } else {
+                format!("{}_{}", base_name, attempt)
+            };
+
+            let iox_name: iceoryx2::prelude::ServiceName = candidate.as_str().try_into().map_err(|e: iceoryx2::service::service_name::ServiceNameError| {
+                SwarmIpcError::ServiceCreation(e.to_string())
+            })?;
+
+            match node
+                .service_builder(&iox_name)
+                .blackboard_creator::<u64>()
+                .max_readers(1024)
+                .max_nodes(10)
+                .create()
+            {
+                Ok(svc) => break svc,
+                Err(e) if attempt < max_attempts => {
+                    attempt += 1;
+                    warn!(
+                        "CapabilityRegistry '{}' creation failed (attempt {}/{}), retrying as '{}': {}",
+                        base_name, attempt, max_attempts, candidate, e
+                    );
+                }
+                Err(e) => {
+                    return Err(SwarmIpcError::ServiceCreation(format!(
+                        "CapabilityRegistry '{}' creation failed after {} attempts: {}",
+                        base_name, max_attempts + 1, e
+                    )));
+                }
+            }
+        };
+
+        info!(
+            "CapabilityRegistry '{}' initialized (max_agents={})",
+            base_name, max_agents
+        );
+
+        Ok(Self {
+            _node: Arc::new(node),
+            service,
+            service_name: base_name,
+            registered_ids: Arc::new(RwLock::new(HashSet::new())),
+        })
+    }
+
+    /// Registers or updates an AgentCard for the given agent_id.
+    pub fn register_agent(
+        &self,
+        agent_id: u64,
+        card: &crate::a2a::agent_card::AgentCard,
+    ) -> Result<(), SwarmIpcError> {
+        let writer = self.service.writer_builder().create().map_err(|e| {
+            SwarmIpcError::AccessViolation(format!("Failed to create writer: {}", e))
+        })?;
+
+        let entry = writer.entry::<AgentCardCopy>(&agent_id)
+            .map_err(|e| SwarmIpcError::AccessViolation(format!(
+                "Agent {} not found in registry: {}", agent_id, e
+            )))?;
+
+        entry.update_with_copy(AgentCardCopy::from_agent_card(*card));
+
+        // Track the registered agent ID for iteration
+        if let Ok(mut ids) = self.registered_ids.write() {
+            ids.insert(agent_id);
+        }
+
+        debug!(agent_id = %agent_id, "Agent registered in capability registry");
+        Ok(())
+    }
+
+    /// Reads an AgentCard for the given agent_id.
+    pub fn get_agent(&self, agent_id: u64) -> Result<crate::a2a::agent_card::AgentCard, SwarmIpcError> {
+        let reader = self.service.reader_builder().create().map_err(|e| {
+            SwarmIpcError::AccessViolation(format!("Failed to create reader: {}", e))
+        })?;
+
+        if let Ok(entry) = reader.entry::<AgentCardCopy>(&agent_id) {
+            let card_copy = entry.get();
+            Ok(card_copy.to_agent_card())
+        } else {
+            Err(SwarmIpcError::AccessViolation(format!(
+                "Agent {} not found in capability registry '{}'",
+                agent_id, self.service_name
+            )))
+        }
+    }
+
+    /// Returns true if the given agent_id is registered.
+    pub fn has_agent(&self, agent_id: u64) -> bool {
+        let Ok(reader) = self.service.reader_builder().create() else {
+            return false;
+        };
+        reader
+            .entry::<AgentCardCopy>(&agent_id)
+            .is_ok()
+    }
+
+    /// Removes an agent from the registry.
+    pub fn unregister_agent(&self, agent_id: u64) -> Result<(), SwarmIpcError> {
+        let default_card = crate::a2a::agent_card::AgentCard::new([0u8; 32], "");
+        self.register_agent(agent_id, &default_card)?;
+        if let Ok(mut ids) = self.registered_ids.write() {
+            ids.remove(&agent_id);
+        }
+        debug!(agent_id = %agent_id, "Agent unregistered from capability registry");
+        Ok(())
+    }
+
+    /// Finds the best agent for a given task using semantic matching.
+    ///
+    /// Scans all registered AgentCards and returns the agent_id with the highest
+    /// composite score: `(semantic_similarity * 0.7) + ((1.0 - pressure) * 0.3)`.
+    ///
+    /// Only considers agents that:
+    /// - Are active (`is_active == true`)
+    /// - Have pressure < 0.9 (not overloaded)
+    /// - Pass the required skills check (bitwise AND)
+    ///
+    /// Returns `None` if no suitable agent is found.
+    pub fn find_best_agent(
+        &self,
+        required_skills: u128,
+        semantic_similarity_fn: &dyn Fn(&crate::a2a::agent_card::AgentCard) -> f32,
+    ) -> Option<(u64, crate::a2a::agent_card::AgentCard)> {
+        let reader = match self.service.reader_builder().create() {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
+
+        let mut best: Option<(u64, crate::a2a::agent_card::AgentCard, f32)> = None;
+
+        let ids = match self.registered_ids.read() {
+            Ok(ids) => ids,
+            Err(_) => return None,
+        };
+
+        for agent_id in ids.iter() {
+            if let Ok(entry) = reader.entry::<AgentCardCopy>(agent_id) {
+                let card = entry.get().to_agent_card();
+                if !card.is_available() {
+                    continue;
+                }
+                if !card.has_skills(required_skills) {
+                    continue;
+                }
+                let similarity = semantic_similarity_fn(&card);
+                let score = card.match_score(similarity, required_skills);
+                if best.as_ref().is_none_or(|(_, _, s)| score > *s) {
+                    best = Some((*agent_id, card, score));
+                }
+            }
+        }
+
+        best.map(|(id, card, _)| (id, card))
+    }
+
+    /// Returns the service name for this registry.
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+}
+
+impl Drop for CapabilityRegistry {
+    fn drop(&mut self) {
+        info!(
+            "Shutting down capability registry '{}'",
+            self.service_name
+        );
+    }
+}
+
+/// Wrapper to enable iceoryx2 blackboard storage of AgentCard.
+/// iceoryx2 requires `ZeroCopySend` which is unsafe to implement directly
+/// for AgentCard due to its padding fields. This wrapper provides a
+/// `#[derive(ZeroCopySend)]` compatible representation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, ZeroCopySend)]
+struct AgentCardCopy {
+    pub data: [u8; std::mem::size_of::<crate::a2a::agent_card::AgentCard>()],
+}
+
+impl Default for AgentCardCopy {
+    fn default() -> Self {
+        Self {
+            data: [0u8; std::mem::size_of::<crate::a2a::agent_card::AgentCard>()],
+        }
+    }
+}
+
+impl AgentCardCopy {
+    fn from_agent_card(card: crate::a2a::agent_card::AgentCard) -> Self {
+        let mut data = [0u8; std::mem::size_of::<crate::a2a::agent_card::AgentCard>()];
+        let card_bytes = unsafe {
+            std::slice::from_raw_parts(
+                &card as *const _ as *const u8,
+                std::mem::size_of::<crate::a2a::agent_card::AgentCard>(),
+            )
+        };
+        data.copy_from_slice(card_bytes);
+        Self { data }
+    }
+
+    fn to_agent_card(self) -> crate::a2a::agent_card::AgentCard {
+        let mut card = crate::a2a::agent_card::AgentCard::new([0u8; 32], "");
+        let card_bytes = unsafe {
+            std::slice::from_raw_parts_mut(
+                &mut card as *mut _ as *mut u8,
+                std::mem::size_of::<crate::a2a::agent_card::AgentCard>(),
+            )
+        };
+        card_bytes.copy_from_slice(&self.data);
+        card
+    }
+}
+
+#[cfg(test)]
+mod capability_registry_tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_card_copy_roundtrip() {
+        let original = crate::a2a::agent_card::AgentCard::new([1u8; 32], "test-agent");
+        let copy = AgentCardCopy::from_agent_card(original);
+        let restored = copy.to_agent_card();
+        assert_eq!(original.agent_id, restored.agent_id);
+        assert_eq!(original.name, restored.name);
+    }
+
+    #[test]
+    #[ignore] // Requires iceoryx2 runtime environment
+    fn test_capability_registry_creation() {
+        let registry = CapabilityRegistry::new("test_cap_registry", 128);
+        assert!(registry.is_ok());
+    }
+
+    #[test]
+    fn test_capability_registry_invalid_name() {
+        let result = CapabilityRegistry::new("", 128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_capability_registry_invalid_max_agents() {
+        let result = CapabilityRegistry::new("test", 0);
+        assert!(result.is_err());
+        let result = CapabilityRegistry::new("test", 256);
+        assert!(result.is_err());
+    }
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ const DEDUP_WINDOW_SIZE: usize = 100;
 const DEFAULT_VECTOR_DIM: usize = 384;
 
 /// Maximum entries to retrieve per collection query.
+#[allow(dead_code)]
 const MAX_BATCH_SIZE: usize = 100_000;
 
 /// Maps an agent_id to a CortexaDB collection name.
@@ -122,7 +123,7 @@ impl Storage {
     /// within a sliding window of `DEDUP_WINDOW_SIZE` entries per partition.
     pub fn append_chat(&self, agent_id: &str, msg: &ChatMessage) -> Result<(), SavantError> {
         let coll = collection_name(agent_id);
-        let payload = serde_json::to_string(msg).map_err(|e| SavantError::SerializationError(e))?;
+        let payload = serde_json::to_string(msg).map_err(SavantError::SerializationError)?;
 
         // Compute content hash for deduplication
         let content_hash = blake3::hash(msg.content.as_bytes()).to_hex().to_string();

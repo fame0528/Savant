@@ -14,7 +14,7 @@ pub mod arbiter;
 mod async_backend;
 pub mod daily_log;
 pub mod distillation;
-mod engine;
+pub mod engine;
 pub mod entities;
 mod error;
 mod lsm_engine;
@@ -27,8 +27,9 @@ mod vector_engine;
 
 pub use async_backend::AsyncMemoryBackend;
 pub use daily_log::{DailyLog, LogEntry, LogPriority};
+pub use distillation::{DistilledTriplet, TripletClaims, extract_triplets_deterministic};
 pub use engine::MemoryEngine;
-pub use entities::{Entity, EntityExtractor, EntityType};
+pub use entities::{Entity, EntityExtractor, EntityRelation, EntityResolver, EntityType, RelationExtractor};
 pub use error::MemoryError;
 pub use lsm_engine::{LsmStorageEngine, StorageStats};
 pub use models::{
@@ -37,8 +38,8 @@ pub use models::{
     TurnState,
 };
 pub use notifications::{MemoryNotification, NotificationChannel};
-pub use promotion::{PersonalityTraits, PromotionEngine, PromotionMetrics};
-pub use reflective::{Concept, ReflectiveMemory, Relation};
+pub use promotion::{PersonalityTraits, PromotionEngine, PromotionMetrics, PersonalityDelta};
+pub use reflective::{Concept, GraphNamespace, NamespaceGraph, QueryIntent, ReflectiveMemory, Relation, resolve_graph_intent, intent_to_namespace};
 pub use savant_core::utils::embeddings::EmbeddingService;
 // Safety verification module is conditionally compiled with kani feature
 #[cfg(feature = "kani")]

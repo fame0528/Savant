@@ -101,20 +101,11 @@ pub fn classify_error(error: &SavantError) -> ErrorCategory {
 // ============================================================================
 
 /// Tracks per-key cooldown with exponential backoff.
+#[derive(Default)]
 struct CooldownState {
     failure_count: u32,
     cooldown_start: Option<Instant>,
     resume_at: Option<Instant>,
-}
-
-impl Default for CooldownState {
-    fn default() -> Self {
-        Self {
-            failure_count: 0,
-            cooldown_start: None,
-            resume_at: None,
-        }
-    }
 }
 
 /// Helper: recover from poisoned RwLock.
@@ -204,6 +195,12 @@ impl CooldownTracker {
         let multiplier = 2u64.pow(exponent);
         let seconds = 5 * 3600 * multiplier;
         Duration::from_secs(seconds.min(86400))
+    }
+}
+
+impl Default for CooldownTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

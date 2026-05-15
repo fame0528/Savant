@@ -1,5 +1,7 @@
 //! MCP server integration tests - auth, rate limiting, circuit breaker.
 
+#![allow(clippy::disallowed_methods)]
+
 use savant_mcp::circuit::CircuitBreaker;
 use std::collections::HashMap;
 use std::hash::Hasher;

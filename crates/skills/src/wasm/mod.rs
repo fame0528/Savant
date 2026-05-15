@@ -209,6 +209,7 @@ impl savant_core::traits::Tool for WasmSkillExecutor {
     }
 }
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use savant_core::traits::Tool;

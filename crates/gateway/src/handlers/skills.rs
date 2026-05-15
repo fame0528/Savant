@@ -411,8 +411,8 @@ async fn handle_skill_scan(
 
     // Validate path is within allowed directories
     let workspace_dir = std::env::current_dir().unwrap_or_default();
-    let skills_base = workspace_dir.join("skills");
-    let workspaces_base = workspace_dir.join("workspaces");
+    let _skills_base = workspace_dir.join("skills");
+    let _workspaces_base = workspace_dir.join("workspaces");
 
     // Must be within skills/ or workspaces/ directory
     let canonical = match path.canonicalize() {

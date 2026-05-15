@@ -11,6 +11,8 @@ members = [
     "crates/ipc",
     "crates/cognitive",
     "crates/memory", "crates/dream", "crates/panopticon",
+    "crates/obsidian",
+    "crates/integrations",
     "crates/security",
     "crates/echo",
     "crates/browser",
@@ -57,6 +59,7 @@ savant_canvas = { path = "crates/canvas" }
 savant_panopticon = { path = "crates/panopticon" }
 savant_browser = { path = "crates/browser" }
 savant_toolforge = { path = "crates/toolforge" }
+savant_obsidian = { path = "crates/obsidian" }
 dashmap = "6.1.0"
 libc = "0.2"
 num_cpus = "1.16"

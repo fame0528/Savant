@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -127,7 +128,7 @@ impl TwitchAdapter {
                             {
                                 if p["recipient"]
                                     .as_str()
-                                    .map_or(false, |r| r.starts_with("twitch:"))
+                                    .is_some_and(|r| r.starts_with("twitch:"))
                                     && p["role"].as_str() == Some("Assistant")
                                 {
                                     let text = p["content"].as_str().unwrap_or("");
@@ -185,6 +186,7 @@ impl TwitchAdapter {
                                     agent_id: None,
                                     session_id: Some(sid),
                                     channel: savant_core::types::AgentOutputChannel::Chat,
+                                    images: Vec::new(),
                                 };
                                 let frame = EventFrame {
                                     event_type: "chat.message".into(),

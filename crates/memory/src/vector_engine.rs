@@ -119,6 +119,9 @@ pub struct VectorConfig {
     pub hnsw_ef_search: usize,
     /// Whether to use 32x binary quantization
     pub use_quantization: bool,
+    /// Maximum number of vectors the HNSW index can hold.
+    /// Controls pre-allocated capacity. The index grows dynamically up to this limit.
+    pub max_elements: usize,
 }
 
 impl Default for VectorConfig {
@@ -129,6 +132,7 @@ impl Default for VectorConfig {
             hnsw_ef_construction: 200,
             hnsw_ef_search: 50,
             use_quantization: true,
+            max_elements: 1_000_000, // Sufficient for single-machine agent memory
         }
     }
 }
@@ -188,7 +192,7 @@ impl SemanticVectorEngine {
             m: config.hnsw_m,
             ef_construction: config.hnsw_ef_construction,
             ef_search: config.hnsw_ef_search,
-            max_elements: 1_000_000, // Default for now
+            max_elements: config.max_elements,
         };
 
         // Create HNSW index with Cosine distance and SIMD acceleration

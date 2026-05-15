@@ -43,7 +43,7 @@ pub struct AuthenticatedSession {
 /// Returns `SavantError::AuthError` if authentication fails for any reason.
 pub async fn authenticate(
     frame: &RequestFrame,
-    dashboard_api_key: Option<&str>,
+    _dashboard_api_key: Option<&str>,
 ) -> Result<AuthenticatedSession, SavantError> {
     // Check for dashboard API key authentication
     if let savant_core::types::RequestPayload::Auth(auth_str) = &frame.payload {
@@ -165,6 +165,7 @@ pub async fn authenticate(
 
 /// Constant-time byte comparison to prevent timing attacks on API key validation.
 /// Returns true if both slices are equal, with execution time independent of where they differ.
+#[allow(dead_code)]
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -417,6 +418,7 @@ mod tests {
                 agent_id: None,
                 session_id: None,
                 channel: savant_core::types::AgentOutputChannel::default(),
+                images: Vec::new(),
             });
         let payload_str = serde_json::to_string(&payload).unwrap();
         let message = format!("req-cm:{}:{}", timestamp, payload_str);

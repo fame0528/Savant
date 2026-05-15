@@ -308,6 +308,207 @@ pub enum ConsensusResult {
     Pending,
 }
 
+// ============================================================================
+// Delegation Consensus Extension
+// ============================================================================
+// Provides high-level methods for initiating and tracking consensus votes
+// on delegated tasks. When a DelegationTask has requires_consensus=true,
+// the Orchestrator initiates a vote before the task is executed.
+
+/// A consensus proposal for a delegated task.
+#[derive(Debug, Clone)]
+pub struct DelegationProposal {
+    pub task_id: [u8; 16],
+    pub target_agent_id: [u8; 32],
+    pub description: String,
+    pub proposal_type: DelegationProposalType,
+}
+
+/// Type of delegation proposal requiring consensus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelegationProposalType {
+    /// Destructive file operation (delete, move, edit)
+    DestructiveEdit = 1,
+    /// Security-sensitive operation (credential access, network call)
+    SecurityOperation = 2,
+    /// Tool synthesis (new WASM tool creation)
+    ToolSynthesis = 3,
+}
+
+impl DelegationProposal {
+    pub fn new(
+        task_id: [u8; 16],
+        target_agent_id: [u8; 32],
+        description: &str,
+        proposal_type: DelegationProposalType,
+    ) -> Self {
+        Self {
+            task_id,
+            target_agent_id,
+            description: description.to_string(),
+            proposal_type,
+        }
+    }
+
+    /// Computes the proposal hash for the active_proposal_hash field.
+    pub fn hash(&self) -> u64 {
+        use xxhash_rust::xxh3::xxh3_64;
+        let mut input = Vec::new();
+        input.extend_from_slice(&self.task_id);
+        input.extend_from_slice(&self.target_agent_id);
+        input.extend_from_slice(self.description.as_bytes());
+        input.push(self.proposal_type as u8);
+        xxh3_64(&input)
+    }
+}
+
+/// High-level consensus operations for delegation tasks.
+pub struct DelegationConsensus<'a> {
+    collective: &'a CollectiveBlackboard,
+}
+
+impl<'a> DelegationConsensus<'a> {
+    pub fn new(collective: &'a CollectiveBlackboard) -> Self {
+        Self { collective }
+    }
+
+    /// Initiates a consensus vote for a delegated task.
+    ///
+    /// Returns the proposal hash on success. Agents should then cast their votes
+    /// via `cast_delegation_vote()`.
+    pub fn propose(&self, proposal: &DelegationProposal) -> Result<u64, SwarmIpcError> {
+        let mut state = self.collective.read_global_state()?;
+        let hash = proposal.hash();
+
+        state.active_proposal_hash = hash;
+        state.proposal_type = proposal.proposal_type as u8;
+        // Reset vote masks
+        state.approve_mask = [0; 2];
+        state.veto_mask = [0; 2];
+
+        self.collective.publish_global_state(state)?;
+        info!(
+            task_id = %hex_encode(&proposal.task_id),
+            proposal_type = %proposal.proposal_type as u8,
+            "Delegation consensus proposal initiated"
+        );
+        Ok(hash)
+    }
+
+    /// Casts a vote on the active delegation proposal.
+    pub fn cast_vote(
+        &self,
+        agent_index: u8,
+        approve: bool,
+    ) -> Result<(), SwarmIpcError> {
+        if agent_index == 0 || agent_index > 128 {
+            return Err(SwarmIpcError::AccessViolation(format!(
+                "Invalid agent index: {}",
+                agent_index
+            )));
+        }
+        self.collective.cast_vote(agent_index, approve)
+    }
+
+    /// Checks the current consensus status of the active proposal.
+    pub fn check_consensus(&self) -> ConsensusResult {
+        self.collective.check_consensus()
+    }
+
+    /// Waits for consensus to be reached, polling at the given interval.
+    ///
+    /// Returns `Ok(ConsensusResult::Approved)` if consensus is reached,
+    /// or `Err` if the timeout expires or a veto is detected.
+    pub async fn await_consensus(
+        &self,
+        poll_interval_ms: u64,
+        timeout_ms: u64,
+    ) -> Result<ConsensusResult, ConsensusTimeoutError> {
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let interval = std::time::Duration::from_millis(poll_interval_ms);
+
+        loop {
+            let result = self.check_consensus();
+            match result {
+                ConsensusResult::Approved => return Ok(result),
+                ConsensusResult::Vetoed => {
+                    return Err(ConsensusTimeoutError::Vetoed);
+                }
+                ConsensusResult::Pending => {
+                    if start.elapsed() >= timeout {
+                        return Err(ConsensusTimeoutError::TimedOut {
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                        });
+                    }
+                    tokio::time::sleep(interval).await;
+                }
+            }
+        }
+    }
+
+    /// Clears the active proposal (after execution or cancellation).
+    pub fn clear_proposal(&self) -> Result<(), SwarmIpcError> {
+        let mut state = self.collective.read_global_state()?;
+        state.active_proposal_hash = 0;
+        state.proposal_type = 0;
+        state.approve_mask = [0; 2];
+        state.veto_mask = [0; 2];
+        self.collective.publish_global_state(state)?;
+        Ok(())
+    }
+}
+
+/// Errors that can occur during delegation consensus.
+#[derive(Debug, thiserror::Error)]
+pub enum ConsensusTimeoutError {
+    #[error("Delegation consensus was vetoed by an agent")]
+    Vetoed,
+    #[error("Delegation consensus timed out after {elapsed_ms}ms")]
+    TimedOut { elapsed_ms: u64 },
+}
+
+/// Utility: encode bytes as hex string for logging.
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+#[cfg(test)]
+mod delegation_consensus_tests {
+    use super::*;
+
+    #[test]
+    fn test_delegation_proposal_hash() {
+        let p1 = DelegationProposal::new(
+            [1u8; 16],
+            [2u8; 32],
+            "test proposal",
+            DelegationProposalType::DestructiveEdit,
+        );
+        let p2 = DelegationProposal::new(
+            [1u8; 16],
+            [2u8; 32],
+            "test proposal",
+            DelegationProposalType::DestructiveEdit,
+        );
+        let p3 = DelegationProposal::new(
+            [3u8; 16],
+            [2u8; 32],
+            "different",
+            DelegationProposalType::SecurityOperation,
+        );
+        assert_eq!(p1.hash(), p2.hash());
+        assert_ne!(p1.hash(), p3.hash());
+    }
+
+    #[test]
+    fn test_delegation_proposal_type_values() {
+        assert_eq!(DelegationProposalType::DestructiveEdit as u8, 1);
+        assert_eq!(DelegationProposalType::SecurityOperation as u8, 2);
+        assert_eq!(DelegationProposalType::ToolSynthesis as u8, 3);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

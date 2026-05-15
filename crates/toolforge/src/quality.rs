@@ -15,18 +15,22 @@ pub struct QualityResult {
     pub failures: Vec<QualityFailure>,
 }
 
+#[allow(clippy::disallowed_methods)]
 static STUB_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(todo!\(\)|unimplemented!\(\)|//\s*todo|FIXME|placeholder|\[STUB\]|__STUB__|TBD)")
         .expect("Hardcoded stub detection regex is valid")
 });
 
+#[allow(clippy::disallowed_methods)]
 static NAMING_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$").expect("Valid naming regex"));
 
+#[allow(clippy::disallowed_methods)]
 static ACTIONABLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^\s*(\d+\.\s|[-*]\s|```)").expect("Valid actionable regex")
 });
 
+#[allow(clippy::disallowed_methods)]
 static VERSION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Valid semver regex"));
 
@@ -131,9 +135,9 @@ impl QualityGate {
 
 fn strip_frontmatter(body: &str) -> String {
     let trimmed = body.trim();
-    if trimmed.starts_with("---") {
-        if let Some(end) = trimmed[3..].find("---") {
-            return trimmed[3 + end + 3..].trim().to_string();
+    if let Some(stripped) = trimmed.strip_prefix("---") {
+        if let Some(end) = stripped.find("---") {
+            return stripped[end + 3..].trim().to_string();
         }
     }
     trimmed.to_string()
@@ -141,9 +145,10 @@ fn strip_frontmatter(body: &str) -> String {
 
 fn keyword_overlap(name: &str, description: &str, existing: &str) -> f64 {
     let combined = format!("{name} {description}").to_lowercase();
-    let words_a: HashSet<&str> = combined
+    let words_a: HashSet<String> = combined
         .split_whitespace()
         .filter(|w| w.len() > 2)
+        .map(|w| w.to_string())
         .collect();
     let words_b: HashSet<String> = existing
         .split('-')
@@ -158,7 +163,7 @@ fn keyword_overlap(name: &str, description: &str, existing: &str) -> f64 {
 
     let intersection = words_a
         .iter()
-        .filter(|w| words_b.contains(&w.to_string()))
+        .filter(|w| words_b.contains(w.as_str()))
         .count();
     let union = words_a.len().min(words_b.len());
     intersection as f64 / union as f64

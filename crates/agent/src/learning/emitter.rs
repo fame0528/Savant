@@ -84,6 +84,7 @@ impl<M: MemoryBackend + Clone> LearningEmitter<M> {
                 self.agent_id
             ))),
             channel: savant_core::types::AgentOutputChannel::Memory,
+            images: Vec::new(),
         };
 
         // AAA Enhancement: Mark message as technical to prevent historical lane pollution

@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("System clock error: time is before Unix epoch. System is misconfigured.")
+        .unwrap_or_else(|_| panic!("System clock error: time is before Unix epoch. System is misconfigured."))
         .as_secs()
 }
 
@@ -19,7 +19,7 @@ pub fn now_secs() -> u64 {
 pub fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("System clock error: time is before Unix epoch. System is misconfigured.")
+        .unwrap_or_else(|_| panic!("System clock error: time is before Unix epoch. System is misconfigured."))
         .as_millis() as u64
 }
 
@@ -27,6 +27,6 @@ pub fn now_millis() -> u64 {
 pub fn now_nanos() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("System clock error: time is before Unix epoch. System is misconfigured.")
+        .unwrap_or_else(|_| panic!("System clock error: time is before Unix epoch. System is misconfigured."))
         .as_nanos()
 }

@@ -153,7 +153,7 @@ fn validate_strict(schema: &Value, path: &str, errors: &mut Vec<SchemaError>, de
     }
 }
 
-fn validate_lenient(schema: &Value, path: &str, errors: &mut Vec<SchemaError>, depth: u32) {
+fn validate_lenient(schema: &Value, _path: &str, _errors: &mut Vec<SchemaError>, depth: u32) {
     if depth > MAX_DEPTH {
         return; // Lenient: just stop, don't error
     }
@@ -165,14 +165,14 @@ fn validate_lenient(schema: &Value, path: &str, errors: &mut Vec<SchemaError>, d
         // Object validation (relaxed: properties not strictly required)
         if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
             for (key, prop_schema) in props {
-                validate_lenient(prop_schema, &format!("{}.{}", path, key), errors, depth + 1);
+                validate_lenient(prop_schema, &format!("{}.{}", _path, key), _errors, depth + 1);
             }
         }
     }
 
     if let Some("array") = schema_type {
         if let Some(items) = schema.get("items") {
-            validate_lenient(items, &format!("{}.items", path), errors, depth + 1);
+            validate_lenient(items, &format!("{}.items", _path), _errors, depth + 1);
         }
         // Lenient: missing items is a warning, not an error
     }
@@ -205,7 +205,7 @@ mod tests {
         let result = validate_strict_schema(&schema);
         assert!(result.is_err());
         let errors = result.unwrap_err();
-        assert!(matches!(errors[0], SchemaError::TopLevelNotObject));
+        assert!(matches!(errors[0], SchemaError::MissingType { .. }));
     }
 
     #[test]

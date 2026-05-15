@@ -187,12 +187,9 @@ impl HookRegistry {
             for reg in event_handlers {
                 let handler = reg.handler.clone();
                 // Catch panics — hooks must never crash the agent
-                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    let rt = tokio::runtime::Handle::current();
-                    rt.block_on(handler.handle(context))
-                }));
+                let result = handler.handle(context).await;
                 match result {
-                    Ok(HookResult::Cancel(reason)) => {
+                    HookResult::Cancel(reason) => {
                         tracing::info!(
                             "[HOOK] Modifying hook cancelled {}: {}",
                             format!("{:?}", context.event),
@@ -200,20 +197,11 @@ impl HookRegistry {
                         );
                         return HookResult::Cancel(reason);
                     }
-                    Ok(HookResult::Modified(content)) => {
+                    HookResult::Modified(content) => {
                         context.content = Some(content.clone());
                         return HookResult::Modified(content);
                     }
-                    Ok(HookResult::Unchanged) => continue,
-                    Err(e) => {
-                        let msg = e
-                            .downcast_ref::<&str>()
-                            .map(|s| s.to_string())
-                            .or_else(|| e.downcast_ref::<String>().cloned())
-                            .unwrap_or_else(|| "unknown panic".to_string());
-                        tracing::error!("[HOOK] Modifying hook panicked: {}", msg);
-                        // Continue to next hook on panic
-                    }
+                    HookResult::Unchanged => continue,
                 }
             }
         }
@@ -354,6 +342,7 @@ impl VoidHookHandler for SessionEndHook {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

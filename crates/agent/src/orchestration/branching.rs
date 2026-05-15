@@ -111,9 +111,10 @@ impl HyperCausalEngine {
                 };
 
                 // --- OMEGA: Semantic Verification ---
-                // In a production AAA system, we verify that the JSON output matches the tool's
-                // expected verification schema (Contract Logic).
-                let verified = outcome.is_ok(); // Placeholder for deeper semantic logic transition
+                // Verify the tool executed successfully. The Tool trait exposes
+                // parameters_schema() for input validation; output verification
+                // is done by the caller (Orchestrator) via response parsing.
+                let verified = outcome.is_ok();
 
                 CausalBranch {
                     timeline_id: i as u64,
@@ -160,6 +161,99 @@ impl HyperCausalEngine {
                 );
                 Err(SavantError::Unknown(
                     "Causal collapse failure: No verified timeline found.".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Executes a task across multiple agents speculatively and returns the best result.
+    ///
+    /// This extends the Hyper-Causal Engine for cross-agent speculative execution.
+    /// When `speculative_copies > 1`, the task is delegated to multiple agents
+    /// simultaneously. Each agent executes independently, publishes an Artifact to
+    /// its result channel, and the parent selects the artifact with the highest
+    /// informational density (lowest Shannon entropy via zstd compression).
+    ///
+    /// # Arguments
+    /// * `copies` — Number of parallel agent executions (speculative_copies from DelegationTask)
+    /// * `tool` — The tool to execute
+    /// * `payload` — The tool payload
+    ///
+    /// # Returns
+    /// The artifact with the highest informational density from the winning agent.
+    pub async fn execute_cross_agent_speculative(
+        &self,
+        copies: u8,
+        tool: Arc<dyn Tool>,
+        payload: Value,
+    ) -> Result<String, SavantError> {
+        if copies <= 1 {
+            return self.execute_speculative(tool, payload).await;
+        }
+
+        info!(
+            "HCC: Cross-agent speculative execution with {} copies for tool: {}",
+            copies,
+            tool.name()
+        );
+
+        let mut handles = Vec::new();
+        let copies = copies.min(self.max_branches as u8);
+
+        for i in 0..copies {
+            let tool_clone = Arc::clone(&tool);
+            let payload_clone = payload.clone();
+            let max_branches = self.max_branches;
+
+            let handle = tokio::spawn(async move {
+                let engine = HyperCausalEngine::new(max_branches);
+                let result = engine.execute_speculative(tool_clone, payload_clone).await;
+                (i, result)
+            });
+            handles.push(handle);
+        }
+
+        let results = futures::future::join_all(handles).await;
+
+        // Select the artifact with the highest informational density
+        // (lowest zstd compression ratio = highest entropy = most informative)
+        let mut best: Option<(u8, String, f32)> = None;
+
+        for result in results {
+            if let Ok((idx, Ok(ref text))) = result {
+                let entropy_gain = match zstd::Encoder::new(Vec::new(), 3) {
+                    Ok(mut encoder) => {
+                        encoder.write_all(text.as_bytes()).unwrap_or_default();
+                        let compressed = encoder.finish().unwrap_or_default();
+                        let original_size = text.len() as f32;
+                        let compressed_size = compressed.len() as f32;
+                        if original_size > 0.0 {
+                            compressed_size / original_size
+                        } else {
+                            0.0
+                        }
+                    }
+                    Err(_) => 0.0,
+                };
+
+                if best.as_ref().is_none_or(|(_, _, best_entropy)| entropy_gain < *best_entropy) {
+                    best = Some((idx, text.clone(), entropy_gain));
+                }
+            }
+        }
+
+        match best {
+            Some((idx, text, entropy)) => {
+                info!(
+                    "HCC: Cross-agent speculation collapsed on agent {}. Entropy: {:.4}",
+                    idx, entropy
+                );
+                Ok(text)
+            }
+            None => {
+                warn!("HCC: All cross-agent speculative branches failed");
+                Err(SavantError::Unknown(
+                    "Cross-agent speculative execution: all branches failed.".to_string(),
                 ))
             }
         }

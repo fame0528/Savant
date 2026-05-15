@@ -26,6 +26,7 @@ pub fn token_count(text: &str) -> usize {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod benches {
     // criterion benchmark stub
 }

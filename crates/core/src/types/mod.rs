@@ -271,6 +271,48 @@ pub struct ChatMessage {
     /// that should go to the insights panel instead of the main chat.
     #[serde(default)]
     pub is_telemetry: bool,
+    /// Base64-encoded image attachments for multimodal models.
+    /// When non-empty, the message is sent as a multimodal request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
+}
+
+impl ChatMessage {
+    /// Creates a new text-only chat message.
+    pub fn new(role: ChatRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            sender: None,
+            recipient: None,
+            agent_id: None,
+            session_id: None,
+            channel: AgentOutputChannel::default(),
+            is_telemetry: false,
+            images: Vec::new(),
+        }
+    }
+
+    /// Creates a new multimodal chat message with base64-encoded images.
+    pub fn with_images(role: ChatRole, content: impl Into<String>, images: Vec<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            sender: None,
+            recipient: None,
+            agent_id: None,
+            session_id: None,
+            channel: AgentOutputChannel::default(),
+            is_telemetry: false,
+            images,
+        }
+    }
+
+    /// Attaches base64-encoded images to this message.
+    pub fn with_images_mut(mut self, images: Vec<String>) -> Self {
+        self.images = images;
+        self
+    }
 }
 
 /// Native provider tool call structure
@@ -317,7 +359,17 @@ pub enum AgentOutputChannel {
 }
 
 /// Model Provider Enum
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// All string conversions use lowercase canonical form:
+/// `"openai"`, `"anthropic"`, `"ollama"`, `"openrouter"`, `"lmstudio"`,
+/// `"groq"`, `"perplexity"`, `"local"`, `"google"`, `"mistral"`,
+/// `"cohere"`, `"together"`, `"deepseek"`, `"azure"`, `"xai"`,
+/// `"fireworks"`, `"novita"`.
+///
+/// `FromStr` accepts any case. `as_str()` returns lowercase.
+/// Serde uses lowercase `rename_all` for consistent TOML/JSON representation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum ModelProvider {
     OpenAi,
     Anthropic,
@@ -327,17 +379,73 @@ pub enum ModelProvider {
     Groq,
     Perplexity,
     Local,
-    // Additional providers
-    Google,    // Gemini models
-    Mistral,   // Mistral AI
-    Cohere,    // Cohere command models
-    Together,  // Together AI
-    Deepseek,  // Deepseek models
-    Azure,     // Azure OpenAI
-    Xai,       // xAI (Grok)
-    Fireworks, // Fireworks AI
-    Novita,    // Novita AI
-               // Add more providers here as needed
+    Google,
+    Mistral,
+    Cohere,
+    Together,
+    Deepseek,
+    Azure,
+    Xai,
+    Fireworks,
+    Novita,
+}
+
+impl ModelProvider {
+    /// Returns the canonical lowercase string for this provider.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModelProvider::OpenAi => "openai",
+            ModelProvider::Anthropic => "anthropic",
+            ModelProvider::Ollama => "ollama",
+            ModelProvider::OpenRouter => "openrouter",
+            ModelProvider::LmStudio => "lmstudio",
+            ModelProvider::Groq => "groq",
+            ModelProvider::Perplexity => "perplexity",
+            ModelProvider::Local => "local",
+            ModelProvider::Google => "google",
+            ModelProvider::Mistral => "mistral",
+            ModelProvider::Cohere => "cohere",
+            ModelProvider::Together => "together",
+            ModelProvider::Deepseek => "deepseek",
+            ModelProvider::Azure => "azure",
+            ModelProvider::Xai => "xai",
+            ModelProvider::Fireworks => "fireworks",
+            ModelProvider::Novita => "novita",
+        }
+    }
+}
+
+impl std::str::FromStr for ModelProvider {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "openai" => Ok(ModelProvider::OpenAi),
+            "anthropic" => Ok(ModelProvider::Anthropic),
+            "ollama" => Ok(ModelProvider::Ollama),
+            "openrouter" => Ok(ModelProvider::OpenRouter),
+            "lmstudio" => Ok(ModelProvider::LmStudio),
+            "groq" => Ok(ModelProvider::Groq),
+            "perplexity" => Ok(ModelProvider::Perplexity),
+            "local" => Ok(ModelProvider::Local),
+            "google" => Ok(ModelProvider::Google),
+            "mistral" => Ok(ModelProvider::Mistral),
+            "cohere" => Ok(ModelProvider::Cohere),
+            "together" => Ok(ModelProvider::Together),
+            "deepseek" => Ok(ModelProvider::Deepseek),
+            "azure" => Ok(ModelProvider::Azure),
+            "xai" => Ok(ModelProvider::Xai),
+            "fireworks" => Ok(ModelProvider::Fireworks),
+            "novita" => Ok(ModelProvider::Novita),
+            other => Err(format!("Unknown model provider: '{}'", other)),
+        }
+    }
+}
+
+impl std::fmt::Display for ModelProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 
 /// Agent Identity containing personality and metadata (OpenClaw compatible)
@@ -383,6 +491,29 @@ impl Default for PersonalityTraits {
     }
 }
 
+impl PersonalityTraits {
+    /// Applies a delta, clamping each trait to [0.0, 1.0].
+    pub fn evolve(&self, delta: &PersonalityDelta) -> Self {
+        Self {
+            openness: (self.openness + delta.openness_delta).clamp(0.0, 1.0),
+            conscientiousness: (self.conscientiousness + delta.conscientiousness_delta).clamp(0.0, 1.0),
+            extraversion: (self.extraversion + delta.extraversion_delta).clamp(0.0, 1.0),
+            agreeableness: (self.agreeableness + delta.agreeableness_delta).clamp(0.0, 1.0),
+            neuroticism: (self.neuroticism + delta.neuroticism_delta).clamp(0.0, 1.0),
+        }
+    }
+
+    /// Computes Euclidean distance between this and another PersonalityTraits.
+    pub fn distance(&self, other: &Self) -> f32 {
+        ((self.openness - other.openness).powi(2)
+            + (self.conscientiousness - other.conscientiousness).powi(2)
+            + (self.extraversion - other.extraversion).powi(2)
+            + (self.agreeableness - other.agreeableness).powi(2)
+            + (self.neuroticism - other.neuroticism).powi(2))
+        .sqrt()
+    }
+}
+
 /// A single SOUL.md mutation proposal
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoulMutation {
@@ -398,6 +529,15 @@ pub struct SoulMutation {
     pub proposed_at: i64,
     pub decided_at: Option<i64>,
     pub conversations_triggered: Vec<String>,
+    /// Session IDs and episodic evidence that triggered this mutation (for vault WikiLinks)
+    #[serde(default)]
+    pub source_evidence: Vec<String>,
+    /// blake3 hash of before_content for dedup
+    #[serde(default)]
+    pub before_hash: String,
+    /// OCEAN delta applied by this mutation (if personality-related)
+    #[serde(default)]
+    pub ocean_delta: Option<PersonalityDelta>,
 }
 
 /// Evolution state snapshot for tracking growth
@@ -443,6 +583,43 @@ pub struct AgentConfig {
     /// Evolution state (mutation count, score, stage, cooldowns)
     #[serde(default)]
     pub evolution_state: Option<EvolutionState>,
+}
+
+/// Delta applied to personality traits when a mutation is approved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalityDelta {
+    pub openness_delta: f32,
+    pub conscientiousness_delta: f32,
+    pub extraversion_delta: f32,
+    pub agreeableness_delta: f32,
+    pub neuroticism_delta: f32,
+    pub reason: String,
+    #[serde(default)]
+    pub source_interaction_ids: Vec<String>,
+}
+
+impl PersonalityDelta {
+    pub fn new(reason: String) -> Self {
+        Self {
+            openness_delta: 0.0,
+            conscientiousness_delta: 0.0,
+            extraversion_delta: 0.0,
+            agreeableness_delta: 0.0,
+            neuroticism_delta: 0.0,
+            reason,
+            source_interaction_ids: Vec::new(),
+        }
+    }
+
+    /// Computes Euclidean distance of this delta (for drift checking)
+    pub fn euclidean_distance(&self) -> f32 {
+        (self.openness_delta.powi(2)
+            + self.conscientiousness_delta.powi(2)
+            + self.extraversion_delta.powi(2)
+            + self.agreeableness_delta.powi(2)
+            + self.neuroticism_delta.powi(2))
+        .sqrt()
+    }
 }
 
 /// LLM parameters for fine-tuning agent behavior
@@ -686,7 +863,7 @@ pub struct AgentFileConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
-    /// Override the model provider ("openrouter", "openai", "anthropic", "groq")
+    /// Override the model provider (e.g. "ollama", "openrouter", "anthropic")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
 
@@ -721,6 +898,10 @@ pub struct AgentFileConfig {
     /// OCEAN personality traits (evolvable per-agent)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub personality_traits: Option<PersonalityTraits>,
+
+    /// Evolution state (mutation count, score, stage, cooldowns)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evolution_state: Option<EvolutionState>,
 }
 
 impl AgentFileConfig {
@@ -754,17 +935,9 @@ impl AgentFileConfig {
             base.model = Some(model.clone());
         }
         if let Some(ref provider) = self.model_provider {
-            base.model_provider = match provider.as_str() {
-                "openai" => ModelProvider::OpenAi,
-                "anthropic" => ModelProvider::Anthropic,
-                "groq" => ModelProvider::Groq,
-                _ => {
-                    tracing::warn!(
-                        "Unknown model provider '{}', falling back to OpenRouter",
-                        provider
-                    );
-                    ModelProvider::OpenRouter
-                }
+            match provider.parse::<ModelProvider>() {
+                Ok(p) => base.model_provider = p,
+                Err(e) => tracing::warn!("{}", e),
             };
         }
         if let Some(ref prompt) = self.system_prompt {
@@ -871,6 +1044,7 @@ pub struct SkillManifest {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -965,11 +1139,13 @@ mod tests {
             agent_id: None,
             session_id: None,
             channel: AgentOutputChannel::default(),
+            images: Vec::new(),
         };
         assert!(msg.sender.is_none());
         assert!(msg.recipient.is_none());
         assert!(msg.agent_id.is_none());
         assert_eq!(msg.channel, AgentOutputChannel::Chat);
+        assert!(msg.images.is_empty());
     }
 
     #[test]
@@ -983,6 +1159,7 @@ mod tests {
             agent_id: Some("id-1".into()),
             session_id: Some(SessionId("sess-1".into())),
             channel: AgentOutputChannel::Memory,
+            images: Vec::new(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ChatMessage = serde_json::from_str(&json).unwrap();

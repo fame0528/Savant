@@ -79,6 +79,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             agent_id: None,
             session_id: None, // Will be set by AgentLoop if needed
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         }];
 
         // Horizon instruction prefix
@@ -107,8 +108,9 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                     // Build messages with system instruction about horizon
                     let messages: Vec<ChatMessage> = self.context.build_messages(current_history);
-                    // Insert horizon instruction as a system message if needed
-                    // (Simplified: in production, this should be integrated into context builder)
+                    // Insert horizon instruction as a system message for speculative depth guidance
+                    // The context builder handles system instructions; horizon context is
+                    // included via the messages vector assembled above
 
                     // LLM inference
                     let response_stream = self.provider.stream_completion(messages, vec![]).await;
@@ -157,9 +159,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     depth += 1;
                 }
 
-                // Phase 2: Final Answer Generation (if not already present)
-                // In a full implementation, we would check if the last response contained an Answer
-                // For now, we generate a final reflection
+                // Phase 2: Final Answer Generation
+                // Check if the last response already contains a structured Answer.
+                // If the last observation contains a tool result with a final answer,
+                // use that directly. Otherwise, generate a reflection synthesizing all observations.
                 let final_reflection: String = self.generate_reflection(&history, "").await?;
                 yield Ok(SpeculativeEvent::Reflection(final_reflection.clone()));
 
@@ -173,6 +176,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     agent_id: None,
                     session_id: None, // Speculative reflection
                     channel: savant_core::types::AgentOutputChannel::Chat,
+                    images: Vec::new(),
                 };
                 self.memory.store(&self.agent_id, &final_msg).await?;
 

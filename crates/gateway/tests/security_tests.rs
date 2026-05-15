@@ -23,7 +23,7 @@ fn create_test_state() -> Arc<GatewayState> {
     let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     let storage = Arc::new(
-        Storage::new(std::env::temp_dir().join(format!("gw-sec-{}-{}", pid, unique))).unwrap(),
+        Storage::new(std::env::temp_dir().join(format!("gw-sec-{}-{}", pid, unique)), 100_000).unwrap(),
     );
 
     Arc::new(GatewayState {

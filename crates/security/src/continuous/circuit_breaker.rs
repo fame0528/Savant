@@ -74,6 +74,7 @@ struct TaskTracker {
     api_call_count: AtomicU64,
     cumulative_cost: Arc<RwLock<f32>>,
     config: CircuitBreakerConfig,
+    #[allow(dead_code)]
     start_time: Instant,
 }
 

@@ -26,7 +26,7 @@ pub fn estimate_message_tokens(msg: &ChatMessage) -> usize {
 
 /// Estimate total tokens across all messages.
 pub fn estimate_total_tokens(messages: &[ChatMessage]) -> usize {
-    messages.iter().map(|m| estimate_message_tokens(m)).sum()
+    messages.iter().map(estimate_message_tokens).sum()
 }
 
 /// Context monitor — decides when and how to compact.
@@ -118,6 +118,7 @@ impl Compactor {
                         agent_id: None,
                         session_id: None,
                         channel: savant_core::types::AgentOutputChannel::Chat,
+                        images: Vec::new(),
                     };
                     recent.insert(0, summary_msg);
                 }
@@ -142,6 +143,7 @@ mod tests {
             agent_id: None,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         }
     }
 

@@ -5,7 +5,6 @@ mod paths;
 use paths::SavantPathResolver;
 use savant_agent::orchestration::ignition::{IgnitionService, SwarmIgnition};
 use savant_core::bus::NexusBridge;
-use serde_json;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
@@ -40,14 +39,16 @@ impl LogBridge {
             .create(true)
             .append(true)
             .open(&log_path)
-            .unwrap_or_else(|_e| {
-                // No eprintln! in release — it spawns a console window on Windows
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("savant-desktop.log")
-                    .expect("CRITICAL: Cannot create any log file")
-            });
+                    .unwrap_or_else(|_e| {
+                        // No eprintln! in release — it spawns a console window on Windows
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("savant-desktop.log")
+                            .unwrap_or_else(|_| {
+                                std::process::exit(1);
+                            })
+                    });
 
         Self {
             app_handle,
@@ -217,6 +218,7 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
 }
 
 #[tauri::command]
+#[allow(clippy::disallowed_methods)]
 async fn get_swarm_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let lock = state.ignition.lock().await;
     if let Some(ref ignition) = *lock {
@@ -337,8 +339,11 @@ async fn start_event_forwarder(ignition: Arc<SwarmIgnition>, app_handle: AppHand
     });
 }
 
+#[allow(clippy::disallowed_methods)]
 fn main() {
     bootstrap_log("Savant Desktop starting...");
+    // .env loaded in setup hook via SavantPathResolver (not from CWD)
+    bootstrap_log("Starting Tauri builder...");
     // .env loaded in setup hook via SavantPathResolver (not from CWD)
     bootstrap_log("Starting Tauri builder...");
 
@@ -477,9 +482,9 @@ fn main() {
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
-                    warn!("default_window_icon() returned None");
-                    tauri::image::Image::from_path("icons/icon.ico")
-                        .expect("CRITICAL: Brand icon 'icons/icon.ico' not found.")
+                    warn!("default_window_icon() returned None, using fallback");
+                    // 1x1 transparent RGBA pixel as fallback
+                    tauri::image::Image::new_owned(vec![0, 0, 0, 0], 1, 1)
                 }))
                 .menu(&menu)
                 .tooltip("Savant Swarm")
@@ -521,7 +526,6 @@ fn main() {
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
             bootstrap_log(&format!("Tauri runtime error: {}", e));
-            eprintln!("Tauri runtime error: {}", e);
             std::process::exit(1);
         });
 }

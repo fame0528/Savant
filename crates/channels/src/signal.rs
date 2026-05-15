@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Signal Channel Adapter
 //!
 //! Provides integration with signal-cli daemon via HTTP + SSE.
@@ -93,7 +94,7 @@ impl SignalAdapter {
 
         let resp = self
             .http
-            .post(&self.rpc_url())
+            .post(self.rpc_url())
             .json(&body)
             .send()
             .await
@@ -268,6 +269,7 @@ impl SignalAdapter {
             agent_id: None,
             session_id: Some(session_id),
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         };
 
         let event = EventFrame {
@@ -360,8 +362,8 @@ impl SignalAdapter {
                             data_lines.clear();
                             self.process_sse_event(&combined).await;
                         }
-                    } else if line.starts_with("data:") {
-                        let value = line["data:".len()..].trim_start();
+                    } else if let Some(stripped) = line.strip_prefix("data:") {
+                        let value = stripped.trim_start();
                         data_lines.push(value.to_string());
                     }
                     // Ignore "event:", "id:", "retry:" lines

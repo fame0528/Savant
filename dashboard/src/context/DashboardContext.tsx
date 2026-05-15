@@ -49,7 +49,7 @@ export interface DashboardState {
   debugPaused: boolean;
   copiedId: string | null;
   showSplash: boolean;
-  
+  showSetupWizard: boolean;
   // Evolution state
   proposedMutations: unknown[];
   mutationHistory: unknown[];
@@ -91,8 +91,9 @@ export interface DashboardState {
   setDebugPaused: (b: boolean) => void;
    setCopiedId: (id: string | null) => void;
    setShowSplash: (b: boolean) => void;
+   setShowSetupWizard: (b: boolean) => void;
    setIsManifestMode: (b: boolean) => void;
-  setAgents: (agents: Agent[]) => void;
+   setAgents: (agents: Agent[]) => void;
   setLaneMessages: (fn: (prev: Record<string, Message[]>) => Record<string, Message[]> ) => void;
   setCognitiveInsights: (insights: Insight[]) => void;
   setDebugLogs: (logs: {timestamp: string, message: string}[]) => void;
@@ -231,7 +232,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [debugPaused, setDebugPaused] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(true);
-
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
   // Evolution state
   const [isEvolutionMode, setIsEvolutionMode] = useState(false);
   const [proposedMutations, setProposedMutations] = useState<unknown[]>([]);
@@ -792,6 +793,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     debugPaused, setDebugPaused,
     copiedId, setCopiedId,
     showSplash, setShowSplash,
+    showSetupWizard, setShowSetupWizard,
     isEvolutionMode, setIsEvolutionMode,
     proposedMutations, setProposedMutations,
     mutationHistory, setMutationHistory,

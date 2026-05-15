@@ -763,6 +763,7 @@ mod tests {
             agent_id: None,
             session_id: Some(SessionId("test_session".to_string())),
             channel: AgentOutputChannel::Chat,
+            images: Vec::new(),
         };
 
         // Store
@@ -797,6 +798,7 @@ mod tests {
                 agent_id: None,
                 session_id: Some(SessionId("query_session".to_string())),
                 channel: AgentOutputChannel::Chat,
+                images: Vec::new(),
             };
             backend.store("query_session", &msg).await.unwrap();
         }

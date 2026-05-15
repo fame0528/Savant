@@ -14,31 +14,32 @@ const MAX_REF_DEPTH: u32 = 16;
 
 /// Main entry point — coerce tool arguments against a JSON Schema.
 pub fn prepare_tool_params(args: &Value, schema: &Value) -> Value {
-    let resolved_schema = resolve_refs(schema, 0);
+    let resolved_schema = resolve_refs(schema, schema, 0);
     coerce_value(args, &resolved_schema)
 }
 
 /// Resolve $ref pointers inline.
 /// Supports both draft-07 (`#/definitions/`) and 2020-12 (`#/$defs/`).
-fn resolve_refs(schema: &Value, depth: u32) -> Value {
+/// `root` is the original root schema for JSON pointer resolution.
+fn resolve_refs(schema: &Value, root: &Value, depth: u32) -> Value {
     if depth > MAX_REF_DEPTH {
         return schema.clone();
     }
     match schema.get("$ref") {
         Some(Value::String(ref_str)) => {
-            let resolved = resolve_json_pointer(schema, ref_str);
-            resolve_refs(&resolved, depth + 1)
+            let resolved = resolve_json_pointer(root, ref_str);
+            resolve_refs(&resolved, root, depth + 1)
         }
         _ => {
             // Recurse into object/array properties
             if let Some(obj) = schema.as_object() {
                 let mut result = serde_json::Map::new();
                 for (k, v) in obj {
-                    result.insert(k.clone(), resolve_refs(v, depth + 1));
+                    result.insert(k.clone(), resolve_refs(v, root, depth + 1));
                 }
                 Value::Object(result)
             } else if let Some(arr) = schema.as_array() {
-                Value::Array(arr.iter().map(|v| resolve_refs(v, depth + 1)).collect())
+                Value::Array(arr.iter().map(|v| resolve_refs(v, root, depth + 1)).collect())
             } else {
                 schema.clone()
             }

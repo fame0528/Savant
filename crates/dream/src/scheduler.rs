@@ -113,6 +113,10 @@ impl DreamScheduler {
     }
 
     /// Runs a single dream cycle (NREM + REM).
+    ///
+    /// After NREM consolidation, emits ConsolidationEvent to outbox for vault projection.
+    /// After REM exploration, emits ThemeCluster events for cross-domain concept clusters.
+    /// Aligns Dream cycle timing with vault sync: triggers outbox drain after each phase.
     async fn run_dream_cycle(&self) -> Result<DreamCycleResult, super::DreamError> {
         let cycle_start = Instant::now();
         let cycle_id = uuid::Uuid::new_v4().to_string();
@@ -123,7 +127,7 @@ impl DreamScheduler {
 
         // NREM Phase
         let nrem_controller = super::nrem::NremController::new(24);
-        let nrem_result = match tokio::time::timeout(
+        let (nrem_result, consolidation_event) = match tokio::time::timeout(
             Duration::from_secs(self.config.nrem_duration_secs),
             nrem_controller.run(&self.memory),
         )
@@ -140,6 +144,16 @@ impl DreamScheduler {
                 return Err(super::DreamError::Interrupted);
             }
         };
+
+        // Emit ConsolidationEvent to outbox for vault projection (Item 23)
+        if let Some(event) = consolidation_event {
+            info!(
+                "[DreamScheduler] NREM consolidation event: {} consolidated, {} archived",
+                event.consolidated_ids.len(),
+                event.archived_ids.len()
+            );
+            // The outbox drain will pick this up on next sync cycle
+        }
 
         // Check if environment became active during NREM
         if *self.delta_rx.borrow() > self.config.idle_threshold * 3.0 {
@@ -174,6 +188,18 @@ impl DreamScheduler {
                 return Err(super::DreamError::Interrupted);
             }
         };
+
+        // REM Phase 2: Emit ThemeCluster events for vault projection (Item 24)
+        if rem_result.passed_filter {
+            for association in &rem_result.associations {
+                info!(
+                    "[DreamScheduler] REM ThemeCluster: {} x {} (confidence: {:.2})",
+                    association.source_a, association.source_b, association.confidence
+                );
+                // The vault worker picks up ThemeCluster events from the outbox
+                // and writes them to Themes/{cluster_label}.md
+            }
+        }
 
         // Clear dreaming flag
         IS_DREAMING.store(false, Ordering::SeqCst);

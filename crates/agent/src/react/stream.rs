@@ -79,6 +79,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             agent_id: None,
             session_id: session_id.clone(),
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         }];
 
         Box::pin({
@@ -434,7 +435,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     }
 
                     // --- OMEGA: Autonomous Ambiguity Synthesis ---
-                    if actions.is_empty() && (full_trace.contains("Action:") || full_trace.contains("thought")) {
+                    if actions.is_empty()
+                        && (full_trace.contains("Action:") || full_trace.contains("thought"))
+                        && !full_trace.contains("Action: None")
+                    {
                         warn!("[{}] Ambiguity detected: LLM suggested action but parser failed. Triggering Heuristic Synthesis.", self.agent_id);
                         yield Ok(AgentEvent::StatusUpdate("HEURISTIC_AMBIGUITY_DETECTED".to_string()));
 
@@ -480,6 +484,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                             agent_id: None,
                             session_id: session_id.clone(),
                             channel: savant_core::types::AgentOutputChannel::Telemetry,
+                            images: Vec::new(),
                         });
                         self.self_repair.reset_stuck().await;
                     }
@@ -622,7 +627,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                             };
                                             self.hooks.run_void(&after_tool_ctx).await;
                                             let safe_obs = savant_core::utils::parsing::scrub_secrets(&obs);
-                                            let obs_msg = ChatMessage { role: ChatRole::User, content: format!("Observation ({}): {}", name, safe_obs), sender: Some("SYSTEM".to_string()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Telemetry, is_telemetry: false };
+                                            let obs_msg = ChatMessage { role: ChatRole::User, content: format!("Observation ({}): {}", name, safe_obs), sender: Some("SYSTEM".to_string()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Telemetry, is_telemetry: false, images: Vec::new() };
                                             history.push(obs_msg);
 
                                             // Report success to collective blackboard
@@ -664,7 +669,8 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                         recipient: None,
                                                         agent_id: None,
                                                         session_id: session_id.clone(),
-                                                        channel: savant_core::types::AgentOutputChannel::Telemetry
+                                                        channel: savant_core::types::AgentOutputChannel::Telemetry,
+                                                        images: Vec::new(),
                                                     };
                                                     history.push(hint_msg);
                                                 }
@@ -682,7 +688,8 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                         recipient: None,
                                                         agent_id: None,
                                                         session_id: session_id.clone(),
-                                                        channel: savant_core::types::AgentOutputChannel::Telemetry
+                                                        channel: savant_core::types::AgentOutputChannel::Telemetry,
+                                                        images: Vec::new(),
                                                     };
                                                     history.push(hint_msg);
                                                 }
@@ -748,7 +755,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                 tracing::warn!("[{}] Failed to persist turn message to memory: {}", self.agent_id, e);
                             }
                         }
-                        let final_msg = ChatMessage { role: ChatRole::Assistant, content: final_response, sender: Some(self.agent_id.clone()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Chat, is_telemetry: false };
+                        let final_msg = ChatMessage { role: ChatRole::Assistant, content: final_response, sender: Some(self.agent_id.clone()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Chat, is_telemetry: false, images: Vec::new() };
                         if let Err(e) = self.memory.store(&sid, &final_msg).await {
                             tracing::warn!("[{}] Failed to persist assistant response to memory: {}", self.agent_id, e);
                         }
@@ -764,7 +771,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                 tracing::warn!("[{}] Failed to persist turn message to memory: {}", self.agent_id, e);
                             }
                         }
-                        let final_msg = ChatMessage { role: ChatRole::Assistant, content: msg, sender: Some(self.agent_id.clone()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Chat, is_telemetry: false };
+                        let final_msg = ChatMessage { role: ChatRole::Assistant, content: msg, sender: Some(self.agent_id.clone()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Chat, is_telemetry: false, images: Vec::new() };
                         if let Err(e) = self.memory.store(&sid, &final_msg).await {
                             tracing::warn!("[{}] Failed to persist assistant response to memory: {}", self.agent_id, e);
                         }
@@ -830,6 +837,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             agent_id: None,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Memory,
+            images: Vec::new(),
         });
 
         let messages = self.context.build_messages(ref_history);
@@ -857,7 +865,7 @@ fn find_thought_tag<'a>(
     let mut earliest: Option<(usize, &'a str, &'a str)> = None;
     for (start, end) in tags {
         if let Some(pos) = buffer.find(start) {
-            if earliest.as_ref().map_or(true, |(ep, _, _)| pos < *ep) {
+            if earliest.as_ref().is_none_or(|(ep, _, _)| pos < *ep) {
                 earliest = Some((pos, start, end));
             }
         }
@@ -873,24 +881,24 @@ fn find_hidden_tag_start(buffer: &str, hidden_tags: &[&str]) -> Option<(usize, S
         let open = format!("<{}", tag);
         if let Some(pos) = buffer.find(&open) {
             let after = buffer[pos + open.len()..].chars().next();
-            if after.map_or(true, |c| c == '>' || c == ' ' || c == '/') {
-                if earliest.as_ref().map_or(true, |(ep, _)| pos < *ep) {
-                    earliest = Some((pos, tag.to_string()));
-                }
+            if after.is_none_or(|c| c == '>' || c == ' ' || c == '/')
+                && earliest.as_ref().is_none_or(|(ep, _)| pos < *ep)
+            {
+                earliest = Some((pos, tag.to_string()));
             }
         }
     }
 
     // Check for <function=...> tags (dynamic tag names like <function=file_atomic_edit>)
     if let Some(pos) = buffer.find("<function=") {
-        if earliest.as_ref().map_or(true, |(ep, _)| pos < *ep) {
+        if earliest.as_ref().is_none_or(|(ep, _)| pos < *ep) {
             earliest = Some((pos, "function".to_string()));
         }
     }
 
     // Check for <tool_call> tags
     if let Some(pos) = buffer.find("<tool_call>") {
-        if earliest.as_ref().map_or(true, |(ep, _)| pos < *ep) {
+        if earliest.as_ref().is_none_or(|(ep, _)| pos < *ep) {
             earliest = Some((pos, "tool_call".to_string()));
         }
     }

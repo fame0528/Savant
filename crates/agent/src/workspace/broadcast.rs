@@ -43,6 +43,7 @@ pub struct ExecutiveMonitor {
     /// Broadcast channel for subscribers.
     broadcast_tx: broadcast::Sender<BroadcastEvent>,
     /// Current delta score (from heartbeat).
+    #[allow(dead_code)]
     delta_rx: watch::Receiver<f32>,
 }
 

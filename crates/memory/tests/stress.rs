@@ -1,5 +1,7 @@
 //! Memory engine stress tests - concurrent writes, consolidation, persistence.
 
+#![allow(clippy::disallowed_methods)]
+
 #[cfg(test)]
 mod memory_stress_tests {
     use std::sync::Arc;

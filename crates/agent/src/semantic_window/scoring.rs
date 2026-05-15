@@ -103,6 +103,7 @@ mod tests {
             agent_id: None,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         }
     }
 

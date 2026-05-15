@@ -222,9 +222,10 @@ mod tests {
     #[test]
     fn test_stuck_detector_stuck() {
         let mut detector = StuckDetector::new(3);
-        assert!(!detector.check(123));
-        assert!(!detector.check(123));
-        assert!(detector.check(123)); // stuck on 3rd same hash
+        assert!(!detector.check(123)); // 1st: new hash, count=0
+        assert!(!detector.check(123)); // 2nd: same hash, count=1
+        assert!(!detector.check(123)); // 3rd: same hash, count=2
+        assert!(detector.check(123)); // 4th: same hash, count=3 >= threshold
     }
 
     #[test]

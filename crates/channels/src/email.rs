@@ -1,4 +1,6 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
+use futures::StreamExt;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
 use savant_core::types::{ChatMessage, ChatRole, EventFrame};
@@ -265,44 +267,46 @@ impl EmailAdapter {
 
     /// Health check: verifies IMAP connectivity within a 10-second timeout.
     pub async fn health_check(&self) -> bool {
-        let config = EmailConfig {
-            imap_host: self.config.imap_host.clone(),
-            imap_port: self.config.imap_port,
-            smtp_host: self.config.smtp_host.clone(),
-            smtp_port: self.config.smtp_port,
-            username: self.config.username.clone(),
-            password: self.config.password.clone(),
-            allowed_senders: self.config.allowed_senders.clone(),
-            default_subject_prefix: self.config.default_subject_prefix.clone(),
-        };
+        let host = self.config.imap_host.clone();
+        let port = self.config.imap_port;
+        let username = self.config.username.clone();
+        let password = self.config.password.clone();
 
         match tokio::time::timeout(Duration::from_secs(10), async {
-            tokio::task::spawn_blocking(move || {
-                let tls = native_tls::TlsConnector::builder()
-                    .build()
-                    .map_err(|e| SavantError::NetworkError(format!("TLS error: {e}")))?;
-                let addr = format!("{}:{}", config.imap_host, config.imap_port);
-                let client = imap::connect(addr, &config.imap_host, &tls)
-                    .map_err(|e| SavantError::NetworkError(format!("IMAP error: {e}")))?;
-                let mut session = client
-                    .login(&config.username, &config.password)
-                    .map_err(|e| SavantError::AuthError(format!("Login error: {}", e.0)))?;
-                if let Err(e) = session.logout() {
-                    tracing::warn!("[channels] IMAP session logout failed: {}", e);
+            let addr = format!("{host}:{port}");
+            let tcp = tokio::net::TcpStream::connect(&addr)
+                .await
+                .map_err(|e| SavantError::NetworkError(format!("TCP connect: {e}")))?;
+            let tls_connector = async_native_tls::TlsConnector::new();
+            let tls_stream = tls_connector
+                .connect(&host, tcp)
+                .await
+                .map_err(|e| SavantError::NetworkError(format!("TLS error: {e}")))?;
+            let mut client = async_imap::Client::new(tls_stream);
+            let greeting = client
+                .read_response()
+                .await
+                .map_err(|e| SavantError::NetworkError(format!("IMAP greeting: {e}")))?;
+            if greeting.is_none() {
+                return Err(SavantError::NetworkError("No IMAP greeting".into()));
+            }
+            match client.login(&username, &password).await {
+                Ok(mut session) => {
+                    if let Err(e) = session.logout().await {
+                        tracing::warn!("[channels] IMAP logout failed: {e}");
+                    }
+                    Ok(())
                 }
-                Ok::<(), SavantError>(())
-            })
-            .await
+                Err((e, _orig_client)) => {
+                    Err(SavantError::AuthError(format!("IMAP login: {e}")))
+                }
+            }
         })
         .await
         {
-            Ok(Ok(Ok(()))) => true,
-            Ok(Ok(Err(e))) => {
-                warn!("[EMAIL_BRIDGE] Health check failed: {}", e);
-                false
-            }
+            Ok(Ok(())) => true,
             Ok(Err(e)) => {
-                warn!("[EMAIL_BRIDGE] Health check task error: {}", e);
+                warn!("[EMAIL_BRIDGE] Health check failed: {e}");
                 false
             }
             Err(_) => {
@@ -376,130 +380,192 @@ impl EmailAdapter {
         }
     }
 
-    /// Synchronous IMAP blocking worker. Connects, selects INBOX, and processes email.
-    /// Sends extracted data over the channel for async processing.
+    /// Async IMAP worker. Connects, selects INBOX, and processes email.
     /// Handles IDLE with polling fallback. Runs indefinitely until error.
-    fn imap_worker(
+    async fn imap_worker(
         config: &EmailConfig,
         tx: &mpsc::UnboundedSender<InboundEmail>,
         use_idle: bool,
     ) -> Result<(), SavantError> {
-        let tls = native_tls::TlsConnector::builder()
-            .build()
-            .map_err(|e| SavantError::NetworkError(format!("TLS error: {e}")))?;
-
+        let tls_connector = async_native_tls::TlsConnector::new();
         let addr = format!("{}:{}", config.imap_host, config.imap_port);
-        let client = imap::connect(addr, &config.imap_host, &tls)
-            .map_err(|e| SavantError::NetworkError(format!("IMAP connect: {e}")))?;
-
-        let mut session = client
-            .login(&config.username, &config.password)
-            .map_err(|e| SavantError::AuthError(format!("IMAP login: {}", e.0)))?;
+        let tcp = tokio::net::TcpStream::connect(&addr)
+            .await
+            .map_err(|e| SavantError::NetworkError(format!("TCP connect: {e}")))?;
+        let tls_stream = tls_connector
+            .connect(&config.imap_host, tcp)
+            .await
+            .map_err(|e| SavantError::NetworkError(format!("TLS error: {e}")))?;
+        let mut client = async_imap::Client::new(tls_stream);
+        // Read greeting (first response from server is a greeting)
+        let greeting = client
+            .read_response()
+            .await
+            .map_err(|e| SavantError::NetworkError(format!("IMAP greeting: {e}")))?;
+        if greeting.is_none() {
+            return Err(SavantError::NetworkError("No IMAP greeting".into()));
+        }
+        let mut session = match client.login(&config.username, &config.password).await {
+            Ok(s) => s,
+            Err((e, _orig_client)) => {
+                return Err(SavantError::AuthError(format!("IMAP login: {e}")));
+            }
+        };
 
         session
             .select("INBOX")
+            .await
             .map_err(|e| SavantError::NetworkError(format!("Select INBOX: {e}")))?;
 
         info!(
-            "[EMAIL_BRIDGE] IMAP connected and INBOX selected (idle={}).",
-            use_idle
+            "[EMAIL_BRIDGE] IMAP connected and INBOX selected (idle={use_idle})."
         );
 
         // Initial fetch of unseen messages
-        Self::fetch_and_process(&mut session, "UNSEEN", tx, &config.allowed_senders)?;
+        Self::fetch_and_process(&mut session, "UNSEEN", tx, &config.allowed_senders).await?;
 
         if use_idle {
-            // IDLE loop — idle() borrows session mutably via Handle,
-            // wait_keepalive() consumes the Handle, releasing the borrow.
+            // IDLE loop — use idle command with timeout
             loop {
+                // session.idle() returns Handle directly (synchronous)
+                let mut idle_handle = session.idle();
+
+                // Initialize the IDLE command (sends IDLE to server)
+                idle_handle
+                    .init()
+                    .await
+                    .map_err(|e| SavantError::NetworkError(format!("IDLE init: {e}")))?;
+
+                // Wait for any IDLE response with a 29-minute timeout
+                // Handle implements Stream, so we use StreamExt::next() with timeout
+                let idle_result = match tokio::time::timeout(
+                    std::time::Duration::from_secs(29 * 60),
+                    idle_handle.next(),
+                )
+                .await
                 {
-                    let idle_handle = session
-                        .idle()
-                        .map_err(|e| SavantError::NetworkError(format!("IDLE start: {e}")))?;
+                    Ok(Some(Ok(_response))) => {
+                        debug!("[EMAIL_BRIDGE] IDLE notification received, fetching...");
+                        true
+                    }
+                    Ok(Some(Err(e))) => {
+                        return Err(SavantError::NetworkError(format!("IDLE stream error: {e}")));
+                    }
+                    Ok(None) => {
+                        warn!("[EMAIL_BRIDGE] IDLE stream ended unexpectedly");
+                        false
+                    }
+                    Err(_) => {
+                        // Timeout — this is normal, just means no activity for 29 min
+                        debug!("[EMAIL_BRIDGE] IDLE timeout, re-selecting...");
+                        false
+                    }
+                };
 
-                    idle_handle
-                        .wait_keepalive()
-                        .map_err(|e| SavantError::NetworkError(format!("IDLE wait: {e}")))?;
+                // Get the session back by sending DONE
+                // idle_handle is still valid (we only called .next() which borrowed it)
+                // Actually .next() consumed idle_handle since StreamExt::next takes &mut self
+                // We need to use the handle differently
+
+                // Actually, since we used tokio::time::timeout which takes the future by value,
+                // and idle_handle.next() returns an impl Future that borrows idle_handle,
+                // idle_handle is still available after the timeout.
+
+                // Send DONE to exit IDLE mode and get session back
+                let done_result = idle_handle.done().await;
+                session = match done_result {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Err(SavantError::NetworkError(format!("IDLE done error: {e}")));
+                    }
+                };
+
+                if idle_result {
+                    // Re-select INBOX and fetch
+                    session
+                        .select("INBOX")
+                        .await
+                        .map_err(|e| SavantError::NetworkError(format!("Re-select: {e}")))?;
+
+                    Self::fetch_and_process(&mut session, "RECENT", tx, &config.allowed_senders).await?;
                 }
-                // Handle is dropped, borrow released. session is available again.
-
-                debug!("[EMAIL_BRIDGE] IDLE received notification, fetching...");
-
-                // Re-select INBOX and fetch recent
-                session
-                    .select("INBOX")
-                    .map_err(|e| SavantError::NetworkError(format!("Re-select: {e}")))?;
-
-                Self::fetch_and_process(&mut session, "RECENT", tx, &config.allowed_senders)?;
             }
         } else {
             // Polling fallback: check every 30 seconds
             loop {
-                std::thread::sleep(Duration::from_secs(30));
+                tokio::time::sleep(Duration::from_secs(30)).await;
 
                 session
                     .select("INBOX")
+                    .await
                     .map_err(|e| SavantError::NetworkError(format!("Re-select: {e}")))?;
 
-                Self::fetch_and_process(&mut session, "UNSEEN", tx, &config.allowed_senders)?;
+                Self::fetch_and_process(&mut session, "UNSEEN", tx, &config.allowed_senders).await?;
             }
         }
     }
 
     /// Fetches messages matching the given IMAP search criteria and sends them through the channel.
-    fn fetch_and_process(
-        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    async fn fetch_and_process(
+        session: &mut async_imap::Session<async_native_tls::TlsStream<tokio::net::TcpStream>>,
         search_criteria: &str,
         tx: &mpsc::UnboundedSender<InboundEmail>,
         allowed_senders: &[String],
     ) -> Result<(), SavantError> {
-        let seq_nums = session
+        let uids = session
             .search(search_criteria)
+            .await
             .map_err(|e| SavantError::NetworkError(format!("IMAP search: {e}")))?;
 
-        if seq_nums.is_empty() {
+        if uids.is_empty() {
             return Ok(());
         }
 
-        let uid_list = seq_nums
-            .iter()
-            .map(|seq| seq.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+        let uid_list: Vec<String> = uids.iter().map(|uid| uid.to_string()).collect();
+        let uid_str = uid_list.join(",");
 
-        let fetches = session
-            .fetch(&uid_list, "(ENVELOPE BODY.PEEK[] UID)")
+        let mut fetch_stream = session
+            .uid_fetch(&uid_str, "ENVELOPE BODY.PEEK[]")
+            .await
             .map_err(|e| SavantError::NetworkError(format!("IMAP fetch: {e}")))?;
 
-        for msg in &fetches {
+        while let Some(fetch_result) = fetch_stream.next().await {
+            let msg = fetch_result.map_err(|e| SavantError::NetworkError(format!("IMAP fetch item: {e}")))?;
+
+            let envelope = msg.envelope().ok_or_else(|| {
+                SavantError::NetworkError("No envelope in IMAP fetch result".into())
+            })?;
+
             // Extract Message-ID for deduplication
-            let message_id = msg
-                .envelope()
-                .and_then(|env| env.message_id)
+            let message_id = envelope
+                .message_id
+                .as_ref()
                 .and_then(|mid| std::str::from_utf8(mid).ok())
                 .and_then(Self::extract_message_id)
                 .unwrap_or_else(|| format!("uid-{}", msg.uid.unwrap_or(0)));
 
             // Extract sender
-            let sender_email = msg
-                .envelope()
-                .and_then(|env| env.from.as_ref())
+            let sender_email = envelope
+                .from
+                .as_ref()
                 .and_then(|addrs| addrs.first())
                 .map(|addr| {
                     let mailbox = addr
                         .mailbox
+                        .as_ref()
                         .and_then(|m| std::str::from_utf8(m).ok())
                         .unwrap_or("");
                     let host = addr
                         .host
+                        .as_ref()
                         .and_then(|h| std::str::from_utf8(h).ok())
                         .unwrap_or("");
-                    format!("{mailbox}@{host}")
+                    format!("{mailbox}@{host}").to_lowercase()
                 })
                 .unwrap_or_default();
 
             let sender_email = if sender_email.contains('@') {
-                sender_email.to_lowercase()
+                sender_email
             } else {
                 Self::extract_sender_email(&sender_email).unwrap_or_default()
             };
@@ -510,14 +576,14 @@ impl EmailAdapter {
             }
 
             if !Self::is_sender_allowed(&sender_email, allowed_senders) {
-                debug!("[EMAIL_BRIDGE] Sender {} not in allowlist.", sender_email);
+                debug!("[EMAIL_BRIDGE] Sender {sender_email} not in allowlist.");
                 continue;
             }
 
             // Extract subject
-            let subject = msg
-                .envelope()
-                .and_then(|env| env.subject)
+            let subject = envelope
+                .subject
+                .as_ref()
                 .and_then(|s| std::str::from_utf8(s).ok())
                 .unwrap_or("(no subject)")
                 .to_string();
@@ -531,7 +597,7 @@ impl EmailAdapter {
                 subject,
                 body,
             }) {
-                tracing::warn!("[channels] Channel send failed: {}", e);
+                tracing::warn!("[channels] Channel send failed: {e}");
             }
         }
 
@@ -583,6 +649,7 @@ impl EmailAdapter {
                         agent_id: None,
                         session_id: Some(session_id),
                         channel: savant_core::types::AgentOutputChannel::Chat,
+                        images: Vec::new(),
                     };
 
                     let event = EventFrame {
@@ -697,8 +764,8 @@ impl EmailAdapter {
 
             loop {
                 info!(
-                    "[EMAIL_BRIDGE] Connecting to IMAP {}:{} (idle={})...",
-                    self.config.imap_host, self.config.imap_port, use_idle
+                    "[EMAIL_BRIDGE] Connecting to IMAP {}:{} (idle={use_idle})...",
+                    self.config.imap_host, self.config.imap_port
                 );
 
                 let config = EmailConfig {
@@ -715,32 +782,25 @@ impl EmailAdapter {
                 let tx_clone = email_tx.clone();
                 let idle_flag = use_idle;
 
-                let result = tokio::task::spawn_blocking(move || {
-                    Self::imap_worker(&config, &tx_clone, idle_flag)
-                })
-                .await;
+                let result = Self::imap_worker(&config, &tx_clone, idle_flag).await;
 
                 let mut idle_failed = false;
                 match result {
-                    Ok(Ok(())) => {
+                    Ok(()) => {
                         info!("[EMAIL_BRIDGE] IMAP worker exited cleanly.");
                     }
-                    Ok(Err(e)) => {
-                        error!("[EMAIL_BRIDGE] IMAP error: {}", e);
+                    Err(e) => {
+                        error!("[EMAIL_BRIDGE] IMAP error: {e}");
                         if use_idle {
                             warn!("[EMAIL_BRIDGE] Falling back to polling mode.");
                             idle_failed = true;
                         }
                     }
-                    Err(e) => {
-                        error!("[EMAIL_BRIDGE] IMAP worker panicked: {}", e);
-                    }
                 }
 
                 // Exponential backoff
                 warn!(
-                    "[EMAIL_BRIDGE] Disconnected. Reconnecting in {}s...",
-                    backoff_secs
+                    "[EMAIL_BRIDGE] Disconnected. Reconnecting in {backoff_secs}s..."
                 );
                 tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                 backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF);
@@ -768,7 +828,7 @@ impl ChannelAdapter for EmailAdapter {
         }
 
         let payload: serde_json::Value =
-            serde_json::from_str(&event.payload).map_err(|e| SavantError::SerializationError(e))?;
+            serde_json::from_str(&event.payload).map_err(SavantError::SerializationError)?;
 
         let to = payload["recipient"]
             .as_str()

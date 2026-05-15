@@ -178,6 +178,7 @@ impl MemoryBackend for FileLoggingMemoryBackend {
                                         "learning.swarm".to_string(),
                                     )),
                                     channel: savant_core::types::AgentOutputChannel::Memory,
+                                    images: Vec::new(),
                                 };
                                 if let Err(e) = self.inner.store("swarm.insights", &msg).await {
                                     tracing::warn!(

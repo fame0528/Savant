@@ -67,7 +67,7 @@ async fn test_production_swarm_initialization_50_agents() {
     // 3. Create dependencies
     let nexus = Arc::new(NexusBridge::new());
     let storage =
-        Arc::new(Storage::new(base_temp.join("storage")).expect("Failed to open test storage"));
+        Arc::new(Storage::new(base_temp.join("storage"), 100_000).expect("Failed to open test storage"));
 
     let config = Config::default();
     let manager = Arc::new(AgentManager::new(config));
@@ -92,6 +92,8 @@ async fn test_production_swarm_initialization_50_agents() {
             session_id: Some("test-session".to_string()),
             proactive: Default::default(),
             llm_params: Default::default(),
+            personality_traits: None,
+            evolution_state: None,
         });
     }
 
@@ -102,6 +104,7 @@ async fn test_production_swarm_initialization_50_agents() {
         skills_path: skills_path.clone(),
         blackboard_name: format!("test_blackboard_{}", uuid::Uuid::new_v4()),
         collective_name: format!("test_collective_{}", uuid::Uuid::new_v4()),
+        config_file: None,
     };
 
     let controller = SwarmController::new(
@@ -155,6 +158,7 @@ async fn test_agent_panic_recovery_logic() {
         skills_path: base_temp.join("skills"),
         blackboard_name: format!("panic_blackboard_{}", uuid::Uuid::new_v4()),
         collective_name: format!("panic_collective_{}", uuid::Uuid::new_v4()),
+        config_file: None,
     };
 
     let controller = SwarmController::new(
@@ -175,9 +179,11 @@ async fn test_agent_panic_recovery_logic() {
             session_id: None,
             proactive: Default::default(),
             llm_params: Default::default(),
+            personality_traits: None,
+            evolution_state: None,
         }],
         Arc::new(
-            Storage::new(base_temp.join("panic_storage")).expect("Failed to open panic storage"),
+            Storage::new(base_temp.join("panic_storage"), 100_000).expect("Failed to open panic storage"),
         ),
         Arc::new(AgentManager::new(Config::default())),
         Arc::new(NexusBridge::new()),
@@ -217,7 +223,7 @@ async fn test_500_agent_initialization_scaling() {
     let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
 
     let storage = Arc::new(
-        Storage::new(base_temp.join("scale_storage")).expect("Failed to open scale storage"),
+        Storage::new(base_temp.join("scale_storage"), 100_000).expect("Failed to open scale storage"),
     );
 
     let nexus = Arc::new(NexusBridge::new());
@@ -242,6 +248,8 @@ async fn test_500_agent_initialization_scaling() {
             session_id: Some("scale-session".to_string()),
             proactive: Default::default(),
             llm_params: Default::default(),
+            personality_traits: None,
+            evolution_state: None,
         });
     }
 
@@ -251,6 +259,7 @@ async fn test_500_agent_initialization_scaling() {
         skills_path: base_temp.join("skills"),
         blackboard_name: format!("scale_blackboard_{}", uuid::Uuid::new_v4()),
         collective_name: format!("scale_collective_{}", uuid::Uuid::new_v4()),
+        config_file: None,
     };
 
     let controller = SwarmController::new(

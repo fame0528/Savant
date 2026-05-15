@@ -12,6 +12,7 @@ use tracing::info;
 use crate::engine::BrowserEngine;
 use crate::types::BrowserConfig;
 
+#[allow(clippy::disallowed_methods)]
 static VISION_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -370,6 +371,7 @@ impl Tool for BrowserTool {
          The browser window is visible to the user by default — both human and agent share the same window."
     }
 
+    #[allow(clippy::disallowed_methods)]
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -504,6 +506,7 @@ impl Tool for BrowserTool {
 
 // ── Vision model ───────────────────────────────────────────────────
 
+#[allow(clippy::disallowed_methods)]
 async fn call_vision_model(
     config: &BrowserConfig,
     image_base64: &str,

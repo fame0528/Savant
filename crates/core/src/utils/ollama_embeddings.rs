@@ -11,7 +11,7 @@ const CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(1000) {
     None => unreachable!(),
 };
 
-const DEFAULT_MODEL: &str = "qwen3-embedding:4b";
+const DEFAULT_MODEL: &str = "gemma4:e4b";
 const DEFAULT_URL: &str = "http://localhost:11434";
 
 /// Embedding service that uses Ollama for high-quality embeddings.
@@ -54,13 +54,15 @@ impl OllamaEmbeddingService {
     }
 
     async fn call_ollama(&self, text: &str) -> Result<Vec<f32>, SavantError> {
+        #[allow(clippy::disallowed_methods)]
+        let body = serde_json::json!({
+            "model": self.model,
+            "prompt": text
+        });
         let resp: serde_json::Value = self
             .client
             .post(format!("{}/api/embeddings", self.url))
-            .json(&serde_json::json!({
-                "model": self.model,
-                "prompt": text
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| SavantError::Unknown(format!("Ollama request failed: {}", e)))?
@@ -251,7 +253,10 @@ async fn ensure_model(client: &reqwest::Client, url: &str, model: &str) -> Resul
     let models = body["models"].as_array().cloned().unwrap_or_default();
     let has_model = models
         .iter()
-        .any(|m| m["name"].as_str().unwrap_or("").contains("qwen3-embedding"));
+        .any(|m| {
+            let name = m["name"].as_str().unwrap_or("");
+            name == model || name.starts_with(model)
+        });
 
     if has_model {
         info!("Embedding model {} found in Ollama", model);
@@ -259,9 +264,11 @@ async fn ensure_model(client: &reqwest::Client, url: &str, model: &str) -> Resul
     }
 
     warn!("Embedding model {} not found. Pulling...", model);
+    #[allow(clippy::disallowed_methods)]
+    let pull_body = serde_json::json!({ "model": model });
     let pull_resp = client
         .post(format!("{}/api/pull", url))
-        .json(&serde_json::json!({ "model": model }))
+        .json(&pull_body)
         .send()
         .await
         .map_err(|e| SavantError::Unknown(format!("Failed to pull model: {}", e)))?;
@@ -308,10 +315,10 @@ pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, Sa
                 error!("CRITICAL: Cannot start Ollama: {}", e);
                 error!("Ollama is required for vector embeddings. The system cannot function without it.");
                 error!("Install from: https://ollama.com/download");
-                error!("Then run: ollama pull qwen3-embedding:4b");
+                error!("Then run: ollama pull <your-gemma-variant>");
                 return Err(SavantError::Unknown(format!(
                     "Ollama is not running and could not be auto-started: {}. \
-                     Install Ollama from https://ollama.com/download and run: ollama pull qwen3-embedding:4b",
+                     Install Ollama from https://ollama.com/download and run: ollama pull <your-gemma-variant>",
                     e
                 )));
             }

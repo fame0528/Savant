@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[tokio::main]
+#[allow(clippy::disallowed_methods)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔱 Savant v0.0.01: Sovereign Manifestation Initiated\n");
 

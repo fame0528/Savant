@@ -161,8 +161,8 @@ mod tests {
         ];
         for path_str in &paths {
             let path = Path::new(path_str);
-            // canonicalize will fail for non-existent paths, but we test the logic
-            // In production, paths are validated before mounting
+            // canonicalize will fail for non-existent paths, which is the expected
+            // validation behavior — non-existent paths are rejected by validate_mount_source
             if let Err(e) = validate_mount_source(path) {
                 tracing::warn!(
                     "[skills::mount_security] Mount source validation failed for {}: {}",

@@ -1,5 +1,7 @@
 //! Crash recovery verification tests.
 
+#![allow(clippy::disallowed_methods)]
+
 #[cfg(test)]
 mod crash_recovery {
     use savant_memory::{

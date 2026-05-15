@@ -7,6 +7,7 @@ pub struct ContextCompressor {
     trigger_threshold: f64,
     preserve_head_turns: usize,
     preserve_tail_turns: usize,
+    #[allow(dead_code)]
     max_summary_tokens: usize,
     cooldown: Duration,
     last_compression: Mutex<Option<Instant>>,
@@ -140,6 +141,7 @@ mod tests {
                 agent_id: None,
                 session_id: None,
                 channel: savant_core::types::AgentOutputChannel::Chat,
+                images: Vec::new(),
             })
             .collect();
         let (head, middle, tail) = compressor.partition(&messages);

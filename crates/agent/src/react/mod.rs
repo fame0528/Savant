@@ -133,6 +133,12 @@ impl HeartbeatDelegate {
     }
 }
 
+impl Default for HeartbeatDelegate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl<M: MemoryBackend> LoopDelegate<M> for HeartbeatDelegate {
     async fn check_signals(&self) -> LoopSignal {
@@ -428,7 +434,7 @@ mod tests {
     use futures::stream::StreamExt;
     use futures::Stream;
     use savant_core::error::SavantError;
-    use savant_core::traits::{LlmProvider, MemoryBackend, Tool, VisionProvider};
+    use savant_core::traits::{LlmProvider, MemoryBackend, Tool};
     use savant_core::types::{AgentIdentity, ChatMessage};
     use serde_json::Value;
     use std::pin::Pin;

@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -156,7 +157,7 @@ impl FeishuAdapter {
                             let is_assistant = payload["role"].as_str() == Some("Assistant");
                             let is_for_feishu = payload["recipient"]
                                 .as_str()
-                                .map_or(false, |r| r.starts_with("feishu:"));
+                                .is_some_and(|r| r.starts_with("feishu:"));
                             if is_assistant || is_for_feishu {
                                 let session_id = payload["session_id"].as_str().unwrap_or("");
                                 if let Some(chat_id) = session_id.strip_prefix("feishu:") {
@@ -212,6 +213,7 @@ impl FeishuAdapter {
                                         agent_id: None,
                                         session_id: Some(session_id),
                                         channel: savant_core::types::AgentOutputChannel::Chat,
+                                        images: Vec::new(),
                                     };
                                     let frame = EventFrame {
                                         event_type: "chat.message".to_string(),

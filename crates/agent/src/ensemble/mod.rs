@@ -67,16 +67,8 @@ impl EnsembleRouter {
         Self {
             providers: vec![
                 EnsembleProvider {
-                    model: "openrouter/hunter-alpha".to_string(),
+                    model: "gemma4".to_string(),
                     temperature: 0.7,
-                },
-                EnsembleProvider {
-                    model: "openrouter/healer-alpha".to_string(),
-                    temperature: 0.5,
-                },
-                EnsembleProvider {
-                    model: "stepfun/step-3.5-flash:free".to_string(),
-                    temperature: 0.5,
                 },
                 EnsembleProvider {
                     model: "openrouter/free".to_string(),
@@ -143,7 +135,7 @@ impl EnsembleRouter {
             score += 0.1;
         }
 
-        score.max(0.0).min(1.0)
+        score.clamp(0.0, 1.0)
     }
 
     /// Picks the best response from a set of responses.
@@ -188,29 +180,20 @@ mod tests {
     #[test]
     fn test_fallback_chain() {
         let router = EnsembleRouter::with_fallback_chain();
-        assert_eq!(router.providers().len(), 4);
+        assert_eq!(router.providers().len(), 2);
         assert_eq!(router.strategy(), &EnsembleStrategy::Fallback);
 
-        // First provider should be hunter-alpha
+        // First provider should be gemma4 (local default)
         assert_eq!(
             router.select_model(0).unwrap().model,
-            "openrouter/hunter-alpha"
+            "gemma4"
         );
 
-        // Second should be healer-alpha
+        // Second should be openrouter/free (cloud fallback)
         assert_eq!(
             router.select_model(1).unwrap().model,
-            "openrouter/healer-alpha"
+            "openrouter/free"
         );
-
-        // Third should be stepfun
-        assert_eq!(
-            router.select_model(2).unwrap().model,
-            "stepfun/step-3.5-flash:free"
-        );
-
-        // Fourth should be free router
-        assert_eq!(router.select_model(3).unwrap().model, "openrouter/free");
     }
 
     #[test]
@@ -222,9 +205,9 @@ mod tests {
     #[test]
     fn test_add_provider() {
         let mut router = EnsembleRouter::with_fallback_chain();
-        assert_eq!(router.providers().len(), 4);
+        assert_eq!(router.providers().len(), 2);
         router.add_provider("new-model".to_string(), 0.8);
-        assert_eq!(router.providers().len(), 5);
+        assert_eq!(router.providers().len(), 3);
     }
 
     #[test]

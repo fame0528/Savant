@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -126,7 +127,7 @@ impl RedditAdapter {
                         if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
                             if p["recipient"]
                                 .as_str()
-                                .map_or(false, |r| r.starts_with("reddit:"))
+                                .is_some_and(|r| r.starts_with("reddit:"))
                                 || p["role"].as_str() == Some("Assistant")
                             {
                                 let sid = p["session_id"].as_str().unwrap_or("");
@@ -161,6 +162,7 @@ impl RedditAdapter {
                                     agent_id: None,
                                     session_id: Some(sid),
                                     channel: savant_core::types::AgentOutputChannel::Chat,
+                                    images: Vec::new(),
                                 };
                                 let frame = EventFrame {
                                     event_type: "chat.message".into(),

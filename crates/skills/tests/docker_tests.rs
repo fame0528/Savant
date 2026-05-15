@@ -1,5 +1,7 @@
 //! Docker sandbox tests - gracefully skip when Docker is unavailable.
 
+#![allow(clippy::disallowed_methods)]
+
 use savant_core::traits::Tool;
 use savant_skills::docker::DockerSkillExecutor;
 use serde_json::json;

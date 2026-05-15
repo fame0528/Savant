@@ -84,7 +84,7 @@ impl EchoCompiler {
                         .handle_access(AccessFs::from_all(abi)).map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "Landlock ruleset init failed"))?
                         .create().map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "Landlock creation failed"))?
                         .add_rule(PathBeneath::new(&project_path_clone, AccessFs::from_all(abi)).map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "Project rule failed"))?).map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "Rule add failed"))?
-                        // Add common system paths if needed for compilation (simplified for now)
+                        // Add common system paths required for compilation toolchains
                         .add_rule(PathBeneath::new("/usr/lib", AccessFs::from_read(abi)).map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "System lib rule failed"))?).map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "Rule add failed"))?;
                     
                     ruleset.restrict_self().map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "Landlock restriction failed"))?;

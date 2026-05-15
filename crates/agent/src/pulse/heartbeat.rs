@@ -491,6 +491,7 @@ impl HeartbeatPulse {
                     session_id: message.session_id.clone(),
                     channel: savant_core::types::AgentOutputChannel::Chat,
                     is_telemetry: false,
+                    images: Vec::new(),
                 };
 
                 let response_payload = serde_json::to_string(&response)?;
@@ -578,7 +579,7 @@ impl HeartbeatPulse {
             "Review your current environment and check for pending tasks.",
         )
         .await;
-        let context_injection = self.nexus.get_global_context().await;
+        let _context_injection = self.nexus.get_global_context().await;
 
         // 城堡 OMEGA-VIII: Orchestration Injection (Task Matrix - Config Driven)
         let matrix = crate::orchestration::tasks::TaskMatrix::new(
@@ -663,7 +664,7 @@ impl HeartbeatPulse {
         if let Some(h) = buffer.last_pulse_hash {
             if h == current_hash {
                 let now = chrono::Utc::now().timestamp();
-                let reflection_due = buffer.last_reflection_time.map_or(true, |last| {
+                let reflection_due = buffer.last_reflection_time.is_none_or(|last| {
                     (now - last) >= reflection_interval as i64
                 });
 
@@ -941,6 +942,7 @@ impl HeartbeatPulse {
                 session_id: None,
                 channel: savant_core::types::AgentOutputChannel::Chat,
                 is_telemetry: false,
+                images: Vec::new(),
             };
             if let Ok(payload) = serde_json::to_string(&final_msg) {
                 if let Err(e) = self.nexus.publish("chat.message", &payload).await {
@@ -987,13 +989,22 @@ impl HeartbeatPulse {
         // AAA: Autonomous Lesson Distillation (ALD) (Phase 19: Watermark Model)
         let ald = crate::learning::ald::ALDEngine::new(self.agent.workspace_path.clone());
         match ald.distill(buffer.ald_watermark) {
-            Ok((new_watermark, burst)) => {
+            Ok((new_watermark, burst, identity_signals)) => {
                 buffer.ald_watermark = new_watermark;
                 if burst {
                     info!(
-                        "[{}] ALD: High-Density Cognitive Burst detected. Promotion complete.",
-                        self.agent.agent_name
+                        "[{}] ALD: High-Density Cognitive Burst detected. {} identity signal(s).",
+                        self.agent.agent_name, identity_signals.len()
                     );
+                }
+                for signal in &identity_signals {
+                    if let Err(e) = ald.process_identity_signal(
+                        signal,
+                        &self.agent.agent_name,
+                        &self.nexus,
+                    ) {
+                        warn!("[{}] ALD identity signal processing failed: {}", self.agent.agent_name, e);
+                    }
                 }
             }
             Err(e) => warn!("[{}] ALD Distillation failed: {}", self.agent.agent_name, e),
@@ -1060,6 +1071,7 @@ impl HeartbeatPulse {
                 session_id: None, // Heartbeat pulses are system-local
                 channel: savant_core::types::AgentOutputChannel::Telemetry,
                 is_telemetry: true,
+                images: Vec::new(),
             };
 
             if let Ok(payload) = serde_json::to_string(&final_msg) {

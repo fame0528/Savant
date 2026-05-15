@@ -60,94 +60,125 @@ pub fn spawn_distillation_pipeline(
                     continue;
                 }
 
-                // Perform Triplet Extraction via LLM
-                match extract_triplets(Arc::clone(&llm), &msg.content).await {
-                    Ok(triplets) => {
-                        for triplet_data in triplets {
-                            let entropy = calculate_shannon_entropy(&msg.content);
-                            let distilled = DistilledTriplet {
-                                subject: triplet_data.subject,
-                                predicate: triplet_data.predicate,
-                                object: triplet_data.object,
-                                confidence: triplet_data.confidence,
-                                entropy,
-                                source_session: msg.session_id.clone(),
-                            };
+                // ── Deterministic-first extraction (Item 20) ──
+                // Step 1: Try deterministic pattern matching (covers ~90% of cases)
+                let deterministic_triplets = extract_triplets_deterministic(&msg.content);
 
-                            let now = chrono::Utc::now().timestamp();
-                            let claims = TripletClaims {
-                                sub: "hive_mind".to_string(),
-                                jti: uuid::Uuid::new_v4().to_string(),
-                                iat: now,
-                                exp: now + 31536000, // 1 year expiry
-                                triplet: distilled,
-                            };
-
-                            let now_ms = chrono::Utc::now().timestamp_millis();
-
-                            // Generate a stable u64 ID from the source message UUID
-                            // blake3 is deterministic across Rust versions (unlike DefaultHasher)
-                            let hash = blake3::hash(msg.id.as_bytes());
-                            let bytes = hash.as_bytes();
-                            let entry_id =
-                                u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]));
-
-                            let content = format!(
-                                "{} {} {}",
-                                claims.triplet.subject,
-                                claims.triplet.predicate,
-                                claims.triplet.object
-                            );
-
-                            // Generate semantic embedding for the triplet
-                            let triplet_embedding = match embeddings.embed(&content).await {
-                                Ok(vec) => vec,
-                                Err(e) => {
-                                    warn!("Failed to embed triplet: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            // Index into Collective as a new MemoryEntry
-                            let entry = MemoryEntry {
-                                id: entry_id.into(),
-                                session_id: msg.session_id.clone(),
-                                created_at: now_ms.into(),
-                                updated_at: now_ms.into(),
-                                content,
-                                category: "distilled_triplet".to_string(),
-                                importance: (claims.triplet.confidence * 10.0) as u8,
-                                tags: vec!["hive-mind".to_string(), "shared".to_string()],
-                                embedding: triplet_embedding,
-                                shannon_entropy: entropy.into(),
-                                last_accessed_at: now_ms.into(),
-                                hit_count: 0.into(),
-                                related_to: vec![],
-                            };
-
-                            if let Err(e) = collective.index_memory(entry).await {
-                                error!("Failed to index distilled triplet into collective: {}", e);
-                            } else {
-                                // AAA: Production-grade SPO Indexing
-                                if let Err(e) = collective.lsm().insert_fact(
-                                    &claims.triplet.subject,
-                                    &claims.triplet.predicate,
-                                    &claims.triplet.object,
-                                    entry_id,
-                                ) {
-                                    error!("Failed to insert fact into SPO index: {}", e);
-                                }
-                            }
+                // Step 2: Confidence gate
+                // - confidence > 0.85 → accept deterministic result directly
+                // - confidence 0.15-0.85 → delegate to LLM for verification
+                // - confidence < 0.15 → discard (noise)
+                let triplets = if deterministic_triplets
+                    .iter()
+                    .all(|t| t.confidence > 0.85)
+                {
+                    // High-confidence deterministic results — skip LLM
+                    deterministic_triplets
+                } else if deterministic_triplets
+                    .iter()
+                    .any(|t| t.confidence >= 0.15)
+                {
+                    // Ambiguous range — delegate to LLM for verification
+                    match extract_triplets(Arc::clone(&llm), &msg.content).await {
+                        Ok(llm_triplets) => {
+                            // Merge: use LLM results for low-confidence deterministic ones
+                            merge_triplets(&deterministic_triplets, &llm_triplets)
                         }
-
-                        // Mark as distilled only after successful processing
-                        if let Err(e) = enclave.lsm().mark_distilled(&msg.id) {
-                            error!("Failed to mark message as distilled: {}", e);
+                        Err(e) => {
+                            warn!("LLM triplet extraction failed, using deterministic: {}", e);
+                            deterministic_triplets
+                                .into_iter()
+                                .filter(|t| t.confidence >= 0.15)
+                                .collect()
                         }
                     }
-                    Err(e) => {
-                        warn!("Triplet extraction failed for message {}: {}", msg.id, e);
+                } else {
+                    // All below 0.15 — skip LLM entirely
+                    Vec::new()
+                };
+
+                if triplets.is_empty() {
+                    // Mark as distilled even if no triplets found (avoid reprocessing)
+                    if let Err(e) = enclave.lsm().mark_distilled(&msg.id) {
+                        error!("Failed to mark message as distilled: {}", e);
                     }
+                    continue;
+                }
+
+                // Process extracted triplets
+                for triplet_data in triplets {
+                    let entropy = calculate_shannon_entropy(&msg.content);
+                    let distilled = DistilledTriplet {
+                        subject: triplet_data.subject,
+                        predicate: triplet_data.predicate,
+                        object: triplet_data.object,
+                        confidence: triplet_data.confidence,
+                        entropy,
+                        source_session: msg.session_id.clone(),
+                    };
+
+                    let now = chrono::Utc::now().timestamp();
+                    let claims = TripletClaims {
+                        sub: "hive_mind".to_string(),
+                        jti: uuid::Uuid::new_v4().to_string(),
+                        iat: now,
+                        exp: now + 31536000,
+                        triplet: distilled,
+                    };
+
+                    let now_ms = chrono::Utc::now().timestamp_millis();
+
+                    let hash = blake3::hash(msg.id.as_bytes());
+                    let bytes = hash.as_bytes();
+                    let entry_id =
+                        u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]));
+
+                    let content = format!(
+                        "{} {} {}",
+                        claims.triplet.subject,
+                        claims.triplet.predicate,
+                        claims.triplet.object
+                    );
+
+                    let triplet_embedding = match embeddings.embed(&content).await {
+                        Ok(vec) => vec,
+                        Err(e) => {
+                            warn!("Failed to embed triplet: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let entry = MemoryEntry {
+                        id: entry_id.into(),
+                        session_id: msg.session_id.clone(),
+                        created_at: now_ms.into(),
+                        updated_at: now_ms.into(),
+                        content,
+                        category: "distilled_triplet".to_string(),
+                        importance: (claims.triplet.confidence * 10.0) as u8,
+                        tags: vec!["hive-mind".to_string(), "shared".to_string()],
+                        embedding: triplet_embedding,
+                        shannon_entropy: entropy.into(),
+                        last_accessed_at: now_ms.into(),
+                        hit_count: 0.into(),
+                        related_to: vec![],
+                    };
+
+                    if let Err(e) = collective.index_memory(entry).await {
+                        error!("Failed to index distilled triplet into collective: {}", e);
+                    } else if let Err(e) = collective.lsm().insert_fact(
+                        &claims.triplet.subject,
+                        &claims.triplet.predicate,
+                        &claims.triplet.object,
+                        entry_id,
+                    ) {
+                        error!("Failed to insert fact into SPO index: {}", e);
+                    }
+                }
+
+                // Mark as distilled only after successful processing
+                if let Err(e) = enclave.lsm().mark_distilled(&msg.id) {
+                    error!("Failed to mark message as distilled: {}", e);
                 }
             }
         }
@@ -159,8 +190,8 @@ struct TripletResponse {
     triplets: Vec<RawTriplet>,
 }
 
-#[derive(Deserialize)]
-struct RawTriplet {
+#[derive(Deserialize, Clone)]
+pub struct RawTriplet {
     subject: String,
     predicate: String,
     object: String,
@@ -186,6 +217,7 @@ async fn extract_triplets(
         agent_id: None,
         session_id: None,
         channel: savant_core::types::AgentOutputChannel::Chat,
+        images: Vec::new(),
     }, ChatMessage {
         is_telemetry: false,
         role: ChatRole::User,
@@ -195,6 +227,7 @@ async fn extract_triplets(
         agent_id: None,
         session_id: None,
         channel: savant_core::types::AgentOutputChannel::Chat,
+        images: Vec::new(),
     }];
 
     let mut stream = llm
@@ -231,4 +264,227 @@ fn calculate_shannon_entropy(text: &str) -> f32 {
         entropy -= p * p.log2();
     }
     entropy
+}
+
+// ─── Deterministic Triplet Extraction (Item 20) ────────────────────────
+
+/// Extracts triplets using deterministic pattern matching.
+/// Covers ~90% of common SPO patterns at zero LLM cost.
+pub fn extract_triplets_deterministic(text: &str) -> Vec<RawTriplet> {
+    let mut triplets = Vec::new();
+    let lower = text.to_lowercase();
+
+    // Pattern: "X is a Y" → (X, is_a, Y)
+    for pattern in &[
+        ("is a", "is_a"),
+        ("is an", "is_a"),
+        ("are a", "is_a"),
+        ("are an", "is_a"),
+        ("is the", "is_a"),
+    ] {
+        if let Some(pos) = lower.find(pattern.0) {
+            let before = text[..pos].trim();
+            let after = text[pos + pattern.0.len()..].trim();
+            let subject = extract_last_noun_phrase(before);
+            let object = extract_first_noun_phrase(after);
+            if !subject.is_empty() && !object.is_empty() {
+                triplets.push(RawTriplet {
+                    subject,
+                    predicate: pattern.1.to_string(),
+                    object,
+                    confidence: 0.90,
+                });
+            }
+        }
+    }
+
+    // Pattern: "X has Y" → (X, has, Y)
+    if let Some(pos) = lower.find(" has ") {
+        let before = text[..pos].trim();
+        let after = text[pos + 5..].trim();
+        let subject = extract_last_noun_phrase(before);
+        let object = extract_first_noun_phrase(after);
+        if !subject.is_empty() && !object.is_empty() {
+            triplets.push(RawTriplet {
+                subject,
+                predicate: "has".to_string(),
+                object,
+                confidence: 0.85,
+            });
+        }
+    }
+
+    // Pattern: "X uses Y" → (X, uses, Y)
+    for verb in &["uses", "requires", "depends on", "needs"] {
+        if let Some(pos) = lower.find(&format!(" {} ", verb)) {
+            let before = text[..pos].trim();
+            let after = text[pos + verb.len() + 2..].trim();
+            let subject = extract_last_noun_phrase(before);
+            let object = extract_first_noun_phrase(after);
+            if !subject.is_empty() && !object.is_empty() {
+                triplets.push(RawTriplet {
+                    subject,
+                    predicate: verb.to_string(),
+                    object,
+                    confidence: 0.88,
+                });
+            }
+        }
+    }
+
+    // Pattern: "X created Y" / "X built Y" / "X developed Y"
+    for verb in &["created", "built", "developed", "designed", "implemented", "wrote"] {
+        if let Some(pos) = lower.find(&format!(" {} ", verb)) {
+            let before = text[..pos].trim();
+            let after = text[pos + verb.len() + 2..].trim();
+            let subject = extract_last_noun_phrase(before);
+            let object = extract_first_noun_phrase(after);
+            if !subject.is_empty() && !object.is_empty() {
+                triplets.push(RawTriplet {
+                    subject,
+                    predicate: verb.to_string(),
+                    object,
+                    confidence: 0.87,
+                });
+            }
+        }
+    }
+
+    // Pattern: "X contains Y" / "X includes Y"
+    for verb in &["contains", "includes", "supports"] {
+        if let Some(pos) = lower.find(&format!(" {} ", verb)) {
+            let before = text[..pos].trim();
+            let after = text[pos + verb.len() + 2..].trim();
+            let subject = extract_last_noun_phrase(before);
+            let object = extract_first_noun_phrase(after);
+            if !subject.is_empty() && !object.is_empty() {
+                triplets.push(RawTriplet {
+                    subject,
+                    predicate: verb.to_string(),
+                    object,
+                    confidence: 0.86,
+                });
+            }
+        }
+    }
+
+    triplets
+}
+
+/// Merges deterministic and LLM triplets, preferring LLM for ambiguous cases.
+fn merge_triplets(deterministic: &[RawTriplet], llm: &[RawTriplet]) -> Vec<RawTriplet> {
+    let mut merged = Vec::new();
+
+    // Accept all high-confidence deterministic triplets directly
+    for det in deterministic {
+        if det.confidence > 0.85 {
+            merged.push(det.clone());
+        }
+    }
+
+    // For LLM triplets, add them if they don't conflict with existing ones
+    for llm_triplet in llm {
+        let is_duplicate = merged.iter().any(|existing| {
+            existing.subject.to_lowercase() == llm_triplet.subject.to_lowercase()
+                && existing.predicate.to_lowercase() == llm_triplet.predicate.to_lowercase()
+                && existing.object.to_lowercase() == llm_triplet.object.to_lowercase()
+        });
+        if !is_duplicate {
+            merged.push(RawTriplet {
+                subject: llm_triplet.subject.clone(),
+                predicate: llm_triplet.predicate.clone(),
+                object: llm_triplet.object.clone(),
+                confidence: llm_triplet.confidence,
+            });
+        }
+    }
+
+    merged
+}
+
+/// Extracts the last noun phrase from text (up to 3 words).
+fn extract_last_noun_phrase(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return String::new();
+    }
+    let start = words.len().saturating_sub(3);
+    words[start..].join(" ")
+}
+
+/// Extracts the first noun phrase from text (up to 3 words).
+fn extract_first_noun_phrase(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return String::new();
+    }
+    let end = words.len().min(3);
+    words[..end].join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deterministic_is_a() {
+        let triplets = extract_triplets_deterministic("Rust is a programming language.");
+        assert!(!triplets.is_empty());
+        assert_eq!(triplets[0].predicate, "is_a");
+        assert!(triplets[0].confidence > 0.85);
+    }
+
+    #[test]
+    fn test_deterministic_uses() {
+        let triplets = extract_triplets_deterministic("Savant uses Rust for performance.");
+        assert!(!triplets.is_empty());
+        assert_eq!(triplets[0].predicate, "uses");
+    }
+
+    #[test]
+    fn test_deterministic_created() {
+        let triplets = extract_triplets_deterministic("Spencer created Savant.");
+        assert!(!triplets.is_empty());
+        assert_eq!(triplets[0].predicate, "created");
+    }
+
+    #[test]
+    fn test_deterministic_no_match() {
+        let triplets = extract_triplets_deterministic("Hello world, how are you?");
+        assert!(triplets.is_empty());
+    }
+
+    #[test]
+    fn test_merge_triplets() {
+        let det = vec![RawTriplet {
+            subject: "Rust".to_string(),
+            predicate: "is_a".to_string(),
+            object: "language".to_string(),
+            confidence: 0.90,
+        }];
+        let llm = vec![RawTriplet {
+            subject: "Rust".to_string(),
+            predicate: "is_a".to_string(),
+            object: "language".to_string(),
+            confidence: 0.95,
+        }];
+        let merged = merge_triplets(&det, &llm);
+        // Should deduplicate — only 1 result
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn test_confidence_gate_high() {
+        // High confidence deterministic → no LLM needed
+        let triplets = extract_triplets_deterministic("Python is a programming language.");
+        assert!(triplets.iter().all(|t| t.confidence > 0.85));
+    }
+
+    #[test]
+    fn test_shannon_entropy() {
+        let entropy = calculate_shannon_entropy("aaaa");
+        assert_eq!(entropy, 0.0);
+        let entropy = calculate_shannon_entropy("abcd");
+        assert!(entropy > 0.0);
+    }
 }

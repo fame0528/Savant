@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Slack Channel Adapter
 //!
 //! Provides integration with the Slack Web API for sending and receiving messages.
@@ -409,6 +410,7 @@ impl SlackAdapter {
                     agent_id: None,
                     session_id: Some(session_id),
                     channel: AgentOutputChannel::Chat,
+                    images: Vec::new(),
                 };
 
                 let event = EventFrame {
@@ -438,9 +440,8 @@ impl SlackAdapter {
     /// Listens on the Nexus event bus for outbound messages to deliver to Slack.
     async fn outbound_loop(self: Arc<Self>) {
         info!("[SLACK] Starting outbound delivery loop.");
-        let mut event_rx = match self.nexus.subscribe().await {
-            (rx, _) => rx,
-        };
+        let (rx, _) = self.nexus.subscribe().await;
+        let mut event_rx = rx;
 
         while let Ok(event) = event_rx.recv().await {
             if event.event_type != "chat.message" {

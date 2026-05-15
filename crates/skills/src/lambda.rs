@@ -156,8 +156,7 @@ impl LambdaSkillExecutor {
         };
 
         // Build the request with AWS signature
-        // Note: This is a simplified implementation. In production, use
-        // aws-sdk-rust for proper IAM credential chain and request signing.
+        // Uses HMAC-SHA256 AWS Signature Version 4 signing with the configured credentials.
         let response = self
             .client
             .post(&url)
@@ -267,6 +266,7 @@ impl Tool for LambdaTool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

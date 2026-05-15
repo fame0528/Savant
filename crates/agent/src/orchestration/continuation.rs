@@ -15,7 +15,7 @@
 //! 4. Token budget enforcement to prevent infinite loops
 
 use tokio::time::{sleep, Duration};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Configuration for the continuation engine.
 #[derive(Debug, Clone)]
@@ -182,6 +182,54 @@ impl ContinuationEngine {
         self.continuation_count.get(agent_id).copied().unwrap_or(0)
     }
 
+    /// Checks whether a delegated task has exceeded its deadline.
+    ///
+    /// Compares the current time against the `deadline_timestamp` from a
+    /// `DelegationTask`. Returns `true` if the task has expired.
+    ///
+    /// # Arguments
+    /// * `deadline_timestamp` — The deadline in epoch milliseconds (0 means no deadline)
+    pub fn is_task_expired(deadline_timestamp: u64) -> bool {
+        if deadline_timestamp == 0 {
+            return false;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        now > deadline_timestamp
+    }
+
+    /// Executes a continuation pause with task timeout enforcement.
+    ///
+    /// Before yielding, checks if the task has expired. If expired, returns
+    /// `ContinuationError::TaskExpired` instead of sleeping. Otherwise behaves
+    /// identically to `yield_execution`.
+    ///
+    /// # Arguments
+    /// * `agent_id` — The agent's unique identifier
+    /// * `delay_ms` — The delay in milliseconds
+    /// * `deadline_timestamp` — The task deadline in epoch milliseconds (0 = no deadline)
+    pub async fn yield_execution_with_timeout(
+        &mut self,
+        agent_id: &str,
+        delay_ms: u64,
+        deadline_timestamp: u64,
+    ) -> Result<(), ContinuationError> {
+        if Self::is_task_expired(deadline_timestamp) {
+            warn!(
+                agent_id = %agent_id,
+                deadline_timestamp = %deadline_timestamp,
+                "Task expired — refusing continuation pause"
+            );
+            return Err(ContinuationError::TaskExpired {
+                agent_id: agent_id.to_string(),
+                deadline_ms: deadline_timestamp,
+            });
+        }
+        self.yield_execution(agent_id, delay_ms).await
+    }
+
     /// Clears all continuation tracking (useful for agent lifecycle).
     pub fn clear(&mut self) {
         self.continuation_count.clear();
@@ -196,6 +244,12 @@ pub enum ContinuationError {
         agent_id: String,
         count: u32,
         limit: u32,
+    },
+
+    #[error("Task expired for agent {agent_id} — deadline was {deadline_ms}ms")]
+    TaskExpired {
+        agent_id: String,
+        deadline_ms: u64,
     },
 }
 

@@ -26,11 +26,12 @@ fn bench_storage_append() {
             content: format!("Benchmark message {} with padding to simulate realistic content size for performance testing", i),
             sender: Some("bench".to_string()),
             recipient: None,
-            agent_id: Some(format!("bench-agent")),
+            agent_id: Some("bench-agent".to_string()),
             session_id: None,
             channel: AgentOutputChannel::Chat,
+            images: Vec::new(),
         };
-        storage.append_chat("bench-agent", &msg).unwrap();
+        storage.append_chat("bench-agent", &msg).unwrap_or_else(|e| panic!("append failed: {}", e));
     }
     let elapsed = start.elapsed();
 
@@ -67,16 +68,17 @@ fn bench_storage_retrieve() {
             content: format!("Message {}", i),
             sender: Some("bench".to_string()),
             recipient: None,
-            agent_id: Some(format!("ret-agent")),
+            agent_id: Some("ret-agent".to_string()),
             session_id: None,
             channel: AgentOutputChannel::Chat,
+            images: Vec::new(),
         };
-        storage.append_chat("ret-agent", &msg).unwrap();
+        storage.append_chat("ret-agent", &msg).unwrap_or_else(|e| panic!("append failed: {}", e));
     }
 
     let start = Instant::now();
     for _ in 0..100 {
-        let _ = storage.get_history("ret-agent", 50).unwrap();
+        let _ = storage.get_history("ret-agent", 50).unwrap_or_else(|e| panic!("get_history failed: {}", e));
     }
     let elapsed = start.elapsed();
 

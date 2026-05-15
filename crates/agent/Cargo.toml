@@ -3,6 +3,9 @@ name = "savant_agent"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+nexus = []
+
 [dependencies]
 savant_core = { workspace = true }
 savant_skills = { workspace = true }
@@ -16,11 +19,15 @@ savant_gateway = { workspace = true }
 savant_dream = { workspace = true }
 savant_browser = { workspace = true }
 savant_toolforge = { workspace = true }
-tokio = { workspace = true }
-tokio-util = { workspace = true }
-zstd = "0.13"
-serde = { workspace = true }
-serde_json = { workspace = true }
+ savant_obsidian = { workspace = true }
+ once_cell = "1.19"
+ aho-corasick = "1.1"
+ tokio = { workspace = true }
+ tokio-util = { workspace = true }
+ zstd = "0.13"
+ serde = { workspace = true }
+ serde_json = { workspace = true }
+ rkyv = { workspace = true }
 tiktoken-rs = "0.5"
 regex = "1.10"
 reqwest = { version = "0.12", features = ["json", "stream"] }

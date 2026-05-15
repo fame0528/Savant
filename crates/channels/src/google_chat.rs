@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -28,7 +29,7 @@ impl GoogleChatAdapter {
     async fn send_text(&self, space_id: &str, text: &str) -> Result<(), SavantError> {
         let resp = self
             .http
-            .post(&format!(
+            .post(format!(
                 "https://chat.googleapis.com/v1/{}/messages",
                 space_id
             ))
@@ -52,7 +53,7 @@ impl GoogleChatAdapter {
                     if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
                         if p["recipient"]
                             .as_str()
-                            .map_or(false, |r| r.starts_with("googlechat:"))
+                            .is_some_and(|r| r.starts_with("googlechat:"))
                             || p["role"].as_str() == Some("Assistant")
                         {
                             let sid = p["session_id"].as_str().unwrap_or("");

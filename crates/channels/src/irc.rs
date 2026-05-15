@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! IRC Channel Adapter
 //!
 //! Provides integration with IRC servers via raw TCP + TLS.
@@ -374,6 +375,7 @@ impl IrcAdapter {
                     agent_id: None,
                     session_id: Some(session_id),
                     channel: savant_core::types::AgentOutputChannel::Chat,
+                    images: Vec::new(),
                 };
 
                 let event = EventFrame {
@@ -435,7 +437,7 @@ impl IrcAdapter {
             _ => {
                 // Numeric replies and other commands
                 if let Ok(code) = command.parse::<u32>() {
-                    if code >= 400 && code < 500 {
+                    if (400..500).contains(&code) {
                         warn!(
                             "[IRC] Error reply {}: {}",
                             code,
@@ -648,10 +650,10 @@ impl IrcAdapter {
 fn parse_irc_message(line: &str) -> (Option<String>, String, Vec<String>, Option<String>) {
     let line = line.trim();
 
-    let (prefix, rest): (Option<String>, &str) = if line.starts_with(':') {
-        match line.find(' ') {
-            Some(pos) => (Some(line[1..pos].to_string()), &line[pos + 1..]),
-            None => (Some(line[1..].to_string()), ""),
+    let (prefix, rest): (Option<String>, &str) = if let Some(stripped) = line.strip_prefix(':') {
+        match stripped.find(' ') {
+            Some(pos) => (Some(stripped[..pos].to_string()), &stripped[pos + 1..]),
+            None => (Some(stripped.to_string()), ""),
         }
     } else {
         (None, line)
@@ -679,7 +681,7 @@ fn parse_irc_message(line: &str) -> (Option<String>, String, Vec<String>, Option
 /// Simple base64 encoder for SASL PLAIN.
 fn base64_encode(input: &[u8]) -> String {
     const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
 
     for chunk in input.chunks(3) {
         let b0 = chunk[0] as u32;

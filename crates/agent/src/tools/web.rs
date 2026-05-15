@@ -191,6 +191,7 @@ impl WebSovereign {
     }
 
     /// Converts a DOM node to Markdown string.
+    #[allow(clippy::only_used_in_recursion)]
     fn node_to_markdown(&self, node: &scraper::ElementRef, depth: usize) -> String {
         let mut output = String::new();
         let tag = node.value().name();
@@ -247,7 +248,7 @@ impl WebSovereign {
                     output.push_str(&format!("![{}]({})", alt, src));
                 }
             }
-            "br" => output.push_str("\n"),
+            "br" => output.push('\n'),
             "hr" => output.push_str("---\n\n"),
             "strong" | "b" => {
                 output.push_str(&format!("**{}**", self.inline_content(node)));

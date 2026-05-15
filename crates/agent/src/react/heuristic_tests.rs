@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 struct AmbiguousLlm {
     responses: Vec<String>,
+    call_count: std::sync::atomic::AtomicUsize,
 }
 
 #[async_trait]
@@ -24,7 +25,14 @@ impl LlmProvider for AmbiguousLlm {
         Pin<Box<dyn Stream<Item = Result<savant_core::types::ChatChunk, SavantError>> + Send>>,
         SavantError,
     > {
-        let response = self.responses[0].clone();
+        let idx = self
+            .call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let response = self
+            .responses
+            .get(idx)
+            .cloned()
+            .unwrap_or_else(|| "Thought: Done.\nAction: None".to_string());
         let chunk = savant_core::types::ChatChunk {
             agent_name: "test".to_string(),
             agent_id: "test".to_string(),
@@ -108,7 +116,9 @@ async fn test_autonomous_ambiguity_synthesis() {
     let provider = Box::new(AmbiguousLlm {
         responses: vec![
             "Thought: I should use a tool.\nAction: MockTool missing_brackets".to_string(),
+            "Thought: Done.\nAction: None".to_string(),
         ],
+        call_count: std::sync::atomic::AtomicUsize::new(0),
     });
 
     let mut agent = AgentLoop::new(
@@ -151,6 +161,7 @@ async fn test_autonomous_ambiguity_synthesis() {
 async fn test_checkpoint_creation() {
     let provider = Box::new(AmbiguousLlm {
         responses: vec!["Action: Tool1[]".to_string()],
+        call_count: std::sync::atomic::AtomicUsize::new(0),
     });
 
     let mut agent = AgentLoop::new(

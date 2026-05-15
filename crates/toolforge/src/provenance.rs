@@ -118,19 +118,16 @@ impl ProvenanceTracker {
             if entry.name != name {
                 continue;
             }
-            match entry.action.as_str() {
-                "rate" => {
-                    use_count += 1;
-                    if let Some(ref agent) = entry.rating_agent {
-                        unique_agents.insert(agent.clone());
-                    }
-                    match entry.rating.as_deref() {
-                        Some("thumbs_up") => thumbs_up += 1,
-                        Some("thumbs_down") => thumbs_down += 1,
-                        _ => {}
-                    }
+            if entry.action.as_str() == "rate" {
+                use_count += 1;
+                if let Some(ref agent) = entry.rating_agent {
+                    unique_agents.insert(agent.clone());
                 }
-                _ => {}
+                match entry.rating.as_deref() {
+                    Some("thumbs_up") => thumbs_up += 1,
+                    Some("thumbs_down") => thumbs_down += 1,
+                    _ => {}
+                }
             }
             if let Ok(ts) = DateTime::parse_from_rfc3339(&entry.timestamp) {
                 last_used_at = Some(ts.with_timezone(&Utc));

@@ -185,6 +185,7 @@ impl AgentMessage {
                 .as_str()
                 .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
                 .unwrap_or_default(),
+            images: Vec::new(),
         }
     }
 }

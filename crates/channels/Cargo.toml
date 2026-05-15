@@ -16,7 +16,8 @@ futures = { workspace = true }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
 dashmap = "6.0"
 reqwest = { workspace = true }
-imap = "2.4"
+async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
+async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
 native-tls = "0.2"
 lettre = { version = "0.11", features = ["smtp-transport", "native-tls", "builder"] }
 mailparse = "0.14"

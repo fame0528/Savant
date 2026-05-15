@@ -90,7 +90,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                 // Execute with timeout
                 let timeout_secs = tool.timeout_secs();
-                let max_output = tool.max_output_chars();
+                let _max_output = tool.max_output_chars();
                 let tool_clone = tool.clone();
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(timeout_secs),
@@ -100,7 +100,16 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                 return match result {
                     Ok(inner_result) => {
-                        inner_result.map(|output| truncate_output(&output, max_output))
+                        inner_result.map(|output| {
+                            // Use Compact engine for L1 tool output compression
+                            crate::compact::integration::compact_output_sync(
+                                name,
+                                args,
+                                0,
+                                &output,
+                                None,
+                            ).output
+                        })
                     }
                     Err(_) => Err(SavantError::Unknown(format!(
                         "Tool '{}' timed out after {} seconds",
@@ -185,6 +194,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
 /// Truncate tool output with head+tail preservation.
 /// Uses char-boundary-aware slicing to prevent UTF-8 panics on multi-byte content.
+#[allow(dead_code)]
 fn truncate_output(output: &str, max_chars: usize) -> String {
     if output.len() <= max_chars {
         return output.to_string();

@@ -22,7 +22,6 @@ use savant_core::utils::parsing;
 use savant_ipc::{CollectiveBlackboard, SwarmBlackboard};
 use savant_memory::{AsyncMemoryBackend, MemoryEngine};
 #[cfg(kani)]
-// pub mod proofs; // Placeholder for future agent-specific proofs
 use savant_security::{SecurityAuthority, SecurityError};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -118,7 +117,7 @@ impl SwarmController {
         let tools = Arc::new(registry.tools);
 
         // 2. Initialize Embedding Service FIRST (required by memory engine)
-        // Ollama qwen3-embedding:4b, fastembed fallback
+        // Ollama Gemma for embeddings, fastembed fallback
         let embedding_service: Arc<dyn savant_core::traits::EmbeddingProvider> =
             create_embedding_service()
                 .await
@@ -143,10 +142,10 @@ impl SwarmController {
                 ))
             })?;
 
-        // 2.6. Initialize Vision Service (Ollama qwen3-vl)
+        // 2.6. Initialize Vision Service (Ollama Gemma)
         let vision_service = match create_vision_service().await {
             Some(svc) => {
-                tracing::info!("Vision service initialized (qwen3-vl)");
+                tracing::info!("Vision service initialized (Gemma)");
                 Some(Arc::from(svc))
             }
             None => {
@@ -775,6 +774,10 @@ impl SwarmController {
 
     pub fn nexus(&self) -> Arc<NexusBridge> {
         self.nexus.clone()
+    }
+
+    pub fn engine(&self) -> Arc<MemoryEngine> {
+        self.engine.clone()
     }
 
     pub async fn active_agents_count(&self) -> usize {

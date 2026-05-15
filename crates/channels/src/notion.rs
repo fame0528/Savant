@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -34,7 +35,7 @@ impl NotionAdapter {
     async fn query_database(&self, db_id: &str) -> Result<Vec<serde_json::Value>, SavantError> {
         let resp: serde_json::Value = self
             .http
-            .post(&format!(
+            .post(format!(
                 "https://api.notion.com/v1/databases/{}/query",
                 db_id
             ))
@@ -58,7 +59,7 @@ impl NotionAdapter {
     async fn append_to_page(&self, page_id: &str, text: &str) -> Result<(), SavantError> {
         let resp = self
             .http
-            .patch(&format!(
+            .patch(format!(
                 "https://api.notion.com/v1/blocks/{}/children",
                 page_id
             ))
@@ -118,7 +119,7 @@ impl NotionAdapter {
                             {
                                 if p["recipient"]
                                     .as_str()
-                                    .map_or(false, |r| r.starts_with("notion:"))
+                                    .is_some_and(|r| r.starts_with("notion:"))
                                     || p["role"].as_str() == Some("Assistant")
                                 {
                                     let sid = p["session_id"].as_str().unwrap_or("");
@@ -158,6 +159,7 @@ impl NotionAdapter {
                                         agent_id: None,
                                         session_id: Some(sid),
                                         channel: savant_core::types::AgentOutputChannel::Chat,
+                                        images: Vec::new(),
                                     };
                                     let frame = EventFrame {
                                         event_type: "chat.message".into(),

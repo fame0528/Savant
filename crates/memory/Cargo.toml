@@ -31,6 +31,8 @@ futures = "0.3"
 
 # Core types and traits
 savant_core = { path = "../core" }
+savant_ipc = { path = "../ipc" }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

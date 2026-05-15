@@ -471,6 +471,18 @@ impl LsmStorageEngine {
         Ok(())
     }
 
+    /// Returns a snapshot of all known session IDs at the time of the call.
+    /// This is a read-only view of the session registry, used by the vault
+    /// projection worker to enumerate sessions for markdown export.
+    pub fn session_keys(&self) -> Vec<String> {
+        self.sessions.iter().map(|s| s.clone()).collect()
+    }
+
+    /// Returns the number of known sessions.
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
+    }
+
     /// Retrieves engine statistics.
     pub fn stats(&self) -> Result<StorageStats, MemoryError> {
         let db_stats = self
@@ -1092,6 +1104,141 @@ impl LsmStorageEngine {
         self.db
             .flush()
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))
+    }
+
+    // ========================================================================
+    // TaskState WAL Journal
+    // ========================================================================
+    // TaskState transitions are journaled to a dedicated collection for crash
+    // recovery. Each entry contains the task_id, the new state, a timestamp,
+    // and an XXH3 checksum for integrity verification.
+    // On orchestrator restart, recover_from_journal() can scan for
+    // TaskState::Working entries and re-queue interrupted delegations.
+
+    /// Journals a TaskState transition to the persistent WAL.
+    ///
+    /// Stores the transition in the `task_state_journal` collection keyed by
+    /// `{task_id}:{timestamp_ms}`. Each entry includes an XXH3 checksum for
+    /// integrity verification.
+    ///
+    /// # Arguments
+    /// * `task_id` — The UUID of the delegated task (as hex string)
+    /// * `new_state` — The TaskState being transitioned to
+    pub fn journal_task_state(
+        &self,
+        task_id: &str,
+        new_state: savant_ipc::a2a::protocol::TaskState,
+    ) -> Result<(), MemoryError> {
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        // Build the journal entry: a compact binary representation
+        // [task_id_bytes][state_u8][timestamp_ms_u64]
+        let mut entry = Vec::new();
+        entry.extend_from_slice(task_id.as_bytes());
+        entry.push(new_state as u8);
+        entry.extend_from_slice(&timestamp_ms.to_le_bytes());
+
+        // Compute XXH3 checksum for integrity verification
+        let checksum = xxhash_rust::xxh3::xxh3_64(&entry);
+
+        // Build metadata with checksum for verification on replay
+        let key = format!("task_state:{}:{}", task_id, timestamp_ms);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("key".to_string(), key.clone());
+        meta.insert("task_id".to_string(), task_id.to_string());
+        meta.insert("state".to_string(), (new_state as u8).to_string());
+        meta.insert("timestamp_ms".to_string(), timestamp_ms.to_string());
+        meta.insert("checksum".to_string(), checksum.to_string());
+
+        self.db
+            .add_with_content(
+                "task_state_journal",
+                entry,
+                self.zero_embedding(),
+                Some(meta),
+            )
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+
+        debug!(
+            task_id = %task_id,
+            state = %new_state,
+            timestamp_ms = %timestamp_ms,
+            "TaskState transition journaled to WAL"
+        );
+        Ok(())
+    }
+
+    /// Scans the task state journal for interrupted delegations.
+    ///
+    /// Returns all task IDs that have a `Working` state entry but no
+    /// corresponding `Completed`, `Failed`, or `Canceled` entry. These
+    /// tasks were interrupted mid-execution and should be re-queued.
+    pub fn recover_interrupted_delegations(
+        &self,
+    ) -> Result<Vec<(String, savant_ipc::a2a::protocol::TaskState)>, MemoryError> {
+        let mut interrupted = Vec::new();
+
+        if let Ok(hits) = self.db.search_in_collection(
+            "task_state_journal",
+            self.zero_embedding(),
+            MAX_BATCH_SIZE,
+            None,
+        ) {
+            // Collect all state entries per task_id
+            let mut task_states: std::collections::HashMap<String, Vec<(savant_ipc::a2a::protocol::TaskState, u64)>> =
+                std::collections::HashMap::new();
+
+            for hit in hits {
+                if let Ok(memory) = self.db.get_memory(hit.id) {
+                    if let Some(task_id) = memory.metadata.get("task_id") {
+                        if let Some(state_str) = memory.metadata.get("state") {
+                            if let Ok(state_val) = state_str.parse::<u8>() {
+                                if let Some(ts_str) = memory.metadata.get("timestamp_ms") {
+                                    if let Ok(ts) = ts_str.parse::<u64>() {
+                                        let state = match state_val {
+                                            0 => savant_ipc::a2a::protocol::TaskState::Submitted,
+                                            1 => savant_ipc::a2a::protocol::TaskState::Working,
+                                            2 => savant_ipc::a2a::protocol::TaskState::InputRequired,
+                                            3 => savant_ipc::a2a::protocol::TaskState::Completed,
+                                            4 => savant_ipc::a2a::protocol::TaskState::Failed,
+                                            5 => savant_ipc::a2a::protocol::TaskState::Canceled,
+                                            _ => continue,
+                                        };
+                                        task_states
+                                            .entry(task_id.clone())
+                                            .or_default()
+                                            .push((state, ts));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Find tasks whose latest state is Working or InputRequired (interrupted)
+            for (task_id, mut states) in task_states {
+                states.sort_by_key(|(_, ts)| *ts);
+                if let Some((latest_state, _)) = states.last() {
+                    if matches!(
+                        latest_state,
+                        savant_ipc::a2a::protocol::TaskState::Working
+                            | savant_ipc::a2a::protocol::TaskState::InputRequired
+                    ) {
+                        interrupted.push((task_id, *latest_state));
+                    }
+                }
+            }
+        }
+
+        info!(
+            interrupted_count = interrupted.len(),
+            "Scanned task state journal for interrupted delegations"
+        );
+        Ok(interrupted)
     }
 }
 

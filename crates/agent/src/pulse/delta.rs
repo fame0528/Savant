@@ -51,7 +51,9 @@ impl EnvironmentalDelta {
 /// Tracks state between pulses to compute deltas.
 pub struct DeltaTracker {
     last_pulse_time: Instant,
+    #[allow(dead_code)]
     last_git_hash: u64,
+    #[allow(dead_code)]
     last_fs_snapshot: Vec<(String, u64)>,
     new_messages_count: usize,
     tool_errors_count: usize,
@@ -100,5 +102,11 @@ impl DeltaTracker {
         self.tool_errors_count = 0;
 
         delta
+    }
+}
+
+impl Default for DeltaTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }

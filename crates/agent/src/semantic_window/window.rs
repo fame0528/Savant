@@ -4,8 +4,8 @@
 //! When the window exceeds the threshold, evicts the lowest-scoring
 //! non-pinned entries. Evicted entries are written to episodic memory.
 
-use savant_core::types::{ChatMessage, ChatRole};
-use tracing::{debug, info};
+use savant_core::types::ChatMessage;
+use tracing::info;
 
 use super::scoring::{score_messages, ContextScore};
 
@@ -127,6 +127,7 @@ impl SemanticWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use savant_core::types::ChatRole;
 
     fn make_msg(role: ChatRole, content: &str) -> ChatMessage {
         ChatMessage {
@@ -138,6 +139,7 @@ mod tests {
             agent_id: None,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         }
     }
 

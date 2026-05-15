@@ -2,6 +2,7 @@ use crate::error::SavantError;
 use crate::types::{AgentConfig, AgentFileConfig, AgentIdentity, ModelProvider};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 /// Discovers and manages agent workspaces.
 pub struct AgentRegistry {
@@ -210,6 +211,32 @@ impl AgentRegistry {
             let _ = fs::write(&evolution_path, "");
         }
 
+        // Resolve model provider: savant.toml [ai] is source of truth.
+        // AgentFileConfig.model_provider is only used if explicitly set AND valid.
+        let provider = if let Some(ref p_str) = file_config.model_provider {
+            match ModelProvider::from_str(p_str) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        "      agent.json has invalid provider '{}': {}. Using global default.",
+                        p_str, e
+                    );
+                    ModelProvider::from_str(&self.defaults.model_provider)
+                        .unwrap_or(ModelProvider::Ollama)
+                }
+            }
+        } else {
+            ModelProvider::from_str(&self.defaults.model_provider)
+                .unwrap_or(ModelProvider::Ollama)
+        };
+
+        // Resolve model: savant.toml [ai] is source of truth.
+        // AgentFileConfig.model is only used if explicitly set.
+        let model = file_config
+            .model
+            .clone()
+            .or_else(|| Some(self.ai_config.model.clone()));
+
         let config = AgentConfig {
             agent_id: file_config
                 .agent_id
@@ -219,20 +246,11 @@ impl AgentRegistry {
                 .agent_name
                 .clone()
                 .unwrap_or_else(|| agent_name.clone()),
-            model_provider: file_config
-                .model_provider
-                .as_deref()
-                .and_then(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).ok())
-                .unwrap_or_else(|| {
-                    serde_json::from_value::<ModelProvider>(serde_json::Value::String(
-                        self.defaults.model_provider.clone(),
-                    ))
-                    .unwrap_or(ModelProvider::OpenRouter)
-                }),
+            model_provider: provider,
             api_key: None,
             env_vars: self.defaults.env_vars.clone(),
             system_prompt: self.defaults.system_prompt.clone(),
-            model: file_config.model.clone(),
+            model,
             heartbeat_interval: self.defaults.heartbeat_interval,
             allowed_skills: Vec::new(),
             workspace_path: workspace_path.to_path_buf(),
@@ -261,12 +279,13 @@ impl AgentRegistry {
             evolution_state: None,
         };
 
-        // Write agent config to workspace
+        // Write agent config to workspace — identity/skills/evolution only.
+        // model and provider are derived from savant.toml [ai] and NOT persisted here.
         let file_config = AgentFileConfig {
             agent_id: Some(config.agent_id.clone()),
             agent_name: Some(config.agent_name.clone()),
-            model: config.model.clone(),
-            model_provider: Some(format!("{:?}", config.model_provider)),
+            model: None,
+            model_provider: None,
             system_prompt: if config.system_prompt.is_empty() {
                 None
             } else {
@@ -283,6 +302,7 @@ impl AgentRegistry {
             description: None,
             avatar: None,
             personality_traits: None,
+            evolution_state: None,
         };
 
         let content = serde_json::to_string_pretty(&file_config)
@@ -406,11 +426,10 @@ This is your private space. Your diary. Your inner monologue.
             fs::create_dir_all(&workspace_path).map_err(SavantError::IoError)?;
         }
 
-        // Parse default provider from config
-        let default_provider: ModelProvider = serde_json::from_value(serde_json::Value::String(
-            self.defaults.model_provider.clone(),
-        ))
-        .unwrap_or(ModelProvider::OpenRouter);
+        // Parse default provider from config using canonical FromStr
+        let default_provider: ModelProvider =
+            ModelProvider::from_str(&self.defaults.model_provider)
+                .unwrap_or(ModelProvider::Ollama);
 
         let config = AgentConfig {
             agent_id: agent_id.to_string(),
@@ -449,7 +468,7 @@ This is your private space. Your diary. Your inner monologue.
                 agent_id: Some(config.agent_id.clone()),
                 agent_name: Some(config.agent_name.clone()),
                 model: config.model.clone(),
-                model_provider: Some(format!("{:?}", config.model_provider)),
+                model_provider: Some(config.model_provider.as_str().to_string()),
                 system_prompt: if config.system_prompt.is_empty() {
                     None
                 } else {
@@ -466,6 +485,7 @@ This is your private space. Your diary. Your inner monologue.
             description: None,
             avatar: None,
             personality_traits: None,
+            evolution_state: None,
         };
         let content = serde_json::to_string_pretty(&file_config)
             .map_err(|e| SavantError::ConfigError(e.to_string()))?;
@@ -487,6 +507,57 @@ This is your private space. Your diary. Your inner monologue.
             if let Err(e) = fs::write(agents_path, default_agents) {
                 tracing::warn!("[core::registry] Failed to write default AGENTS.md: {}", e);
             }
+        }
+
+        // Scaffold Obsidian memory vault directory structure
+        let vault_path = workspace_path.join("memory-vault");
+        if !vault_path.exists() {
+            let vault_dirs = [
+                vault_path.join(".obsidian"),
+                vault_path.join("Episodic"),
+                vault_path.join("Semantic"),
+                vault_path.join("Identity").join("Evolution"),
+                vault_path.join("Themes"),
+                vault_path.join("Working"),
+                vault_path.join("Dashboard"),
+                vault_path.join(".stale"),
+            ];
+            for dir in &vault_dirs {
+                if let Err(e) = fs::create_dir_all(dir) {
+                    tracing::warn!("[core::registry] Failed to create vault dir {:?}: {}", dir, e);
+                }
+            }
+
+            let appearance_json = vault_path.join(".obsidian").join("appearance.json");
+            let appearance_content = "{\"accentColor\":\"#00FFBB\",\"baseTheme\":\"obsidian\",\"interfaceFontFamily\":\"Inter\",\"textFontFamily\":\"Inter\",\"monospaceFontFamily\":\"JetBrains Mono\",\"translucency\":false,\"native\":false,\"enabledCssSnippets\":[],\"cssTheme\":\"\"}";
+            if let Err(e) = fs::write(&appearance_json, appearance_content) {
+                tracing::warn!("[core::registry] Failed to write appearance.json: {}", e);
+            }
+
+            let stale_gitignore = vault_path.join(".stale").join(".gitignore");
+            if let Err(e) = fs::write(&stale_gitignore, "*\n") {
+                tracing::warn!("[core::registry] Failed to write .stale/.gitignore: {}", e);
+            }
+
+            let index_md = vault_path.join("INDEX.md");
+            let agent_name = &config.agent_name;
+            let index_content = format!(
+                "# {agent_name}'s Memory Tree\n\n\
+                 > *Vault initialized on agent birth. Awaiting first sync.*\n\n\
+                 ---\n\n\
+                 ## Episodic\n\n\
+                 ## Semantic\n\n\
+                 ## Identity\n\n\
+                 ## Themes\n\n\
+                 ## Dashboard\n\n\
+                 ---\n\n\
+                 *This vault is a bidirectional projection of Savant's LSM+HNSW memory substrate.*\n"
+            );
+            if let Err(e) = fs::write(&index_md, index_content) {
+                tracing::warn!("[core::registry] Failed to write INDEX.md: {}", e);
+            }
+
+            tracing::info!("[core::registry] Obsidian vault scaffolded at {:?}", vault_path);
         }
 
         Ok(config)

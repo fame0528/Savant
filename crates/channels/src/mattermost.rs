@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -31,7 +32,7 @@ impl MattermostAdapter {
     async fn send_text(&self, channel_id: &str, text: &str) -> Result<(), SavantError> {
         let resp = self
             .http
-            .post(&format!("{}/api/v4/posts", self.config.server_url))
+            .post(format!("{}/api/v4/posts", self.config.server_url))
             .bearer_auth(&self.config.token)
             .json(&serde_json::json!({"channel_id": channel_id, "message": text}))
             .send()
@@ -46,7 +47,7 @@ impl MattermostAdapter {
     async fn poll_posts(&self, channel_id: &str) -> Result<Vec<serde_json::Value>, SavantError> {
         let resp: serde_json::Value = self
             .http
-            .get(&format!(
+              .get(format!(
                 "{}/api/v4/channels/{}/posts",
                 self.config.server_url, channel_id
             ))
@@ -83,7 +84,7 @@ impl MattermostAdapter {
                         if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
                             if p["recipient"]
                                 .as_str()
-                                .map_or(false, |r| r.starts_with("mattermost:"))
+                                .is_some_and(|r| r.starts_with("mattermost:"))
                                 || p["role"].as_str() == Some("Assistant")
                             {
                                 let sid = p["session_id"].as_str().unwrap_or("");
@@ -118,6 +119,7 @@ impl MattermostAdapter {
                                         agent_id: None,
                                         session_id: Some(sid),
                                         channel: savant_core::types::AgentOutputChannel::Chat,
+                                        images: Vec::new(),
                                     };
                                     let frame = EventFrame {
                                         event_type: "chat.message".into(),

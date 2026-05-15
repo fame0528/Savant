@@ -12,6 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use savant_core::types::PersonalityDelta;
+
 /// OCEAN personality traits from agent SOUL.md.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonalityTraits {
@@ -67,6 +69,14 @@ impl PromotionEngine {
             personality_drift_limit: 0.15,
             baseline_personality: Some(personality),
         }
+    }
+
+    /// Updates the active personality traits for promotion scoring.
+    ///
+    /// The baseline personality (set at construction) is preserved for drift detection.
+    /// Only the active scoring personality is updated.
+    pub fn update_traits(&mut self, traits: PersonalityTraits) {
+        self.personality = traits;
     }
 
     /// Calculates the promotion score for a memory.
@@ -134,11 +144,11 @@ impl PromotionEngine {
         }
 
         // High neuroticism: conservative decay for threat/error memories (hyper-vigilance)
-        if metrics.category.contains("threat") || metrics.category.contains("error") {
-            if self.personality.neuroticism > 0.6 {
-                // Conservative: keep threat memories longer
-                score += 0.1;
-            }
+        if (metrics.category.contains("threat") || metrics.category.contains("error"))
+            && self.personality.neuroticism > 0.6
+        {
+            // Conservative: keep threat memories longer
+            score += 0.1;
         }
 
         score.clamp(0.0, 1.0)
@@ -165,12 +175,7 @@ impl PromotionEngine {
     /// Checks whether a proposed personality delta stays within the drift limit.
     /// Returns Ok(()) if within bounds, Err with distance if exceeded.
     pub fn check_drift_guard(&self, delta: &PersonalityDelta) -> Result<(), f32> {
-        let distance = (delta.openness_delta.powi(2)
-            + delta.conscientiousness_delta.powi(2)
-            + delta.extraversion_delta.powi(2)
-            + delta.agreeableness_delta.powi(2)
-            + delta.neuroticism_delta.powi(2))
-            .sqrt();
+        let distance = delta.euclidean_distance();
         if distance > self.personality_drift_limit {
             Err(distance)
         } else {
@@ -191,45 +196,6 @@ impl PromotionEngine {
             + (p.agreeableness - baseline.agreeableness).powi(2)
             + (p.neuroticism - baseline.neuroticism).powi(2))
         .sqrt()
-    }
-}
-
-/// Delta applied to personality traits when a mutation is approved.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersonalityDelta {
-    pub openness_delta: f32,
-    pub conscientiousness_delta: f32,
-    pub extraversion_delta: f32,
-    pub agreeableness_delta: f32,
-    pub neuroticism_delta: f32,
-    pub reason: String,
-    pub source_interaction_ids: Vec<String>,
-}
-
-impl PersonalityDelta {
-    pub fn new(reason: String) -> Self {
-        Self {
-            openness_delta: 0.0,
-            conscientiousness_delta: 0.0,
-            extraversion_delta: 0.0,
-            agreeableness_delta: 0.0,
-            neuroticism_delta: 0.0,
-            reason,
-            source_interaction_ids: Vec::new(),
-        }
-    }
-}
-
-impl PersonalityTraits {
-    /// Applies a delta, clamping each trait to [0.0, 1.0].
-    pub fn evolve(&self, delta: &PersonalityDelta) -> Self {
-        Self {
-            openness: (self.openness + delta.openness_delta).clamp(0.0, 1.0),
-            conscientiousness: (self.conscientiousness + delta.conscientiousness_delta).clamp(0.0, 1.0),
-            extraversion: (self.extraversion + delta.extraversion_delta).clamp(0.0, 1.0),
-            agreeableness: (self.agreeableness + delta.agreeableness_delta).clamp(0.0, 1.0),
-            neuroticism: (self.neuroticism + delta.neuroticism_delta).clamp(0.0, 1.0),
-        }
     }
 }
 

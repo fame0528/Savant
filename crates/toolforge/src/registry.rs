@@ -12,19 +12,10 @@ pub enum ToolRegistryEvent {
     ToolUpdated { name: String },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RegistryEpoch {
     pub tools: HashMap<String, Arc<dyn Tool>>,
     pub epoch_id: u64,
-}
-
-impl Default for RegistryEpoch {
-    fn default() -> Self {
-        RegistryEpoch {
-            tools: HashMap::new(),
-            epoch_id: 0,
-        }
-    }
 }
 
 pub struct SharedToolRegistry {

@@ -528,6 +528,7 @@ fn get_value_at_path_mut<'a>(
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use serde_json::json;

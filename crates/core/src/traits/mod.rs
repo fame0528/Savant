@@ -203,11 +203,13 @@ pub trait Tool: Send + Sync {
     /// This is sent to the LLM API as the tool's `parameters` field.
     /// Default: empty object (no parameters).
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
+        #[allow(clippy::disallowed_methods)]
+        let schema = serde_json::json!({
             "type": "object",
             "properties": {},
             "required": []
-        })
+        });
+        schema
     }
 
     /// Whether this tool requires human approval before execution.

@@ -8,11 +8,9 @@
 /// Emergent lenses use DIVERGENT verbs (speculate, juxtapose, interrogate, reimagine, challenge)
 /// to force the model into low-probability, high-novelty latent space regions.
 /// Operational lenses use CONVERGENT verbs (analyze, identify, evaluate) for precision.
-
 // ═══════════════════════════════════════════════════════════════════════════
 // OPERATIONAL LENSES — Task and system oriented (convergent verbs)
 // ═══════════════════════════════════════════════════════════════════════════
-
 pub const LENS_INFRASTRUCTURE: &str = "
 ---
 FOCUS: INFRASTRUCTURE (Substrate Health)

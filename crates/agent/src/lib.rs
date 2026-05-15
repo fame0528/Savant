@@ -5,6 +5,7 @@
 //! Contains the ReAct loop, LLM providers, and token budgeting.
 
 pub mod budget;
+pub mod compact;
 pub mod context;
 pub mod context_compressor;
 pub mod ensemble;

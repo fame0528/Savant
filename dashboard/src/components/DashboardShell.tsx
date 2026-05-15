@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useDashboard } from "@/context/DashboardContext";
 import styles from "../app/page.module.css";
 import SplashScreen from "@/components/SplashScreen";
+import SetupWizard from "@/components/SetupWizard";
 import FormattedContent from "@/components/FormattedContent";
 
 // ─── Error Boundary ───────────────────────────────────────────────────
@@ -79,6 +80,9 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
     isSessionReady,
     showSplash,
     setShowSplash,
+    showSetupWizard,
+    setShowSetupWizard,
+    setIsManifestMode,
     isCollapsed,
     setIsCollapsed,
     isRightCollapsed,
@@ -142,12 +146,18 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
     }
   }, [cognitiveInsights]);
 
-  // Auto-dismiss splash
+  // Auto-dismiss splash, then show setup wizard if first run
   useEffect(() => {
     if (!ctx.isMounted) return;
-    const splashTimer = setTimeout(() => setShowSplash(false), 5000);
+    const splashTimer = setTimeout(() => {
+      setShowSplash(false);
+      // Show setup wizard after splash dismisses
+      if (!localStorage.getItem("savant.setup.complete")) {
+        setShowSetupWizard(true);
+      }
+    }, 5000);
     return () => clearTimeout(splashTimer);
-  }, [ctx.isMounted, setShowSplash]);
+  }, [ctx.isMounted, setShowSplash, setShowSetupWizard]);
 
   const formatEst = (utcTimestamp: string) => {
     try {
@@ -588,6 +598,10 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
             {debugLogs.length === 0 && <div style={{ color: '#666' }}>No logs yet...</div>}
           </div>
         </div>
+      )}
+      {/* Setup Wizard — shown on first run after splash */}
+      {showSetupWizard && (
+        <SetupWizard onComplete={() => setShowSetupWizard(false)} />
       )}
     </>
   );

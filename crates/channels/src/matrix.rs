@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -36,7 +37,7 @@ impl MatrixAdapter {
         let txn_id = chrono::Utc::now().timestamp_millis();
         let resp = self
             .http
-            .put(&format!(
+            .put(format!(
                 "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
                 self.config.homeserver, room_id, txn_id
             ))
@@ -120,7 +121,7 @@ impl MatrixAdapter {
                         if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
                             let is_for = p["recipient"]
                                 .as_str()
-                                .map_or(false, |r| r.starts_with("matrix:"));
+                                .is_some_and(|r| r.starts_with("matrix:"));
                             let is_assistant = p["role"].as_str() == Some("Assistant");
                             if is_assistant || is_for {
                                 let sid = p["session_id"].as_str().unwrap_or("");
@@ -160,6 +161,7 @@ impl MatrixAdapter {
                                 agent_id: None,
                                 session_id: Some(sid),
                                 channel: savant_core::types::AgentOutputChannel::Chat,
+                                images: Vec::new(),
                             };
                             let frame = EventFrame {
                                 event_type: "chat.message".into(),

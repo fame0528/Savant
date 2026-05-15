@@ -72,6 +72,20 @@ pub struct DreamCycleResult {
     pub interrupted: bool,
 }
 
+/// Theme cluster discovered during REM Phase 2.
+/// Emitted to outbox for vault projection.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ThemeCluster {
+    /// Unique cluster identifier.
+    pub cluster_id: String,
+    /// Concept IDs that belong to this cluster.
+    pub concept_ids: Vec<String>,
+    /// Human-readable label for the theme cluster.
+    pub label: String,
+    /// Vendi Score of the cluster (diversity metric).
+    pub vendi_score: f32,
+}
+
 /// Dream engine error types.
 #[derive(Debug, thiserror::Error)]
 pub enum DreamError {

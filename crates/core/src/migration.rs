@@ -1,6 +1,7 @@
 use crate::types::{AgentConfig, ChatMessage, ChatRole, ModelProvider};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 /// Legacy OpenClaw Agent Configuration (JSON Shape)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,12 +17,8 @@ pub struct LegacyOpenClawConfig {
 
 impl From<LegacyOpenClawConfig> for AgentConfig {
     fn from(legacy: LegacyOpenClawConfig) -> Self {
-        let provider = match legacy.provider.to_lowercase().as_str() {
-            "openrouter" => ModelProvider::OpenRouter,
-            "openai" => ModelProvider::OpenAi,
-            "anthropic" => ModelProvider::Anthropic,
-            _ => ModelProvider::Local,
-        };
+        let provider = ModelProvider::from_str(&legacy.provider)
+            .unwrap_or(ModelProvider::Local);
 
         AgentConfig {
             agent_id: legacy.id,
@@ -70,11 +67,13 @@ impl From<LegacyMessage> for ChatMessage {
             agent_id: None,
             session_id: None,
             channel: crate::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         }
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

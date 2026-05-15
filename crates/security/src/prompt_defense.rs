@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_strip_invisible_unicode() {
-        let text = format!("hello\u{200B}world\u{202E}test");
+        let text = "hello\u{200B}world\u{202E}test".to_string();
         let result = scan_prompt(&text);
         assert_eq!(result.sanitized_text, "helloworldtest");
     }

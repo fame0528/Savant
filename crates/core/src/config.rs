@@ -26,6 +26,10 @@ pub struct Config {
     pub telemetry: TelemetryConfig,
     pub mcp: McpConfig,
     pub evolution: EvolutionConfig,
+    #[serde(default)]
+    pub obsidian: ObsidianConfig,
+    #[serde(default)]
+    pub browser: BrowserConfig,
     #[serde(skip)]
     pub project_root: PathBuf,
     #[serde(default)]
@@ -47,6 +51,8 @@ impl Default for Config {
             telemetry: TelemetryConfig::default(),
             mcp: McpConfig::default(),
             evolution: EvolutionConfig::default(),
+            obsidian: ObsidianConfig::default(),
+            browser: BrowserConfig::default(),
             project_root: PathBuf::from("."),
             proactive: ProactiveConfig::default(),
         }
@@ -139,7 +145,7 @@ pub struct TelemetryConfig {
 }
 
 /// MCP (Model Context Protocol) configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpConfig {
     /// List of MCP server endpoints to connect to on startup
     pub servers: Vec<McpServerEntry>,
@@ -156,14 +162,6 @@ pub struct McpServerEntry {
     pub auth_token: Option<String>,
 }
 
-impl Default for McpConfig {
-    fn default() -> Self {
-        Self {
-            servers: Vec::new(),
-        }
-    }
-}
-
 impl AiConfig {
     /// Returns the inline system prompt or an empty string.
     pub fn resolved_system_prompt(&self) -> String {
@@ -175,12 +173,29 @@ impl AiConfig {
 // Defaults
 // ============================================================================
 
+impl ObsidianConfig {
+    /// Returns the resolved vault path, defaulting to `{workspace_root}/memory-vault/`
+    pub fn resolved_vault_path(&self, workspace_root: &std::path::Path) -> std::path::PathBuf {
+        self.vault_path
+            .as_ref()
+            .map(|p| {
+                let pb = std::path::PathBuf::from(p);
+                if pb.is_relative() {
+                    workspace_root.join(&pb)
+                } else {
+                    pb
+                }
+            })
+            .unwrap_or_else(|| workspace_root.join("memory-vault"))
+    }
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
-            provider: "openrouter".to_string(),
-            model: "openrouter/hunter-alpha".to_string(),
-            manifestation_model: Some("stepfun/step-3.5-flash:free".to_string()),
+            provider: "ollama".to_string(),
+            model: "gemma4".to_string(),
+            manifestation_model: Some("gemma4".to_string()),
             temperature: 0.7,
             top_p: 1.0,
             frequency_penalty: 0.0,
@@ -319,6 +334,104 @@ impl Default for TelemetryConfig {
             log_level: "info".to_string(),
             log_color: true,
             enable_tracing: false,
+        }
+    }
+}
+
+// ============================================================================
+// Obsidian Memory Tree Configuration
+// ============================================================================
+
+/// Controls the Obsidian vault projection system.
+/// When enabled, the agent's memory substrate (LSM+HNSW) is projected into
+/// a human-readable markdown vault with bidirectional sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObsidianConfig {
+    /// Master toggle: false = no vault projection, no watcher
+    #[serde(default)]
+    pub enabled: bool,
+    /// Directory where the vault is written. Defaults to `{workspace_path}/memory-vault/`
+    #[serde(default)]
+    pub vault_path: Option<String>,
+    /// How often the outbox worker drains and projects to markdown (seconds)
+    #[serde(default = "default_obsidian_sync_interval")]
+    pub sync_interval_secs: u64,
+    /// Maximum number of .md files in the vault before cold storage is forced
+    #[serde(default = "default_obsidian_max_files")]
+    pub max_files: usize,
+    /// Episodic content older than this many days is removed from vault (retained in LSM)
+    #[serde(default = "default_obsidian_cold_storage_days")]
+    pub cold_storage_days: u64,
+    /// How long tombstoned files remain before metadata is pruned (days)
+    #[serde(default = "default_obsidian_tombstone_prune_days")]
+    pub tombstone_prune_days: u64,
+    /// Directories eligible for cold storage (subdirectories of vault root)
+    #[serde(default)]
+    pub db_only_dirs: Vec<String>,
+}
+
+fn default_obsidian_sync_interval() -> u64 { 300 }
+fn default_obsidian_max_files() -> usize { 15_000 }
+fn default_obsidian_cold_storage_days() -> u64 { 90 }
+fn default_obsidian_tombstone_prune_days() -> u64 { 30 }
+
+impl Default for ObsidianConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            vault_path: None,
+            sync_interval_secs: 300,
+            max_files: 15_000,
+            cold_storage_days: 90,
+            tombstone_prune_days: 30,
+            db_only_dirs: vec!["Episodic".to_string()],
+        }
+    }
+}
+
+// ============================================================================
+// Browser & Local Model Configuration
+// ============================================================================
+
+fn default_true() -> bool { true }
+
+/// Controls the browser tool and local Ollama model settings.
+/// The user can change any of these values via the setup wizard or dashboard settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserConfig {
+    /// Whether the browser tool is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Vision model for image understanding (Ollama).
+    /// Set during first-run setup. User can change to any model.
+    #[serde(default = "default_vision_model")]
+    pub vision_model: String,
+    /// Provider for the vision model (usually "ollama").
+    #[serde(default = "default_vision_provider")]
+    pub vision_model_provider: String,
+    /// Embedding model for semantic search (Ollama).
+    /// Set during first-run setup. User can change to any model.
+    #[serde(default = "default_embedding_model")]
+    pub embedding_model: String,
+}
+
+fn default_vision_model() -> String {
+    "gemma4".to_string()
+}
+fn default_vision_provider() -> String {
+    "ollama".to_string()
+}
+fn default_embedding_model() -> String {
+    "gemma4".to_string()
+}
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            vision_model: default_vision_model(),
+            vision_model_provider: default_vision_provider(),
+            embedding_model: default_embedding_model(),
         }
     }
 }

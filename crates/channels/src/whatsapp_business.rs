@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -30,7 +31,7 @@ impl WhatsAppBusinessAdapter {
     async fn send_text(&self, to: &str, text: &str) -> Result<(), SavantError> {
         let resp = self
             .http
-            .post(&format!(
+            .post(format!(
                 "https://graph.facebook.com/v18.0/{}/messages",
                 self.config.phone_number_id
             ))
@@ -59,7 +60,7 @@ impl WhatsAppBusinessAdapter {
                     if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
                         if p["recipient"]
                             .as_str()
-                            .map_or(false, |r| r.starts_with("wabiz:"))
+                            .is_some_and(|r| r.starts_with("wabiz:"))
                             || p["role"].as_str() == Some("Assistant")
                         {
                             let sid = p["session_id"].as_str().unwrap_or("");

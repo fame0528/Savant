@@ -169,6 +169,7 @@ impl ContextAssembler {
             agent_id: None,
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
+            images: Vec::new(),
         });
 
         for msg in history {
@@ -212,6 +213,8 @@ mod tests {
             ethics: None,
             image: None,
             internal_settings: None,
+            personality_traits: None,
+            baseline_soul_hash: None,
         };
         let budget = TokenBudget::new(100);
         let assembler = ContextAssembler::new(identity, budget, None, "House Rules.".to_string(), String::new());

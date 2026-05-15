@@ -60,7 +60,7 @@ async fn execute_model_command(intent: &CommandIntent) -> Result<String, SavantE
             model
         ))
     } else {
-        Ok("Which model would you like to switch to? Try: hunter alpha, healer alpha, stepfun, or free router.".to_string())
+        Ok("Which model would you like to switch to? Try: gemma4, claude sonnet, gpt-5, deepseek v4, grok 4, or any model from /api/models.".to_string())
     }
 }
 
@@ -102,9 +102,12 @@ fn help_text() -> String {
     "enable whatsapp"             — Enable WhatsApp channel
 
   Model Switching:
-    "switch to hunter alpha"      — Change to Hunter Alpha model
-    "use stepfun model"           — Change to Step 3.5 Flash
-    "switch to free router"       — Change to OpenRouter Free
+    "switch to gemma4"            — Change to local Gemma 4 (default)
+    "switch to claude sonnet"     — Change to Claude Sonnet
+    "switch to gpt-5"             — Change to GPT-5
+    "switch to deepseek v4"       — Change to DeepSeek V4
+    "use openrouter free"         — Use free cloud models
+    See /api/models for the full catalog.
 
   Diagnostics:
     "what's using the most memory" — Memory diagnostics
@@ -155,9 +158,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_switch_model() {
-        let intent = parse_command("switch to hunter alpha");
+        let intent = parse_command("switch to gemma4");
         let result = execute_command(&intent).await;
         assert!(result.is_ok());
-        assert!(result.unwrap().contains("hunter"));
+        assert!(result.unwrap().contains("gemma4"));
     }
 }

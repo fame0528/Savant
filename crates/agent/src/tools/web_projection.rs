@@ -32,6 +32,8 @@ fn content_boundary_marker(content: &str) -> String {
 /// Chrome-based DOM projection with real content extraction.
 pub struct ChromeProjection {
     url: String,
+    /// The last projected HTML content, used for intent coherence verification.
+    last_html: std::sync::RwLock<String>,
 }
 
 impl Default for ChromeProjection {
@@ -44,11 +46,16 @@ impl ChromeProjection {
     pub fn new() -> Self {
         Self {
             url: "about:blank".to_string(),
+            last_html: std::sync::RwLock::new(String::new()),
         }
     }
 
     /// Projects HTML into a structured Markdown representation with content-root detection.
     pub fn project_html(&self, html: &str, url: &str) -> String {
+        // Store the HTML for intent coherence verification
+        if let Ok(mut last) = self.last_html.write() {
+            *last = html.to_string();
+        }
         let document = Html::parse_document(html);
 
         // Content-root detection: main → article → [role=main] → body
@@ -90,6 +97,7 @@ impl ChromeProjection {
         document.root_element()
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn node_to_markdown(&self, node: &scraper::ElementRef, depth: usize) -> String {
         let mut output = String::new();
         let tag = node.value().name();
@@ -186,6 +194,10 @@ impl ChromeProjection {
                     }
                 } else if tag == "code" {
                     text.push_str(&format!("`{}`", self.text_content(&element)));
+                } else if tag == "strong" || tag == "b" {
+                    text.push_str(&format!("**{}**", self.text_content(&element)));
+                } else if tag == "em" || tag == "i" {
+                    text.push_str(&format!("*{}*", self.text_content(&element)));
                 } else {
                     text.push_str(&self.inline_content(&element));
                 }
@@ -218,9 +230,50 @@ impl SymbolicBrowser for ChromeProjection {
             "Projection: Intent coherence check for {} on {}",
             action, selector
         );
-        // With real DOM, coherence is checked against actual projected content.
-        // For now, accept all actions (the actual DOM is verified by the web tool).
-        Ok(true)
+
+        // Validate the action type
+        let valid_actions = ["click", "type", "scroll", "navigate", "select", "hover", "focus", "submit", "read"];
+        if !valid_actions.contains(&action) {
+            tracing::warn!("Projection: Unknown action type '{}'", action);
+            return Ok(false);
+        }
+
+        // Validate the selector is non-empty
+        if selector.is_empty() {
+            tracing::warn!("Projection: Empty selector for action '{}'", action);
+            return Ok(false);
+        }
+
+        // Check coherence against the last projected DOM
+        let html = match self.last_html.read() {
+            Ok(guard) => guard,
+            Err(_) => return Ok(true), // Lock poisoned; allow with warning
+        };
+
+        if html.is_empty() {
+            // No projected DOM yet; allow the action but log it
+            tracing::debug!("Projection: No projected DOM for coherence check; allowing action '{}'", action);
+            return Ok(true);
+        }
+
+        // Verify the selector matches at least one element in the projected DOM
+        let document = Html::parse_document(&html);
+        match Selector::parse(selector) {
+            Ok(sel) => {
+                let found = document.select(&sel).next().is_some();
+                if !found {
+                    tracing::warn!(
+                        "Projection: Selector '{}' not found in projected DOM for action '{}'",
+                        selector, action
+                    );
+                }
+                Ok(found)
+            }
+            Err(_) => {
+                tracing::warn!("Projection: Invalid CSS selector '{}'", selector);
+                Ok(false)
+            }
+        }
     }
 
     async fn execute_verified(&self, action: Value) -> Result<String, SavantError> {

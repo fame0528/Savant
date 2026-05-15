@@ -72,7 +72,7 @@ echo  BUILD COMPLETE
 echo ========================================
 echo.
 echo Installers are located at:
-echo   MSI:  target\release\bundle\msi\Savant_0.1.1_x64_en-US.msi
-echo   EXE:  target\release\bundle\nsis\Savant_0.1.1_x64-setup.exe
+echo   MSI:  target\release\bundle\msi\Savant_0.3.0_x64_en-US.msi
+echo   EXE:  target\release\bundle\nsis\Savant_0.3.0_x64-setup.exe
 echo.
 pause

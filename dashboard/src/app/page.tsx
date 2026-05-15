@@ -257,7 +257,7 @@ export default function ChatPage() {
           <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
             <img src="/img/logo.png" className={`${styles.logoWatermark} ${connectionStatus === 'NOMINAL' ? styles.ignitePulse : ''}`} style={{ marginBottom: '24px' }} />
             <div style={{ opacity: 0.4, fontSize: '14px', letterSpacing: '2px', color: 'var(--accent)' }}>
-              {activeAgent ? (ctx.agents.find(a => a.id === activeAgent)?.name?.toUpperCase() || activeAgent?.toUpperCase()) : 'SAVANT'}
+              {activeAgent ? (ctx.agents.find((a: { id: string; name?: string }) => a.id === activeAgent)?.name?.toUpperCase() || activeAgent?.toUpperCase()) : 'SAVANT'}
             </div>
             <div style={{ opacity: 0.2, fontSize: '11px', letterSpacing: '1px', marginTop: '8px' }}>
               {connectionStatus === 'NOMINAL' ? (

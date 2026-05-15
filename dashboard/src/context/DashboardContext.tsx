@@ -1,5 +1,6 @@
 "use client";
 
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode, memo } from "react";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useRouter } from "next/navigation";
 import { isTauri, igniteSwarm } from "@/lib/tauri";
@@ -185,8 +186,8 @@ const cleanMessage = (content: string) => {
     .trim();
 };
 
-const CollapsibleThoughts = React.memo(({ thoughts }: { thoughts: string }) => {
-  const [collapsed, setCollapsed] = React.useState(true);
+const CollapsibleThoughts = memo(({ thoughts }: { thoughts: string }) => {
+  const [collapsed, setCollapsed] = useState(true);
   if (!thoughts.trim()) return null;
   return (
     <div style={{

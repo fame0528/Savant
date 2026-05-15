@@ -113,18 +113,49 @@
 
         function copyAllLogs() {
             const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
-            navigator.clipboard.writeText(lines).then(() => {
-                const btn = document.getElementById('copy-btn');
-                const orig = btn.textContent;
-                btn.textContent = 'COPIED';
-                btn.style.background = '#00d5ff';
-                btn.style.color = '#0a0e14';
-                setTimeout(() => {
-                    btn.textContent = orig;
-                    btn.style.background = '';
-                    btn.style.color = '';
-                }, 2000);
-            });
+            if (window.__TAURI__ && window.__TAURI__.clipboard) {
+                window.__TAURI__.clipboard.writeText(lines).then(() => {
+                    showCopied();
+                }).catch(() => {
+                    fallbackCopy(lines);
+                });
+            } else {
+                fallbackCopy(lines);
+            }
+        }
+
+        function fallbackCopy(text) {
+            try {
+                navigator.clipboard.writeText(text).then(() => {
+                    showCopied();
+                }).catch(() => {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    showCopied();
+                });
+            } catch {
+                statusEl.textContent = 'Copy failed';
+                statusEl.style.color = '#f38ba8';
+            }
+        }
+
+        function showCopied() {
+            const btn = document.getElementById('copy-btn');
+            const orig = btn.textContent;
+            btn.textContent = 'COPIED';
+            btn.style.background = '#00d5ff';
+            btn.style.color = '#0a0e14';
+            setTimeout(() => {
+                btn.textContent = orig;
+                btn.style.background = '';
+                btn.style.color = '';
+            }, 2000);
         }
     </script>
 </body>

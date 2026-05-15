@@ -117,7 +117,7 @@ pub async fn config_set_handler(
     }
 }
 
-/// GET /api/setup/check — Check Ollama + model availability
+/// GET /api/setup/check — Check Ollama/LM Studio + model availability
 pub async fn setup_check_handler(State(_state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let configured_model = savant_core::config::Config::load()
         .map(|c| c.browser.embedding_model.clone())
@@ -130,59 +130,59 @@ pub async fn setup_check_handler(State(_state): State<Arc<GatewayState>>) -> imp
         "model_name": configured_model,
         "issues": [],
         "instructions": [],
+        "providers": [],
     });
 
     let mut issues: Vec<String> = Vec::new();
     let mut instructions: Vec<String> = Vec::new();
+    let mut providers: Vec<serde_json::Value> = Vec::new();
 
+    // Check Ollama
     let ollama_url =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
-
-    match savant_core::net::secure_client()
-        .get(format!("{}/api/tags", ollama_url))
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            checks["ollama_running"] = serde_json::Value::Bool(true);
-            checks["ollama_installed"] = serde_json::Value::Bool(true);
-
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                let models = body["models"].as_array().cloned().unwrap_or_default();
-                let has_model = models
-                    .iter()
-                    .any(|m| {
-                        let name = m["name"].as_str().unwrap_or("");
-                        name == configured_model || name.starts_with(&configured_model)
-                    });
-
-                checks["model_available"] = serde_json::Value::Bool(has_model);
-
-                if !has_model {
-                    issues.push("Gemma 4 model not found in Ollama".to_string());
-                    instructions.push("Select a Gemma 4 variant during setup to auto-install.".to_string());
-                }
-            }
+    let ollama_result = check_provider(&ollama_url, "Ollama", &configured_model).await;
+    if ollama_result.running {
+        checks["ollama_running"] = serde_json::Value::Bool(true);
+        checks["ollama_installed"] = serde_json::Value::Bool(true);
+        if ollama_result.model_available {
+            checks["model_available"] = serde_json::Value::Bool(true);
         }
-        Ok(resp) => {
-            issues.push(format!("Ollama returned status {}", resp.status()));
-            instructions
-                .push("Ollama is running but returned an error. Try restarting it.".to_string());
+    }
+    providers.push(serde_json::json!({
+        "name": "Ollama",
+        "url": ollama_url,
+        "running": ollama_result.running,
+        "model_available": ollama_result.model_available,
+        "error": ollama_result.error,
+    }));
+
+    // Check LM Studio
+    let lmstudio_url =
+        std::env::var("LMSTUDIO_URL").unwrap_or_else(|_| "http://localhost:1234".to_string());
+    let lmstudio_result = check_provider(&lmstudio_url, "LM Studio", &configured_model).await;
+    if lmstudio_result.running {
+        checks["ollama_running"] = serde_json::Value::Bool(true);
+        checks["ollama_installed"] = serde_json::Value::Bool(true);
+        if lmstudio_result.model_available {
+            checks["model_available"] = serde_json::Value::Bool(true);
         }
-        Err(e) => {
-            let err_str = e.to_string();
-            if err_str.contains("Connection refused") || err_str.contains("connect error") {
-                issues.push("Ollama is not running".to_string());
-                instructions.push(
-                    "Install Ollama from https://ollama.com/download and start it.".to_string(),
-                );
-            } else {
-                issues.push(format!("Cannot connect to Ollama: {}", err_str));
-                instructions
-                    .push("Check if Ollama is installed and running on port 11434".to_string());
-            }
-        }
+    }
+    providers.push(serde_json::json!({
+        "name": "LM Studio",
+        "url": lmstudio_url,
+        "running": lmstudio_result.running,
+        "model_available": lmstudio_result.model_available,
+        "error": lmstudio_result.error,
+    }));
+
+    // If neither is running, populate issues
+    if !ollama_result.running && !lmstudio_result.running {
+        issues.push("No local AI provider detected".to_string());
+        instructions.push("Install Ollama (https://ollama.com/download) or LM Studio (https://lmstudio.ai)".to_string());
+        instructions.push("Start the provider and return here.".to_string());
+    } else if !checks["model_available"].as_bool().unwrap_or(false) {
+        issues.push(format!("Model '{}' not found", configured_model));
+        instructions.push("Select a model variant during setup to auto-install.".to_string());
     }
 
     checks["issues"] =
@@ -193,8 +193,144 @@ pub async fn setup_check_handler(State(_state): State<Arc<GatewayState>>) -> imp
             .map(serde_json::Value::String)
             .collect(),
     );
+    checks["providers"] = serde_json::Value::Array(providers);
 
     Json(checks).into_response()
+}
+
+struct ProviderCheck {
+    running: bool,
+    model_available: bool,
+    error: Option<String>,
+}
+
+async fn check_provider(url: &str, name: &str, configured_model: &str) -> ProviderCheck {
+    // Use a longer timeout for local providers — first response can be slow
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return ProviderCheck {
+                running: false,
+                model_available: false,
+                error: Some(format!("{} client build failed: {}", name, e)),
+            };
+        }
+    };
+
+    // Try /api/tags (Ollama) first, then /v1/models (LM Studio / OpenAI-compatible)
+    let tags_url = format!("{}/api/tags", url);
+    let models_url = format!("{}/v1/models", url);
+
+    // Try Ollama-style endpoint
+    match client.get(&tags_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                let models = body["models"].as_array().cloned().unwrap_or_default();
+                let has_model = models.iter().any(|m| {
+                    let name = m["name"].as_str().unwrap_or("");
+                    name == configured_model || name.starts_with(configured_model)
+                });
+                return ProviderCheck {
+                    running: true,
+                    model_available: has_model,
+                    error: None,
+                };
+            }
+            return ProviderCheck {
+                running: true,
+                model_available: false,
+                error: None,
+            };
+        }
+        Ok(resp) => {
+            // Try LM Studio / OpenAI-compatible endpoint
+            match client.get(&models_url).send().await {
+                Ok(resp2) if resp2.status().is_success() => {
+                    if let Ok(body) = resp2.json::<serde_json::Value>().await {
+                        let data = body["data"].as_array().cloned().unwrap_or_default();
+                        let has_model = data.iter().any(|m| {
+                            let id = m["id"].as_str().unwrap_or("");
+                            id == configured_model || id.starts_with(configured_model)
+                        });
+                        return ProviderCheck {
+                            running: true,
+                            model_available: has_model,
+                            error: None,
+                        };
+                    }
+                    return ProviderCheck {
+                        running: true,
+                        model_available: false,
+                        error: None,
+                    };
+                }
+                Ok(resp2) => {
+                    return ProviderCheck {
+                        running: false,
+                        model_available: false,
+                        error: Some(format!("{} returned status {}", name, resp2.status())),
+                    };
+                }
+                Err(e2) => {
+                    return ProviderCheck {
+                        running: false,
+                        model_available: false,
+                        error: Some(format!("{} not reachable: {}", name, e2)),
+                    };
+                }
+            }
+        }
+        Err(e) => {
+            // Try LM Studio / OpenAI-compatible endpoint as fallback
+            match client.get(&models_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(body) = resp.json::<serde_json::Value>().await {
+                        let data = body["data"].as_array().cloned().unwrap_or_default();
+                        let has_model = data.iter().any(|m| {
+                            let id = m["id"].as_str().unwrap_or("");
+                            id == configured_model || id.starts_with(configured_model)
+                        });
+                        return ProviderCheck {
+                            running: true,
+                            model_available: has_model,
+                            error: None,
+                        };
+                    }
+                    return ProviderCheck {
+                        running: true,
+                        model_available: false,
+                        error: None,
+                    };
+                }
+                Ok(resp) => {
+                    return ProviderCheck {
+                        running: false,
+                        model_available: false,
+                        error: Some(format!("{} returned status {} (Ollama) and {} (OpenAI)", name, e.status(), resp.status())),
+                    };
+                }
+                Err(e2) => {
+                    let err_str = format!("{} / {}", e, e2);
+                    if err_str.contains("Connection refused") || err_str.contains("connect error") || err_str.contains("timed out") {
+                        return ProviderCheck {
+                            running: false,
+                            model_available: false,
+                            error: Some(format!("{} is not running", name)),
+                        };
+                    }
+                    return ProviderCheck {
+                        running: false,
+                        model_available: false,
+                        error: Some(format!("Cannot connect to {}: {}", name, err_str)),
+                    };
+                }
+            }
+        }
+    }
 }
 
 /// POST /api/setup/install-model — Pull a model via Ollama

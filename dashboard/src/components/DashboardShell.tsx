@@ -561,11 +561,30 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               🛠️ DEBUG CONSOLE ({debugLogs.length} entries) {debugPaused ? '⏸ PAUSED' : ''}
             </span>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={() => {
+              <button onClick={async () => {
                 const text = debugLogs.map(l => `[${l.timestamp.substr(11, 12)}] ${l.message}`).join('\n');
-                navigator.clipboard.writeText(text);
-                setCopiedId('debug');
-                setTimeout(() => setCopiedId(null), 2000);
+                try {
+                  if (window.__TAURI__?.clipboard) {
+                    await window.__TAURI__.clipboard.writeText(text);
+                  } else {
+                    await navigator.clipboard.writeText(text);
+                  }
+                  setCopiedId('debug');
+                  setTimeout(() => setCopiedId(null), 2000);
+                } catch {
+                  try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    setCopiedId('debug');
+                    setTimeout(() => setCopiedId(null), 2000);
+                  } catch { /* silent */ }
+                }
               }} style={{ background: copiedId === 'debug' ? '#00ff00' : 'var(--accent)', color: '#000', border: 'none', padding: '4px 12px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' }}>{copiedId === 'debug' ? '✓ COPIED' : 'COPY'}</button>
               <button onClick={() => setDebugExpanded(!debugExpanded)} style={{ background: '#333', color: '#fff', border: 'none', padding: '4px 12px', cursor: 'pointer' }}>{debugExpanded ? 'COLLAPSE' : 'EXPAND'}</button>
               <button onClick={() => { setShowDebug(false); setDebugExpanded(false); }} style={{ background: '#333', color: '#fff', border: 'none', padding: '4px 12px', cursor: 'pointer' }}>CLOSE</button>

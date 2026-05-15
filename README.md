@@ -3,7 +3,7 @@
 
 <img src="img/savant.png" alt="Savant Logo" width="180" />
 
-# SAVANT v0.1.0
+# SAVANT v0.3.0
 
 **One Mind. A Thousand Faces.**
 
@@ -16,6 +16,12 @@ A production-grade, Rust-native framework for building, deploying, and coordinat
 **Deep Audit (2026-03-24):** Python static analysis (1,492 violations) filtered to 333 actionable findings. Enterprise-grade FID with 24 fix items across 3 phases. 5 CRITICAL security vulnerabilities (TOCTOU, SSRF) eliminated. 14 stub implementations discovered and wired. 133+ silent failures fixed. 72 files changed. Phase 1 + Phase 2 complete.
 
 **Desktop App:** Tauri 2.x with auto-updater, splash screen, dependency checker. Users always have the latest version.
+
+**Gemma 4 Model System (2026-05-15):** Gemma 4 is the default local model for the entire framework. Even when you select a different primary chat model, Gemma 4 automatically handles vision and embeddings if your primary model doesn't support them. 4 variants available (E2B 3GB, E4B 8GB, 26B 18GB, 31B 22GB). On-demand loading — vision model loads per-request and unloads immediately after to minimize memory. Ollama auto-start with model auto-pull. Full setup wizard with hardware detection and variant recommendation on first launch. Cloud fallback via OpenRouter free tier when no local model is available.
+
+**A2A Communication Layer (2026-05-15):** Typed agent-to-agent delegation protocol. 44 integration tests. Structured task lifecycle (Submitted → Working → InputRequired → Completed → Failed → Canceled). AgentCard capability advertisement with semantic matching. ContextPackage memory-aware context passing. WAL journaling for crash recovery. Cancellation cascade. Consensus voting for destructive operations. Cross-agent speculative execution. Zero-copy iceoryx2 shared memory throughout.
+
+**Glass House — Obsidian Bidirectional Sync (2026-05-15):** Full memory-to-vault projection system. Agent memory (episodic, semantic, identity, themes, working notes) automatically rendered as structured Obsidian markdown with wiki-links, frontmatter, and Mermaid graphs. User edits in Obsidian feed back into agent memory via file watcher — episodic edits create Correction nodes, semantic edits become Ground Truth Overrides, personality edits update OCEAN values. SOUL.md is protected — must go through the Evolution system. Injection defense scans all vault edits before they affect agent state. Cold storage migration enforces file ceiling (~15K files) by archiving old episodic content to LSM-only retention. Cursor-based outbox worker triggers projection only when memory state changes. Atomic file writes via tempfile+rename prevent corruption.
 
 [![Rust](https://img.shields.io/badge/Rust-2021-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://www.rust-lang.org/)[![Next.js](https://img.shields.io/badge/Next.js-16-%23000000?style=flat-square&logo=nextdotjs&logoColor=%2300fbff)](https://nextjs.org/)[![Tauri](https://img.shields.io/badge/Tauri-2.0-%23000000?style=flat-square&logo=tauri&logoColor=%2300fbff)](https://tauri.app/)[![Axum](https://img.shields.io/badge/Axum-0.7-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://github.com/tokio-rs/axum/)[![SQLite](https://img.shields.io/badge/SQLite-Hybrid-%23000000?style=flat-square&logo=sqlite&logoColor=%2300fbff)](https://sqlite.org/)[![Fjall](https://img.shields.io/badge/Fjall-LSM--Tree-%23000000?style=flat-square&logo=rust&logoColor=%2300fbff)](https://github.com/fjall-rs/fjall)[![Ollama](https://img.shields.io/badge/Ollama-Native-%23000000?style=flat-square&logo=ollama&logoColor=%2300fbff)](https://ollama.com/)[![License](https://img.shields.io/badge/License-Proprietary-%23000000?style=flat-square&logo=github&logoColor=%2300fbff)](LICENSE)
 
@@ -46,6 +52,13 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 - **Threat Intelligence** — Global blocklist sync with configurable threat intelligence feed
 - **Smart Build System** — Incremental compilation with automatic source change detection
 - **Config Auto-Reload** — Live configuration updates via file watcher
+- **Gemma 4 Model System** — Default local model for vision + embeddings. Auto-fallback when primary chat model lacks vision/embedding support. 4 variants (E2B/E4B/26B/31B). On-demand loading with auto-unload. Ollama auto-start + model auto-pull. Setup wizard with hardware detection. Cloud fallback via OpenRouter free tier.
+- **Personality Evolution** — Per-agent lifetime SOUL.md evolution with ALD pipeline, identity signal processing, mutation proposals with cooldown, and immutable section locking
+- **Continuous Consciousness** — Self-referential heartbeat feedback loop with deterministic stillness detection and forced reflection
+- **Dream System** — NREM/REM sleep cycles for memory consolidation, with Vendi cognitive architecture integration
+- **Tool Forge** — Tool creation with quality gates, provenance tracking, and registry
+- **External Integrations** — Gmail and Notion connectors with sync scheduler and state tracking
+- **Dashboard Evolution UI** — Behind-the-curtain evolution viewer, health monitoring, setup wizard, and enhanced settings
 
 ---
 
@@ -272,19 +285,22 @@ Instructions and implementation details...
 | :--- | :--- |
 | `savant_core` | Shared types, config, error handling, traits, Fjall DB |
 | `savant_gateway` | Axum WebSocket server, authentication, skill control, config watcher |
-| `savant_agent` | Agent lifecycle, swarm coordination, 15 LLM providers |
+| `savant_agent` | Agent lifecycle, swarm coordination, 15 LLM providers, A2A delegation |
 | `savant_cognitive` | Strategic synthesis, goal decomposition, proactive loops |
-| `savant_memory` | Hybrid storage (Fjall LSM + vectors + consolidation) |
+| `savant_memory` | Hybrid storage (Fjall LSM + vectors + consolidation), WAL journaling |
 | `savant_skills` | OpenClaw skills, security scanner, ClawHub, Docker/Nix |
-| `savant_ipc` | Zero-copy inter-process communication |
+| `savant_ipc` | Zero-copy IPC, iceoryx2 blackboard, A2A protocol types |
 | `savant_echo` | ECHO protocol (speculative ReAct + circuit breaker) |
 | `savant_canvas` | A2UI rendering and LCS-based diff |
-| `savant_channels` | Discord, Telegram, WhatsApp, Matrix integrations |
+| `savant_channels` | 25 channel integrations (Discord, Slack, Signal, etc.) |
 | `savant_mcp` | MCP server with auth + circuit breaker |
 | `savant_cli` | CLI entry point with --config and --keygen |
-| `savant_security` | CCT token verification, PQC signatures |
+| `savant_security` | CCT token verification, PQC signatures, prompt defense |
 | `savant_panopticon` | Monitoring and telemetry |
 | `savant_desktop` | Tauri-based desktop companion |
+| `savant_obsidian` | Obsidian vault projection and bidirectional sync |
+| `savant_toolforge` | Tool forge with quality gates and provenance tracking |
+| `savant_integrations` | External service integrations (Gmail, Notion, etc.) |
 | `savant_test_suite` | Global integration and heuristic testing |
 
 ---

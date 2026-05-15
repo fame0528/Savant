@@ -7,6 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-05-15
+
+**Gemma 4 Model System. A2A Communication Layer. Glass House Obsidian Sync. Personality Evolution. Continuous Consciousness. Full Workspace Clippy Cleanup. 265 files changed.**
+
+### Gemma 4 Model System — Default Vision + Embedding Engine
+
+Gemma 4 is the default local model for the entire framework. Even when the user selects a different primary chat model, Gemma 4 automatically handles vision and embeddings if the primary model doesn't support them.
+
+- **Default Model** — `gemma4` configured as default for chat (`ai.model`), vision (`browser.vision_model`), embeddings (`browser.embedding_model`), and manifestation (`ai.manifestation_model`)
+- **Vision Fallback** — If the user's selected chat model doesn't support vision (not in the known vision patterns list: gemma4, qwen3-vl, llava, bakllava, moondream, minicpm-v, phi-3-vision, pixtral, internvl, idefics, florence, mistral-3, cogvlm, deepseek-vl), the system automatically falls back to the configured vision model (default: gemma4) for image understanding
+- **Embedding Fallback** — Same pattern for text embeddings. If the primary model doesn't support embeddings, Gemma 4 handles it
+- **On-Demand Loading** — Vision model loads via Ollama on use, unloads immediately after (`keep_alive: 0`) to minimize CPU/memory consumption
+- **Embedding Service** — Ollama is REQUIRED (no silent fallback). Auto-starts Ollama if not running. Auto-pulls the embedding model if missing. Hard error with installation instructions if Ollama is unavailable
+- **Free Model Router** — Cloud fallback via `openrouter/free` when no local model is available. `FreeModelRouter` with model validation, dashboard model list, and rotation strategy
+- **NLP Model Commands** — Natural language model switching: "switch to gemma4", "use gemma4:e4b", etc. Supports all Gemma 4 variants (e2b, e4b, 26b, 31b)
+- **Setup Wizard** — First-launch wizard that:
+  - Detects hardware (RAM, CPU cores, GPU via WebGL)
+  - Recommends optimal Gemma 4 variant based on available resources
+  - Shows all 4 variants with VRAM requirements and descriptions
+  - Checks Ollama status and model availability
+  - Pulls the selected model via Ollama API
+  - Configures vision_model, embedding_model, and vault_path in savant.toml
+  - Can be skipped and configured later in Settings
+- **Settings UI** — Dashboard settings page with vision_model and embedding_model inputs
+- **Config API** — `POST /api/config/set` for runtime config updates (browser, obsidian, ai sections)
+- **Setup API** — `GET /api/setup/check` (Ollama + model status), `POST /api/setup/install-model` (pull model)
+
+### A2A Communication Layer — Typed Agent-to-Agent Delegation Protocol
+
+Replaces fragile text-based LLM command parsing (`/subagents spawn`) with a fully typed, structured delegation protocol.
+
+- **A2A Protocol Types** (`savant_ipc::a2a`) — `A2AEnvelope`, `DelegationTask`, `TaskState` (Submitted → Working → InputRequired → Completed → Failed → Canceled), `Artifact`, `ArtifactPart`, `AgentCard`, `ContextPackage`, `ResultRouter` — all `#[repr(C)]`, rkyv-serialized for zero-copy shared memory
+- **AgentCard Registry** — Machine-readable capability manifests in iceoryx2 blackboard. Semantic capability matching via keyword scoring. Dynamic pressure tracking for load balancing
+- **ContextPackage** — Memory-aware context passing. References CortexaDB collection keys instead of raw text. Fixed-size arrays for `#[repr(C)]` compatibility
+- **TaskState WAL Journaling** — All task state transitions persisted to CortexaDB WAL with CRC32 checksums. `recover_interrupted_delegations()` re-hydrates interrupted tasks on restart
+- **Delegation Lifecycle** — `delegate_task()` wired into `execute_turn()` via `DELEGATE:` prefix detection. CCT token minting for authorization. Cancellation cascade through nested subagents
+- **Cross-Agent Speculative Execution** — `execute_cross_agent_speculative()` delegates to multiple agents, selects best artifact via informational entropy scoring
+- **Consensus Integration** — `requires_consensus` flag on `DelegationTask` triggers swarm voting for destructive operations
+- **Task Timeout Detection** — `is_task_expired()` checks `deadline_timestamp` during continuation. `TaskExpired` error variant
+- **ResultRouter** — Per-agent result channels via iceoryx2 request-response. Parent polls for `ArtifactDelivery`
+- **AgentCardCopy Fix** — Uses `size_of::<AgentCard>()` at compile time instead of hardcoded 192, eliminating buffer over-read/overflow UB
+- **44 Integration Tests** — Full delegation cycle, AgentCard matching, ContextPackage extraction, WAL journaling, cancellation, consensus, speculative execution
+
+### Glass House — Obsidian Bidirectional Sync System (New Crate: `savant_obsidian`)
+
+Full memory-to-vault projection system with bidirectional sync. The agent's entire memory system is rendered as structured Obsidian markdown, and user edits in Obsidian feed back into agent memory.
+
+- **VaultWriter** (40KB) — Projects all memory graphs into Obsidian vault structure:
+  - `Episodic/` — Daily markdown files with wiki-links, frontmatter, Mermaid timeline graphs
+  - `Semantic/` — Concept nodes with relation edges, importance scores, decay status
+  - `Identity/Evolution/` — SOUL.md (protected), Personality.md (OCEAN model), evolution changelog
+  - `Themes/` — Auto-detected themes across episodic memories
+  - `Working/` — Active task context, recent tool outputs
+  - `Dashboard/` — Real-time stats, agent status, memory metrics
+  - `Delegation/` — Structured markdown artifacts from A2A task results
+  - Index page with full vault stats and navigation
+- **VaultWatcher** (12KB) — File system watcher with edit classification:
+  - `Episodic/*.md` → Rejected (past cannot be rewritten). Edits logged as Correction nodes
+  - `Semantic/*.md` → Accepted as Ground Truth Override. Parsed into LSM metadata
+  - `Identity/SOUL.md` → Blocked. Must go through Evolution system
+  - `Identity/Personality.md` → Accepted. OCEAN values parsed and forwarded
+  - New files → Quarantine. Extracted entities require user validation
+  - File deletions → Tombstone pattern (marked hidden in DB, not recreated)
+  - All edits pass through `scan_prompt()` injection defense before affecting agent state
+- **OutboxWorker** (6KB) — Cursor-based projection trigger. Polls LSM for state changes, triggers full projection only when memory state differs from last-projected cursor. Atomic file writes via tempfile+rename
+- **ColdStorageManager** (7KB) — Enforces Obsidian file ceiling (~15K files, Graph View crashes at ~100K). Migrates episodic content older than configurable days to LSM-only retention. Retains data immutably in database, removes from vault
+- **Injection Defense** — All vault edits scanned via `scan_prompt()` before affecting agent state. Vault treated as potentially hostile data source
+
+### Personality Evolution Architecture
+
+- **ALD (Autonomous Learning & Distillation)** — Identity signal processing pipeline. Extracts identity signals from conversation history, proposes SOUL.md mutations
+- **Evolution Cooldown** — No proposals targeting same section during cooldown period
+- **Immutable Section Locking** — Core Laws protected from mutation
+- **EVOLUTION.jsonl** — Append-only audit log of all evolution events
+- **Nexus Event Emission** — Real-time dashboard updates on evolution events
+
+### Continuous Consciousness
+
+- **Self-Referential Heartbeat Feedback Loop** — Deterministic stillness detection via content hashing. Skips inference when substrate state is identical
+- **Forced Reflection** — Triggers when state is unchanged but reflection interval exceeded
+- **DeltaTracker** — Environmental change detection (git diff, filesystem snapshot, message count, tool error count)
+
+### New Crates
+
+- `savant_obsidian` — Glass House bidirectional sync (writer, watcher, outbox, cold storage)
+- `savant_toolforge` — Tool creation with quality gates, provenance tracking, registry
+- `savant_integrations` — External service connectors (Gmail, Notion) with sync scheduler and state tracking
+
+### Dashboard & UI
+
+- **Evolution Pages** — `/evolution` and `/evolution/behind-the-curtain` pages for viewing personality evolution
+- **Enhanced Settings** — Provider configuration with validation, vision/embedding model inputs
+- **Health Monitoring** — `/health` page for system status
+- **Browser Panel** — Refactored from monolithic component to modular architecture
+- **Setup Wizard** — Redesigned with proper CSS module styling, hardware detection, model selection
+
+### Full Workspace Clippy Cleanup
+
+- Fixed 500+ clippy warnings across 24 crates (100+ files)
+- Zero `unwrap()`/`expect()` in production code (enforced by `clippy.toml` `disallowed-methods`)
+- All `map_or(false, ...)` → `is_some_and()`, `map_or(true, ...)` → `is_none_or()`
+- All manual `Range::contains()` → `(start..end).contains(&value)`
+- All manual prefix stripping → `strip_prefix()`
+- All redundant closures `|e| Error(e)` → `Error`
+- All needless borrows `&format!(...)` → `format!(...)`
+- All `impl Default` that could be `#[derive(Default)]`
+- All `match_single_binding` → `let` destructuring
+- All `assert!(true)` → meaningful assertions or removed
+- All unused imports removed
+- Added `#[allow(clippy::disallowed_methods)]` to test modules and `json!`-heavy files
+
+### Root Directory Cleanup
+
+- Moved misplaced docs to `docs/plans/`, `docs/research/`, `docs/evolution/`
+- Moved stale code to `dev/archive/`
+- Moved session transcripts to `dev/archive/`
+- Moved audit report to `docs/archive/`
+- Removed `firebase-debug.log`
+- Archived completed FIDs to `dev/fids/archive/`
+
+### Verification
+
+- `cargo check --workspace` — 0 errors, 0 warnings
+- `cargo clippy --all-targets -- -D warnings` — 0 errors, 0 warnings
+- `cargo test --workspace` — all tests pass (0 failures)
+- `npx tsc --noEmit` — frontend compiles clean
+- `cargo fmt --check` — clean (only external cortexadb lib has issues)
+
+---
+
 ## [0.2.0] - 2026-04-02
 
 **Continuous Awareness Architecture. Bridging the AI Consciousness Gap. 18 new source files.**

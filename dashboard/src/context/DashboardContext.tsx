@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
+import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useRouter } from "next/navigation";
 import { isTauri, igniteSwarm } from "@/lib/tauri";
 import { logger } from "@/lib/logger";
@@ -290,27 +290,29 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const handleCopy = useCallback(async (text: string, id: string) => {
     try {
-      if (window.__TAURI__?.clipboard) {
-        await window.__TAURI__.clipboard.writeText(text);
-      } else {
-        await navigator.clipboard.writeText(text);
-      }
+      await writeText(text);
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
-    } catch (err) {
+    } catch {
       try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
+        await navigator.clipboard.writeText(text);
         setCopiedId(id);
         setTimeout(() => setCopiedId(null), 2000);
       } catch {
-        logger.error('Clipboard', 'Failed to copy text', err);
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          setCopiedId(id);
+          setTimeout(() => setCopiedId(null), 2000);
+        } catch {
+          logger.error('Clipboard', 'All copy methods failed');
+        }
       }
     }
   }, []);

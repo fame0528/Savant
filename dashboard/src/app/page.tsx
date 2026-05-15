@@ -146,7 +146,7 @@ export default function ChatPage() {
             <div key={key} className={styles.metricCard}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', opacity: 0.7 }}>
                 <span>{key}</span>
-                <span>{Math.round(val)}%</span>
+                <span>{Math.round(val as number)}%</span>
               </div>
               <div className={styles.metricBar}>
                 <div className={styles.metricFill} style={{ width: `${val}%` }} />

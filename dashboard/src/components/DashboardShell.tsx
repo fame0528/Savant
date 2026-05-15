@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useDashboard } from "@/context/DashboardContext";
 import styles from "../app/page.module.css";
 import SplashScreen from "@/components/SplashScreen";
-import SetupWizard from "@/components/SetupWizard";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import FormattedContent from "@/components/FormattedContent";
 
 // ─── Error Boundary ───────────────────────────────────────────────────
@@ -564,26 +564,28 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               <button onClick={async () => {
                 const text = debugLogs.map(l => `[${l.timestamp.substr(11, 12)}] ${l.message}`).join('\n');
                 try {
-                  if (window.__TAURI__?.clipboard) {
-                    await window.__TAURI__.clipboard.writeText(text);
-                  } else {
-                    await navigator.clipboard.writeText(text);
-                  }
+                  await writeText(text);
                   setCopiedId('debug');
                   setTimeout(() => setCopiedId(null), 2000);
                 } catch {
                   try {
-                    const ta = document.createElement('textarea');
-                    ta.value = text;
-                    ta.style.position = 'fixed';
-                    ta.style.opacity = '0';
-                    document.body.appendChild(ta);
-                    ta.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(ta);
+                    await navigator.clipboard.writeText(text);
                     setCopiedId('debug');
                     setTimeout(() => setCopiedId(null), 2000);
-                  } catch { /* silent */ }
+                  } catch {
+                    try {
+                      const ta = document.createElement('textarea');
+                      ta.value = text;
+                      ta.style.position = 'fixed';
+                      ta.style.opacity = '0';
+                      document.body.appendChild(ta);
+                      ta.select();
+                      document.execCommand('copy');
+                      document.body.removeChild(ta);
+                      setCopiedId('debug');
+                      setTimeout(() => setCopiedId(null), 2000);
+                    } catch { /* silent */ }
+                  }
                 }
               }} style={{ background: copiedId === 'debug' ? '#00ff00' : 'var(--accent)', color: '#000', border: 'none', padding: '4px 12px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' }}>{copiedId === 'debug' ? '✓ COPIED' : 'COPY'}</button>
               <button onClick={() => setDebugExpanded(!debugExpanded)} style={{ background: '#333', color: '#fff', border: 'none', padding: '4px 12px', cursor: 'pointer' }}>{debugExpanded ? 'COLLAPSE' : 'EXPAND'}</button>

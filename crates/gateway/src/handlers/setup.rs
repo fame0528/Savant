@@ -310,7 +310,7 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
                     return ProviderCheck {
                         running: false,
                         model_available: false,
-                        error: Some(format!("{} returned status {} (Ollama) and {} (OpenAI)", name, e.status(), resp.status())),
+                        error: Some(format!("{} returned status {:?} (Ollama) and {:?} (OpenAI)", name, e.status(), resp.status())),
                     };
                 }
                 Err(e2) => {

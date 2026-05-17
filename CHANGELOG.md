@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.1] - 2026-05-17
+
+**Full Workspace Audit Remediation. 11 FIDs closed. 180+ issues fixed across 20 crates. Zero unwrap/expect in production code.**
+
+### Security Audit Remediation (`savant_security`)
+- Removed crate-level `#[allow(clippy::disallowed_methods)]` — replaced with per-test-module allows
+- Fixed 4x `.expect()` on clock errors (token.rs, enclave.rs) — replaced with checked arithmetic returning `Result`
+- Fixed non-ASCII text lowercasing index mismatch panic in `prompt_defense.rs`
+- Zero credential bytes on revoke in `continuous/credentials.rs`
+- 32/32 tests pass, 0 clippy warnings
+
+### Core Audit Remediation (`savant_core`)
+- Fixed infinite recursion in `EmbeddingProvider::dimensions()` and `OllamaEmbeddingService::dimensions()` (trait method called itself instead of inherent impl)
+- Fixed batch cache index out of bounds in `embeddings.rs`
+- Changed `.expect()` to `Result` return in `secure_client()` + added `secure_client_fallible()` for backward compat
+- Added Unix file permissions (`0o600`) for `.env` file writes
+- Replaced `DefaultHasher` with `blake3::Hasher` in `session.rs`
+- Fixed corrupted `agent.json` silently returning defaults — now returns `Err`
+- Removed dead `storage/mod.rs` file
+- 53/53 tests pass, 0 clippy warnings
+
+### Agent Audit Remediation (`savant_agent`) — 29 Issues Fixed
+- Removed blanket `#[allow(clippy::disallowed_methods)]` from lib.rs — replaced with targeted allow for `serde_json::json!` macro
+- Fixed speculative horizon instruction discarded (`react_speculative.rs`)
+- Fixed JSON parse failures silently mangling tool args (`reactor.rs`, `stream.rs`) — now propagates errors to LLM for retry
+- Replaced `unwrap_or_default()` with proper error propagation (`ald.rs`, `heartbeat.rs`)
+- Removed master key fallback on key creation failure (`swarm.rs`) — security hardening
+- Added validation logging for missing heartbeat payload fields (`heartbeat.rs`)
+- Fixed fallback parser to extract real action names (`stream.rs`)
+- Changed `WebSovereign::new()` to return `Result` instead of panicking (`web.rs`)
+- 168 tests pass (120 unit + 44 a2a + 3 production + 1 doc-test), 0 clippy warnings
+
+### Stub/Abandoned Implementation Remediation — 38 Issues Across 20 Crates
+- `cull_low_entropy_memories()` — implemented entropy-based culling (was returning `Ok(0)`)
+- `promote_to_agents()` — writes sanitized content to AGENTS.md (was no-op)
+- `HeartbeatTool` — returns structured JSON with evaluation (was uppercasing action)
+- `EvaluateNotificationTool` — evaluates urgency, quiet hours, anomalies (was returning static "Acknowledged")
+- `run_promotion_cycle()` — archives low-scoring, reinforces high-scoring entries (was scoring but never acting)
+- 9 `ChannelAdapter` trait methods — wired to nexus event bus (were returning `Ok(())`)
+- `VaultWatcher` — wired enclave for semantic memory storage (was `#[allow(dead_code)]`)
+- 5 send-only channels — added inbound `handle_event` routing
+- `delta_rx` — connected to DreamScheduler (was discarded)
+- `SyncScheduler` — added graceful shutdown via `watch` channel (was infinite loop)
+- Echo watcher — replaced 3600s CPU-wasting sleep with channel recv
+- `LambdaInvokeRequest/Response` — used in actual invocation (were dead code)
+- `MemoryLayer` enum — used in promotion cycle for layer distribution tracking
+- Gateway API handlers — return proper `serde_json::Value` responses
+- `JsonRpcError` — fields used in error formatting
+- `CircuitBreaker::start_time` — used for timeout detection
+- `browser_get_tabs` — queries Chrome DevTools Protocol for real tab list
+- `ColdStorageManager::_writer` — used to ensure vault structure
+- Duplicate `bootstrap_log` call removed
+- `voice` module — fully implemented with nexus event bus routing
+- Commented-out `// pub mod memory;` removed
+- Email `send_event` — logs dropped events
+- `fetch_deduped_tail()` helper extracted (deduplication for semantic search + Ollama retry)
+- `iter_all_messages()` — added `limit` param to bound memory usage
+- FNV-1a hash replaced with `std::hash::DefaultHasher`
+- TOCTOU race fixed in `get_or_create_session_state()`
+- Entity extraction now includes keyword word itself in capture
+- Dead code removed (`find_by_key`, unused watchdog)
+
+### Memory Audit Remediation (`savant_memory`)
+- 7/8 issues fixed (1 by-design: reflective in-memory confirmed as Obsidian vault responsibility)
+- Replaced FNV-1a hash with `std::hash::DefaultHasher`
+- Fixed TOCTOU race in session state creation
+- Fixed entity extraction to include keyword in capture
+- Deduplicated code with `fetch_deduped_tail()` helper
+- Added pagination to `iter_all_messages()`
+- Removed dead `find_by_key` function
+- 82/82 tests pass
+
+### Gateway Audit Remediation (`savant_gateway`)
+- Fixed all `.expect()` panic risks with `fallback_response()`
+- Monolithic handler split is tech debt (all code is functional)
+- 19/19 tests pass
+
+### Other Crate Remediations
+- Cognitive: Removed blanket allow, fixed 5 `.unwrap()` in production code
+- Dream: Removed blanket allow (no production unwraps found)
+- IPC: No issues found
+- Obsidian/Desktop/CLI: No issues found
+
+### Workspace-Wide Verification
+- `cargo check --workspace` — 0 errors, 0 warnings
+- `cargo test --workspace` — 0 failures (all crates)
+- `cargo clippy --all-targets -- -D warnings` — 0 warnings
+- `cargo fmt --check` — clean
+- Zero `.unwrap()` / `.expect()` / `todo!()` / `unimplemented!()` in non-test code
+- Zero `#[allow(dead_code)]` annotations (excluding test-only code)
+- Zero functions returning `Ok(0)` or `Ok(())` without side effects
+
+---
+
 ## [0.3.0] - 2026-05-15
 
 **Gemma 4 Model System. A2A Communication Layer. Glass House Obsidian Sync. Personality Evolution. Continuous Consciousness. Full Workspace Clippy Cleanup. 265 files changed.**

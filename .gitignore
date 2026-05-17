@@ -20,6 +20,11 @@ savant.db
 savant.db-journal
 savant.db-shm
 savant.db-wal
+
+# CortexaDB runtime data (binary journals, vectors, keyspaces)
+crates/agent/data/memory/
+crates/memory/ruvector.db/
+*.jnl
 /logs/
 /data/
 *.log

@@ -8,6 +8,6 @@ pub mod writer;
 pub use cold_storage::ColdStorageManager;
 pub use config::ObsidianConfig;
 pub use error::VaultError;
-pub use outbox::OutboxWorker;
+pub use outbox::{CursorState, OutboxWorker, StateSnapshot};
 pub use watcher::VaultWatcher;
-pub use writer::VaultWriter;
+pub use writer::{VaultWriter, VaultStats, atomic_write, count_md_files, slugify, truncate_to_line};

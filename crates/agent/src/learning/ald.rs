@@ -155,7 +155,9 @@ impl ALDEngine {
         let evo_path = self.workspace_root.join("EVOLUTION.jsonl");
         if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&evo_path) {
             let line = serde_json::to_string(&mutation).unwrap_or_default();
-            let _ = writeln!(file, "{}", line);
+            if let Err(e) = writeln!(file, "{}", line) {
+                tracing::warn!("[ald] Failed to write mutation to EVOLUTION.jsonl: {}", e);
+            }
         }
 
         // Emit to Nexus for real-time dashboard update
@@ -168,10 +170,72 @@ impl ALDEngine {
     }
 
 
-    fn promote_to_agents(&self, _block: &str) -> Result<(), Box<dyn std::error::Error>> {
-        // S-ATLAS distillation to AGENTS.md disabled — auto-generated artifacts
-        // were polluting the system prompt with diary/identity content.
-        // Distillations still flow to SOUL.md via promote_to_soul().
+    /// Promotes engineering distillations to AGENTS.md.
+    ///
+    /// Engineering learnings (marked with [ENGINEERING] or "Protocol Precision")
+    /// are distilled into actionable agent behavior guidelines and appended to
+    /// AGENTS.md under the "## Engineering Distillations" section.
+    ///
+    /// The content is formatted with:
+    /// - Timestamp of distillation
+    /// - Source attribution (LEARNINGS.md block)
+    /// - Sanitized content (stripped of diary/identity markers)
+    fn promote_to_agents(&self, block: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let agents_path = self.workspace_root.join("AGENTS.md");
+
+        // Read existing content or create new file with header
+        let existing = if agents_path.exists() {
+            fs::read_to_string(&agents_path)?
+        } else {
+            let header = "# AGENTS.md\n\n> Auto-generated engineering distillations from the ALD pipeline.\n\n";
+            fs::write(&agents_path, header)?;
+            header.to_string()
+        };
+
+        // Sanitize block content: remove identity/diary markers that caused prior pollution
+        let sanitized = block
+            .trim()
+            .lines()
+            .filter(|line| {
+                let lower = line.to_lowercase();
+                !lower.contains("[identity]")
+                    && !lower.contains("[diary]")
+                    && !lower.contains("[personal]")
+                    && !lower.contains("[trait]")
+                    && !lower.contains("[mutation]")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if sanitized.trim().is_empty() {
+            info!("ALD: promote_to_agents — block sanitized to empty, skipping");
+            return Ok(());
+        }
+
+        // Ensure the distillation section header exists (prepend if missing)
+        if !existing.contains("## Engineering Distillations") {
+            let with_section = format!("{}\n## Engineering Distillations\n", existing);
+            fs::write(&agents_path, &with_section)?;
+        }
+
+        // Build the distillation entry
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+        let entry = format!(
+            "\n### Engineering Distillation — {timestamp}\n\n{sanitized}\n\n---\n"
+        );
+
+        // Append to AGENTS.md
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&agents_path)?;
+        file.write_all(entry.as_bytes())?;
+
+        info!(
+            "ALD: Engineering distillation appended to AGENTS.md ({} chars)",
+            sanitized.len()
+        );
+
         Ok(())
     }
 }

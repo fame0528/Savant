@@ -172,7 +172,9 @@ impl Engine {
                 }
                 Command::Delete(id) => {
                     // Delete may refer to a missing segment entry in crash scenarios.
-                    let _ = segments.delete_entry(*id);
+                    if let Err(e) = segments.delete_entry(*id) {
+                        log::debug!("[cortexadb] Delete entry failed (may be expected during recovery): {}", e);
+                    }
                 }
                 Command::Connect { .. } | Command::Disconnect { .. } => {}
             }
@@ -215,18 +217,24 @@ impl Engine {
             // 1. Rollback if data_dir is missing but backup exists
             if !segments_dir.exists() && !backups.is_empty() {
                 let backup_path = &backups[0];
-                let _ = std::fs::rename(backup_path, segments_dir);
+                if let Err(e) = std::fs::rename(backup_path, segments_dir) {
+                    log::warn!("[cortexadb] Failed to rollback from backup: {}", e);
+                }
                 backups.remove(0);
             }
 
             // 2. Delete any remaining backups (cleanup from successful compaction, or extras)
             for backup in backups {
-                let _ = std::fs::remove_dir_all(&backup);
+                if let Err(e) = std::fs::remove_dir_all(&backup) {
+                    log::debug!("[cortexadb] Failed to remove backup: {}", e);
+                }
             }
 
             // 3. Delete any temp compact dirs (failed mid-compaction)
             for compact in compacts {
-                let _ = std::fs::remove_dir_all(&compact);
+                if let Err(e) = std::fs::remove_dir_all(&compact) {
+                    log::debug!("[cortexadb] Failed to remove compact temp: {}", e);
+                }
             }
         }
     }

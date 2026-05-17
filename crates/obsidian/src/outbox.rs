@@ -134,25 +134,25 @@ impl OutboxWorker {
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
-struct StateSnapshot {
-    session_count: u64,
-    memory_count: u64,
-    vector_count: u64,
+pub struct StateSnapshot {
+    pub session_count: u64,
+    pub memory_count: u64,
+    pub vector_count: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[derive(Default)]
-struct CursorState {
-    session_count: u64,
-    memory_count: u64,
-    vector_count: u64,
-    mutation_count: u64,
-    vault_file_count: u64,
-    timestamp: i64,
+pub struct CursorState {
+    pub session_count: u64,
+    pub memory_count: u64,
+    pub vector_count: u64,
+    pub mutation_count: u64,
+    pub vault_file_count: u64,
+    pub timestamp: i64,
 }
 
 impl CursorState {
-    fn load(vault_path: &Path) -> Self {
+    pub fn load(vault_path: &Path) -> Self {
         let path = vault_path.join(".cursor.json");
         if path.exists() {
             if let Ok(content) = std::fs::read_to_string(&path) {
@@ -164,20 +164,28 @@ impl CursorState {
         CursorState::default()
     }
 
-    fn save(&self, vault_path: &Path) {
+    pub fn save(&self, vault_path: &Path) {
         let path = vault_path.join(".cursor.json");
         if let Ok(content) = serde_json::to_string(self) {
             let tmp = path.with_extension("tmp");
             if let Ok(mut f) = std::fs::File::create(&tmp) {
                 use std::io::Write;
-                let _ = f.write_all(content.as_bytes());
-                let _ = f.sync_all();
-                let _ = std::fs::rename(&tmp, &path);
+                if let Err(e) = f.write_all(content.as_bytes()) {
+                    tracing::warn!("[outbox] Failed to write cursor data: {}", e);
+                    return;
+                }
+                if let Err(e) = f.sync_all() {
+                    tracing::warn!("[outbox] Failed to sync cursor data: {}", e);
+                    return;
+                }
+                if let Err(e) = std::fs::rename(&tmp, &path) {
+                    tracing::warn!("[outbox] Failed to rename cursor file: {}", e);
+                }
             }
         }
     }
 
-    fn has_changed(&self, state: &StateSnapshot) -> bool {
+    pub fn has_changed(&self, state: &StateSnapshot) -> bool {
         self.session_count != state.session_count
             || self.memory_count != state.memory_count
             || self.vector_count != state.vector_count

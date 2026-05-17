@@ -86,7 +86,9 @@ impl ProvenanceTracker {
     pub fn append(&self, entry: &ProvenanceEntry) {
         let line = serde_json::to_string(entry).unwrap_or_default();
         if let Ok(mut file) = self.writer.lock() {
-            let _ = writeln!(file, "{line}");
+            if let Err(e) = writeln!(file, "{line}") {
+                tracing::warn!("[provenance] Failed to write provenance entry: {}", e);
+            }
         }
     }
 

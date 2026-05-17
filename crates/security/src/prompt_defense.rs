@@ -47,7 +47,7 @@ pub fn scan_prompt(text: &str) -> ScanResult {
         if lower.contains(pattern) {
             let start = lower.find(pattern).unwrap_or(0);
             let end = (start + pattern.len() + 40).min(lower.len());
-            let snippet = text[start..end].to_string();
+            let snippet = lower[start..end].to_string();
             blocked.push(BlockedReason {
                 pattern: pattern.to_string(),
                 snippet,
@@ -78,9 +78,7 @@ pub fn scan_prompt(text: &str) -> ScanResult {
     }
 
     let mut sanitized = text.to_string();
-    let has_invisible = INVISIBLE_UNICODE
-        .iter()
-        .any(|&c| text.contains(c));
+    let has_invisible = INVISIBLE_UNICODE.iter().any(|&c| text.contains(c));
     if has_invisible {
         for &c in INVISIBLE_UNICODE {
             sanitized = sanitized.replace(c, "");
@@ -95,6 +93,7 @@ pub fn scan_prompt(text: &str) -> ScanResult {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

@@ -53,12 +53,14 @@ pub async fn spawn_echo_watcher(
             ))
         })?;
 
+    // Keep the debouncer alive in a dedicated thread.
+    // Uses a oneshot channel receiver to block indefinitely without CPU waste.
+    let (_keep_alive_tx, keep_alive_rx) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {
-        // Move ownership of debouncer into the thread to keep it alive
-        let _keep_alive = debouncer;
-        loop {
-            std::thread::sleep(Duration::from_secs(3600));
-        }
+        let _debouncer = debouncer;
+        // Block indefinitely — debouncer is kept alive as long as this thread runs.
+        // The channel receiver blocks without consuming CPU (unlike sleep loops).
+        let _ = keep_alive_rx.recv();
     });
 
     // Async receiver loop handling the actual compilation and hot-swapping

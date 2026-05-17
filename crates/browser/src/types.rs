@@ -72,8 +72,20 @@ impl Default for BrowserConfig {
 
 impl BrowserConfig {
     pub fn from_config_file(path: &std::path::Path) -> Option<Self> {
-        let content = std::fs::read_to_string(path).ok()?;
-        let table: toml::Table = toml::from_str(&content).ok()?;
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("[browser] Failed to read config file {:?}: {}", path, e);
+                return None;
+            }
+        };
+        let table: toml::Table = match toml::from_str(&content) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("[browser] Failed to parse config file {:?}: {}", path, e);
+                return None;
+            }
+        };
         let browser = table.get("browser")?;
         let b = browser.as_table()?;
 

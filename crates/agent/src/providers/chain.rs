@@ -478,7 +478,15 @@ impl LlmProvider for ProviderChain {
             {
                 Ok(stream) => {
                     let chunks: Vec<ChatChunk> =
-                        stream.filter_map(|r| async move { r.ok() }).collect().await;
+                        stream.filter_map(|r| async move {
+                            match r {
+                                Ok(chunk) => Some(chunk),
+                                Err(e) => {
+                                    tracing::warn!("[{}] Stream chunk error: {}", self.chain_key, e);
+                                    None
+                                }
+                            }
+                        }).collect().await;
 
                     self.breaker.record_success();
                     self.cooldown.record_success(&self.chain_key);

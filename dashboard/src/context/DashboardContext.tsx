@@ -564,7 +564,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       // Send authentication frame first — session handshake begins
       const apiKey = process.env.NEXT_PUBLIC_DASHBOARD_API_KEY;
       if (!apiKey) {
-        console.error('[SAVANT] NEXT_PUBLIC_DASHBOARD_API_KEY is not set. Dashboard auth will fail.');
+        logger.error('Auth', 'NEXT_PUBLIC_DASHBOARD_API_KEY is not set. Dashboard auth will fail.');
       }
       socket.send(JSON.stringify({
         session_id: "",
@@ -688,15 +688,18 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     initTauri();
 
     let unlisten: (() => void) | null = null;
+    let cancelled = false;
     import('@tauri-apps/api/event').then(({ listen }) => {
+      if (cancelled) return;
       listen('system-log-event', (event: any) => {
         const logMsg = event.payload as string;
         logger.debug('System', logMsg);
         setDebugLogs(prev => [{ timestamp: new Date().toISOString(), message: logMsg }, ...prev]);
-      }).then(u => unlisten = u).catch((e) => logger.error('Tauri', 'Failed to listen to system-log-event', e));
+      }).then(u => { if (!cancelled) unlisten = u; }).catch((e) => logger.error('Tauri', 'Failed to listen to system-log-event', e));
     }).catch((e) => logger.error('Tauri', 'Failed to import @tauri-apps/api/event', e));
 
     return () => {
+      cancelled = true;
       if (unlisten) unlisten();
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (socketRef.current) socketRef.current.close();
@@ -757,7 +760,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       const payload = { role: role === 'user' ? 'user' : 'assistant', content, recipient, broadcast };
-      console.log(`[Dashboard] Sending chat message (session: ${sessionIdRef.current}, recipient: ${recipient || 'global/broadcast'}, content: "${content.substring(0, 50)}...")`);
+      logger.debug("Dashboard", `Sending chat message (session: ${sessionIdRef.current}, recipient: ${recipient || 'global/broadcast'})`);
 
       // Add user message to local lane messages immediately
       const laneKey = recipient ? recipient.toLowerCase() : "global";

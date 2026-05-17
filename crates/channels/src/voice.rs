@@ -195,10 +195,36 @@ impl ChannelAdapter for VoiceAdapter {
     fn name(&self) -> &str {
         "voice"
     }
-    async fn send_event(&self, _e: EventFrame) -> Result<(), SavantError> {
+    async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        // Route outbound voice events through the nexus event bus.
+        // The spawned task subscribes and dispatches TTS/STT operations.
+        if let Err(e) = self.nexus.event_bus.send(event) {
+            warn!("[VOICE] Failed to send event to nexus: {}", e);
+            return Err(SavantError::Unknown(format!(
+                "Voice event send failed: {}",
+                e
+            )));
+        }
         Ok(())
     }
-    async fn handle_event(&self, _e: EventFrame) -> Result<(), SavantError> {
+    async fn handle_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        // Inbound voice events are dispatched through the nexus event bus
+        // where the spawned task processes TTS/STT operations.
+        if event.event_type.starts_with("voice.") {
+            info!("[VOICE] Handling inbound event: {}", event.event_type);
+            if let Err(e) = self.nexus.event_bus.send(event) {
+                warn!("[VOICE] Failed to route inbound event: {}", e);
+                return Err(SavantError::Unknown(format!(
+                    "Voice event routing failed: {}",
+                    e
+                )));
+            }
+        } else {
+            warn!(
+                "[VOICE] Dropping non-voice event type: {}",
+                event.event_type
+            );
+        }
         Ok(())
     }
 }

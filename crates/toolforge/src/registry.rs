@@ -59,7 +59,9 @@ impl SharedToolRegistry {
         self.current.store(Arc::from(new_epoch));
 
         info!("[toolforge] Tool registered: {name}");
-        let _ = self.event_tx.send(ToolRegistryEvent::ToolAdded { name });
+        if let Err(e) = self.event_tx.send(ToolRegistryEvent::ToolAdded { name }) {
+            tracing::warn!("[toolforge] Failed to send ToolAdded event: {}", e);
+        }
     }
 
     pub fn remove(&self, name: &str) -> bool {
@@ -70,9 +72,11 @@ impl SharedToolRegistry {
             new_epoch.epoch_id = guard.epoch_id.wrapping_add(1);
             self.current.store(Arc::from(new_epoch));
             info!("[toolforge] Tool removed: {name}");
-            let _ = self.event_tx.send(ToolRegistryEvent::ToolRemoved {
+            if let Err(e) = self.event_tx.send(ToolRegistryEvent::ToolRemoved {
                 name: name.to_string(),
-            });
+            }) {
+                tracing::warn!("[toolforge] Failed to send ToolRemoved event: {}", e);
+            }
         }
         existed
     }

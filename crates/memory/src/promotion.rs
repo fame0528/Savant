@@ -57,6 +57,8 @@ pub struct PromotionEngine {
     pub personality_drift_limit: f32,
     /// Original baseline personality for drift comparison
     pub baseline_personality: Option<PersonalityTraits>,
+    /// Running evolution score (0.0-1.0) updated each promotion cycle
+    pub evolution_score: f32,
 }
 
 impl PromotionEngine {
@@ -68,6 +70,7 @@ impl PromotionEngine {
             decay_after_hours: 168.0,
             personality_drift_limit: 0.15,
             baseline_personality: Some(personality),
+            evolution_score: 0.0,
         }
     }
 
@@ -77,6 +80,19 @@ impl PromotionEngine {
     /// Only the active scoring personality is updated.
     pub fn update_traits(&mut self, traits: PersonalityTraits) {
         self.personality = traits;
+    }
+
+    /// Updates the evolution score based on the latest promotion cycle results.
+    ///
+    /// The evolution score represents the ratio of high-value memories to total memories,
+    /// providing a health metric for the memory system. A higher score indicates
+    /// a greater proportion of valuable, frequently-accessed memories.
+    pub fn update_evolution_score(&mut self, score: f32) {
+        // Smooth the evolution score with exponential moving average (alpha=0.3)
+        // to prevent wild swings from single-cycle anomalies
+        let alpha = 0.3;
+        self.evolution_score = alpha * score + (1.0 - alpha) * self.evolution_score;
+        self.evolution_score = self.evolution_score.clamp(0.0, 1.0);
     }
 
     /// Calculates the promotion score for a memory.

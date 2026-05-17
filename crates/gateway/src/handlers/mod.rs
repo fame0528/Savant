@@ -213,10 +213,12 @@ pub async fn handle_message(
                                                         "status": "blocked",
                                                         "reason": format!("Immutable section '{}' cannot be modified", section),
                                                     });
-                                                    let _ = send_control_response(
+                                                    if let Err(e) = send_control_response(
                                                         "UPDATE_BLOCKED", result,
                                                         &session.session_id, &state.nexus,
-                                                    ).await;
+                                                    ).await {
+                                                        tracing::warn!("[gateway] Failed to send UPDATE_BLOCKED response: {}", e);
+                                                    }
                                                     return;
                                                 }
                                             }
@@ -246,14 +248,18 @@ pub async fn handle_message(
                                 {
                                     use std::io::Write;
                                     let line = serde_json::to_string(&provenance_entry).unwrap_or_default();
-                                    let _ = writeln!(file, "{}", line);
+                                    if let Err(e) = writeln!(file, "{}", line) {
+                                        tracing::warn!("[gateway] Failed to write to EVOLUTION.jsonl: {}", e);
+                                    }
                                 }
 
                                 let result = serde_json::json!({ "agent_id": agent_id, "status": "success" });
-                                let _ = send_control_response(
+                                if let Err(e) = send_control_response(
                                     "UPDATE_SUCCESS", result,
                                     &session.session_id, &state.nexus,
-                                ).await;
+                                ).await {
+                                    tracing::warn!("[gateway] Failed to send UPDATE_SUCCESS response: {}", e);
+                                }
                             }
                         }
                         _ => {
@@ -262,10 +268,12 @@ pub async fn handle_message(
                                 Ok(config) => {
                                     tracing::info!("[gateway] Workspace birthed: {}", config.workspace_path.display());
                                     let result = serde_json::json!({ "agent_id": config.agent_id, "status": "created" });
-                                    let _ = send_control_response(
+                                    if let Err(e) = send_control_response(
                                         "UPDATE_SUCCESS", result,
                                         &session.session_id, &state.nexus,
-                                    ).await;
+                                    ).await {
+                                        tracing::warn!("[gateway] Failed to send UPDATE_SUCCESS response: {}", e);
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::error!("[gateway] Failed to scaffold workspace: {}", e);
@@ -498,11 +506,19 @@ pub async fn handle_message(
                     let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
                     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&evo_path) {
                         let line = serde_json::to_string(&mutation).unwrap_or_default();
-                        let _ = writeln!(file, "{}", line);
+                        if let Err(e) = writeln!(file, "{}", line) {
+                            tracing::warn!("[gateway] Failed to write mutation to EVOLUTION.jsonl: {}", e);
+                        }
+                    } else {
+                        tracing::warn!("[gateway] Failed to open EVOLUTION.jsonl at {:?}", evo_path);
                     }
 
-                    let _ = state.nexus.publish("system.evolution.mutation_proposed", &serde_json::to_string(&mutation).unwrap_or_default()).await;
-                    let _ = send_control_response("MUTATION_PROPOSED", mutation, &session.session_id, &state.nexus).await;
+                    if let Err(e) = state.nexus.publish("system.evolution.mutation_proposed", &serde_json::to_string(&mutation).unwrap_or_default()).await {
+                        tracing::warn!("[gateway] Failed to publish mutation_proposed event: {}", e);
+                    }
+                    if let Err(e) = send_control_response("MUTATION_PROPOSED", mutation, &session.session_id, &state.nexus).await {
+                        tracing::warn!("[gateway] Failed to send MUTATION_PROPOSED response: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::SoulMutationApprove { agent_id, mutation_id } => {
                     let decided_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
@@ -524,7 +540,9 @@ pub async fn handle_message(
                         }
                     }
 
-                    let _ = std::fs::write(&evo_path, mutations.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect::<Vec<_>>().join("\n") + "\n");
+                    if let Err(e) = std::fs::write(&evo_path, mutations.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect::<Vec<_>>().join("\n") + "\n") {
+                        tracing::warn!("[gateway] Failed to write EVOLUTION.jsonl: {}", e);
+                    }
 
                     let config_path = workspace_path.join("agent.json");
                     if config_path.exists() {
@@ -537,14 +555,20 @@ pub async fn handle_message(
                                 evo_state["last_mutation_at"] = serde_json::json!(decided_at);
                                 evo_state["evolution_score"] = serde_json::json!((approved_count as f32 / 10.0).min(1.0));
                                 evo_state["stage"] = serde_json::json!(if approved_count >= 10 { "Sovereign" } else if approved_count >= 5 { "Mature" } else if approved_count >= 2 { "Growing" } else { "Seedling" });
-                                let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&config_val).unwrap_or_default());
+                                if let Err(e) = std::fs::write(&config_path, serde_json::to_string_pretty(&config_val).unwrap_or_default()) {
+                                    tracing::warn!("[gateway] Failed to write agent.json: {}", e);
+                                }
                             }
                         }
                     }
 
                     let result = serde_json::json!({ "status": "approved", "mutation_id": mutation_id, "agent_id": agent_id, "decided_at": decided_at });
-                    let _ = state.nexus.publish("system.evolution.mutation_applied", &serde_json::to_string(&result).unwrap_or_default()).await;
-                    let _ = send_control_response("MUTATION_APPROVED", result, &session.session_id, &state.nexus).await;
+                    if let Err(e) = state.nexus.publish("system.evolution.mutation_applied", &serde_json::to_string(&result).unwrap_or_default()).await {
+                        tracing::warn!("[gateway] Failed to publish mutation_applied event: {}", e);
+                    }
+                    if let Err(e) = send_control_response("MUTATION_APPROVED", result, &session.session_id, &state.nexus).await {
+                        tracing::warn!("[gateway] Failed to send MUTATION_APPROVED response: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::SoulMutationReject { agent_id, mutation_id, reason } => {
                     let decided_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
@@ -565,11 +589,17 @@ pub async fn handle_message(
                             }
                         }
                     }
-                    let _ = std::fs::write(&evo_path, mutations.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect::<Vec<_>>().join("\n") + "\n");
+                    if let Err(e) = std::fs::write(&evo_path, mutations.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect::<Vec<_>>().join("\n") + "\n") {
+                        tracing::warn!("[gateway] Failed to write EVOLUTION.jsonl: {}", e);
+                    }
 
                     let result = serde_json::json!({ "status": "rejected", "mutation_id": mutation_id, "agent_id": agent_id, "reason": reason, "decided_at": decided_at });
-                    let _ = state.nexus.publish("system.evolution.mutation_applied", &serde_json::to_string(&result).unwrap_or_default()).await;
-                    let _ = send_control_response("MUTATION_REJECTED", result, &session.session_id, &state.nexus).await;
+                    if let Err(e) = state.nexus.publish("system.evolution.mutation_applied", &serde_json::to_string(&result).unwrap_or_default()).await {
+                        tracing::warn!("[gateway] Failed to publish mutation_applied event: {}", e);
+                    }
+                    if let Err(e) = send_control_response("MUTATION_REJECTED", result, &session.session_id, &state.nexus).await {
+                        tracing::warn!("[gateway] Failed to send MUTATION_REJECTED response: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::SoulMutationRevert { .. } => {
                     tracing::info!("[evolution] Revert requested (not yet implemented)");
@@ -582,7 +612,9 @@ pub async fn handle_message(
                     let total = mutations.len();
                     let limited: Vec<_> = if limit > 0 { mutations.into_iter().rev().take(limit).collect() } else { mutations };
                     let result = serde_json::json!({ "agent_id": agent_id, "mutations": limited, "total": total });
-                    let _ = send_control_response("EVOLUTION_HISTORY", result, &session.session_id, &state.nexus).await;
+                    if let Err(e) = send_control_response("EVOLUTION_HISTORY", result, &session.session_id, &state.nexus).await {
+                        tracing::warn!("[gateway] Failed to send EVOLUTION_HISTORY response: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::EvolutionScoreRequest { agent_id } => {
                     let config_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("agent.json");
@@ -599,7 +631,9 @@ pub async fn handle_message(
                             .unwrap_or((0.0, "Seedling".to_string(), 0))
                     } else { (0.0, "Seedling".to_string(), 0) };
                     let result = serde_json::json!({ "agent_id": agent_id, "evolution_score": score, "stage": stage, "mutation_count": mutation_count });
-                    let _ = send_control_response("EVOLUTION_SCORE", result, &session.session_id, &state.nexus).await;
+                    if let Err(e) = send_control_response("EVOLUTION_SCORE", result, &session.session_id, &state.nexus).await {
+                        tracing::warn!("[gateway] Failed to send EVOLUTION_SCORE response: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::EvolutionIdeaSubmit { agent_id, content, significance } => {
                     let mutation_id = uuid::Uuid::new_v4().to_string();
@@ -616,9 +650,13 @@ pub async fn handle_message(
                     let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
                     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&evo_path) {
                         let line = serde_json::to_string(&mutation).unwrap_or_default();
-                        let _ = writeln!(file, "{}", line);
+                        if let Err(e) = writeln!(file, "{}", line) {
+                            tracing::warn!("[gateway] Failed to write idea to EVOLUTION.jsonl: {}", e);
+                        }
                     }
-                    let _ = send_control_response("IDEA_SUBMITTED", mutation, &session.session_id, &state.nexus).await;
+                    if let Err(e) = send_control_response("IDEA_SUBMITTED", mutation, &session.session_id, &state.nexus).await {
+                        tracing::warn!("[gateway] Failed to send IDEA_SUBMITTED response: {}", e);
+                    }
                 }
                 savant_core::types::ControlFrame::PersonalityExportRequest { agent_id } | savant_core::types::ControlFrame::PersonalityImportRequest { agent_id, .. } => {
                     tracing::info!("[evolution] Personality export/import requested for agent {}", agent_id);
@@ -627,12 +665,14 @@ pub async fn handle_message(
                         "status": "not_implemented",
                         "message": "Personality export/import will be implemented in Phase 4"
                     });
-                    let _ = send_control_response(
+                    if let Err(e) = send_control_response(
                         "PERSONALITY_IO",
                         result,
                         &session.session_id,
                         &state.nexus,
-                    ).await;
+                    ).await {
+                        tracing::warn!("[gateway] Failed to send PERSONALITY_IO response: {}", e);
+                    }
                 }
             }
         }
@@ -1558,12 +1598,13 @@ async fn fetch_openrouter_models() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Failed to parse OpenRouter response: {}", e))?;
 
     let models = resp["data"].clone();
+    // Ignore error if another thread already set the cache
     let _ = OPENROUTER_MODELS.set((models.clone(), std::time::Instant::now()));
     Ok(models)
 }
 
 /// Get available models — fetches live from OpenRouter API + local Ollama models.
-pub async fn handle_models_list(nexus: &Arc<NexusBridge>) -> Result<(), String> {
+pub async fn handle_models_list(nexus: &Arc<NexusBridge>) -> Result<serde_json::Value, String> {
     let openrouter_models = fetch_openrouter_models().await.unwrap_or_else(|e| {
         tracing::warn!("Failed to fetch OpenRouter models: {}", e);
         serde_json::json!([])
@@ -1610,7 +1651,8 @@ pub async fn handle_models_list(nexus: &Arc<NexusBridge>) -> Result<(), String> 
     nexus
         .publish("models.list.result", &response.to_string())
         .await
-        .map_err(|e| format!("Failed to publish: {}", e))
+        .map_err(|e| format!("Failed to publish: {}", e))?;
+    Ok(response["data"].clone())
 }
 
 /// Filters the OpenRouter model catalog to only free models.
@@ -1720,7 +1762,7 @@ pub async fn models_free_handler() -> impl IntoResponse {
 
 /// Get parameter descriptors for the config UI
 /// Returns detailed explanations for each configurable parameter
-pub async fn handle_parameter_descriptors(nexus: &Arc<NexusBridge>) -> Result<(), String> {
+pub async fn handle_parameter_descriptors(nexus: &Arc<NexusBridge>) -> Result<serde_json::Value, String> {
     let descriptors = savant_core::types::LlmParams::get_parameter_descriptors();
 
     let response = serde_json::json!({
@@ -1734,11 +1776,12 @@ pub async fn handle_parameter_descriptors(nexus: &Arc<NexusBridge>) -> Result<()
     nexus
         .publish("parameter.descriptors.result", &response.to_string())
         .await
-        .map_err(|e| format!("Failed to publish: {}", e))
+        .map_err(|e| format!("Failed to publish: {}", e))?;
+    Ok(response["data"].clone())
 }
 
 /// Get the current Savant configuration
-pub async fn handle_config_get(nexus: &Arc<NexusBridge>) -> Result<(), String> {
+pub async fn handle_config_get(nexus: &Arc<NexusBridge>) -> Result<serde_json::Value, String> {
     let config =
         savant_core::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
 
@@ -1755,7 +1798,8 @@ pub async fn handle_config_get(nexus: &Arc<NexusBridge>) -> Result<(), String> {
     nexus
         .publish("config.get.result", &response.to_string())
         .await
-        .map_err(|e| format!("Failed to publish: {}", e))
+        .map_err(|e| format!("Failed to publish: {}", e))?;
+    Ok(response["data"].clone())
 }
 
 /// Request payload for updating config

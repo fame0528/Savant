@@ -63,7 +63,9 @@ impl WebSovereign {
                 .user_agent("Savant/1.6")
                 .redirect(reqwest::redirect::Policy::limited(5))
                 .build()
-                .expect("CRITICAL: Failed to build HTTP client with security constraints"),
+                .map_err(|e| SavantError::Unknown(
+                    format!("CRITICAL: Failed to build HTTP client with security constraints: {}", e)
+                ))?;
             projection: Arc::new(super::web_projection::ChromeProjection::new()),
         }
     }

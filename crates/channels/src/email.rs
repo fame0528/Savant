@@ -518,6 +518,7 @@ impl EmailAdapter {
             .map_err(|e| SavantError::NetworkError(format!("IMAP search: {e}")))?;
 
         if uids.is_empty() {
+            debug!("[email::watch] IMAP search returned no messages for criteria: {}", search_criteria);
             return Ok(());
         }
 
@@ -537,12 +538,18 @@ impl EmailAdapter {
             })?;
 
             // Extract Message-ID for deduplication
-            let message_id = envelope
+            let message_id = match envelope
                 .message_id
                 .as_ref()
                 .and_then(|mid| std::str::from_utf8(mid).ok())
                 .and_then(Self::extract_message_id)
-                .unwrap_or_else(|| format!("uid-{}", msg.uid.unwrap_or(0)));
+            {
+                Some(id) => id,
+                None => {
+                    tracing::warn!("[EMAIL_BRIDGE] Failed to extract Message-ID header, falling back to UID");
+                    format!("uid-{}", msg.uid.unwrap_or(0))
+                }
+            };
 
             // Extract sender
             let sender_email = envelope

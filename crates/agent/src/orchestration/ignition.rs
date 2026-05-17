@@ -27,7 +27,7 @@ async fn kill_port_process(port: u16) {
 
     #[cfg(target_os = "windows")]
     {
-        let _ = tokio::process::Command::new("powershell")
+        if let Err(e) = tokio::process::Command::new("powershell")
             .args([
                 "-Command",
                 &format!(
@@ -36,18 +36,24 @@ async fn kill_port_process(port: u16) {
                 ),
             ])
             .output()
-            .await;
+            .await
+        {
+            warn!("[ignition] Failed to execute port cleanup on Windows: {}", e);
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = tokio::process::Command::new("sh")
+        if let Err(e) = tokio::process::Command::new("sh")
             .args([
                 "-c",
                 &format!("lsof -ti :{} | xargs kill -9 2>/dev/null", port),
             ])
             .output()
-            .await;
+            .await
+        {
+            warn!("[ignition] Failed to execute port cleanup on Unix: {}", e);
+        }
     }
 
     // Wait a moment for the process to release the port
@@ -244,8 +250,11 @@ impl IgnitionService {
                 }
             });
 
-            // Store shutdown senders so they can be used for graceful shutdown
-            let _ = (outbox_shutdown_tx, watcher_shutdown_tx, outbox_handle, watcher_handle);
+            // Keep shutdown senders and handles alive to prevent premature cancellation
+            let _outbox_shutdown_tx = outbox_shutdown_tx;
+            let _watcher_shutdown_tx = watcher_shutdown_tx;
+            let _outbox_handle = outbox_handle;
+            let _watcher_handle = watcher_handle;
 
             info!("[obsidian] Vault projection workers enabled at {}", vault_path.display());
         }

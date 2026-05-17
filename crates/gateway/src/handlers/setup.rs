@@ -5,6 +5,11 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Deserialize;
 use std::sync::Arc;
 
+/// Validate that a section/key name contains only safe characters.
+fn is_valid_identifier(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 #[derive(Debug, Deserialize)]
 pub struct InstallModelRequest {
     pub model: String,
@@ -22,16 +27,28 @@ pub async fn config_set_handler(
     State(_state): State<Arc<GatewayState>>,
     Json(body): Json<ConfigSetRequest>,
 ) -> impl IntoResponse {
+    // Validate input to prevent injection
+    if !is_valid_identifier(&body.section) || !is_valid_identifier(&body.key) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Invalid section or key name"
+            })),
+        )
+            .into_response();
+    }
+
     let config_path = savant_core::config::Config::primary_config_path();
 
     let mut config = match savant_core::config::Config::load() {
         Ok(c) => c,
-        Err(e) => {
+        Err(_) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "status": "error",
-                    "message": format!("Failed to load config: {}", e)
+                    "message": "Failed to load configuration"
                 })),
             )
                 .into_response();
@@ -56,7 +73,7 @@ pub async fn config_set_handler(
                 config.browser.enabled = body.value.as_bool().unwrap_or(true);
                 Ok(())
             }
-            _ => Err(format!("Unknown browser key: {}", body.key)),
+            _ => Err("Unknown browser key".to_string()),
         },
         "obsidian" => match body.key.as_str() {
             "vault_path" => {
@@ -71,7 +88,7 @@ pub async fn config_set_handler(
                 config.obsidian.sync_interval_secs = body.value.as_u64().unwrap_or(300);
                 Ok(())
             }
-            _ => Err(format!("Unknown obsidian key: {}", body.key)),
+            _ => Err("Unknown obsidian key".to_string()),
         },
         "ai" => match body.key.as_str() {
             "model" => {
@@ -82,19 +99,19 @@ pub async fn config_set_handler(
                 config.ai.provider = body.value.as_str().unwrap_or("ollama").to_string();
                 Ok(())
             }
-            _ => Err(format!("Unknown ai key: {}", body.key)),
+            _ => Err("Unknown ai key".to_string()),
         },
-        _ => Err(format!("Unknown config section: {}", body.section)),
+        _ => Err("Unknown config section".to_string()),
     };
 
     match result {
         Ok(()) => {
-            if let Err(e) = config.save(&config_path) {
+            if config.save(&config_path).is_err() {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({
                         "status": "error",
-                        "message": format!("Failed to save config: {}", e)
+                        "message": "Failed to save configuration"
                     })),
                 )
                     .into_response();
@@ -240,14 +257,14 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
                     error: None,
                 };
             }
-            return ProviderCheck {
+            ProviderCheck {
                 running: true,
                 model_available: false,
                 error: None,
-            };
+            }
         }
-        Ok(resp) => {
-            // Try LM Studio / OpenAI-compatible endpoint
+        Ok(_ollama_resp) => {
+            // Ollama responded but we couldn't parse models — try LM Studio / OpenAI-compatible
             match client.get(&models_url).send().await {
                 Ok(resp2) if resp2.status().is_success() => {
                     if let Ok(body) = resp2.json::<serde_json::Value>().await {
@@ -262,25 +279,25 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
                             error: None,
                         };
                     }
-                    return ProviderCheck {
+                    ProviderCheck {
                         running: true,
                         model_available: false,
                         error: None,
-                    };
+                    }
                 }
                 Ok(resp2) => {
-                    return ProviderCheck {
+                    ProviderCheck {
                         running: false,
                         model_available: false,
                         error: Some(format!("{} returned status {}", name, resp2.status())),
-                    };
+                    }
                 }
                 Err(e2) => {
-                    return ProviderCheck {
+                    ProviderCheck {
                         running: false,
                         model_available: false,
                         error: Some(format!("{} not reachable: {}", name, e2)),
-                    };
+                    }
                 }
             }
         }
@@ -300,18 +317,18 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
                             error: None,
                         };
                     }
-                    return ProviderCheck {
+ProviderCheck {
                         running: true,
                         model_available: false,
                         error: None,
-                    };
+                    }
                 }
                 Ok(resp) => {
-                    return ProviderCheck {
+                    ProviderCheck {
                         running: false,
                         model_available: false,
                         error: Some(format!("{} returned status {:?} (Ollama) and {:?} (OpenAI)", name, e.status(), resp.status())),
-                    };
+                    }
                 }
                 Err(e2) => {
                     let err_str = format!("{} / {}", e, e2);
@@ -322,15 +339,20 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
                             error: Some(format!("{} is not running", name)),
                         };
                     }
-                    return ProviderCheck {
+                    ProviderCheck {
                         running: false,
                         model_available: false,
-                        error: Some(format!("Cannot connect to {}: {}", name, err_str)),
-                    };
+                        error: Some(format!("Cannot connect to {}", name)),
+                    }
                 }
             }
         }
     }
+}
+
+/// Validate that a model name contains only safe characters (alphanumeric, colon, dash, underscore, dot, slash).
+fn is_valid_model_name(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || ":.-_/".contains(c))
 }
 
 /// POST /api/setup/install-model — Pull a model via Ollama
@@ -339,6 +361,18 @@ pub async fn setup_install_model_handler(
     State(_state): State<Arc<GatewayState>>,
     Json(body): Json<InstallModelRequest>,
 ) -> impl IntoResponse {
+    // Validate model name to prevent injection
+    if !is_valid_model_name(&body.model) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Invalid model name"
+            })),
+        )
+            .into_response();
+    }
+
     let ollama_url =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
 
@@ -354,26 +388,25 @@ pub async fn setup_install_model_handler(
     {
         Ok(resp) if resp.status().is_success() => Json(serde_json::json!({
             "status": "success",
-            "message": format!("{} installed successfully", body.model)
+            "message": "Model installed successfully"
         }))
         .into_response(),
         Ok(resp) => {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({
                     "status": "error",
-                    "message": format!("Ollama pull failed ({}): {}", status, body)
+                    "message": format!("Model installation failed ({})", status)
                 })),
             )
                 .into_response()
         }
-        Err(e) => (
+        Err(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
                 "status": "error",
-                "message": format!("Cannot connect to Ollama: {}", e)
+                "message": "Cannot connect to model service"
             })),
         )
             .into_response(),

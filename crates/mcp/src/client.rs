@@ -35,7 +35,6 @@ struct JsonRpcResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct JsonRpcError {
     code: i32,
     message: String,
@@ -199,8 +198,10 @@ impl McpClient {
                             if let Some((_, tx)) = responses.remove(&id) {
                                 let value = resp.result.unwrap_or_else(|| {
                                     serde_json::json!({
-                                        "error": resp.error.map(|e| e.message)
-                                            .unwrap_or_else(|| "Unknown error".to_string())
+                                        "error": resp.error.map(|e| {
+                                            format!("Error {}: {}", e.code, e.message)
+                                        })
+                                        .unwrap_or_else(|| "Unknown error".to_string())
                                     })
                                 });
                                 if let Err(e) = tx.send(value) {

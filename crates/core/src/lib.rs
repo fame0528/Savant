@@ -1,5 +1,3 @@
-// pub mod memory;
-
 //! Savant Core Crate
 //! Defines shared types, traits, utilities, and errors.
 

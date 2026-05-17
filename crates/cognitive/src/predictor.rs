@@ -95,7 +95,7 @@ pub struct DspPredictor {
 
 impl Default for DspPredictor {
     fn default() -> Self {
-        Self::new(DspConfig::default()).unwrap_or_else(|_| unreachable!("Default DspConfig is always valid"))
+        Self::new(DspConfig::default()).expect("Default DspConfig is always valid")
     }
 }
 
@@ -166,7 +166,6 @@ impl DspPredictor {
     ///
     /// # Returns
     /// The computed loss value (lower is better)
-    #[allow(dead_code)]
     fn expectile_loss(&self, actual_k: f32, predicted_k: f32) -> f32 {
         let diff = actual_k - predicted_k;
         let indicator = if actual_k < predicted_k { 1.0 } else { 0.0 };

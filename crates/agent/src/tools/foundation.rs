@@ -23,11 +23,10 @@ const EVOLUTION_STAGING_FILES: &[&str] = &[
     "SOUL.proposed.md",
 ];
 
-/// Checks if a path targets a blocked file. Returns the filename if blocked.
+/// Checks if a path targets a blocked file. Returns the filename if blocked, None otherwise.
 /// Evolution staging files (SOUL.proposed.md) are exempt from blocking.
 fn check_blocked(path: &Path) -> Option<String> {
     if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-        // Allow evolution staging files
         if EVOLUTION_STAGING_FILES.iter().any(|s| s.eq_ignore_ascii_case(filename)) {
             return None;
         }
@@ -38,7 +37,7 @@ fn check_blocked(path: &Path) -> Option<String> {
             return Some(filename.to_string());
         }
     }
-    Some(path.to_string_lossy().to_string())
+    None
 }
 
 /// Sandboxing Path Resolver
@@ -352,7 +351,9 @@ impl Tool for FileAtomicEditTool {
                 .ok_or_else(|| SavantError::Unknown("Missing 'value'".to_string()))?;
 
             if !content.contains(target) {
-                fs::remove_file(&backup_path).await.ok();
+                if let Err(e) = fs::remove_file(&backup_path).await {
+                    tracing::warn!("[foundation] Failed to remove backup file: {}", e);
+                }
                 return Err(SavantError::Unknown(format!(
                     "AtomicEdit: Target not found: {}",
                     target
@@ -367,7 +368,9 @@ impl Tool for FileAtomicEditTool {
             SavantError::Unknown(format!("AtomicEdit: Write failed: {}", e))
         })?;
 
-        fs::remove_file(&backup_path).await.ok();
+        if let Err(e) = fs::remove_file(&backup_path).await {
+            tracing::warn!("[foundation] Failed to remove backup file after atomic edit: {}", e);
+        }
         Ok(format!(
             "Successfully applied {} replacements to {:?}.",
             replacements.len(),

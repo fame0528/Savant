@@ -35,11 +35,17 @@ impl SecurityAuthority {
     }
 
     /// Helper to get current UNIX time securely
-    fn current_time() -> u64 {
+    fn current_time() -> Result<u64, SecurityError> {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("System clock error: time is before Unix epoch")
-            .as_secs()
+            .map(|d| d.as_secs())
+            .map_err(|e| {
+                tracing::error!("System clock error: {}", e);
+                SecurityError::UnauthorizedAction(
+                    "Clock error".into(),
+                    "System clock is before Unix epoch".into(),
+                )
+            })
     }
 
     /// Mints a new token with Quantum-Cognitive Entanglement.
@@ -75,8 +81,8 @@ impl SecurityAuthority {
             assignee_hash,
             resource_uri: resource_uri.to_string(),
             permitted_action: permitted_action.to_string(),
-            expires_at: Self::current_time() + ttl_seconds,
-            issued_at: Self::current_time(),
+            expires_at: Self::current_time()? + ttl_seconds,
+            issued_at: Self::current_time()?,
             entropy_hash,
         };
 
@@ -110,8 +116,8 @@ impl SecurityAuthority {
             assignee_hash,
             resource_uri: resource_uri.to_string(),
             permitted_action: permitted_action.to_string(),
-            expires_at: Self::current_time() + ttl_seconds,
-            issued_at: Self::current_time(),
+            expires_at: Self::current_time()? + ttl_seconds,
+            issued_at: Self::current_time()?,
             entropy_hash: [0u8; 32],
         };
 
@@ -139,7 +145,8 @@ impl SecurityAuthority {
         requested_action: &str,
     ) -> Result<(), SecurityError> {
         // 1. Time-to-Live Check
-        if Self::current_time() > token.payload.expires_at {
+        let now = Self::current_time()?;
+        if now > token.payload.expires_at {
             return Err(SecurityError::TokenExpired);
         }
 
@@ -241,6 +248,7 @@ impl SecurityAuthority {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
@@ -277,7 +285,7 @@ mod tests {
         .unwrap();
 
         // Force expiration by setting time to the past
-        token.payload.expires_at = SecurityAuthority::current_time().saturating_sub(1);
+        token.payload.expires_at = SecurityAuthority::current_time().unwrap().saturating_sub(1);
 
         assert!(matches!(
             enclave.verify_token_and_action(&token, 12345, "/file", "read"),

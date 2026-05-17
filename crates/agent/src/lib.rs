@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::disallowed_methods)]
 
 //! Savant Agent Crate
 //! Contains the ReAct loop, LLM providers, and token budgeting.

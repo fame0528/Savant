@@ -345,9 +345,13 @@ impl ClawHubClient {
                 }
             }
             if let Some(parent) = file_path.parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    warn!("[clawhub] Failed to create parent directory: {}", e);
+                }
             }
-            tokio::fs::write(&file_path, &file.content).await.ok();
+            if let Err(e) = tokio::fs::write(&file_path, &file.content).await {
+                warn!("[clawhub] Failed to write file {}: {}", file_path.display(), e);
+            }
         }
 
         // 4. MANDATORY SECURITY SCAN BEFORE INSTALLING

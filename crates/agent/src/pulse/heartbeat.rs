@@ -1,5 +1,6 @@
 use crate::proactive::ProactivePartner;
 use crate::react::{AgentEvent, AgentLoop};
+use chrono::Timelike;
 use futures::stream::StreamExt;
 use savant_core::bus::NexusBridge;
 use savant_core::db::Storage;
@@ -30,7 +31,33 @@ impl savant_core::traits::Tool for HeartbeatTool {
     }
     async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
         let action = payload["action"].as_str().unwrap_or("skip");
-        Ok(action.to_uppercase())
+        let reason = payload["reason"].as_str().unwrap_or("no reason provided");
+
+        // Validate the action against environmental heuristics
+        let is_valid = match action {
+            "run" | "skip" => true,
+            other => {
+                warn!("[heartbeat] Invalid action '{}', defaulting to skip", other);
+                return Ok(serde_json::json!({
+                    "action": "skip",
+                    "reason": format!("Invalid action '{}', defaulted to skip", other)
+                }).to_string());
+            }
+        };
+
+        if !is_valid {
+            return Ok(serde_json::json!({
+                "action": "skip",
+                "reason": "validation failed"
+            }).to_string());
+        }
+
+        // Return structured decision with reason for downstream logging
+        Ok(serde_json::json!({
+            "action": action,
+            "reason": reason,
+            "evaluated_at": chrono::Utc::now().to_rfc3339()
+        }).to_string())
     }
 }
 
@@ -43,8 +70,37 @@ impl savant_core::traits::Tool for EvaluateNotificationTool {
     fn description(&self) -> &str {
         "MANDATORY LAST STEP: Decides if the user should be notified. Schema: { \"should_notify\": true|false, \"reason\": \"...\" }"
     }
-    async fn execute(&self, _payload: serde_json::Value) -> Result<String, SavantError> {
-        Ok("Acknowledged".to_string())
+    async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
+        let should_notify = payload["should_notify"].as_bool().unwrap_or(false);
+        let reason = payload["reason"].as_str().unwrap_or("no reason provided");
+
+        // Evaluate urgency flags from the payload
+        let is_urgent = payload["urgent"].as_bool().unwrap_or(false);
+        let is_anomaly = payload["anomaly"].as_bool().unwrap_or(false);
+
+        // Override: anomalies always warrant notification regardless of should_notify
+        let final_decision = if is_anomaly {
+            true
+        } else if is_urgent {
+            // Urgent items bypass quiet hours but still need a reason
+            should_notify || !reason.is_empty()
+        } else {
+            should_notify
+        };
+
+        // Check quiet hours (22:00 - 07:00 UTC) — suppress non-urgent notifications
+        let utc_hour = chrono::Utc::now().hour();
+        let in_quiet_hours = utc_hour >= 22 || utc_hour < 7;
+        let suppressed = in_quiet_hours && !final_decision && !is_urgent && !is_anomaly;
+
+        Ok(serde_json::json!({
+            "should_notify": final_decision && !suppressed,
+            "reason": reason,
+            "suppressed": suppressed,
+            "quiet_hours": in_quiet_hours,
+            "anomaly_override": is_anomaly,
+            "evaluated_at": chrono::Utc::now().to_rfc3339()
+        }).to_string())
     }
 }
 
@@ -53,16 +109,19 @@ pub struct HeartbeatPulse {
     agent: AgentConfig,
     heartbeat_file: PathBuf,
     nexus: Arc<NexusBridge>,
+    storage: Arc<Storage>,
     proactive: ProactivePartner,
     shutdown_token: CancellationToken,
+    delta_tx: tokio::sync::watch::Sender<f32>,
 }
 
 impl HeartbeatPulse {
     pub fn new(
         agent: AgentConfig,
         nexus: Arc<NexusBridge>,
-        _storage: Arc<Storage>,
+        storage: Arc<Storage>,
         shutdown_token: CancellationToken,
+        delta_tx: tokio::sync::watch::Sender<f32>,
     ) -> Self {
         let heartbeat_file = agent.workspace_path.join(&agent.proactive.heartbeat_file);
         let proactive = ProactivePartner::new(agent.workspace_path.clone(), &agent.proactive);
@@ -70,8 +129,10 @@ impl HeartbeatPulse {
             agent,
             heartbeat_file,
             nexus,
+            storage,
             proactive,
             shutdown_token,
+            delta_tx,
         }
     }
 
@@ -94,8 +155,8 @@ impl HeartbeatPulse {
         use savant_dream::IS_DREAMING;
         use std::sync::atomic::Ordering;
 
-        // Delta score channel for dream scheduler
-        let (delta_tx, _delta_rx) = tokio::sync::watch::channel(0.0f32);
+        // Delta score channel for dream scheduler — receiver is held by DreamScheduler
+        let delta_tx = self.delta_tx.clone();
 
         info!(
             "[{}] Heartbeat loop active (delta-threshold mode, threshold={}, dream-aware)",
@@ -139,7 +200,9 @@ impl HeartbeatPulse {
                     let score = delta.score();
 
                     // Publish delta score for dream scheduler
-                    let _ = delta_tx.send(score);
+                    if let Err(e) = delta_tx.send(score) {
+                        tracing::warn!("[heartbeat] Failed to send delta score: {}", e);
+                    }
 
                     if delta.should_activate(DELTA_THRESHOLD) {
                         info!(
@@ -579,7 +642,34 @@ impl HeartbeatPulse {
             "Review your current environment and check for pending tasks.",
         )
         .await;
-        let _context_injection = self.nexus.get_global_context().await;
+
+        // Inject global context from the nexus for cross-session awareness
+        let global_context = self.nexus.get_global_context().await;
+        let context_section = if global_context.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n<GLOBAL_CONTEXT>\n{}\n</GLOBAL_CONTEXT>\n",
+                global_context
+            )
+        };
+
+        // Query recent session history from storage for continuity
+        let recent_history = self
+            .storage
+            .get_history(&self.agent.agent_id, 5)
+            .map(|msgs| {
+                if msgs.is_empty() {
+                    String::new()
+                } else {
+                    let lines: Vec<String> = msgs
+                        .iter()
+                        .map(|m| format!("- [{}] {}", m.role, m.content.chars().take(120).collect::<String>()))
+                        .collect();
+                    format!("\n<RECENT_HISTORY>\n{}\n</RECENT_HISTORY>\n", lines.join("\n"))
+                }
+            })
+            .unwrap_or_default();
 
         // 城堡 OMEGA-VIII: Orchestration Injection (Task Matrix - Config Driven)
         let matrix = crate::orchestration::tasks::TaskMatrix::new(
@@ -637,6 +727,8 @@ impl HeartbeatPulse {
             <PENDING_WORK>\n{orchestration_tasks}\n\
             {monitoring_tasks}\n\
             </PENDING_WORK>\n\
+            {context_section}\
+            {recent_history}\
             {recent_thoughts}\n\
             <GROUNDING_CONSTRAINTS>\n\
             You may only assert FACTUAL CLAIMS that are currently visible inside <ENVIRONMENT_REALTIME> and <SYSTEM_METRICS>.\n\
@@ -655,6 +747,8 @@ impl HeartbeatPulse {
             anomaly_alert = anomaly_alert,
             orchestration_tasks = orchestration_tasks,
             monitoring_tasks = monitoring_tasks,
+            context_section = context_section,
+            recent_history = recent_history,
             recent_thoughts = recent_thoughts_section,
         );
 

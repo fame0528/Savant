@@ -20,8 +20,8 @@ savant.db
 savant.db-journal
 savant.db-shm
 savant.db-wal
-logs/
-data/
+/logs/
+/data/
 *.log
 *.txt
 *.tmp
@@ -93,3 +93,5 @@ extracted_issues.txt
 audit_extract.py
 generate_full_report.py
 nul
+
+.env.production

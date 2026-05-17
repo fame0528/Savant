@@ -1,4 +1,3 @@
-#![allow(clippy::disallowed_methods)]
 pub mod chain;
 pub mod mgmt;
 use async_stream::stream;

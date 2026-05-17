@@ -248,7 +248,6 @@ impl LearningsParser {
             }
         }
 
-        let _ = agent_id;
         let candidates: Vec<(String, usize)> = fingerprint_counts
             .into_iter()
             .filter(|(_, count)| *count >= min_recurrence)

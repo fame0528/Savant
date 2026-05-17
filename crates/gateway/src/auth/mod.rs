@@ -43,17 +43,23 @@ pub struct AuthenticatedSession {
 /// Returns `SavantError::AuthError` if authentication fails for any reason.
 pub async fn authenticate(
     frame: &RequestFrame,
-    _dashboard_api_key: Option<&str>,
+    dashboard_api_key: Option<&str>,
 ) -> Result<AuthenticatedSession, SavantError> {
-    // Check for dashboard API key authentication
     if let savant_core::types::RequestPayload::Auth(auth_str) = &frame.payload {
-        if let Some(_key) = auth_str.strip_prefix("DASHBOARD_API_KEY:") {
-            // Dashboard connections are always allowed (localhost-only service)
-            debug!("Dashboard authentication accepted");
-            return Ok(AuthenticatedSession {
-                session_id: SessionId(format!("dash-{}", uuid::Uuid::new_v4())),
-                public_key: [0u8; 32],
-            });
+        if let Some(provided_key) = auth_str.strip_prefix("DASHBOARD_API_KEY:") {
+            if let Some(expected_key) = dashboard_api_key {
+                if constant_time_eq(provided_key.as_bytes(), expected_key.as_bytes()) {
+                    debug!("Dashboard authentication accepted");
+                    return Ok(AuthenticatedSession {
+                        session_id: SessionId(format!("dash-{}", uuid::Uuid::new_v4())),
+                        public_key: [0u8; 32],
+                    });
+                }
+                warn!("Dashboard authentication failed: API key mismatch");
+                return Err(SavantError::AuthError("Invalid dashboard API key".to_string()));
+            }
+            warn!("Dashboard authentication failed: no API key configured");
+            return Err(SavantError::AuthError("Dashboard API key not configured".to_string()));
         }
     }
 

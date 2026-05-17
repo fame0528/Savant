@@ -148,10 +148,12 @@ impl BrowserEngine {
                 self.tabs.insert(tab_id.clone(), Some(page.clone()));
                 *self.active_tab.write().await = Some(tab_id.clone());
 
-                let _ = self.event_tx.send(BrowserEvent::TabOpened {
+                if let Err(e) = self.event_tx.send(BrowserEvent::TabOpened {
                     tab_id: tab_id.0.clone(),
                     url: String::from("about:blank"),
-                });
+                }) {
+                    tracing::warn!("[browser] Failed to send TabOpened event: {}", e);
+                }
 
                 Ok((tab_id, page))
             }
@@ -216,10 +218,12 @@ impl BrowserEngine {
 
         self.tabs.insert(tab_id.clone(), Some(Arc::new(page)));
 
-        let _ = self.event_tx.send(BrowserEvent::TabOpened {
+        if let Err(e) = self.event_tx.send(BrowserEvent::TabOpened {
             tab_id: tab_id.0.clone(),
             url: url.clone(),
-        });
+        }) {
+            tracing::warn!("[browser] Failed to send TabOpened event: {}", e);
+        }
 
         Ok(tab_id)
     }
@@ -229,15 +233,19 @@ impl BrowserEngine {
             Some((_key, Some(_page))) => {
                 // Page will be closed via chromiumoxide Drop when Arc is dropped
                 drop(_page);
-                let _ = self.event_tx.send(BrowserEvent::TabClosed {
+                if let Err(e) = self.event_tx.send(BrowserEvent::TabClosed {
                     tab_id: tab_id.0.clone(),
-                });
+                }) {
+                    tracing::warn!("[browser] Failed to send TabClosed event: {}", e);
+                }
                 Ok(())
             }
             Some((_key, None)) => {
-                let _ = self.event_tx.send(BrowserEvent::TabClosed {
+                if let Err(e) = self.event_tx.send(BrowserEvent::TabClosed {
                     tab_id: tab_id.0.clone(),
-                });
+                }) {
+                    tracing::warn!("[browser] Failed to send TabClosed event: {}", e);
+                }
                 Ok(())
             }
             None => Err(BrowserError::TabNotFound(tab_id.0.clone())),
@@ -294,11 +302,13 @@ impl BrowserEngine {
         let text = self.extract_text_js(&page).await;
         let html = page.content().await.unwrap_or_default();
 
-        let _ = self.event_tx.send(BrowserEvent::PageLoaded {
+        if let Err(e) = self.event_tx.send(BrowserEvent::PageLoaded {
             tab_id: _tab_id.0.clone(),
             url: url.clone(),
             title: title.clone(),
-        });
+        }) {
+            tracing::warn!("[browser] Failed to send PageLoaded event: {}", e);
+        }
 
         Ok(PageContent {
             url,
@@ -757,9 +767,11 @@ impl BrowserEngine {
 
         let (width, height) = self.get_viewport_dimensions(&page).await;
 
-        let _ = self.event_tx.send(BrowserEvent::ScreenshotCaptured {
+        if let Err(e) = self.event_tx.send(BrowserEvent::ScreenshotCaptured {
             tab_id: _tab_id.0.clone(),
-        });
+        }) {
+            tracing::warn!("[browser] Failed to send ScreenshotCaptured event: {}", e);
+        }
 
         Ok(ScreenshotResult {
             base64,

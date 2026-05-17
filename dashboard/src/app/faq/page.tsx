@@ -1,5 +1,7 @@
 "use client";
 
+import React from "react";
+
 export default function FAQPage() {
   return (
     <div style={{ padding: "40px", width: "100%", maxWidth: "1200px", margin: "0 auto" }}>

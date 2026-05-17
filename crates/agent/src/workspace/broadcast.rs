@@ -161,7 +161,9 @@ impl ExecutiveMonitor {
             }
 
             // Broadcast via channel
-            let _ = self.broadcast_tx.send(event);
+            if let Err(e) = self.broadcast_tx.send(event) {
+                tracing::warn!("[broadcast] Failed to send event: {}", e);
+            }
         }
     }
 }

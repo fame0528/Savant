@@ -9,11 +9,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio::sync::watch;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
 /// Schedules periodic sync operations across all registered providers.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SyncScheduler {
     /// Provider registry.
     registry: Arc<ProviderRegistry>,
@@ -23,6 +24,8 @@ pub struct SyncScheduler {
     state_path: PathBuf,
     /// Default sync interval in seconds.
     default_interval_secs: u64,
+    /// Shutdown signal receiver — `true` means shutdown requested.
+    shutdown_rx: watch::Receiver<bool>,
 }
 
 impl SyncScheduler {
@@ -31,6 +34,7 @@ impl SyncScheduler {
         registry: Arc<ProviderRegistry>,
         state_path: PathBuf,
         default_interval_secs: u64,
+        shutdown_rx: watch::Receiver<bool>,
     ) -> IntegrationResult<Self> {
         let state = SyncState::load(&state_path).await;
         info!(
@@ -43,21 +47,38 @@ impl SyncScheduler {
             state: Arc::new(RwLock::new(state)),
             state_path,
             default_interval_secs,
+            shutdown_rx,
         })
     }
 
     /// Runs the sync scheduler loop.
+    ///
+    /// Ticks at the configured interval, syncing all registered providers.
+    /// Exits gracefully when the shutdown signal is set to `true`.
     pub async fn run(&self) {
         info!(
             "[integrations] Starting sync scheduler (interval: {}s)",
             self.default_interval_secs
         );
         let mut ticker = interval(Duration::from_secs(self.default_interval_secs));
+        let mut shutdown_rx = self.shutdown_rx.clone();
 
         loop {
-            ticker.tick().await;
-            if let Err(e) = self.sync_all().await {
-                error!("[integrations] Sync all failed: {}", e);
+            tokio::select! {
+                _ = shutdown_rx.wait_for(|v| *v) => {
+                    info!("[integrations] Sync scheduler shutting down gracefully");
+                    // Persist state before exit
+                    let state = self.state.read().await;
+                    if let Err(e) = state.save(&self.state_path).await {
+                        warn!("[integrations] Failed to persist sync state on shutdown: {}", e);
+                    }
+                    break;
+                }
+                _ = ticker.tick() => {
+                    if let Err(e) = self.sync_all().await {
+                        error!("[integrations] Sync all failed: {}", e);
+                    }
+                }
             }
         }
     }

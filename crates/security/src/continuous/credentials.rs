@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Ephemeral token that auto-expires.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,12 +107,11 @@ impl CredentialBroker {
             revoked: false,
         };
 
-        info!(
-            "[CredentialBroker] Issued ephemeral token for {}/{} (expires in {}s, token={})",
+        debug!(
+            "[CredentialBroker] Issued ephemeral token for {}/{} (expires in {}s)",
             service,
             task_id,
             ttl.as_secs(),
-            token.masked()
         );
 
         self.active_tokens
@@ -126,14 +125,26 @@ impl CredentialBroker {
     }
 
     /// Revokes all tokens for a task (called on task completion).
+    ///
+    /// Zeroes credential bytes in memory before dropping to prevent
+    /// credential leakage through memory dumps or reuse.
     pub async fn revoke_task_tokens(&self, task_id: &str) {
         let mut active = self.active_tokens.write().await;
         if let Some(tokens) = active.remove(task_id) {
-            info!(
-                "[CredentialBroker] Revoked {} tokens for task {}",
-                tokens.len(),
-                task_id
-            );
+            let count = tokens.len();
+            for mut token in tokens {
+                token.revoked = true;
+                // Zero credential bytes in memory before dropping
+                let mut credential_bytes = std::mem::take(&mut token.token).into_bytes();
+                credential_bytes.fill(0);
+                drop(credential_bytes);
+            }
+            if count > 0 {
+                debug!(
+                    "[CredentialBroker] Revoked {} tokens for task {}, credentials zeroed",
+                    count, task_id
+                );
+            }
         }
     }
 
@@ -162,6 +173,7 @@ impl Default for CredentialBroker {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -197,7 +209,7 @@ mod tests {
         let broker = CredentialBroker::new();
         broker.load_credential("openrouter", "sk-test").await;
 
-        let _ = broker
+        let _token = broker
             .get_credential("openrouter", "task1", Duration::from_secs(300))
             .await;
 

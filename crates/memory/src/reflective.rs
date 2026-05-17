@@ -388,7 +388,9 @@ impl ReflectiveMemory {
 
     /// Adds a relation to the appropriate namespace (backward-compatible).
     pub fn add_relation(&mut self, relation: Relation) {
-        let _ = self.add_relation_to_namespace(relation);
+        if let Err(e) = self.add_relation_to_namespace(relation) {
+            tracing::warn!("[reflective] Failed to add relation: {}", e);
+        }
     }
 
     /// Finds concepts by label across all namespaces (backward-compatible).
@@ -419,6 +421,8 @@ impl Default for ReflectiveMemory {
 }
 
 #[cfg(test)]
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

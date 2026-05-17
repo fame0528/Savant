@@ -578,7 +578,9 @@ impl SkillManager {
                 .await?;
         } else {
             // Create the directory if it doesn't exist
-            tokio::fs::create_dir_all(&swarm_skills).await.ok();
+            if let Err(e) = tokio::fs::create_dir_all(&swarm_skills).await {
+                warn!("[parser] Failed to create swarm skills directory: {}", e);
+            }
             info!(
                 "Created swarm-wide skills directory: {}",
                 swarm_skills.display()
@@ -603,7 +605,9 @@ impl SkillManager {
                     .await?;
             } else {
                 // Create the directory
-                tokio::fs::create_dir_all(&agent_skills).await.ok();
+                if let Err(e) = tokio::fs::create_dir_all(&agent_skills).await {
+                    warn!("[parser] Failed to create agent skills directory: {}", e);
+                }
             }
         }
 

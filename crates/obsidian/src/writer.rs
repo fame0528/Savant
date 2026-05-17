@@ -451,7 +451,9 @@ impl VaultWriter {
         );
 
         let reports_dir = self.vault_path.join("Identity").join("Evolution").join("reports");
-        let _ = fs::create_dir_all(&reports_dir);
+        if let Err(e) = fs::create_dir_all(&reports_dir) {
+            tracing::warn!("[obsidian] Failed to create evolution reports directory: {}", e);
+        }
         for m in &mutations {
             if let Err(e) = self.write_mutation_report(m, &reports_dir) {
                 tracing::warn!("[obsidian] Failed to write mutation report: {}", e);
@@ -831,7 +833,7 @@ impl Default for VaultStats {
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────
 
-fn atomic_write(path: &Path, content: &str) -> Result<(), VaultError> {
+pub fn atomic_write(path: &Path, content: &str) -> Result<(), VaultError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -845,7 +847,7 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), VaultError> {
     Ok(())
 }
 
-fn count_md_files(path: &Path) -> usize {
+pub fn count_md_files(path: &Path) -> usize {
     let mut count = 0;
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
@@ -860,7 +862,7 @@ fn count_md_files(path: &Path) -> usize {
     count
 }
 
-fn slugify(s: &str) -> String {
+pub fn slugify(s: &str) -> String {
     s.to_lowercase()
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-')
@@ -869,7 +871,7 @@ fn slugify(s: &str) -> String {
         .replace(' ', "-")
 }
 
-fn truncate_to_line(s: &str) -> String {
+pub fn truncate_to_line(s: &str) -> String {
     s.lines().next().unwrap_or(s).to_string()
 }
 

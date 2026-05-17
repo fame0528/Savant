@@ -4,8 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "@/context/DashboardContext";
 import styles from "./page.module.css";
 import FormattedContent from "@/components/FormattedContent";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 const MAX_RENDERED_MESSAGES = 200;
 

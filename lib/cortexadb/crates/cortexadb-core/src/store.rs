@@ -646,7 +646,9 @@ impl CortexaDBStore {
                     )?;
                 }
                 None => {
-                    let _ = writer.indexes.vector_index_mut().remove(effective.id);
+                    if let Err(e) = writer.indexes.vector_index_mut().remove(effective.id) {
+                        log::debug!("[cortexadb] Vector index remove failed (entry may not exist): {}", e);
+                    }
                 }
             }
         }
@@ -825,7 +827,9 @@ impl CortexaDBStore {
             writer.engine.enforce_capacity_unsynced(policy)?
         };
         for id in &report.evicted_ids {
-            let _ = writer.indexes.vector_index_mut().remove(*id);
+            if let Err(e) = writer.indexes.vector_index_mut().remove(*id) {
+                log::debug!("[cortexadb] Vector index remove during eviction: {}", e);
+            }
         }
 
         Self::assert_vector_index_in_sync_inner(
@@ -929,7 +933,9 @@ impl CortexaDBStore {
                         embedding,
                     )?,
                     None => {
-                        let _ = writer.indexes.vector_index_mut().remove(entry.id);
+                        if let Err(e) = writer.indexes.vector_index_mut().remove(entry.id) {
+                            log::debug!("[cortexadb] Vector index remove failed: {}", e);
+                        }
                     }
                 }
                 id
@@ -940,7 +946,9 @@ impl CortexaDBStore {
                 } else {
                     writer.engine.execute_command_unsynced(Command::Delete(id))?
                 };
-                let _ = writer.indexes.vector_index_mut().remove(id);
+                if let Err(e) = writer.indexes.vector_index_mut().remove(id) {
+                    log::debug!("[cortexadb] Vector index remove during delete: {}", e);
+                }
                 cmd_id
             }
             WriteOp::Connect { from, to, relation } => {
@@ -1036,7 +1044,9 @@ impl CortexaDBStore {
 
             for existing_id in existing_ids {
                 if !state_ids.contains(&existing_id) {
-                    let _ = indexes.vector_index_mut().remove(existing_id);
+                    if let Err(e) = indexes.vector_index_mut().remove(existing_id) {
+                        log::debug!("[cortexadb] Vector index cleanup for deleted entry: {}", e);
+                    }
                 }
             }
         }
@@ -1077,7 +1087,9 @@ impl Drop for CortexaDBStore {
             cvar.notify_all();
         }
         if let Some(handle) = self.checkpoint_thread.take() {
-            let _ = handle.join();
+            if let Err(e) = handle.join() {
+                log::warn!("[cortexadb] Checkpoint thread panicked during shutdown: {:?}", e);
+            }
         }
 
         {
@@ -1087,13 +1099,19 @@ impl Drop for CortexaDBStore {
             cvar.notify_all();
         }
         if let Some(handle) = self.sync_thread.take() {
-            let _ = handle.join();
+            if let Err(e) = handle.join() {
+                log::warn!("[cortexadb] Sync thread panicked during shutdown: {:?}", e);
+            }
         }
 
         // Now do the final flush + checkpoint with no background threads running.
-        let _ = self.flush();
+        if let Err(e) = self.flush() {
+            log::warn!("[cortexadb] Final flush failed during shutdown: {}", e);
+        }
         if self.checkpoint_policy != CheckpointPolicy::Disabled {
-            let _ = self.checkpoint_now();
+            if let Err(e) = self.checkpoint_now() {
+                log::warn!("[cortexadb] Final checkpoint failed during shutdown: {}", e);
+            }
         }
 
         // Always save HNSW index on drop if it exists (automatic persistence)

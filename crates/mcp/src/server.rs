@@ -156,14 +156,16 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
 
             // Authentication check: require auth before any method except initialize
             if req.method != "initialize" && !state.authenticated {
-                if !server.auth_tokens.is_empty() {
+                if server.auth_tokens.is_empty() {
+                    // No auth tokens configured — reject in production mode
+                    warn!("[mcp::server] Connection rejected: no auth tokens configured. MCP server requires at least one auth token.");
                     let err_response = JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),
                         id: req.id,
                         result: None,
                         error: Some(serde_json::json!({
-                            "code": -32002,
-                            "message": "Authentication required. Call 'initialize' with auth_token."
+                            "code": -32003,
+                            "message": "Server not configured with auth tokens. Contact administrator."
                         })),
                     };
                     if let Ok(resp_text) = serde_json::to_string(&err_response) {
@@ -173,8 +175,21 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                     }
                     continue;
                 }
-                // No auth tokens configured = allow all (dev mode)
-                state.authenticated = true;
+                let err_response = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: req.id,
+                    result: None,
+                    error: Some(serde_json::json!({
+                        "code": -32002,
+                        "message": "Authentication required. Call 'initialize' with auth_token."
+                    })),
+                };
+                if let Ok(resp_text) = serde_json::to_string(&err_response) {
+                    if let Err(e) = socket.send(Message::Text(resp_text)).await {
+                        warn!("[mcp::server] Failed to send auth required response: {}", e);
+                    }
+                }
+                continue;
             }
 
             let response = match req.method.as_str() {
@@ -206,12 +221,7 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                             continue;
                         }
 
-                        let token_hash = {
-                            use std::hash::Hasher;
-                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                            hasher.write(provided_token.as_bytes());
-                            format!("{:x}", hasher.finish())
-                        };
+                        let token_hash = blake3::hash(provided_token.as_bytes()).to_hex().to_string();
 
                         if server.auth_tokens.contains_key(&token_hash) {
                             info!("MCP client authenticated");

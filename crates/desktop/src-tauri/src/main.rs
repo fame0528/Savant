@@ -32,7 +32,9 @@ impl LogBridge {
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("logs")))
             .unwrap_or_else(|| std::path::PathBuf::from("logs"));
-        let _ = std::fs::create_dir_all(&log_dir);
+        if std::fs::create_dir_all(&log_dir).is_err() {
+            eprintln!("[desktop] Failed to create log directory at {:?}", log_dir);
+        }
         let log_path = log_dir.join("savant-desktop.log");
 
         let file = OpenOptions::new()
@@ -68,8 +70,12 @@ impl<S: Subscriber> Layer<S> for LogBridge {
         // Write to log file
         if let Ok(mut f) = self.log_file.lock() {
             let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-            let _ = writeln!(f, "{} {}", ts, msg);
-            let _ = f.flush();
+            if let Err(e) = writeln!(f, "{} {}", ts, msg) {
+                eprintln!("[desktop] Failed to write to log file: {}", e);
+            }
+            if let Err(e) = f.flush() {
+                eprintln!("[desktop] Failed to flush log file: {}", e);
+            }
         }
 
         // Emit to frontend (splash screen)
@@ -111,20 +117,26 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
     if lock.is_some() {
         let msg = "Swarm is already active";
         info!("{}", msg);
-        let _ = app_handle.emit("system-log-event", msg);
+        if let Err(e) = app_handle.emit("system-log-event", msg) {
+            eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+        }
         return Ok(msg.into());
     }
 
     // Step 1: Resolve paths using SavantPathResolver (set up in main.rs setup hook)
     info!("[1/5] Resolving project paths...");
-    let _ = app_handle.emit("system-log-event", "[1/5] Resolving project paths...");
+    if let Err(e) = app_handle.emit("system-log-event", "[1/5] Resolving project paths...") {
+        eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+    }
 
     let resolver = match app_handle.try_state::<SavantPathResolver>() {
         Some(r) => r,
         None => {
             let msg = "CRITICAL: SavantPathResolver not initialized".to_string();
             error!("{}", msg);
-            let _ = app_handle.emit("system-log-event", &msg);
+            if let Err(e) = app_handle.emit("system-log-event", &msg) {
+                eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+            }
             return Err(msg);
         }
     };
@@ -133,13 +145,17 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
     info!("  config_file: {:?}", config_path);
     info!("  env_file: {:?}", resolver.env_file());
     info!("  workspaces_dir: {:?}", resolver.workspaces_dir());
-    let _ = app_handle.emit("system-log-event", &format!("  config: {:?}", config_path));
+    if let Err(e) = app_handle.emit("system-log-event", &format!("  config: {:?}", config_path)) {
+        eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+    }
 
     let config_path_str = if config_path.exists() {
         Some(config_path.to_string_lossy().into_owned())
     } else {
         warn!("  config not found at {:?} — using defaults", config_path);
-        let _ = app_handle.emit("system-log-event", "  config: NOT FOUND (using defaults)");
+        if let Err(e) = app_handle.emit("system-log-event", "  config: NOT FOUND (using defaults)") {
+            eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+        }
         None
     };
 
@@ -149,14 +165,18 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
         "  SAVANT_PROJECT_ROOT set to: {:?}",
         resolver.base_data_path
     );
-    let _ = app_handle.emit(
+    if let Err(e) = app_handle.emit(
         "system-log-event",
         &format!("  SAVANT_PROJECT_ROOT={:?}", resolver.base_data_path),
-    );
+    ) {
+        eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+    }
 
     // Step 2: Check environment
     info!("[2/5] Checking environment...");
-    let _ = app_handle.emit("system-log-event", "[2/5] Checking environment...");
+    if let Err(e) = app_handle.emit("system-log-event", "[2/5] Checking environment...") {
+        eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+    }
 
     let has_or_key = std::env::var("OR_MASTER_KEY").is_ok();
     let dev_mode = std::env::var("SAVANT_DEV_MODE").is_ok();
@@ -165,18 +185,22 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
         if has_or_key { "SET" } else { "NOT SET" }
     );
     info!("  SAVANT_DEV_MODE: {}", dev_mode);
-    let _ = app_handle.emit(
+    if let Err(e) = app_handle.emit(
         "system-log-event",
         &format!(
             "  OR_MASTER_KEY: {} | DEV_MODE: {}",
             if has_or_key { "SET" } else { "NOT SET" },
             dev_mode
         ),
-    );
+    ) {
+        eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+    }
 
     // Step 3: Ignite
     info!("[3/5] Calling IgnitionService::ignite()...");
-    let _ = app_handle.emit("system-log-event", "[3/5] Starting IgnitionService...");
+    if let Err(e) = app_handle.emit("system-log-event", "[3/5] Starting IgnitionService...") {
+        eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+    }
 
     match IgnitionService::ignite(config_path_str.as_deref()).await {
         Ok(ignition) => {
@@ -184,7 +208,9 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
 
             // Step 4: Store state
             info!("[4/5] Storing ignition state...");
-            let _ = app_handle.emit("system-log-event", "[4/5] Storing swarm state...");
+            if let Err(e) = app_handle.emit("system-log-event", "[4/5] Storing swarm state...") {
+                eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+            }
 
             let ignition_arc = Arc::new(ignition);
             *lock = Some(Arc::clone(&ignition_arc));
@@ -194,23 +220,31 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
 
             // Step 5: Start event forwarder
             info!("[5/5] Starting event forwarder...");
-            let _ = app_handle.emit("system-log-event", "[5/5] Starting event forwarder...");
+            if let Err(e) = app_handle.emit("system-log-event", "[5/5] Starting event forwarder...") {
+                eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+            }
             start_event_forwarder(Arc::clone(&ignition_arc), app_handle.clone()).await;
 
             let msg = "Swarm Ignition Sequence Complete";
             info!("=== {} ===", msg);
-            let _ = app_handle.emit("system-log-event", msg);
+            if let Err(e) = app_handle.emit("system-log-event", msg) {
+                eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+            }
             Ok(msg.into())
         }
         Err(e) => {
             let msg = format!("IGNITION FAILED: {}", e);
             error!("{}", msg);
-            let _ = app_handle.emit("system-log-event", &msg);
+            if let Err(e) = app_handle.emit("system-log-event", &msg) {
+                eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+            }
 
             // Also log the full error chain
             let full_err = format!("  Error details: {:?}", e);
             error!("{}", full_err);
-            let _ = app_handle.emit("system-log-event", &full_err);
+            if let Err(e) = app_handle.emit("system-log-event", &full_err) {
+                eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+            }
 
             Err(msg)
         }
@@ -308,7 +342,31 @@ async fn browser_navigate(app_handle: AppHandle, url: String) -> Result<String, 
 
 #[tauri::command]
 async fn browser_get_tabs() -> Result<String, String> {
-    Ok("[]".to_string())
+    // Query Chrome DevTools Protocol for open tabs.
+    // Chrome must be launched with --remote-debugging-port=9222 for this to work.
+    let client = savant_core::net::secure_client();
+    let cdp_url = "http://localhost:9222/json/list";
+
+    match client.get(cdp_url).send().await {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                match resp.text().await {
+                    Ok(body) => Ok(body),
+                    Err(e) => Err(format!("Failed to read CDP response: {}", e)),
+                }
+            } else {
+                Err(format!(
+                    "CDP returned HTTP {} — is Chrome running with --remote-debugging-port=9222?",
+                    resp.status()
+                ))
+            }
+        }
+        Err(e) => Err(format!(
+            "Failed to connect to Chrome DevTools Protocol at {}: {}. \
+             Ensure Chrome is running with --remote-debugging-port=9222",
+            cdp_url, e
+        )),
+    }
 }
 
 /// Write a line directly to the log file (before tracing is initialized)
@@ -317,11 +375,15 @@ fn bootstrap_log(msg: &str) {
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("logs")))
         .unwrap_or_else(|| std::path::PathBuf::from("logs"));
-    let _ = std::fs::create_dir_all(&log_dir);
+    if std::fs::create_dir_all(&log_dir).is_err() {
+        eprintln!("[desktop] Failed to create log directory at {:?}", log_dir);
+    }
     let log_path = log_dir.join("savant-desktop.log");
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let _ = writeln!(f, "{} [BOOT] {}", ts, msg);
+        if let Err(e) = writeln!(f, "{} [BOOT] {}", ts, msg) {
+            eprintln!("[desktop] Failed to write to bootstrap log: {}", e);
+        }
     }
 }
 
@@ -379,7 +441,7 @@ fn main() {
                 .with(bridge)
                 .try_init()
             {
-                // No eprintln! in release — it spawns a console window on Windows
+                // Tracing already initialized elsewhere - this is expected
                 let _ = e;
             }
 
@@ -427,10 +489,12 @@ fn main() {
                     .version
                     .clone()
                     .unwrap_or_else(|| "0.0.0".to_string());
-                let _ = app_handle2.emit(
+                if let Err(e) = app_handle2.emit(
                     "system-log-event",
                     format!("Savant Desktop v{} — Ready", version),
-                );
+                ) {
+                    tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
+                }
                 info!("Desktop v{} initialized", version);
             });
 
@@ -443,10 +507,12 @@ fn main() {
                     Ok(updater) => match updater.check().await {
                         Ok(Some(update)) => {
                             info!("[updater] Update available: {}", update.version);
-                            let _ = update_handle.emit(
+                            if let Err(e) = update_handle.emit(
                                 "system-log-event",
                                 format!("Update available: v{}", update.version),
-                            );
+                            ) {
+                                tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
+                            }
                             match update.download_and_install(|_, _| {}, || {}).await {
                                 Ok(_) => {
                                     info!("[updater] Update installed successfully");
@@ -494,14 +560,22 @@ fn main() {
                     }
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            if let Err(e) = window.show() {
+                                tracing::debug!("[desktop] Failed to show main window: {}", e);
+                            }
+                            if let Err(e) = window.set_focus() {
+                                tracing::debug!("[desktop] Failed to focus main window: {}", e);
+                            }
                         }
                     }
                     "show_browser" => {
                         if let Some(window) = app.get_webview_window("browser") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            if let Err(e) = window.show() {
+                                tracing::debug!("[desktop] Failed to show browser window: {}", e);
+                            }
+                            if let Err(e) = window.set_focus() {
+                                tracing::debug!("[desktop] Failed to focus browser window: {}", e);
+                            }
                         }
                     }
                     _ => {}

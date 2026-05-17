@@ -331,7 +331,9 @@ impl VectorIndex {
 
         // Also add to HNSW backend if enabled
         if let Some(ref hnsw) = self.hnsw_backend {
-            let _ = hnsw.add(id, &embedding);
+        if let Err(e) = hnsw.add(id, &embedding) {
+            log::debug!("[cortexadb] HNSW add failed (non-critical): {}", e);
+        }
         }
 
         Ok(())
@@ -367,7 +369,9 @@ impl VectorIndex {
 
             // Also remove from HNSW backend if enabled
             if let Some(ref hnsw) = self.hnsw_backend {
-                let _ = hnsw.remove(id);
+            if let Err(e) = hnsw.remove(id) {
+                log::debug!("[cortexadb] HNSW remove failed (non-critical): {}", e);
+            }
             }
         }
         Ok(())
@@ -567,7 +571,9 @@ impl VectorIndex {
             // Re-insert all live embeddings into the fresh backend
             for partition in self.partitions.values() {
                 for (id, embedding) in &partition.embeddings {
-                    let _ = new_hnsw.add(*id, embedding);
+                    if let Err(e) = new_hnsw.add(*id, embedding) {
+                        log::debug!("[cortexadb] HNSW rebuild add failed (non-critical): {}", e);
+                    }
                 }
             }
 

@@ -218,17 +218,21 @@ impl DailyLog {
         Self::date_to_days(to) - Self::date_to_days(from)
     }
 
+    const UNIX_EPOCH_DAYS: i64 = 719163; // days from CE 0000-01-01 to 1970-01-01
+
     fn date_to_days(date: &str) -> i64 {
         chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .map(|d| {
-                d.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
-                    .num_days()
+                let days_ce = d.num_days_from_ce() as i64;
+                days_ce - Self::UNIX_EPOCH_DAYS
+            })
             })
             .unwrap_or(0)
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

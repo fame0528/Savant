@@ -93,7 +93,6 @@ pub struct SwarmController {
 
 impl SwarmController {
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::disallowed_methods)]
     pub async fn new(
         config: SwarmConfig,
         agents: Vec<AgentConfig>,
@@ -203,7 +202,9 @@ impl SwarmController {
                 .pool_max_idle_per_host(4)
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()
-                .expect("CRITICAL: Failed to build secure HTTP client"),
+                .map_err(|e| savant_core::error::SavantError::Unknown(
+                    format!("CRITICAL: Failed to build secure HTTP client: {}", e)
+                ))?,
             handles: DashMap::new(),
             tools,
             engine,
@@ -286,6 +287,7 @@ impl SwarmController {
 
         let shutdown_token = CancellationToken::new();
         let shutdown_task_token = shutdown_token.clone();
+        let dream_engine = self.engine.clone();
 
         let handle = tokio::spawn(async move {
             let mut agent_cfg = agent_cfg;
@@ -730,8 +732,22 @@ impl SwarmController {
 
             tracing::info!("Agent {} background pulse ignited.", agent_cfg.agent_name);
 
-            // 6. Start the Heartbeat Pulse
-            let pulse = HeartbeatPulse::new(agent_cfg, nexus, storage, shutdown_task_token);
+            // 6. Create delta channel for dream scheduler coordination
+            let (delta_tx, delta_rx) = tokio::sync::watch::channel(0.0f32);
+
+            // 7. Spawn the Dream Scheduler with delta receiver
+            let dream_config = savant_dream::DreamConfig::default();
+            let dream_scheduler = savant_dream::scheduler::DreamScheduler::new(
+                dream_config,
+                dream_engine,
+                delta_rx,
+            );
+            tokio::spawn(async move {
+                dream_scheduler.run().await;
+            });
+
+            // 8. Start the Heartbeat Pulse with delta sender
+            let pulse = HeartbeatPulse::new(agent_cfg, nexus, storage, shutdown_task_token, delta_tx);
             pulse.start(agent_loop).await;
         });
 

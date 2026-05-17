@@ -15,7 +15,7 @@ serde_json = { workspace = true }
 ed25519-dalek = "2.0"
 rand = { workspace = true }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["trace", "cors"] }
+tower-http = { version = "0.5", features = ["trace", "cors", "limit"] }
 tracing = { workspace = true }
 futures = "0.3"
 dashmap = { workspace = true }
@@ -25,3 +25,4 @@ uuid = { version = "1.8", features = ["v4"] }
 reqwest = { workspace = true }
 backoff = { workspace = true }
 blake3 = "1.5"
+tower_governor = "0.4"

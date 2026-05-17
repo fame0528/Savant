@@ -56,6 +56,7 @@ impl AgentToken {
     /// Verifies if the token grants the requested capability.
     ///
     /// OMEGA-Tier: Checks resource URI and permitted action against the payload.
+    /// On clock error, returns `false` (fail-closed) and logs the error.
     pub fn verify_capability(&self, resource: &str, action: &str) -> bool {
         // AAA: Resource URI matching (prefix-based for hierarchy support)
         let resource_match = resource.starts_with(&self.payload.resource_uri);
@@ -63,11 +64,14 @@ impl AgentToken {
         // AAA: Action matching (exact match only - no wildcards permitted)
         let action_match = self.payload.permitted_action == action;
 
-        // AAA: Expiration check — loud failure on clock error
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("System clock error: time is before Unix epoch")
-            .as_secs();
+        // AAA: Expiration check — fail closed on clock error
+        let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                tracing::error!("Token clock error: {}", e);
+                return false;
+            }
+        };
         let not_expired = self.payload.expires_at > now;
 
         resource_match && action_match && not_expired
@@ -82,11 +86,15 @@ impl AgentToken {
     ///
     /// Returns true when 80% of the token's lifetime has elapsed.
     /// This provides a safety margin before actual expiration.
+    /// On clock error, returns `true` (rotate to be safe) and logs the error.
     pub fn should_rotate(&self) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("System clock error: time is before Unix epoch")
-            .as_secs();
+        let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                tracing::error!("Token clock error during rotation check: {}", e);
+                return true;
+            }
+        };
 
         let lifetime = self
             .payload
@@ -102,11 +110,16 @@ impl AgentToken {
     }
 
     /// Checks if the token has expired.
+    ///
+    /// On clock error, returns `true` (treat as expired) and logs the error.
     pub fn is_expired(&self) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("System clock error: time is before Unix epoch")
-            .as_secs();
+        let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                tracing::error!("Token clock error during expiry check: {}", e);
+                return true;
+            }
+        };
         self.payload.expires_at <= now
     }
 }

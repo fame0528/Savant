@@ -187,10 +187,30 @@ impl ChannelAdapter for RedditAdapter {
     fn name(&self) -> &str {
         "reddit"
     }
-    async fn send_event(&self, _e: EventFrame) -> Result<(), SavantError> {
-        Ok(())
+
+    async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        if event.event_type != "chat.message" {
+            return Ok(());
+        }
+        let payload: serde_json::Value =
+            serde_json::from_str(&event.payload).map_err(|e| SavantError::Unknown(e.to_string()))?;
+        let content = payload["content"].as_str().unwrap_or("");
+        let session_id = payload["session_id"].as_str().unwrap_or("");
+
+        let thing_id = session_id
+            .strip_prefix("reddit:")
+            .ok_or_else(|| SavantError::Unknown("No Reddit thing_id available".to_string()))?;
+
+        self.reply(thing_id, content).await
     }
-    async fn handle_event(&self, _e: EventFrame) -> Result<(), SavantError> {
-        Ok(())
+
+    async fn handle_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        if event.event_type != "chat.message" {
+            return Ok(());
+        }
+        self.nexus
+            .event_bus
+            .send(event)
+            .map(|_| ()).map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
     }
 }

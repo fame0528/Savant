@@ -67,9 +67,12 @@ pub async fn emit_event(
     event: &CompressionEvent,
 ) {
     let payload = serde_json::to_string(event).unwrap_or_default();
-    let _ = nexus
+    if let Err(e) = nexus
         .publish("system.compact.compression", &payload)
-        .await;
+        .await
+    {
+        tracing::warn!("[telemetry] Failed to publish compression event: {}", e);
+    }
 }
 
 /// No-op emit when nexus feature is not enabled.

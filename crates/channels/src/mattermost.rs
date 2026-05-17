@@ -148,10 +148,34 @@ impl ChannelAdapter for MattermostAdapter {
     fn name(&self) -> &str {
         "mattermost"
     }
-    async fn send_event(&self, _event: EventFrame) -> Result<(), SavantError> {
-        Ok(())
+
+    async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        if event.event_type != "chat.message" {
+            return Ok(());
+        }
+        let payload: serde_json::Value =
+            serde_json::from_str(&event.payload).map_err(|e| SavantError::Unknown(e.to_string()))?;
+        let content = payload["content"].as_str().unwrap_or("");
+        let session_id = payload["session_id"].as_str().unwrap_or("");
+
+        let channel_id = session_id
+            .strip_prefix("mattermost:")
+            .or(self.config.channel_id.as_deref())
+            .ok_or_else(|| {
+                SavantError::Unknown("No Mattermost channel_id available".to_string())
+            })?;
+
+        self.send_text(channel_id, content).await
     }
-    async fn handle_event(&self, _event: EventFrame) -> Result<(), SavantError> {
-        Ok(())
+
+    async fn handle_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        if event.event_type != "chat.message" {
+            return Ok(());
+        }
+        // Route inbound event through the nexus event bus
+        self.nexus
+            .event_bus
+            .send(event)
+            .map(|_| ()).map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
     }
 }

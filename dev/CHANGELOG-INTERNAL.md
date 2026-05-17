@@ -7,6 +7,41 @@
 
 ## [Unreleased]
 
+### FID-20260516-SECURITY-AUDIT-REMEDIATION — 8 Security Audit Issues Fixed
+
+**Scope:** `crates/security` only. All 8 issues from the security audit remediated.
+
+#### HIGH (1)
+
+| # | File | Issue | Fix |
+|---|------|-------|-----|
+| 1 | `lib.rs:1` | Crate-level `#[allow(clippy::disallowed_methods)]` hid ALL `.expect()` calls | Removed. Replaced with per-test-module allows. Fixed all non-test `.expect()` calls. |
+
+#### MEDIUM (4)
+
+| # | File | Issue | Fix |
+|---|------|-------|-----|
+| 2 | `token.rs:69,88,108` | 3x `.expect()` on clock error (panic on system clock before epoch) | Replaced with `match` — returns fail-closed defaults, logs via `tracing::error!`. Public API unchanged. |
+| 3 | `enclave.rs:41` | `.expect()` on clock error in `current_time()` | Changed to `Result<u64, SecurityError>`, propagated via `?` through callers. |
+| 4 | `prompt_defense.rs:50` | Non-ASCII text lowercasing changes byte length — index mismatch panic | Snippet extraction uses `lower` string (where indices are valid) instead of `text`. |
+| 5 | `continuous/credentials.rs:104` | Credential not zeroed on revoke | `revoke_task_tokens` zeroes credential bytes via `into_bytes().fill(0)` before dropping. |
+
+#### LOW (3) — Already documented, no code changes
+
+| # | File | Issue |
+|---|------|-------|
+| 6 | `attestation.rs:108` | TPM check is device-file-exists only |
+| 7 | `attestation.rs:166` | WASM check is trivial buffer allocation |
+| 8 | `token.rs:52` | `signature: Vec<u8>` prevents fixed-size shared memory |
+
+#### Verification
+- `cargo check`: 0 errors, 0 warnings
+- `cargo test`: 32/32 passed
+- `cargo clippy --all-targets -- -D warnings`: 0 warnings
+- `cargo fmt --check`: clean
+- Zero `.expect()`/`.unwrap()` in non-test code
+- All public API signatures unchanged
+
 ### FID-20260516-CORE-AUDIT-REMEDIATION — All 9 Findings Fixed in `crates/core/`
 
 **Scope:** 9 fixes across 7 files in `crates/core/`.

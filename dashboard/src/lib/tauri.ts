@@ -12,7 +12,6 @@ export const isTauri = (): boolean => {
 
 export const igniteSwarm = async (): Promise<string> => {
   if (isTauri()) {
-    console.log("🚀 [Tauri] Triggering Swarm Ignition...");
     return await invoke<string>("ignite_swarm");
   }
   return "Not running under Tauri";
@@ -20,7 +19,6 @@ export const igniteSwarm = async (): Promise<string> => {
 
 export const setupLogListener = async (onLog: (msg: string) => void) => {
   if (isTauri()) {
-    console.log("🔭 [Tauri] Subscribing to System Logs...");
     return await listen<string>("log-event", (event: any) => {
       onLog(event.payload);
     });

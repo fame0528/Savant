@@ -8,6 +8,7 @@ import styles from "../app/page.module.css";
 import SplashScreen from "@/components/SplashScreen";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import FormattedContent from "@/components/FormattedContent";
+import SetupWizard from "@/components/SetupWizard";
 
 // ─── Error Boundary ───────────────────────────────────────────────────
 interface ErrorBoundaryProps { children: ReactNode }

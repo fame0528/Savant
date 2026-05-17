@@ -11,8 +11,7 @@ use savant_core::traits::{EmbeddingProvider, LlmProvider};
 use savant_core::types::LlmParams;
 
 /// 🧬 OMEGA-VIII: Memory Layer Definition
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemoryLayer {
     /// L0: High-frequency transient logs (Episodic)
     Episodic,
@@ -20,6 +19,21 @@ pub enum MemoryLayer {
     Contextual,
     /// L2: SIMD-accelerated long-term storage (Semantic)
     Semantic,
+}
+
+impl MemoryLayer {
+    /// Determines the memory layer from a category string.
+    pub fn from_category(category: &str) -> Self {
+        match category.to_lowercase().as_str() {
+            c if c.contains("episodic") || c.contains("session") || c.contains("transcript") => {
+                Self::Episodic
+            }
+            c if c.contains("semantic") || c.contains("concept") || c.contains("relation") => {
+                Self::Semantic
+            }
+            _ => Self::Contextual,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -137,8 +151,15 @@ impl MemoryEnclave {
         }
     }
 
-    /// Runs a promotion cycle: scores all memory entries and reports high/low value entries.
-    /// Low-scoring old entries are candidates for archival. High-scoring entries are reinforced.
+    /// Runs a promotion cycle: scores all memory entries, archives low-value entries,
+    /// reinforces high-value entries, and promotes identity candidates.
+    ///
+    /// The promotion cycle is the core memory lifecycle operation:
+    /// 1. **Score**: Each entry is scored using personality-weighted metrics
+    /// 2. **Archive**: Low-scoring old entries (score < 0.35, age > 720h) are deleted
+    /// 3. **Reinforce**: High-scoring entries (score > 0.7) have their hit_count incremented
+    /// 4. **Identity**: Candidates for SOUL.md mutation are drift-checked and queued
+    /// 5. **Persist**: Evolution score is updated based on cycle results
     pub fn run_promotion_cycle(&self) {
         let entries = match self.lsm.iter_metadata() {
             Ok(e) => e,
@@ -146,7 +167,10 @@ impl MemoryEnclave {
         };
         let mut low_count = 0;
         let mut high_count = 0;
+        let mut archived_count = 0;
+        let mut reinforced_count = 0;
         let mut identity_candidates = Vec::new();
+        let mut archive_errors = 0;
 
         for entry in &entries {
             let age_hours = (chrono::Utc::now().timestamp_millis() - i64::from(entry.created_at))
@@ -165,10 +189,44 @@ impl MemoryEnclave {
             };
             let score = promotion.calculate_score(&metrics);
 
+            // Archive low-scoring old entries
             if score < 0.35 && age_hours > 720.0 {
                 low_count += 1;
+                let id: u64 = entry.id.into();
+                // Remove from vector (best effort)
+                if let Err(e) = self.vector.remove(&id.to_string()) {
+                    warn!(
+                        "[memory::enclave] Failed to remove vector for archived entry {}: {}",
+                        id, e
+                    );
+                }
+                // Remove from LSM (authoritative)
+                if let Err(e) = self.lsm.delete_metadata(id) {
+                    warn!(
+                        "[memory::enclave] Failed to archive entry {} from LSM: {}",
+                        id, e
+                    );
+                    archive_errors += 1;
+                } else {
+                    archived_count += 1;
+                }
             } else if score > 0.7 {
+                // Reinforce high-scoring entries by incrementing hit_count
                 high_count += 1;
+                let mut reinforced = entry.clone();
+                let current_hits: u32 = reinforced.hit_count.into();
+                reinforced.hit_count = (current_hits + 1).into();
+                reinforced.updated_at = chrono::Utc::now().timestamp_millis().into();
+
+                let id: u64 = entry.id.into();
+                if let Err(e) = self.lsm.insert_metadata(id, &reinforced) {
+                    warn!(
+                        "[memory::enclave] Failed to reinforce entry {}: {}",
+                        id, e
+                    );
+                } else {
+                    reinforced_count += 1;
+                }
             }
 
             // Check if this memory should be promoted to identity (SOUL.md mutation)
@@ -195,6 +253,18 @@ impl MemoryEnclave {
         // Update evolution score based on promotion cycle results
         let new_score = (high_count as f32 / entries.len().max(1) as f32).min(1.0);
 
+        // Track layer distribution for observability
+        let mut layer_counts: std::collections::HashMap<MemoryLayer, usize> = std::collections::HashMap::new();
+        for entry in &entries {
+            let layer = MemoryLayer::from_category(&entry.category);
+            *layer_counts.entry(layer).or_insert(0) += 1;
+        }
+
+        // Persist evolution score to promotion engine
+        if let Ok(mut engine) = self.promotion.lock() {
+            engine.update_evolution_score(new_score);
+        }
+
         if !identity_candidates.is_empty() {
             tracing::info!(
                 "[PROMOTION] Identity promotion candidates: {} (drift-checked)",
@@ -202,10 +272,10 @@ impl MemoryEnclave {
             );
         }
 
-        if low_count > 0 || high_count > 0 || !identity_candidates.is_empty() {
+        if low_count > 0 || high_count > 0 || archived_count > 0 || reinforced_count > 0 || !identity_candidates.is_empty() {
             tracing::info!(
-                "[PROMOTION] Cycle: {} entries scored, {} low-value, {} high-value, {} identity-candidates (score: {:.2})",
-                entries.len(), low_count, high_count, identity_candidates.len(), new_score
+                "[PROMOTION] Cycle: {} entries scored, {} archived ({} errors), {} reinforced, {} identity-candidates (evolution: {:.2})",
+                entries.len(), archived_count, archive_errors, reinforced_count, identity_candidates.len(), new_score
             );
         }
     }
@@ -326,6 +396,68 @@ impl MemoryEnclave {
 
         // Remove from LSM engine
         self.lsm.delete_metadata(id)
+    }
+
+    /// Culls low-entropy memories below the specified Shannon entropy threshold.
+    ///
+    /// Low-entropy memories contain minimal informational gain and represent
+    /// redundant, trivial, or noise entries. This operation:
+    /// 1. Iterates all metadata entries in the enclave
+    /// 2. Identifies entries with `shannon_entropy < threshold`
+    /// 3. Deletes qualifying entries from both vector index and LSM storage
+    /// 4. Returns the count of culled entries
+    ///
+    /// # Arguments
+    /// * `threshold` - Minimum Shannon entropy (0.0-1.0). Entries below this are culled.
+    ///   Typical values: 0.1 (aggressive), 0.3 (moderate), 0.5 (conservative)
+    ///
+    /// # Returns
+    /// * `Ok(count)` - Number of entries successfully culled
+    /// * `Err(MemoryError)` - If iteration or deletion fails
+    pub fn cull_low_entropy_memories(&self, threshold: f32) -> Result<usize, MemoryError> {
+        let entries = self.lsm.iter_metadata()?;
+        let mut culled = 0usize;
+        let mut failed = 0usize;
+
+        for entry in &entries {
+            let entropy: f32 = entry.shannon_entropy.into();
+            if entropy < threshold {
+                let id: u64 = entry.id.into();
+                // Remove from vector engine (best effort)
+                if let Err(e) = self.vector.remove(&id.to_string()) {
+                    warn!(
+                        "[memory::enclave] Failed to remove vector for culled entry {}: {}",
+                        id, e
+                    );
+                }
+                // Remove from LSM engine (authoritative)
+                if let Err(e) = self.lsm.delete_metadata(id) {
+                    warn!(
+                        "[memory::enclave] Failed to delete culled entry {} from LSM: {}",
+                        id, e
+                    );
+                    failed += 1;
+                } else {
+                    culled += 1;
+                }
+            }
+        }
+
+        if culled > 0 || failed > 0 {
+            info!(
+                "[memory::enclave] Cull complete: threshold={:.3}, scanned={}, culled={}, failed={}",
+                threshold, entries.len(), culled, failed
+            );
+        }
+
+        if failed > 0 {
+            Err(MemoryError::TransactionFailed(format!(
+                "Cull completed with {} failures out of {} attempted",
+                failed, culled + failed
+            )))
+        } else {
+            Ok(culled)
+        }
     }
 
     pub fn semantic_search(
@@ -630,8 +762,32 @@ impl MemoryEngine {
         self.enclave.index_memory(entry).await
     }
 
-    pub fn cull_low_entropy_memories(&self, _threshold: f32) -> Result<usize, MemoryError> {
-        Ok(0)
+    /// Culls low-entropy memories below the specified Shannon entropy threshold.
+    ///
+    /// Low-entropy memories contain minimal informational gain and represent
+    /// redundant, trivial, or noise entries. This operation runs across both
+    /// the enclave (personal memory) and collective (shared memory) databases.
+    ///
+    /// # Arguments
+    /// * `threshold` - Minimum Shannon entropy (0.0-1.0). Entries below this are culled.
+    ///   Typical values: 0.1 (aggressive), 0.3 (moderate), 0.5 (conservative)
+    ///
+    /// # Returns
+    /// * `Ok(count)` - Total number of entries successfully culled across both databases
+    /// * `Err(MemoryError)` - If iteration or deletion fails
+    pub fn cull_low_entropy_memories(&self, threshold: f32) -> Result<usize, MemoryError> {
+        let enclave_culled = self.enclave.cull_low_entropy_memories(threshold)?;
+        let collective_culled = self.collective.cull_low_entropy_memories(threshold)?;
+        let total = enclave_culled + collective_culled;
+
+        if total > 0 {
+            info!(
+                "[memory::engine] Total culled: {} (enclave: {}, collective: {})",
+                total, enclave_culled, collective_culled
+            );
+        }
+
+        Ok(total)
     }
 
     /// Consolidates session memory: deduplicates consecutive identical messages

@@ -1255,7 +1255,9 @@ mod tests {
             "savant_memory_test_cortexa_{}",
             Uuid::new_v4()
         ));
-        let _ = fs::create_dir_all(&temp_dir);
+        if let Err(e) = fs::create_dir_all(&temp_dir) {
+            panic!("Failed to create temp dir: {}", e);
+        }
 
         let engine = LsmStorageEngine::with_defaults(&temp_dir).unwrap();
 

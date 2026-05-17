@@ -83,9 +83,9 @@ export default function TunePage() {
       
       setIsLoading(false);
     })
-    .catch((e) => {
-      console.error(e);
-      setLoadError(`Gateway sync failed: ${e.message}`);
+    .catch((e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e);
+      setLoadError(`Gateway sync failed: ${message}`);
       setIsLoading(false);
     });
   }, []);

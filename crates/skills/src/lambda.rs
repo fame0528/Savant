@@ -29,7 +29,6 @@ const LAMBDA_DEFAULT_TIMEOUT_SECS: u64 = 30;
 
 /// AWS Lambda invocation request payload
 #[derive(Debug, Serialize)]
-#[allow(dead_code)]
 struct LambdaInvokeRequest {
     #[serde(rename = "FunctionName")]
     function_name: String,
@@ -41,7 +40,6 @@ struct LambdaInvokeRequest {
 
 /// AWS Lambda invocation response
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct LambdaInvokeResponse {
     #[serde(rename = "StatusCode")]
     status_code: u16,
@@ -133,7 +131,6 @@ impl LambdaSkillExecutor {
     /// Uses the AWS Lambda Invoke API (v2015-03-31).
     /// Authentication uses the standard AWS credential chain.
     pub async fn invoke(&self, payload: &serde_json::Value) -> Result<String, SavantError> {
-        let payload_str = payload.to_string();
         let function_name = &self.config.function_name;
         let region = &self.config.region;
 
@@ -155,14 +152,21 @@ impl LambdaSkillExecutor {
             "Event"
         };
 
+        // Use structured request type for serialization
+        let request = LambdaInvokeRequest {
+            function_name: function_name.clone(),
+            invocation_type: invocation_type.to_string(),
+            payload: payload.to_string(),
+        };
+
         // Build the request with AWS signature
         // Uses HMAC-SHA256 AWS Signature Version 4 signing with the configured credentials.
         let response = self
             .client
             .post(&url)
-            .header("X-Amz-Invocation-Type", invocation_type)
+            .header("X-Amz-Invocation-Type", &request.invocation_type)
             .header("Content-Type", "application/json")
-            .body(payload_str)
+            .body(request.payload)
             .send()
             .await
             .map_err(|e| SavantError::Unknown(format!("Lambda invocation failed: {}", e)))?;
@@ -173,6 +177,17 @@ impl LambdaSkillExecutor {
             .await
             .map_err(|e| SavantError::Unknown(format!("Failed to read Lambda response: {}", e)))?;
 
+        // Parse structured response when available
+        if let Ok(resp) = serde_json::from_str::<LambdaInvokeResponse>(&body) {
+            if let Some(func_error) = &resp.function_error {
+                warn!("Lambda function error (status: {}): {}", resp.status_code, func_error);
+            }
+            if let Some(payload_str) = resp.payload {
+                return Ok(payload_str);
+            }
+        }
+
+        // Fallback: raw body parsing for function errors
         if !status.is_success() {
             return Err(SavantError::Unknown(format!(
                 "Lambda invocation failed (HTTP {}): {}",
@@ -180,7 +195,6 @@ impl LambdaSkillExecutor {
             )));
         }
 
-        // Check for function errors
         if let Some(func_error) = body
             .strip_prefix("{\"errorMessage\"")
             .or_else(|| body.strip_prefix("{\"errorType\""))

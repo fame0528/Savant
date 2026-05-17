@@ -26,7 +26,13 @@ impl ColdStorageManager {
     }
 
     /// Runs the cold storage check: removes eligible files and enforces ceiling.
-    pub fn run(&self, _writer: &VaultWriter) -> Result<(), VaultError> {
+    ///
+    /// Uses the provided `writer` to ensure vault structure exists before
+    /// writing tombstones, so that the `.stale/` directory is present.
+    pub fn run(&self, writer: &VaultWriter) -> Result<(), VaultError> {
+        // Ensure vault structure (including .stale/ directory) exists
+        writer.ensure_structure()?;
+
         let max = self.config.max_files.max(100);
         let cold_days = self.config.cold_storage_days;
         let db_only_dirs: HashSet<String> = self
@@ -66,13 +72,15 @@ impl ColdStorageManager {
                         if !tombstone.exists() {
                             if let Ok(mut f) = fs::File::create(&tombstone) {
                                 use std::io::Write;
-                                let _ = f.write_all(
+                                if let Err(e) = f.write_all(
                                     format!(
                                         "Cold storage — removed {date} (>{cold_days}d old).\n\
                                          Retained in LSM+HNSW.\n"
                                     )
                                     .as_bytes(),
-                                );
+                                ) {
+                                    warn!("[obsidian] Failed to write tombstone: {}", e);
+                                }
                             }
                         }
                         if let Err(e) = fs::remove_file(&path) {
@@ -128,9 +136,13 @@ impl ColdStorageManager {
                         .join(".stale")
                         .join(format!("{stem}.tombstone"));
                     if !tombstone.exists() {
-                        let _ = fs::write(&tombstone, "Cold storage archive.\n");
+                        if let Err(e) = fs::write(&tombstone, "Cold storage archive.\n") {
+                            warn!("[obsidian] Failed to write tombstone: {}", e);
+                        }
                     }
-                    let _ = fs::remove_file(&path);
+                    if let Err(e) = fs::remove_file(&path) {
+                        warn!("[obsidian] Failed to remove archived file: {}", e);
+                    }
                 }
             }
         }
@@ -157,8 +169,12 @@ impl ColdStorageManager {
         for (_date, path) in dated.iter().take(count) {
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
             let tombstone = self.vault_path.join(".stale").join(format!("{stem}.tombstone"));
-            let _ = fs::write(&tombstone, "Force-archived (file ceiling enforcement).\n");
-            let _ = fs::remove_file(path);
+            if let Err(e) = fs::write(&tombstone, "Force-archived (file ceiling enforcement).\n") {
+                warn!("[obsidian] Failed to write tombstone: {}", e);
+            }
+            if let Err(e) = fs::remove_file(path) {
+                warn!("[obsidian] Failed to remove force-archived file: {}", e);
+            }
             debug!("[obsidian] Force-archived Episodic/{stem}.md");
         }
         Ok(())

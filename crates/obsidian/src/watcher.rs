@@ -27,7 +27,6 @@ use crate::error::VaultError;
 ///
 /// All edits pass through `scan_prompt()` injection defense before affecting
 /// agent state. The vault is treated as a potentially hostile data source.
-#[allow(dead_code)]
 pub struct VaultWatcher {
     vault_path: PathBuf,
     config: ObsidianConfig,
@@ -55,9 +54,23 @@ impl VaultWatcher {
 
     /// Starts the file watcher loop. Spawn this as a tokio task.
     pub async fn run(&self) -> Result<(), VaultError> {
+        if !self.config.enabled {
+            debug!("[obsidian] Vault watcher disabled by config");
+            return Ok(());
+        }
+
         if !self.vault_path.exists() {
             debug!("[obsidian] Vault path does not exist; watcher idle");
             return Ok(());
+        }
+
+        // Check vault size against max_files threshold
+        let file_count = crate::count_md_files(&self.vault_path);
+        if file_count >= self.config.max_files {
+            warn!(
+                "[obsidian] Vault at capacity ({}/{} files) — cold storage recommended",
+                file_count, self.config.max_files
+            );
         }
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<notify::Event>(256);
@@ -65,7 +78,9 @@ impl VaultWatcher {
         let mut watcher = RecommendedWatcher::new(
             move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
-                    let _ = tx.blocking_send(event);
+                    if let Err(e) = tx.blocking_send(event) {
+                        tracing::warn!("[watcher] Failed to send file event: {}", e);
+                    }
                 }
             },
             Config::default().with_poll_interval(Duration::from_secs(2)),
@@ -178,7 +193,7 @@ impl VaultWatcher {
                         "[obsidian] Episodic edit rejected (immutable): {relative:?}"
                     );
                     if let Some(nexus) = &self.nexus {
-                        let _ = nexus
+                        if let Err(e) = nexus
                             .publish(
                                 "system.vault.edit_rejected",
                                 &format!(
@@ -186,15 +201,63 @@ impl VaultWatcher {
                                      Edit rejected: {relative:?}"
                                 ),
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::warn!("[watcher] Failed to publish edit_rejected event: {}", e);
+                        }
                     }
                 }
                 "Semantic" => {
                     // Semantic edits accepted as ground truth overrides.
-                    // Forward to the agent's memory system for processing.
+                    // Write directly to the memory enclave and publish to nexus.
                     debug!(
                         "[obsidian] Semantic edit accepted: {relative:?}"
                     );
+
+                    // Store in memory enclave if available
+                    if let Some(enclave) = &self.enclave {
+                        let entry_id = chrono::Utc::now().timestamp_millis() as u64;
+                        // Compute Shannon entropy of the content
+                        let entropy = {
+                            let mut freq = std::collections::HashMap::new();
+                            for byte in sanitized.bytes() {
+                                *freq.entry(byte).or_insert(0u64) += 1;
+                            }
+                            let total = sanitized.len() as f64;
+                            if total > 0.0 {
+                                let mut h = 0.0f64;
+                                for &count in freq.values() {
+                                    let p = count as f64 / total;
+                                    if p > 0.0 {
+                                        h -= p * p.log2();
+                                    }
+                                }
+                                // Normalize to 0.0-1.0 range (max entropy for byte = 8.0)
+                                (h / 8.0).clamp(0.0, 1.0) as f32
+                            } else {
+                                0.0
+                            }
+                        };
+                        let memory_entry = savant_memory::models::MemoryEntry {
+                            id: entry_id.into(),
+                            session_id: "vault".to_string(),
+                            category: "semantic_override".to_string(),
+                            content: sanitized.clone(),
+                            importance: 8,
+                            tags: vec!["vault".to_string(), "semantic".to_string()],
+                            embedding: Vec::new(),
+                            created_at: chrono::Utc::now().timestamp_millis().into(),
+                            updated_at: chrono::Utc::now().timestamp_millis().into(),
+                            shannon_entropy: entropy.into(),
+                            last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
+                            hit_count: 0u32.into(),
+                            related_to: Vec::new(),
+                        };
+                        if let Err(e) = enclave.lsm().insert_metadata(entry_id, &memory_entry) {
+                            warn!("[obsidian] Failed to store semantic edit in enclave: {}", e);
+                        }
+                    }
+
                     if let Some(nexus) = &self.nexus {
                         let frame = serde_json::json!({
                             "source": "vault",
@@ -202,12 +265,15 @@ impl VaultWatcher {
                             "content": sanitized,
                             "action": "semantic_override",
                         });
-                        let _ = nexus
+                        if let Err(e) = nexus
                             .publish(
                                 "system.vault.semantic_edit",
                                 &frame.to_string(),
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::warn!("[watcher] Failed to publish semantic_edit event: {}", e);
+                        }
                     }
                 }
                 "Identity" => {
@@ -222,12 +288,15 @@ impl VaultWatcher {
                             "[obsidian] SOUL.md edit blocked — use Evolution system"
                         );
                         if let Some(nexus) = &self.nexus {
-                            let _ = nexus
+                            if let Err(e) = nexus
                                 .publish(
                                     "system.vault.edit_blocked",
                                     r#"{"reason":"SOUL.md edits must go through the Evolution system"}"#,
                                 )
-                                .await;
+                                .await
+                            {
+                                tracing::warn!("[watcher] Failed to publish edit_blocked event: {}", e);
+                            }
                         }
                     } else if file_name == "Personality.md" {
                         // Personality edits: extract OCEAN values.
@@ -238,12 +307,15 @@ impl VaultWatcher {
                                 "content": sanitized,
                                 "action": "personality_override",
                             });
-                            let _ = nexus
+                            if let Err(e) = nexus
                                 .publish(
                                     "system.vault.personality_edit",
                                     &frame.to_string(),
                                 )
-                                .await;
+                                .await
+                            {
+                                tracing::warn!("[watcher] Failed to publish personality_edit event: {}", e);
+                            }
                         }
                     } else if file_name.starts_with("Evolution") {
                         // Evolution files are read-only projections.
@@ -267,7 +339,7 @@ impl VaultWatcher {
                         "[obsidian] Delegation artifact edit rejected (read-only): {relative:?}"
                     );
                     if let Some(nexus) = &self.nexus {
-                        let _ = nexus
+                        if let Err(e) = nexus
                             .publish(
                                 "system.vault.edit_rejected",
                                 &format!(
@@ -275,7 +347,10 @@ impl VaultWatcher {
                                      Edit rejected: {relative:?}"
                                 ),
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::warn!("[watcher] Failed to publish edit_rejected event: {}", e);
+                        }
                     }
                 }
                 _ => {
@@ -305,8 +380,11 @@ async fn quarantine_notify(
             "reason": reason,
             "action": "quarantine",
         });
-        let _ = nexus
+        if let Err(e) = nexus
             .publish("system.vault.file_quarantined", &frame.to_string())
-            .await;
+            .await
+        {
+            tracing::warn!("[watcher] Failed to publish file_quarantined event: {}", e);
+        }
     }
 }

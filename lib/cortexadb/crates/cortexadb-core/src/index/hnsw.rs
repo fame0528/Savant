@@ -91,7 +91,9 @@ impl HnswBackend {
         let index =
             usearch::new_index(&options).map_err(|e| HnswError::UsearchError(e.to_string()))?;
 
-        let _ = index.reserve(10000);
+        if let Err(e) = index.reserve(10000) {
+            log::debug!("[cortexadb] HNSW reserve failed (non-critical): {}", e);
+        }
 
         Ok(Self { index: Arc::new(RwLock::new(index)), dimension, config })
     }

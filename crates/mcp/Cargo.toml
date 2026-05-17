@@ -19,3 +19,4 @@ axum = { version = "0.7", features = ["ws"] }
 async-trait = { workspace = true }
 dashmap = { workspace = true }
 url = "2.5"
+blake3 = "1.5"

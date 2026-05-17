@@ -23,7 +23,12 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
+use tower_governor::{
+    governor::GovernorConfigBuilder,
+    key_extractor::SmartIpKeyExtractor,
+    GovernorLayer,
+};
 
 /// Shared state for the gateway server.
 pub struct GatewayState {
@@ -58,9 +63,24 @@ pub async fn start_gateway(
     });
 
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin([
+            "http://localhost:3000".parse().unwrap(),
+            "http://127.0.0.1:3000".parse().unwrap(),
+        ])
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+
+    // Rate limiting: 20 requests per minute per IP
+    let rate_limiter = GovernorLayer {
+        config: std::sync::Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(3)
+                .burst_size(20)
+                .key_extractor(SmartIpKeyExtractor)
+                .finish()
+                .unwrap(),
+        ),
+    };
 
     let app = Router::new()
         .route("/ws", get(websocket_handler))
@@ -128,6 +148,7 @@ pub async fn start_gateway(
             "/api/models/free",
             axum::routing::get(crate::handlers::models_free_handler),
         )
+        .layer(rate_limiter)
         .layer(cors)
         .with_state(state);
 
@@ -411,10 +432,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                         }
                         Err(e) => {
                             tracing::warn!(
-                                    "[gateway] Failed to deserialize WebSocket message: {}. Payload: {}",
-                                    e,
-                                    &text[..text.len().min(200)]
-                                );
+                                "[gateway] Failed to deserialize WebSocket message: {}",
+                                e
+                            );
                         }
                     },
                     Ok(Message::Ping(_data)) => {
@@ -581,8 +601,6 @@ async fn settings_get_handler(State(state): State<Arc<GatewayState>>) -> impl In
         "vision_model": vision_model,
         "ollama_url": ollama_url,
         "gateway_port": config.server.port,
-        "agents_path": config.system.agents_path,
-        "db_path": config.system.db_path,
         "temperature": temperature,
         "top_p": top_p,
         "frequency_penalty": frequency_penalty,
@@ -847,7 +865,13 @@ async fn changelog_handler(State(state): State<Arc<GatewayState>>) -> axum::resp
     axum::response::Response::builder()
         .header("content-type", "text/markdown; charset=utf-8")
         .body(axum::body::Body::from(content))
-        .unwrap()
+        .unwrap_or_else(|e| {
+            tracing::error!("[gateway] Failed to build changelog response: {}", e);
+            axum::response::Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::from("Internal server error"))
+                .expect("fallback response builder must succeed")
+        })
 }
 
 #[cfg(test)]

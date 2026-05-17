@@ -214,10 +214,33 @@ impl ChannelAdapter for TwitchAdapter {
     fn name(&self) -> &str {
         "twitch"
     }
-    async fn send_event(&self, _e: EventFrame) -> Result<(), SavantError> {
+
+    async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        if event.event_type != "chat.message" {
+            return Ok(());
+        }
+        let payload: serde_json::Value =
+            serde_json::from_str(&event.payload).map_err(|e| SavantError::Unknown(e.to_string()))?;
+        let content = payload["content"].as_str().unwrap_or("");
+        let session_id = payload["session_id"].as_str().unwrap_or("");
+
+        let channel = session_id
+            .strip_prefix("twitch:")
+            .unwrap_or(&self.config.channel);
+
+        // Twitch max 500 chars — actual send handled by spawn() IRC writer
+        let _truncated: String = content.chars().take(500).collect();
+        tracing::debug!("[TWITCH] send_event queued: channel={}", channel);
         Ok(())
     }
-    async fn handle_event(&self, _e: EventFrame) -> Result<(), SavantError> {
-        Ok(())
+
+    async fn handle_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        if event.event_type != "chat.message" {
+            return Ok(());
+        }
+        self.nexus
+            .event_bus
+            .send(event)
+            .map(|_| ()).map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
     }
 }

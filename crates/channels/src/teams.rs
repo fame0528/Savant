@@ -117,10 +117,34 @@ impl ChannelAdapter for TeamsAdapter {
     fn name(&self) -> &str {
         "teams"
     }
-    async fn send_event(&self, _event: EventFrame) -> Result<(), SavantError> {
-        Ok(())
+
+    async fn send_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        if event.event_type != "chat.message" {
+            return Ok(());
+        }
+        let payload: serde_json::Value =
+            serde_json::from_str(&event.payload).map_err(|e| SavantError::Unknown(e.to_string()))?;
+        let content = payload["content"].as_str().unwrap_or("");
+        let session_id = payload["session_id"].as_str().unwrap_or("");
+
+        let rest = session_id
+            .strip_prefix("teams:")
+            .ok_or_else(|| SavantError::Unknown("No Teams session_id available".to_string()))?;
+
+        let (svc, conv) = rest.split_once('/').ok_or_else(|| {
+            SavantError::Unknown("Teams session_id must be format 'teams:service_url/conversation_id'".to_string())
+        })?;
+
+        self.send_text(svc, conv, content).await
     }
-    async fn handle_event(&self, _event: EventFrame) -> Result<(), SavantError> {
-        Ok(())
+
+    async fn handle_event(&self, event: EventFrame) -> Result<(), SavantError> {
+        if event.event_type != "chat.message" {
+            return Ok(());
+        }
+        self.nexus
+            .event_bus
+            .send(event)
+            .map(|_| ()).map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
     }
 }

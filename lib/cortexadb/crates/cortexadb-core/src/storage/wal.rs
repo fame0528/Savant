@@ -279,7 +279,9 @@ impl WriteAheadLog {
         // fsync parent directory for rename durability.
         if let Some(parent) = path.parent() {
             if let Ok(dir) = OpenOptions::new().read(true).open(parent) {
-                let _ = dir.sync_all();
+        if let Err(e) = dir.sync_all() {
+            log::debug!("[cortexadb] Directory sync failed (non-critical): {}", e);
+        }
             }
         }
 

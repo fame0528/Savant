@@ -74,7 +74,6 @@ struct TaskTracker {
     api_call_count: AtomicU64,
     cumulative_cost: Arc<RwLock<f32>>,
     config: CircuitBreakerConfig,
-    #[allow(dead_code)]
     start_time: Instant,
 }
 
@@ -254,6 +253,38 @@ impl CircuitBreaker {
     pub async fn trip_history(&self) -> Vec<TripRecord> {
         self.trip_log.read().await.clone()
     }
+
+    /// Checks if a task has exceeded its execution timeout.
+    ///
+    /// Returns the elapsed duration if the task is still running,
+    /// or an error if the task has exceeded a reasonable timeout.
+    pub async fn check_timeout(
+        &self,
+        task_id: &str,
+        max_duration: std::time::Duration,
+    ) -> Result<std::time::Duration, savant_core::error::SavantError> {
+        let tasks = self.tasks.read().await;
+        if let Some(tracker) = tasks.get(task_id) {
+            let elapsed = tracker.start_time.elapsed();
+            if elapsed > max_duration {
+                let reason = format!(
+                    "Task execution time {:?} exceeds timeout {:?}",
+                    elapsed, max_duration
+                );
+                self.record_trip(task_id, &reason).await;
+                Err(savant_core::error::SavantError::CircuitBreakerTripped(
+                    reason,
+                ))
+            } else {
+                Ok(elapsed)
+            }
+        } else {
+            Err(savant_core::error::SavantError::Unknown(format!(
+                "Task not registered: {}",
+                task_id
+            )))
+        }
+    }
 }
 
 impl Default for CircuitBreaker {
@@ -263,6 +294,7 @@ impl Default for CircuitBreaker {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

@@ -1,6 +1,6 @@
 [package]
 name = "savant_obsidian"
-version = "0.1.0"
+version = "0.3.1"
 edition = "2021"
 description = "Obsidian Memory Tree — bidirectional vault projection for Savant's memory substrate"
 

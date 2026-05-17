@@ -4,8 +4,9 @@ use crate::manager::AgentManager;
 use crate::providers::mgmt::OpenRouterMgmt;
 use crate::providers::{
     AnthropicProvider, AzureProvider, CohereProvider, DeepseekProvider, FireworksProvider,
-    GoogleProvider, GroqProvider, MistralProvider, NovitaProvider, OllamaProvider, OpenAiProvider,
-    OpenRouterProvider, RetryProvider, TogetherProvider, XaiProvider,
+    GoogleProvider, GroqProvider, MistralProvider, NineRouterProvider, NovitaProvider,
+    OllamaProvider, OpenAiProvider, OpenRouterProvider, RetryProvider, TogetherProvider,
+    XaiProvider,
 };
 use crate::pulse::HeartbeatPulse;
 use crate::react::AgentLoop;
@@ -537,6 +538,24 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
+                ModelProvider::NineRouter => {
+                    let nine_router_url = std::env::var("NINE_ROUTER_URL")
+                        .unwrap_or_else(|_| "http://localhost:20128".to_string());
+                    Box::new(NineRouterProvider {
+                        client: client.clone(),
+                        api_key: agent_cfg.api_key.clone().unwrap_or_default(),
+                        base_url: nine_router_url,
+                        model: agent_cfg
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| "kr/claude-sonnet-4.5".to_string()),
+                        agent_id: agent_cfg.agent_id.clone(),
+                        agent_name: agent_cfg.agent_name.clone(),
+                        llm_params: Some(agent_cfg.llm_params.clone()),
+                        context_window: model_info.as_ref().and_then(|m| m.context_length),
+                        max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
+                    })
+                }
                 ModelProvider::LmStudio | ModelProvider::Perplexity | ModelProvider::Local => {
                     // Use the model info already fetched from OpenRouter
                     let model_id = agent_cfg

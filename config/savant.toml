@@ -1,6 +1,15 @@
 [ai]
 provider = "ollama"
 model = "gemma4"
+
+# 9Router — Unified AI model router with 40+ providers, RTK token savings, auto-fallback
+# Set provider = "nine_router" above to route all LLM requests through 9router
+# Install: npm install -g 9router && 9router (runs at http://localhost:20128)
+# See: https://github.com/decolua/9router
+[nine_router]
+enabled = false
+base_url = "http://localhost:20128"
+# api_key = "your-9router-api-key"  # Optional: set if 9router requires auth
 manifestation_model = "gemma4"
 temperature = 0.699999988079071
 top_p = 0.8999999761581421

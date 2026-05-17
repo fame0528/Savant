@@ -15,6 +15,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use chrono::Datelike;
 use tracing::debug;
 
 /// Daily operational log for an agent.
@@ -208,7 +209,6 @@ impl DailyLog {
 
     fn days_to_ymd(days: i64) -> (i32, u32, u32) {
         // Use chrono for correct date arithmetic (handles leap years, centuries, 400-year rules)
-        use chrono::Datelike;
         chrono::NaiveDate::from_num_days_from_ce_opt(days as i32 + 719163)
             .map(|d| (d.year(), d.month(), d.day()))
             .unwrap_or((1970, 1, 1))
@@ -225,7 +225,6 @@ impl DailyLog {
             .map(|d| {
                 let days_ce = d.num_days_from_ce() as i64;
                 days_ce - Self::UNIX_EPOCH_DAYS
-            })
             })
             .unwrap_or(0)
     }

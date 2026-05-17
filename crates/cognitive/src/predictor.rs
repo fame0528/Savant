@@ -95,6 +95,7 @@ pub struct DspPredictor {
 
 impl Default for DspPredictor {
     fn default() -> Self {
+        #[allow(clippy::disallowed_methods)]
         Self::new(DspConfig::default()).expect("Default DspConfig is always valid")
     }
 }

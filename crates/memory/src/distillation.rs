@@ -47,7 +47,7 @@ pub fn spawn_distillation_pipeline(
 
             debug!("Starting distillation sweep pass across Enclave...");
 
-            let messages: Vec<AgentMessage> = enclave.lsm().iter_all_messages().collect();
+            let messages: Vec<AgentMessage> = enclave.lsm().iter_all_messages(5000).collect();
 
             for msg in messages {
                 if enclave.lsm().is_distilled(&msg.id) {

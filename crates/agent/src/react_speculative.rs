@@ -83,7 +83,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
         }];
 
         // Horizon instruction prefix
-        if horizon_k > 1 {
+        let horizon_instruction = if horizon_k > 1 {
             format!(
                 "You are requested to think ahead up to {} steps.",
                 horizon_k
@@ -104,13 +104,21 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     // Assemble context with horizon instruction
                     let session_context = self.memory.retrieve(&self.agent_id, input, 10).await?;
                     let mut current_history = session_context;
+                    current_history.insert(0, ChatMessage {
+                        is_telemetry: false,
+                        role: ChatRole::System,
+                        content: horizon_instruction.clone(),
+                        sender: None,
+                        recipient: None,
+                        agent_id: None,
+                        session_id: None,
+                        channel: savant_core::types::AgentOutputChannel::Chat,
+                        images: Vec::new(),
+                    });
                     current_history.extend(history.clone());
 
                     // Build messages with system instruction about horizon
                     let messages: Vec<ChatMessage> = self.context.build_messages(current_history);
-                    // Insert horizon instruction as a system message for speculative depth guidance
-                    // The context builder handles system instructions; horizon context is
-                    // included via the messages vector assembled above
 
                     // LLM inference
                     let response_stream = self.provider.stream_completion(messages, vec![]).await;

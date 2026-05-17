@@ -128,11 +128,10 @@ impl PerceptionEngine {
                 .with_cpu(CpuRefreshKind::everything()),
         );
 
-        // Refresh CPU to get accurate usage (needs a small interval)
+        // Refresh CPU to get accurate usage (needs a small interval between refreshes).
         sys.refresh_cpu_all();
         std::thread::sleep(std::time::Duration::from_millis(200));
         sys.refresh_cpu_all();
-
         let total_mem = sys.total_memory();
         let used_mem = sys.used_memory();
         let mem_pct = if total_mem > 0 {

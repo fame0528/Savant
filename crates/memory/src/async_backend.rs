@@ -64,6 +64,24 @@ impl AsyncMemoryBackend {
     pub fn has_embeddings(&self) -> bool {
         self.embedding_service.is_some()
     }
+
+    /// Fetches session tail and deduplicates by content, up to `limit` results.
+    fn fetch_deduped_tail(&self, sid: &str, fetch_multiple: usize, limit: usize) -> Vec<ChatMessage> {
+        let tail = self.engine.fetch_session_tail(sid, fetch_multiple);
+        let mut seen_content = std::collections::HashSet::new();
+        let mut results = Vec::new();
+        for msg in tail {
+            let chat_msg = msg.to_chat();
+            let content_key = chat_msg.content.clone();
+            if seen_content.insert(content_key) {
+                results.push(chat_msg);
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+        results
+    }
 }
 
 #[async_trait::async_trait]
@@ -163,19 +181,7 @@ impl MemoryBackend for AsyncMemoryBackend {
                                 );
 
                                 // Fetch recent messages and match by content relevance
-                                let tail = self.engine.fetch_session_tail(&sid, limit * 3);
-                                let mut seen_content = std::collections::HashSet::new();
-
-                                for msg in tail {
-                                    let chat_msg = msg.to_chat();
-                                    let content_key = chat_msg.content.clone();
-                                    if seen_content.insert(content_key) {
-                                        results.push(chat_msg);
-                                        if results.len() >= limit {
-                                            break;
-                                        }
-                                    }
-                                }
+                                results = self.fetch_deduped_tail(&sid, limit * 3, limit);
                             }
                             Err(e) => {
                                 warn!(
@@ -212,18 +218,7 @@ impl MemoryBackend for AsyncMemoryBackend {
                                             results = search_results.len(),
                                             "Semantic search returned results after Ollama restart"
                                         );
-                                        let tail = self.engine.fetch_session_tail(&sid, limit * 3);
-                                        let mut seen_content = std::collections::HashSet::new();
-                                        for msg in tail {
-                                            let chat_msg = msg.to_chat();
-                                            let content_key = chat_msg.content.clone();
-                                            if seen_content.insert(content_key) {
-                                                results.push(chat_msg);
-                                                if results.len() >= limit {
-                                                    break;
-                                                }
-                                            }
-                                        }
+                                        results = self.fetch_deduped_tail(&sid, limit * 3, limit);
                                     }
                                     Err(e2) => {
                                         warn!(

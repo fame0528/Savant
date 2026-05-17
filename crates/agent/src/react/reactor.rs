@@ -79,8 +79,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
         for tool in &self.tools {
             if tool.name().to_lowercase() == name.to_lowercase() {
-                let mut payload = serde_json::from_str(args)
-                    .unwrap_or_else(|_| serde_json::json!({ "payload": args }));
+                let mut payload = serde_json::from_str(args).map_err(|e| {
+                    warn!("[{}] Failed to parse tool args for '{}': {}. Args: {}", self.agent_id, name, e, args);
+                    SavantError::Unknown(format!("Invalid JSON arguments for tool '{}': {}", name, e))
+                })?;
 
                 // Coerce arguments against tool's JSON Schema
                 let schema = tool.parameters_schema();

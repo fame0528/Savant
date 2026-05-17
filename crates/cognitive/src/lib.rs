@@ -1,4 +1,3 @@
-#![allow(clippy::disallowed_methods)]
 //! Dynamic Speculative Planning (DSP) Engine.
 //!
 //! This module implements the mathematical framework for predicting the optimal

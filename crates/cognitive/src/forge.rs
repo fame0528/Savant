@@ -73,7 +73,7 @@ impl GeneticForge {
                 .collect();
 
             // 2. Selection (Sort by fitness descending: higher is better)
-            fitness_scores.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+            fitness_scores.sort_by(|a, b| b.0.total_cmp(&a.0));
 
             let current_best = fitness_scores[0].0;
 
@@ -103,8 +103,10 @@ impl GeneticForge {
 
             let mut next_gen = survivors.clone();
             while next_gen.len() < self.population_size {
-                let parent1 = survivors.choose(&mut rng).unwrap();
-                let parent2 = survivors.choose(&mut rng).unwrap();
+                let Some(parent1) = survivors.choose(&mut rng) else { break };
+                let Some(parent2) = survivors.choose(&mut rng) else { break };
+                let parent1 = *parent1;
+                let parent2 = *parent2;
 
                 // Crossover & Mutation
                 let mut child = ConfigChromosome {
@@ -131,7 +133,10 @@ impl GeneticForge {
 
     /// Calculates fitness based on inverse loss across training data.
     fn calculate_fitness(&self, chromosome: ConfigChromosome, training_data: &[(f32, u32)]) -> f32 {
-        let mut predictor = DspPredictor::new(chromosome.into()).unwrap();
+        let mut predictor = match DspPredictor::new(chromosome.into()) {
+            Ok(p) => p,
+            Err(_) => return 0.0,
+        };
         let mut total_loss = 0.0;
 
         for &(complexity, actual) in training_data {

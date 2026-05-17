@@ -132,7 +132,7 @@ impl NremController {
         // Fetch all messages across sessions
         let enclave = memory.enclave();
         let lsm = enclave.lsm();
-        let all_messages = lsm.iter_all_messages();
+        let all_messages = lsm.iter_all_messages(5000);
         let messages: Vec<_> = all_messages.collect();
 
         if messages.is_empty() {

@@ -197,9 +197,11 @@ impl LsmStorageEngine {
         Ok(())
     }
 
-    /// Iterates over all messages across all sessions.
-    pub fn iter_all_messages(&self) -> impl Iterator<Item = AgentMessage> + '_ {
+    /// Iterates over messages across all sessions, with optional limit.
+    /// Uses MAX_BATCH_SIZE as the cap per session scoped query to bound memory usage.
+    pub fn iter_all_messages(&self, limit: usize) -> impl Iterator<Item = AgentMessage> + '_ {
         let mut all_msgs: Vec<AgentMessage> = Vec::new();
+        let batch_limit = if limit > 0 { limit } else { MAX_BATCH_SIZE };
 
         for session_ref in self.sessions.iter() {
             let session_id = session_ref.key().clone();
@@ -208,10 +210,13 @@ impl LsmStorageEngine {
             if let Ok(hits) = self.db.search_in_collection(
                 &collection,
                 self.zero_embedding(),
-                MAX_BATCH_SIZE,
+                batch_limit,
                 None,
             ) {
                 for hit in hits {
+                    if all_msgs.len() >= batch_limit {
+                        break;
+                    }
                     if let Ok(memory) = self.db.get_memory(hit.id) {
                         if memory.content.len() <= 10 * 1024 * 1024 {
                             if let Ok(archived) = rkyv::access::<
@@ -229,6 +234,9 @@ impl LsmStorageEngine {
                     }
                 }
             }
+            if all_msgs.len() >= batch_limit {
+                break;
+            }
         }
 
         all_msgs.sort_by_key(|m| i64::from(m.timestamp));
@@ -239,7 +247,7 @@ impl LsmStorageEngine {
     /// Used by the NREM dream phase for structured memory replay.
     pub fn iter_recent_messages(&self, hours: u64) -> Vec<AgentMessage> {
         let cutoff = chrono::Utc::now().timestamp() - (hours as i64 * 3600);
-        self.iter_all_messages()
+        self.iter_all_messages(MAX_BATCH_SIZE)
             .filter(|msg| i64::from(msg.timestamp) >= cutoff)
             .collect()
     }
@@ -671,26 +679,6 @@ impl LsmStorageEngine {
                         .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
                     return Ok(Some(node));
                 }
-            }
-        }
-        Ok(None)
-    }
-
-    /// Helper to find a CortexaDB entry ID by its metadata key.
-    #[allow(dead_code)]
-    fn find_by_key(&self, collection: &str, key: &str) -> Result<Option<u64>, MemoryError> {
-        let filter = {
-            let mut m = HashMap::new();
-            m.insert("key".to_string(), key.to_string());
-            m
-        };
-
-        if let Ok(hits) =
-            self.db
-                .search_in_collection(collection, self.zero_embedding(), 1, Some(filter))
-        {
-            if let Some(hit) = hits.first() {
-                return Ok(Some(hit.id));
             }
         }
         Ok(None)
@@ -1243,6 +1231,7 @@ impl LsmStorageEngine {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use crate::models::{AgentMessage, MessageRole, ToolResultRef};

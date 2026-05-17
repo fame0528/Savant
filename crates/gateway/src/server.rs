@@ -57,7 +57,8 @@ pub async fn start_gateway(
         nexus,
         storage,
         avatar_cache: TokioMutex::new(LruCache::new(
-            NonZeroUsize::new(100).expect("100 is non-zero"),
+            #[allow(clippy::disallowed_methods)]
+            NonZeroUsize::new(100).unwrap(),
         )),
         gateway_signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
     });
@@ -489,12 +490,7 @@ async fn agent_image_handler(
         return Response::builder()
             .status(400)
             .body(axum::body::Body::from("Invalid agent name"))
-            .unwrap_or_else(|_| {
-                Response::builder()
-                    .status(500)
-                    .body(axum::body::Body::empty())
-                    .expect("valid response builder")
-            });
+            .unwrap_or_else(|_| fallback_response());
     }
 
     let name_lower = name.to_lowercase();
@@ -509,10 +505,7 @@ async fn agent_image_handler(
                 .body(axum::body::Body::from(content.clone()))
                 .unwrap_or_else(|_| {
                     tracing::error!("Failed to build cached image response for {}", name_lower);
-                    Response::builder()
-                        .status(500)
-                        .body(axum::body::Body::empty())
-                        .expect("valid response builder")
+                    fallback_response()
                 });
         }
     }
@@ -867,10 +860,17 @@ async fn changelog_handler(State(state): State<Arc<GatewayState>>) -> axum::resp
         .body(axum::body::Body::from(content))
         .unwrap_or_else(|e| {
             tracing::error!("[gateway] Failed to build changelog response: {}", e);
-            axum::response::Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(axum::body::Body::from("Internal server error"))
-                .expect("fallback response builder must succeed")
+            fallback_response()
+        })
+}
+
+/// Returns a 500 error response without using `.expect()`.
+fn fallback_response() -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(500)
+        .body(axum::body::Body::empty())
+        .unwrap_or_else(|_| {
+            axum::response::Response::new(axum::body::Body::empty())
         })
 }
 

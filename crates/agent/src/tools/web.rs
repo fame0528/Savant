@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
@@ -49,272 +49,124 @@ pub struct WebSovereign {
 
 impl Default for WebSovereign {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("CRITICAL: WebSovereign initialization failed")
     }
 }
 
 impl WebSovereign {
-    #[allow(clippy::disallowed_methods)]
-    pub fn new() -> Self {
-        Self {
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .user_agent("Savant/1.6")
-                .redirect(reqwest::redirect::Policy::limited(5))
-                .build()
-                .map_err(|e| SavantError::Unknown(
-                    format!("CRITICAL: Failed to build HTTP client with security constraints: {}", e)
-                ))?;
+    pub fn new() -> Result<Self, SavantError> {
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .user_agent("Savant/1.6")
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .map_err(|e| SavantError::Unknown(
+                format!("CRITICAL: Failed to build HTTP client with security constraints: {}", e)
+            ))?;
+        Ok(Self {
+            http,
             projection: Arc::new(super::web_projection::ChromeProjection::new()),
-        }
+        })
     }
 
-    /// Validates URL for SSRF protection before fetching.
-    fn validate_url(&self, url: &str) -> Result<(), SavantError> {
+    fn max_output_chars(&self) -> usize {
+        50_000
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        30
+    }
+
+    /// Fetches a URL with SSRF protection.
+    /// Validates the URL scheme and host before making the request.
+    async fn fetch_url(&self, url: &str) -> Result<String, SavantError> {
         let parsed = reqwest::Url::parse(url)
             .map_err(|e| SavantError::Unknown(format!("Invalid URL: {}", e)))?;
 
         // Block dangerous schemes
         if BLOCKED_SCHEMES.contains(&parsed.scheme()) {
-            return Err(SavantError::ConsensusVeto(format!(
+            return Err(SavantError::Unknown(format!(
                 "Blocked URL scheme: {}",
                 parsed.scheme()
             )));
         }
 
-        // Block internal hosts
+        // Block private/internal hosts (SSRF protection)
         if let Some(host) = parsed.host_str() {
-            for blocked in BLOCKED_HOSTS {
-                if host == *blocked {
-                    return Err(SavantError::ConsensusVeto(format!(
-                        "Blocked internal host: {}",
-                        host
-                    )));
-                }
+            if BLOCKED_HOSTS.contains(&host) {
+                return Err(SavantError::Unknown(format!(
+                    "Blocked internal host: {}",
+                    host
+                )));
             }
         }
 
-        Ok(())
-    }
-
-    /// Fetches URL content with SSRF protection.
-    async fn fetch_url(&self, url: &str) -> Result<String, SavantError> {
-        self.validate_url(url)?;
-
-        info!("[WEB] Fetching: {}", url);
-
-        let resp = self
+        let response = self
             .http
             .get(url)
             .send()
             .await
-            .map_err(|e| SavantError::Unknown(format!("HTTP fetch failed: {}", e)))?;
+            .map_err(|e| SavantError::Unknown(format!("HTTP request failed: {}", e)))?;
 
-        if !resp.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
             return Err(SavantError::Unknown(format!(
                 "HTTP {} for {}",
-                resp.status(),
+                status.as_u16(),
                 url
             )));
         }
 
-        let content_type = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-
-        // Only parse HTML responses
-        if !content_type.contains("text/html") && !content_type.contains("application/xhtml") {
-            let body = resp
-                .text()
-                .await
-                .map_err(|e| SavantError::Unknown(format!("Failed to read response: {}", e)))?;
-            return Ok(format!(
-                "Content-Type: {}\n\n{}",
-                content_type,
-                &body[..body.len().min(5000)]
-            ));
-        }
-
-        let html = resp
+        let body = response
             .text()
             .await
-            .map_err(|e| SavantError::Unknown(format!("Failed to read HTML: {}", e)))?;
+            .map_err(|e| SavantError::Unknown(format!("Failed to read response body: {}", e)))?;
 
-        Ok(html)
+        Ok(body)
     }
 
-    /// Converts HTML to Markdown with content-root detection and skip-elements.
-    fn html_to_markdown(&self, html: &str) -> String {
-        let document = Html::parse_document(html);
-
-        // Find content root: main → article → [role=main] → body
-        let content_root = self.find_content_root(&document);
-
-        // Convert to Markdown
-        self.node_to_markdown(&content_root, 0)
+    /// Converts raw HTML to structured Markdown using ChromeProjection's
+    /// content-root detection and Markdown conversion pipeline.
+    fn html_to_markdown(&self, html: &str, url: &str) -> String {
+        self.projection.project_html(html, url)
     }
 
-    /// Finds the content root element in priority order.
-    fn find_content_root<'a>(&self, document: &'a Html) -> scraper::ElementRef<'a> {
-        // Priority 1: <main>
-        if let Ok(sel) = Selector::parse("main") {
-            if let Some(el) = document.select(&sel).next() {
-                return el;
-            }
-        }
-
-        // Priority 2: <article>
-        if let Ok(sel) = Selector::parse("article") {
-            if let Some(el) = document.select(&sel).next() {
-                return el;
-            }
-        }
-
-        // Priority 3: [role=main]
-        if let Ok(sel) = Selector::parse("[role='main']") {
-            if let Some(el) = document.select(&sel).next() {
-                return el;
-            }
-        }
-
-        // Priority 4: <body>
-        if let Ok(sel) = Selector::parse("body") {
-            if let Some(el) = document.select(&sel).next() {
-                return el;
-            }
-        }
-
-        // Fallback: root
-        document.root_element()
+    /// Extracts text content from a scraped element as Markdown.
+    /// Used by the `scrape` action to get text from CSS selector matches.
+    fn node_to_markdown(&self, node: &ElementRef, _depth: usize) -> String {
+        // Collect all descendant text from the element
+        let text: String = node
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        text
     }
 
-    /// Converts a DOM node to Markdown string.
-    #[allow(clippy::only_used_in_recursion)]
-    fn node_to_markdown(&self, node: &scraper::ElementRef, depth: usize) -> String {
-        let mut output = String::new();
-        let tag = node.value().name();
+    fn validate_url(&self, url: &str) -> Result<(), SavantError> {
+        let parsed = reqwest::Url::parse(url)
+            .map_err(|e| SavantError::Unknown(format!("Invalid URL: {}", e)))?;
 
-        // Skip non-content elements
-        if SKIP_ELEMENTS.contains(&tag) {
-            return String::new();
+        if BLOCKED_SCHEMES.contains(&parsed.scheme()) {
+            return Err(SavantError::Unknown(format!(
+                "Blocked URL scheme: {}",
+                parsed.scheme()
+            )));
         }
 
-        match tag {
-            "h1" => output.push_str(&format!("# {}\n\n", self.text_content(node))),
-            "h2" => output.push_str(&format!("## {}\n\n", self.text_content(node))),
-            "h3" => output.push_str(&format!("### {}\n\n", self.text_content(node))),
-            "h4" => output.push_str(&format!("#### {}\n\n", self.text_content(node))),
-            "h5" => output.push_str(&format!("##### {}\n\n", self.text_content(node))),
-            "h6" => output.push_str(&format!("###### {}\n\n", self.text_content(node))),
-            "p" => {
-                output.push_str(&self.inline_content(node));
-                output.push_str("\n\n");
-            }
-            "li" => {
-                output.push_str(&format!("- {}\n", self.inline_content(node)));
-            }
-            "blockquote" => {
-                let text = self.inline_content(node);
-                for line in text.lines() {
-                    output.push_str(&format!("> {}\n", line));
-                }
-                output.push('\n');
-            }
-            "pre" => {
-                output.push_str("```\n");
-                output.push_str(&self.text_content(node));
-                output.push_str("\n```\n\n");
-            }
-            "code" => {
-                output.push('`');
-                output.push_str(&self.text_content(node));
-                output.push('`');
-            }
-            "a" => {
-                let href = node.value().attr("href").unwrap_or("");
-                let text = self.text_content(node);
-                if !href.is_empty() && !text.is_empty() {
-                    output.push_str(&format!("[{}]({})", text, href));
-                } else {
-                    output.push_str(&text);
-                }
-            }
-            "img" => {
-                let alt = node.value().attr("alt").unwrap_or("");
-                let src = node.value().attr("src").unwrap_or("");
-                if !src.is_empty() {
-                    output.push_str(&format!("![{}]({})", alt, src));
-                }
-            }
-            "br" => output.push('\n'),
-            "hr" => output.push_str("---\n\n"),
-            "strong" | "b" => {
-                output.push_str(&format!("**{}**", self.inline_content(node)));
-            }
-            "em" | "i" => {
-                output.push_str(&format!("*{}*", self.inline_content(node)));
-            }
-            _ => {
-                // Default: recurse into children
-                for child in node.children() {
-                    if let Some(element) = scraper::ElementRef::wrap(child) {
-                        output.push_str(&self.node_to_markdown(&element, depth + 1));
-                    } else if let Some(text) = child.value().as_text() {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            output.push_str(trimmed);
-                            output.push(' ');
-                        }
-                    }
-                }
+        if let Some(host) = parsed.host_str() {
+            if BLOCKED_HOSTS.contains(&host) {
+                return Err(SavantError::Unknown(format!(
+                    "Blocked internal host: {}",
+                    host
+                )));
             }
         }
 
-        output
-    }
-
-    /// Extracts text content from a node (recursive).
-    fn text_content(&self, node: &scraper::ElementRef) -> String {
-        let mut text = String::new();
-        for child in node.children() {
-            if let Some(t) = child.value().as_text() {
-                text.push_str(t);
-            } else if let Some(element) = scraper::ElementRef::wrap(child) {
-                text.push_str(&self.text_content(&element));
-            }
-        }
-        text.trim().to_string()
-    }
-
-    /// Extracts inline content (text + links) from a node.
-    fn inline_content(&self, node: &scraper::ElementRef) -> String {
-        let mut text = String::new();
-        for child in node.children() {
-            if let Some(t) = child.value().as_text() {
-                text.push_str(t.trim());
-            } else if let Some(element) = scraper::ElementRef::wrap(child) {
-                let tag = element.value().name();
-                if tag == "a" {
-                    let href = element.value().attr("href").unwrap_or("");
-                    let link_text = self.text_content(&element);
-                    if !href.is_empty() {
-                        text.push_str(&format!("[{}]({})", link_text, href));
-                    } else {
-                        text.push_str(&link_text);
-                    }
-                } else if tag == "code" {
-                    text.push_str(&format!("`{}`", self.text_content(&element)));
-                } else {
-                    text.push_str(&self.inline_content(&element));
-                }
-                text.push(' ');
-            }
-        }
-        text.trim().to_string()
+        Ok(())
     }
 }
 
@@ -370,7 +222,7 @@ impl Tool for WebSovereign {
                     .ok_or_else(|| SavantError::Unknown("Missing 'url' for navigate".into()))?;
 
                 let html = self.fetch_url(url).await?;
-                let markdown = self.html_to_markdown(&html);
+                let markdown = self.html_to_markdown(&html, url);
 
                 let truncated = if markdown.len() > self.max_output_chars() {
                     format!(

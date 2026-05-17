@@ -30,7 +30,10 @@ impl savant_core::traits::Tool for HeartbeatTool {
         "MANDATORY FIRST STEP: Evaluates whether to run or skip proactive tasks. Schema: { \"action\": \"skip\"|\"run\", \"reason\": \"...\" }"
     }
     async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
-        let action = payload["action"].as_str().unwrap_or("skip");
+        let action = payload["action"].as_str().unwrap_or_else(|| {
+            warn!("[heartbeat] Missing 'action' field in heartbeat payload");
+            "skip"
+        });
         let reason = payload["reason"].as_str().unwrap_or("no reason provided");
 
         // Validate the action against environmental heuristics
@@ -71,12 +74,21 @@ impl savant_core::traits::Tool for EvaluateNotificationTool {
         "MANDATORY LAST STEP: Decides if the user should be notified. Schema: { \"should_notify\": true|false, \"reason\": \"...\" }"
     }
     async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
-        let should_notify = payload["should_notify"].as_bool().unwrap_or(false);
+        let should_notify = payload["should_notify"].as_bool().unwrap_or_else(|| {
+            debug!("[heartbeat::evaluate_notification] Missing 'should_notify' field, defaulting to false");
+            false
+        });
         let reason = payload["reason"].as_str().unwrap_or("no reason provided");
 
         // Evaluate urgency flags from the payload
-        let is_urgent = payload["urgent"].as_bool().unwrap_or(false);
-        let is_anomaly = payload["anomaly"].as_bool().unwrap_or(false);
+        let is_urgent = payload["urgent"].as_bool().unwrap_or_else(|| {
+            debug!("[heartbeat::evaluate_notification] Missing 'urgent' field, defaulting to false");
+            false
+        });
+        let is_anomaly = payload["anomaly"].as_bool().unwrap_or_else(|| {
+            debug!("[heartbeat::evaluate_notification] Missing 'anomaly' field, defaulting to false");
+            false
+        });
 
         // Override: anomalies always warrant notification regardless of should_notify
         let final_decision = if is_anomaly {
@@ -90,7 +102,7 @@ impl savant_core::traits::Tool for EvaluateNotificationTool {
 
         // Check quiet hours (22:00 - 07:00 UTC) — suppress non-urgent notifications
         let utc_hour = chrono::Utc::now().hour();
-        let in_quiet_hours = utc_hour >= 22 || utc_hour < 7;
+        let in_quiet_hours = !(7..22).contains(&utc_hour);
         let suppressed = in_quiet_hours && !final_decision && !is_urgent && !is_anomaly;
 
         Ok(serde_json::json!({
@@ -700,7 +712,13 @@ impl HeartbeatPulse {
         };
 
         // AAA: Restore working buffer
-        let mut buffer = self.proactive.restore_state().unwrap_or_default();
+        let mut buffer = self.proactive.restore_state().unwrap_or_else(|e| {
+            tracing::warn!(
+                "[{}] Failed to restore proactive state: {}. Starting fresh.",
+                self.agent.agent_name, e
+            );
+            crate::proactive::WorkingBuffer::default()
+        });
 
         let recent_thoughts_section = Self::load_recent_thoughts(&buffer);
         let reflection_interval = self.agent.proactive.reflection_interval_secs;
@@ -825,11 +843,15 @@ impl HeartbeatPulse {
                         Ok(AgentEvent::Action { name, args }) => {
                             if name == "heartbeat" {
                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&args) {
-                                    if json["action"].as_str() == Some("skip") {
+                                    let action_str = json["action"].as_str().unwrap_or_else(|| {
+                                        warn!("[{}] heartbeat action missing 'action' field", self.agent.agent_name);
+                                        ""
+                                    });
+                                    if action_str == "skip" {
                                         info!(
                                             "[{}] Heartbeat skipped: {}",
                                             self.agent.agent_name,
-                                            json["reason"].as_str().unwrap_or("")
+                                            json["reason"].as_str().unwrap_or("no reason provided")
                                         );
                                         action_taken = false;
                                         break;
@@ -838,7 +860,10 @@ impl HeartbeatPulse {
                             } else if name == "evaluate_notification" {
                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&args) {
                                     should_notify_override =
-                                        json["should_notify"].as_bool().unwrap_or(false);
+                                        json["should_notify"].as_bool().unwrap_or_else(|| {
+                                            warn!("[{}] evaluate_notification missing 'should_notify' field", self.agent.agent_name);
+                                            false
+                                        });
                                 }
                             }
 

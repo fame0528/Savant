@@ -1,5 +1,3 @@
-#![allow(clippy::disallowed_methods)]
-
 //! Oneiros Dream Engine — Sleep-Time Compute for Savant.
 //!
 //! Implements NREM and REM analog processing for autonomous memory consolidation

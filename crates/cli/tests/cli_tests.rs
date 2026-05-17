@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use std::path::PathBuf;
 
 // ─── copy_dir_recursive tests ─────────────────────────────────────────────

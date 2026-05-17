@@ -233,22 +233,26 @@ impl EntityExtractor {
     }
 
     /// Extracts the entity name from a sentence near a keyword.
+    /// Captures the full noun phrase containing the keyword (not just words after it).
+    /// Example: "the API endpoint is returning errors" with keyword "api"
+    ///   → old behavior: "endpoint is returning"
+    ///   → new behavior: "API endpoint"
     fn extract_entity_name(sentence: &str, keyword: &str) -> Option<String> {
         let words: Vec<&str> = sentence.split_whitespace().collect();
         for (i, word) in words.iter().enumerate() {
             if word.to_lowercase().contains(keyword) {
-                // Take the next 2-3 words as the entity name
-                if i + 1 < words.len() {
-                    let name: String = words[i + 1..]
-                        .iter()
-                        .take(3)
-                        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
-                        .filter(|w| !w.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if !name.is_empty() {
-                        return Some(name);
-                    }
+                // Include the keyword word itself plus up to 2 following words
+                // (not just words after — the keyword is part of the entity name)
+                let start = i;
+                let end = (i + 3).min(words.len());
+                let name: String = words[start..end]
+                    .iter()
+                    .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
+                    .filter(|w| !w.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if !name.is_empty() {
+                    return Some(name);
                 }
             }
         }

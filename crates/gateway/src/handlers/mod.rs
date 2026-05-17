@@ -548,15 +548,16 @@ pub async fn handle_message(
                     if config_path.exists() {
                         if let Ok(config_content) = std::fs::read_to_string(&config_path) {
                             if let Ok(mut config_val) = serde_json::from_str::<serde_json::Value>(&config_content) {
-                                let state_obj = config_val.as_object_mut().unwrap();
-                                let evo_state = state_obj.entry("evolution_state").or_insert_with(|| serde_json::json!({}));
-                                let approved_count = mutations.iter().filter(|m| m.get("status").and_then(|v| v.as_str()) == Some("approved")).count();
-                                evo_state["mutation_count"] = serde_json::json!(approved_count);
-                                evo_state["last_mutation_at"] = serde_json::json!(decided_at);
-                                evo_state["evolution_score"] = serde_json::json!((approved_count as f32 / 10.0).min(1.0));
-                                evo_state["stage"] = serde_json::json!(if approved_count >= 10 { "Sovereign" } else if approved_count >= 5 { "Mature" } else if approved_count >= 2 { "Growing" } else { "Seedling" });
-                                if let Err(e) = std::fs::write(&config_path, serde_json::to_string_pretty(&config_val).unwrap_or_default()) {
-                                    tracing::warn!("[gateway] Failed to write agent.json: {}", e);
+                                if let Some(state_obj) = config_val.as_object_mut() {
+                                    let evo_state = state_obj.entry("evolution_state").or_insert_with(|| serde_json::json!({}));
+                                    let approved_count = mutations.iter().filter(|m| m.get("status").and_then(|v| v.as_str()) == Some("approved")).count();
+                                    evo_state["mutation_count"] = serde_json::json!(approved_count);
+                                    evo_state["last_mutation_at"] = serde_json::json!(decided_at);
+                                    evo_state["evolution_score"] = serde_json::json!((approved_count as f32 / 10.0).min(1.0));
+                                    evo_state["stage"] = serde_json::json!(if approved_count >= 10 { "Sovereign" } else if approved_count >= 5 { "Mature" } else if approved_count >= 2 { "Growing" } else { "Seedling" });
+                                    if let Err(e) = std::fs::write(&config_path, serde_json::to_string_pretty(&config_val).unwrap_or_default()) {
+                                        tracing::warn!("[gateway] Failed to write agent.json: {}", e);
+                                    }
                                 }
                             }
                         }

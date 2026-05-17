@@ -578,7 +578,7 @@ mod tests {
 
         let provider = Box::new(MockLlm {
             responses: vec![
-                "Thought: Doing two things.\nAction: Tool1[arg1]\nAction: Tool2[arg2]".to_string(),
+                "Thought: Doing two things.\nAction: Tool1[\"arg1\"]\nAction: Tool2[\"arg2\"]".to_string(),
             ],
             call_count: Arc::new(Mutex::new(0)),
         });

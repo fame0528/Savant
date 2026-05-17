@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 // Tests for savant-desktop (Tauri) crate.
 //
 // Tauri commands require the full Tauri runtime (AppHandle, webview, etc.)

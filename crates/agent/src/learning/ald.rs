@@ -129,7 +129,13 @@ impl ALDEngine {
         // Read current SOUL.md content for the before/after diff
         let soul_path = self.workspace_root.join("SOUL.md");
         let before_content = if soul_path.exists() {
-            fs::read_to_string(&soul_path).unwrap_or_default()
+            match fs::read_to_string(&soul_path) {
+                Ok(content) => content,
+                Err(e) => {
+                    warn!("ALD: Failed to read SOUL.md at {:?}: {}. Proceeding with empty before-content.", soul_path, e);
+                    String::new()
+                }
+            }
         } else {
             String::new()
         };
@@ -154,7 +160,13 @@ impl ALDEngine {
         // Persist to EVOLUTION.jsonl
         let evo_path = self.workspace_root.join("EVOLUTION.jsonl");
         if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&evo_path) {
-            let line = serde_json::to_string(&mutation).unwrap_or_default();
+            let line = match serde_json::to_string(&mutation) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("[ald] Failed to serialize mutation: {}", e);
+                        return Ok(());
+                    }
+                };
             if let Err(e) = writeln!(file, "{}", line) {
                 tracing::warn!("[ald] Failed to write mutation to EVOLUTION.jsonl: {}", e);
             }

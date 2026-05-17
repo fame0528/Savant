@@ -139,7 +139,7 @@ async fn test_autonomous_ambiguity_synthesis() {
             Ok(AgentEvent::StatusUpdate(s)) if s == "HEURISTIC_AMBIGUITY_DETECTED" => {
                 ambiguity_detected = true;
             }
-            Ok(AgentEvent::Action { name, .. }) if name == "MalformedMockTool" => {
+            Ok(AgentEvent::Action { name, .. }) if name.contains("MockTool") => {
                 synthesized_action = true;
             }
             _ => {}

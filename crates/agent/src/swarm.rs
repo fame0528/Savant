@@ -307,8 +307,10 @@ impl SwarmController {
                             agent_cfg.api_key = Some(derivative_key);
                         }
                         Err(e) => {
-                            tracing::error!("[{}] Key creation failed: {}", agent_name, e);
-                            agent_cfg.api_key = Some(master_key.clone());
+                            tracing::error!(
+                                "[{}] CRITICAL: Key creation failed: {}. Not falling back to master key.",
+                                agent_name, e
+                            );
                         }
                     }
                 } else {

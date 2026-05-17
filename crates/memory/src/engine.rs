@@ -61,12 +61,10 @@ pub struct MemoryEnclave {
 impl MemoryEnclave {
     /// Acquires the partitioned write lock for the given session.
     async fn lock_session(&self, session_id: &str) -> tokio::sync::MutexGuard<'_, ()> {
-        let mut hash: u64 = 0xcbf29ce484222325;
-        for byte in session_id.as_bytes() {
-            hash ^= *byte as u64;
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
-        let idx = (hash % 64) as usize;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        session_id.hash(&mut hasher);
+        let idx = (hasher.finish() % 64) as usize;
         self.write_locks[idx].lock().await
     }
 }
@@ -590,15 +588,16 @@ impl MemoryEnclave {
         self.lsm.get_session_state(session_id)
     }
 
-    /// Gets or creates a session state (write-locked if creating).
+    /// Gets or creates a session state (write-locked to prevent TOCTOU race).
     pub async fn get_or_create_session_state(
         &self,
         session_id: &str,
     ) -> Result<crate::models::SessionState, MemoryError> {
+        let _guard = self.lock_session(session_id).await;
+        // Re-check after acquiring lock to prevent TOCTOU race
         if let Some(state) = self.lsm.get_session_state(session_id)? {
             return Ok(state);
         }
-        let _guard = self.lock_session(session_id).await;
         self.lsm.get_or_create_session_state(session_id)
     }
 

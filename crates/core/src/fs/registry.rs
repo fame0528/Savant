@@ -583,12 +583,4 @@ This is your private space. Your diary. Your inner monologue.
             None,
         )
     }
-    #[allow(dead_code)]
-    fn ensure_stable_id(&self, workspace_path: &Path) -> Result<String, SavantError> {
-        let name = workspace_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| SavantError::ConfigError("Invalid workspace path".to_string()))?;
-        Ok(name.to_string())
-    }
 }

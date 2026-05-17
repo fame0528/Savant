@@ -459,8 +459,12 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                     // AAA: Robust Fallback for missing brackets
                                     let name = line["Action:".len()..].trim();
                                     if !name.is_empty() {
-                                        actions.push(("MalformedMockTool".to_string(), name.to_string()));
-                                        info!("[{}] Heuristic: Synthesized MalformedMockTool for ambiguous line: {}", self.agent_id, name);
+                                        warn!(
+                                            "[{}] Heuristic: Fallback parse for ambiguous action line (no brackets): '{}'",
+                                            self.agent_id, name
+                                        );
+                                        actions.push((name.to_string(), "{}".to_string()));
+                                        info!("[{}] Heuristic: Extracted action name '{}' from ambiguous trace", self.agent_id, name);
                                     }
                                 }
                             }
@@ -575,7 +579,16 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                             for tool in &tools_inner {
                                                 debug!("[{}] Comparing against tool [{}]", agent_id_inner, tool.name());
                                                 if tool.name().to_lowercase() == node_name_inner.to_lowercase() {
-                                                    let payload = serde_json::from_str(&node_args_inner).unwrap_or_else(|_| serde_json::json!({ "payload": node_args_inner }));
+                                                    let payload = match serde_json::from_str(&node_args_inner) {
+                                                        Ok(p) => p,
+                                                        Err(e) => {
+                                                            let name_for_err = node_name_inner.clone();
+                                                            warn!("[agent::stream] Failed to parse args for tool '{}': {}. Args: {}", node_name_inner, e, node_args_inner);
+                                                            return (idx, node_name_inner, Err(SavantError::Unknown(
+                                                                format!("Invalid JSON arguments for tool '{}': {}", name_for_err, e)
+                                                            )));
+                                                        }
+                                                    };
                                                     debug!("[{}] Tool [{}] matched. Executing...", agent_id_inner, node_name_inner);
                                                     result = hc_inner.execute_speculative(tool.clone(), payload).await;
                                                     break;

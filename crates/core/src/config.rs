@@ -370,10 +370,18 @@ pub struct ObsidianConfig {
     pub db_only_dirs: Vec<String>,
 }
 
-fn default_obsidian_sync_interval() -> u64 { 300 }
-fn default_obsidian_max_files() -> usize { 15_000 }
-fn default_obsidian_cold_storage_days() -> u64 { 90 }
-fn default_obsidian_tombstone_prune_days() -> u64 { 30 }
+fn default_obsidian_sync_interval() -> u64 {
+    300
+}
+fn default_obsidian_max_files() -> usize {
+    15_000
+}
+fn default_obsidian_cold_storage_days() -> u64 {
+    90
+}
+fn default_obsidian_tombstone_prune_days() -> u64 {
+    30
+}
 
 impl Default for ObsidianConfig {
     fn default() -> Self {
@@ -393,7 +401,9 @@ impl Default for ObsidianConfig {
 // Browser & Local Model Configuration
 // ============================================================================
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// Controls the browser tool and local Ollama model settings.
 /// The user can change any of these values via the setup wizard or dashboard settings.
@@ -475,13 +485,27 @@ pub struct EvolutionConfig {
 }
 
 impl EvolutionConfig {
-    fn default_mutation_rate() -> f32 { 0.3 }
-    fn default_require_approval() -> bool { true }
-    fn default_max_mutations_per_week() -> u32 { 2 }
-    fn default_drift_limit() -> f32 { 0.15 }
-    fn default_digestion_cooldown_days() -> u32 { 7 }
-    fn default_min_conversations() -> u32 { 50 }
-    fn default_divergence_threshold() -> f32 { 0.1 }
+    fn default_mutation_rate() -> f32 {
+        0.3
+    }
+    fn default_require_approval() -> bool {
+        true
+    }
+    fn default_max_mutations_per_week() -> u32 {
+        2
+    }
+    fn default_drift_limit() -> f32 {
+        0.15
+    }
+    fn default_digestion_cooldown_days() -> u32 {
+        7
+    }
+    fn default_min_conversations() -> u32 {
+        50
+    }
+    fn default_divergence_threshold() -> f32 {
+        0.1
+    }
 }
 
 impl Default for EvolutionConfig {
@@ -490,9 +514,7 @@ impl Default for EvolutionConfig {
             enabled: false,
             mutation_rate: Self::default_mutation_rate(),
             require_approval: Self::default_require_approval(),
-            immutable_sections: vec![
-                "Core Laws".to_string(),
-            ],
+            immutable_sections: vec!["Core Laws".to_string()],
             max_mutations_per_week: Self::default_max_mutations_per_week(),
             drift_limit: Self::default_drift_limit(),
             digestion_cooldown_days: Self::default_digestion_cooldown_days(),

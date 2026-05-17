@@ -8,10 +8,8 @@ use std::sync::{Mutex, RwLock};
 use tracing::info;
 
 /// Cache capacity — 1000 is always non-zero.
-const CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(1000) {
-    Some(v) => v,
-    None => unreachable!(),
-};
+#[allow(clippy::disallowed_methods)]
+const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(1000).expect("1000 is non-zero");
 
 /// Service for generating text embeddings using fastembed.
 ///
@@ -37,7 +35,7 @@ impl EmbeddingProvider for EmbeddingService {
     }
 
     fn dimensions(&self) -> usize {
-        self.dimensions()
+        EmbeddingService::dimensions(self)
     }
 }
 
@@ -156,12 +154,10 @@ impl EmbeddingService {
                 .write()
                 .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
 
-            for (idx, embedding) in uncached_indices.iter().zip(batch_embeddings.iter()) {
-                cache.put(
-                    uncached_texts[*idx - uncached_indices[0]].clone(),
-                    embedding.clone(),
-                );
-                results[*idx] = Some(embedding.clone());
+            for (cache_idx, embedding) in batch_embeddings.iter().enumerate() {
+                let orig_idx = uncached_indices[cache_idx];
+                cache.put(uncached_texts[cache_idx].clone(), embedding.clone());
+                results[orig_idx] = Some(embedding.clone());
             }
         }
 

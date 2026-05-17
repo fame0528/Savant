@@ -8,10 +8,11 @@ pub fn bytes_to_string(bytes: &Bytes) -> String {
 }
 
 /// Scrub known secrets from output text to prevent logging to user or LLM traces.
+#[allow(clippy::disallowed_methods)]
 pub fn scrub_secrets(text: &str) -> String {
     static SECRETS_RE: OnceLock<Regex> = OnceLock::new();
     let re = SECRETS_RE.get_or_init(|| {
-        Regex::new(r"sk-ant-[0-9a-zA-Z\-_]{40,}|sk-[0-9a-zA-Z\-_]{40,}|ghp_[0-9a-zA-Z]{36}|gho_[0-9a-zA-Z]{36}|glpat-[0-9a-zA-Z\-_]{20}|xox[baprs]-[0-9a-zA-Z\-]{10,}|Bearer\s+[0-9a-zA-Z\-_.]+|eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+").unwrap_or_else(|_| panic!("valid regex pattern"))
+        Regex::new(r"sk-ant-[0-9a-zA-Z\-_]{40,}|sk-[0-9a-zA-Z\-_]{40,}|ghp_[0-9a-zA-Z]{36}|gho_[0-9a-zA-Z]{36}|glpat-[0-9a-zA-Z\-_]{20}|xox[baprs]-[0-9a-zA-Z\-]{10,}|Bearer\s+[0-9a-zA-Z\-_.]+|eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+").expect("SECRETS_RE: hardcoded regex must compile")
     });
     re.replace_all(text, "[REDACTED]").to_string()
 }
@@ -37,6 +38,7 @@ pub fn alias_tool_name(name: &str) -> &str {
 }
 
 /// Parses multiple "Action: name[args]" OR emergent XML-like "<tool_call>" patterns from LLM text.
+#[allow(clippy::disallowed_methods)]
 pub fn parse_actions(text: &str) -> Vec<(String, String)> {
     static LEGACY_RE: OnceLock<Regex> = OnceLock::new();
     static TOOL_CALL_RE: OnceLock<Regex> = OnceLock::new();
@@ -62,8 +64,9 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
     let mut actions: Vec<(String, String)> = Vec::new();
 
     // 1. Legacy/Standard Parser: Action: name[args]
-    let legacy_re = LEGACY_RE
-        .get_or_init(|| Regex::new(r"Action:\s*(\w+)\[(.*?)\]").unwrap_or_else(|_| panic!("valid regex pattern")));
+    let legacy_re = LEGACY_RE.get_or_init(|| {
+        Regex::new(r"Action:\s*(\w+)\[(.*?)\]").expect("hardcoded regex must compile")
+    });
     for cap in legacy_re.captures_iter(text) {
         actions.push((alias_tool_name(&cap[1]).to_string(), cap[2].to_string()));
     }
@@ -71,8 +74,9 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
     // 1b. JSON-format Parser: Action: name{"key": "value"}
     if actions.is_empty() {
         static JSON_ACTION_RE: OnceLock<Regex> = OnceLock::new();
-        let json_re = JSON_ACTION_RE
-            .get_or_init(|| Regex::new(r#"Action:\s*(\w+)(\{.*\})"#).unwrap_or_else(|_| panic!("valid regex pattern")));
+        let json_re = JSON_ACTION_RE.get_or_init(|| {
+            Regex::new(r#"Action:\s*(\w+)(\{.*\})"#).expect("hardcoded regex must compile")
+        });
         for cap in json_re.captures_iter(text) {
             actions.push((alias_tool_name(&cap[1]).to_string(), cap[2].to_string()));
         }
@@ -81,19 +85,21 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
     // 2. Emergent Substrate Parser (XML-like): <tool_call><function=name>...
     if text.contains("<tool_call>") {
         let tool_call_re = TOOL_CALL_RE.get_or_init(|| {
-            Regex::new(r"(?s)<tool_call>.*?</tool_call>").unwrap_or_else(|_| panic!("valid regex pattern"))
+            Regex::new(r"(?s)<tool_call>.*?</tool_call>").expect("hardcoded regex must compile")
         });
-        let fn_re =
-            FN_RE.get_or_init(|| Regex::new(r"<function=([\w_]+)>").unwrap_or_else(|_| panic!("valid regex pattern")));
+        let fn_re = FN_RE.get_or_init(|| {
+            Regex::new(r"<function=([\w_]+)>").expect("hardcoded regex must compile")
+        });
         let param_re = PARAM_RE.get_or_init(|| {
-            Regex::new(r"(?s)<parameter=([\w_]+)>(.*?)</parameter>").unwrap_or_else(|_| panic!("valid regex pattern"))
+            Regex::new(r"(?s)<parameter=([\w_]+)>(.*?)</parameter>")
+                .expect("hardcoded regex must compile")
         });
 
         let name_re = OPENROUTER_NAME_RE.get_or_init(|| {
-            Regex::new(r"(?s)<name>\s*([^<]+)\s*</name>").unwrap_or_else(|_| panic!("valid regex pattern"))
+            Regex::new(r"(?s)<name>\s*([^<]+)\s*</name>").expect("hardcoded regex must compile")
         });
         let args_re = OPENROUTER_ARGS_RE.get_or_init(|| {
-            Regex::new(r"(?s)<arguments>(.*?)</arguments>").unwrap_or_else(|_| panic!("valid regex pattern"))
+            Regex::new(r"(?s)<arguments>(.*?)</arguments>").expect("hardcoded regex must compile")
         });
 
         for tc_match in tool_call_re.find_iter(text) {
@@ -132,11 +138,11 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
     if text.contains("<invoke ") {
         let invoke_re = INVOKE_RE.get_or_init(|| {
             Regex::new(r#"(?s)<invoke\s+name=["']([^"']+)["']>(.*?)</invoke>"#)
-                .unwrap_or_else(|_| panic!("valid regex pattern"))
+                .expect("hardcoded regex must compile")
         });
         let param_re = INVOKE_PARAM_RE.get_or_init(|| {
             Regex::new(r#"(?s)<parameter\s+name=["']([^"']+)["']\s+value=["']([^"']+)["']\s*/?>"#)
-                .unwrap_or_else(|_| panic!("valid regex pattern"))
+                .expect("hardcoded regex must compile")
         });
         for invoke_cap in invoke_re.captures_iter(text) {
             let fn_name = alias_tool_name(&invoke_cap[1]).to_string();
@@ -155,13 +161,14 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
     // 4. Format D - <use_mcp_tool> XML
     if text.contains("<use_mcp_tool>") {
         let use_mcp_re = USE_MCP_RE.get_or_init(|| {
-            Regex::new(r"(?s)<use_mcp_tool>.*?</use_mcp_tool>").unwrap_or_else(|_| panic!("valid regex pattern"))
+            Regex::new(r"(?s)<use_mcp_tool>.*?</use_mcp_tool>")
+                .expect("hardcoded regex must compile")
         });
         let tool_name_re = MCP_TOOL_NAME_RE.get_or_init(|| {
-            Regex::new(r"<tool_name>([^<]+)</tool_name>").unwrap_or_else(|_| panic!("valid regex pattern"))
+            Regex::new(r"<tool_name>([^<]+)</tool_name>").expect("hardcoded regex must compile")
         });
         let args_re = MCP_ARGUMENTS_RE.get_or_init(|| {
-            Regex::new(r"(?s)<arguments>(.*?)</arguments>").unwrap_or_else(|_| panic!("valid regex pattern"))
+            Regex::new(r"(?s)<arguments>(.*?)</arguments>").expect("hardcoded regex must compile")
         });
 
         for mcp_match in use_mcp_re.find_iter(text) {
@@ -188,7 +195,7 @@ pub fn parse_actions(text: &str) -> Vec<(String, String)> {
             Regex::new(
                 r#"(?s)<function_call\s+name=["']([^"']+)["']\s+arguments=["']([^"']+)["']\s*/?>"#,
             )
-            .unwrap_or_else(|_| panic!("valid regex pattern"))
+            .expect("hardcoded regex must compile")
         });
         for cap in fn_call_re.captures_iter(text) {
             let fn_name = alias_tool_name(&cap[1]).to_string();

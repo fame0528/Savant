@@ -85,6 +85,10 @@ impl AgentKeyPair {
 
         #[cfg(not(unix))]
         {
+            // On Windows, file permissions are controlled by ACLs.
+            // This write uses default ACL (user-only access on typical single-user systems).
+            // For multi-user deployments, configure NTFS permissions manually or use
+            // a credential manager like Windows DPAPI.
             fs::write(path, json)?;
         }
 
@@ -166,10 +170,15 @@ impl AgentKeyPair {
         }
 
         // Strategy 5: Auto-generate and persist to config directory
-        tracing::warn!("⚠️  No master key found. Auto-generating...");
+        // NOTE: Auto-generation is a convenience fallback for development.
+        // Production deployments should explicitly configure keys via environment variables.
+        tracing::warn!("[core::crypto] No master key configured. Auto-generating a development key. Set SAVANT_MASTER_SECRET_KEY/SAVANT_MASTER_PUBLIC_KEY for production.");
         let generated_key = Self::generate()?;
         let key_id_short = &generated_key.key_id[..generated_key.key_id.len().min(8)];
-        tracing::info!("✅ Generated master key: {}...", key_id_short);
+        tracing::info!(
+            "[core::crypto] Generated development master key: {}...",
+            key_id_short
+        );
 
         // Persist to config directory so it survives restarts
         if let Some(key_path) = Self::key_file_path() {

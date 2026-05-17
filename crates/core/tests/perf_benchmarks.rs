@@ -31,7 +31,9 @@ fn bench_storage_append() {
             channel: AgentOutputChannel::Chat,
             images: Vec::new(),
         };
-        storage.append_chat("bench-agent", &msg).unwrap_or_else(|e| panic!("append failed: {}", e));
+        storage
+            .append_chat("bench-agent", &msg)
+            .unwrap_or_else(|e| panic!("append failed: {}", e));
     }
     let elapsed = start.elapsed();
 
@@ -73,12 +75,16 @@ fn bench_storage_retrieve() {
             channel: AgentOutputChannel::Chat,
             images: Vec::new(),
         };
-        storage.append_chat("ret-agent", &msg).unwrap_or_else(|e| panic!("append failed: {}", e));
+        storage
+            .append_chat("ret-agent", &msg)
+            .unwrap_or_else(|e| panic!("append failed: {}", e));
     }
 
     let start = Instant::now();
     for _ in 0..100 {
-        let _ = storage.get_history("ret-agent", 50).unwrap_or_else(|e| panic!("get_history failed: {}", e));
+        let _ = storage
+            .get_history("ret-agent", 50)
+            .unwrap_or_else(|e| panic!("get_history failed: {}", e));
     }
     let elapsed = start.elapsed();
 

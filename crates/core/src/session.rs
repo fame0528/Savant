@@ -12,11 +12,17 @@ impl SessionMapper {
     /// Returns a hash-based session ID if the sanitized ID is empty.
     pub fn map(platform: &str, id: &str) -> SessionId {
         let sanitized = Self::sanitize(id).unwrap_or_else(|| {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            id.hash(&mut hasher);
-            format!("hash-{:x}", hasher.finish())
+            let hash = blake3::hash(id.as_bytes());
+            let hash_bytes = hash.as_bytes();
+            let hash64 = (hash_bytes[0] as u64)
+                | ((hash_bytes[1] as u64) << 8)
+                | ((hash_bytes[2] as u64) << 16)
+                | ((hash_bytes[3] as u64) << 24)
+                | ((hash_bytes[4] as u64) << 32)
+                | ((hash_bytes[5] as u64) << 40)
+                | ((hash_bytes[6] as u64) << 48)
+                | ((hash_bytes[7] as u64) << 56);
+            format!("hash-{:x}", hash64)
         });
         SessionId(format!("{}:{}", platform.to_lowercase(), sanitized))
     }

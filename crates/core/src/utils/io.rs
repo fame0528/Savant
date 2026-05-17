@@ -24,14 +24,30 @@ pub async fn append_to_env(
     let env_path = workspace_path.join(".env");
     let line = format!("{}={}\n", key, value);
 
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(env_path)
-        .await?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&env_path)?;
+        file.write_all(line.as_bytes())?;
+    }
 
-    use tokio::io::AsyncWriteExt;
-    file.write_all(line.as_bytes()).await?;
+    #[cfg(not(unix))]
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(env_path)
+            .await?;
+        file.write_all(line.as_bytes()).await?;
+    }
+
     Ok(())
 }
 

@@ -171,7 +171,11 @@ impl FileIndexer {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
-        let rows = match stmt.query_map(params![format!("%{}%", query)], |row| {
+        let escaped_query = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let rows = match stmt.query_map(params![format!("%{}%", escaped_query)], |row| {
             Ok(MemoryEntry {
                 id: row.get(0)?,
                 content: row.get(1)?,

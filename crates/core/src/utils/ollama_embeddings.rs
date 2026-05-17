@@ -6,10 +6,8 @@ use std::num::NonZeroUsize;
 use std::sync::Mutex;
 use tracing::{error, info, warn};
 
-const CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(1000) {
-    Some(v) => v,
-    None => unreachable!(),
-};
+#[allow(clippy::disallowed_methods)]
+const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(1000).expect("1000 is non-zero");
 
 const DEFAULT_MODEL: &str = "gemma4:e4b";
 const DEFAULT_URL: &str = "http://localhost:11434";
@@ -33,24 +31,24 @@ impl OllamaEmbeddingService {
             model, url
         );
         Ok(Self {
-            client: crate::net::secure_client(),
+            client: crate::net::secure_client_fallible()?,
             url,
             model,
             cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),
         })
     }
 
-    pub fn with_config(url: &str, model: &str) -> Self {
+    pub fn with_config(url: &str, model: &str) -> Result<Self, SavantError> {
         info!(
             "Initializing OllamaEmbeddingService (model={}, url={})",
             model, url
         );
-        Self {
-            client: crate::net::secure_client(),
+        Ok(Self {
+            client: crate::net::secure_client_fallible()?,
             url: url.to_string(),
             model: model.to_string(),
             cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),
-        }
+        })
     }
 
     async fn call_ollama(&self, text: &str) -> Result<Vec<f32>, SavantError> {
@@ -129,7 +127,7 @@ impl EmbeddingProvider for OllamaEmbeddingService {
     }
 
     fn dimensions(&self) -> usize {
-        self.dimensions()
+        OllamaEmbeddingService::dimensions(self)
     }
 }
 
@@ -251,12 +249,10 @@ async fn ensure_model(client: &reqwest::Client, url: &str, model: &str) -> Resul
         .map_err(|e| SavantError::Unknown(format!("Failed to parse Ollama response: {}", e)))?;
 
     let models = body["models"].as_array().cloned().unwrap_or_default();
-    let has_model = models
-        .iter()
-        .any(|m| {
-            let name = m["name"].as_str().unwrap_or("");
-            name == model || name.starts_with(model)
-        });
+    let has_model = models.iter().any(|m| {
+        let name = m["name"].as_str().unwrap_or("");
+        name == model || name.starts_with(model)
+    });
 
     if has_model {
         info!("Embedding model {} found in Ollama", model);
@@ -298,7 +294,7 @@ async fn ensure_model(client: &reqwest::Client, url: &str, model: &str) -> Resul
 pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, SavantError> {
     let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
     let model = std::env::var("OLLAMA_EMBED_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
-    let client = crate::net::secure_client();
+    let client = crate::net::secure_client_fallible()?;
 
     // Step 1: Check if Ollama is already running
     let ollama_running = match client.get(format!("{}/api/tags", url)).send().await {
@@ -329,7 +325,7 @@ pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, Sa
     ensure_model(&client, &url, &model).await?;
 
     // Step 4: Create and return the Ollama embedding service
-    let ollama = OllamaEmbeddingService::with_config(&url, &model);
+    let ollama = OllamaEmbeddingService::with_config(&url, &model)?;
     info!(
         "Ollama embedding service initialized (model={}, dims=2560)",
         model

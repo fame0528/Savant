@@ -17,8 +17,7 @@ pub struct LegacyOpenClawConfig {
 
 impl From<LegacyOpenClawConfig> for AgentConfig {
     fn from(legacy: LegacyOpenClawConfig) -> Self {
-        let provider = ModelProvider::from_str(&legacy.provider)
-            .unwrap_or(ModelProvider::Local);
+        let provider = ModelProvider::from_str(&legacy.provider).unwrap_or(ModelProvider::Local);
 
         AgentConfig {
             agent_id: legacy.id,

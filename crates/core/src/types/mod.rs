@@ -496,7 +496,8 @@ impl PersonalityTraits {
     pub fn evolve(&self, delta: &PersonalityDelta) -> Self {
         Self {
             openness: (self.openness + delta.openness_delta).clamp(0.0, 1.0),
-            conscientiousness: (self.conscientiousness + delta.conscientiousness_delta).clamp(0.0, 1.0),
+            conscientiousness: (self.conscientiousness + delta.conscientiousness_delta)
+                .clamp(0.0, 1.0),
             extraversion: (self.extraversion + delta.extraversion_delta).clamp(0.0, 1.0),
             agreeableness: (self.agreeableness + delta.agreeableness_delta).clamp(0.0, 1.0),
             neuroticism: (self.neuroticism + delta.neuroticism_delta).clamp(0.0, 1.0),
@@ -519,13 +520,13 @@ impl PersonalityTraits {
 pub struct SoulMutation {
     pub id: String,
     pub agent_id: String,
-    pub mutation_type: String,        // "additive" | "subtractive" | "transformative"
+    pub mutation_type: String, // "additive" | "subtractive" | "transformative"
     pub target_section: String,
     pub before_content: String,
     pub after_content: String,
     pub reasoning: String,
     pub confidence: f32,
-    pub status: String,               // "pending" | "approved" | "rejected"
+    pub status: String, // "pending" | "approved" | "rejected"
     pub proposed_at: i64,
     pub decided_at: Option<i64>,
     pub conversations_triggered: Vec<String>,

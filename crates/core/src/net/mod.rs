@@ -1,3 +1,4 @@
+use crate::error::SavantError;
 use std::time::Duration;
 
 /// Creates a secure `reqwest::Client` with timeout, connection pool, and redirect limits.
@@ -14,4 +15,18 @@ pub fn secure_client() -> reqwest::Client {
         .expect(
             "CRITICAL: Failed to build secure HTTP client with timeout and redirect constraints",
         )
+}
+
+/// Fallible version of `secure_client()` that returns a `Result` instead of panicking.
+///
+/// Preferred for new code. Use `?` to propagate errors.
+#[allow(clippy::disallowed_methods)]
+pub fn secure_client_fallible() -> Result<reqwest::Client, SavantError> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .connect_timeout(Duration::from_secs(5))
+        .pool_max_idle_per_host(4)
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|e| SavantError::Unknown(format!("Failed to build HTTP client: {}", e)))
 }

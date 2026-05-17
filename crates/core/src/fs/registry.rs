@@ -153,16 +153,13 @@ impl AgentRegistry {
         let content = fs::read_to_string(&config_file).map_err(SavantError::IoError)?;
 
         // AAA Perfection: Allow partial parsing of legacy agent.json by using relaxed deserialization
-        let file_config: AgentFileConfig = serde_json::from_str(&content).unwrap_or_else(|e| {
-            tracing::warn!(
-                "      Partial parse for {}: {}. Attempting heuristic recovery...",
+        let file_config: AgentFileConfig = serde_json::from_str(&content).map_err(|e| {
+            SavantError::ConfigError(format!(
+                "Failed to parse agent config {}: {}",
                 config_file.display(),
                 e
-            );
-            // Heuristic Recovery: If JSON is malformed or has incompatible schema,
-            // attempt to extract just the identity and use defaults for the rest.
-            AgentFileConfig::default()
-        });
+            ))
+        })?;
 
         // Resolve absolute workspace path
         let workspace_path_resolved = workspace_path
@@ -208,7 +205,9 @@ impl AgentRegistry {
         // Seed EVOLUTION.jsonl if not present in workspace
         let evolution_path = workspace_path_resolved.join("EVOLUTION.jsonl");
         if !evolution_path.exists() {
-            let _ = fs::write(&evolution_path, "");
+            if let Err(e) = fs::write(&evolution_path, "") {
+                tracing::warn!("[registry] Failed to seed EVOLUTION.jsonl: {}", e);
+            }
         }
 
         // Resolve model provider: savant.toml [ai] is source of truth.
@@ -219,15 +218,15 @@ impl AgentRegistry {
                 Err(e) => {
                     tracing::warn!(
                         "      agent.json has invalid provider '{}': {}. Using global default.",
-                        p_str, e
+                        p_str,
+                        e
                     );
                     ModelProvider::from_str(&self.defaults.model_provider)
                         .unwrap_or(ModelProvider::Ollama)
                 }
             }
         } else {
-            ModelProvider::from_str(&self.defaults.model_provider)
-                .unwrap_or(ModelProvider::Ollama)
+            ModelProvider::from_str(&self.defaults.model_provider).unwrap_or(ModelProvider::Ollama)
         };
 
         // Resolve model: savant.toml [ai] is source of truth.
@@ -428,8 +427,7 @@ This is your private space. Your diary. Your inner monologue.
 
         // Parse default provider from config using canonical FromStr
         let default_provider: ModelProvider =
-            ModelProvider::from_str(&self.defaults.model_provider)
-                .unwrap_or(ModelProvider::Ollama);
+            ModelProvider::from_str(&self.defaults.model_provider).unwrap_or(ModelProvider::Ollama);
 
         let config = AgentConfig {
             agent_id: agent_id.to_string(),
@@ -482,14 +480,14 @@ This is your private space. Your diary. Your inner monologue.
                 } else {
                     Some(config.env_vars.clone())
                 },
-            description: None,
-            avatar: None,
-            personality_traits: None,
-            evolution_state: None,
-        };
-        let content = serde_json::to_string_pretty(&file_config)
-            .map_err(|e| SavantError::ConfigError(e.to_string()))?;
-        fs::write(&config_path, content).map_err(SavantError::IoError)?;
+                description: None,
+                avatar: None,
+                personality_traits: None,
+                evolution_state: None,
+            };
+            let content = serde_json::to_string_pretty(&file_config)
+                .map_err(|e| SavantError::ConfigError(e.to_string()))?;
+            fs::write(&config_path, content).map_err(SavantError::IoError)?;
         }
 
         // Write SOUL.md if it doesn't exist
@@ -524,7 +522,11 @@ This is your private space. Your diary. Your inner monologue.
             ];
             for dir in &vault_dirs {
                 if let Err(e) = fs::create_dir_all(dir) {
-                    tracing::warn!("[core::registry] Failed to create vault dir {:?}: {}", dir, e);
+                    tracing::warn!(
+                        "[core::registry] Failed to create vault dir {:?}: {}",
+                        dir,
+                        e
+                    );
                 }
             }
 
@@ -557,7 +559,10 @@ This is your private space. Your diary. Your inner monologue.
                 tracing::warn!("[core::registry] Failed to write INDEX.md: {}", e);
             }
 
-            tracing::info!("[core::registry] Obsidian vault scaffolded at {:?}", vault_path);
+            tracing::info!(
+                "[core::registry] Obsidian vault scaffolded at {:?}",
+                vault_path
+            );
         }
 
         Ok(config)

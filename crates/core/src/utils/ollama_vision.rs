@@ -55,12 +55,21 @@ pub struct OllamaVisionService {
 
 impl Default for OllamaVisionService {
     fn default() -> Self {
-        Self::new()
+        let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
+        let model =
+            std::env::var("OLLAMA_VISION_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+        let model_is_vision = is_vision_model(&model);
+        Self {
+            client: reqwest::Client::new(),
+            url,
+            model,
+            model_is_vision,
+        }
     }
 }
 
 impl OllamaVisionService {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, SavantError> {
         let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
         let model =
             std::env::var("OLLAMA_VISION_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
@@ -69,26 +78,26 @@ impl OllamaVisionService {
             "Initializing OllamaVisionService (model={}, url={}, vision_native={})",
             model, url, model_is_vision
         );
-        Self {
-            client: crate::net::secure_client(),
+        Ok(Self {
+            client: crate::net::secure_client_fallible()?,
             url,
             model,
             model_is_vision,
-        }
+        })
     }
 
-    pub fn with_config(url: &str, model: &str) -> Self {
+    pub fn with_config(url: &str, model: &str) -> Result<Self, SavantError> {
         let model_is_vision = is_vision_model(model);
         info!(
             "Initializing OllamaVisionService (model={}, url={}, vision_native={})",
             model, url, model_is_vision
         );
-        Self {
-            client: crate::net::secure_client(),
+        Ok(Self {
+            client: crate::net::secure_client_fallible()?,
             url: url.to_string(),
             model: model.to_string(),
             model_is_vision,
-        }
+        })
     }
 
     /// Returns true if the configured model supports vision natively.
@@ -125,12 +134,10 @@ impl VisionProvider for OllamaVisionService {
                 if let Ok(body) = resp.json::<serde_json::Value>().await {
                     let models = body["models"].as_array().cloned().unwrap_or_default();
                     let model_base = self.model.split(':').next().unwrap_or(&self.model);
-                    return models
-                        .iter()
-                        .any(|m| {
-                            let name = m["name"].as_str().unwrap_or("");
-                            name == self.model || name.starts_with(model_base)
-                        });
+                    return models.iter().any(|m| {
+                        let name = m["name"].as_str().unwrap_or("");
+                        name == self.model || name.starts_with(model_base)
+                    });
                 }
                 false
             }
@@ -234,7 +241,13 @@ impl OllamaVisionService {
 /// Create a vision service. The model is loaded lazily on first `describe_image()` call
 /// and unloaded from memory after each use to minimize resource consumption.
 pub async fn create_vision_service() -> Option<Box<dyn VisionProvider>> {
-    let svc = OllamaVisionService::new();
+    let svc = match OllamaVisionService::new() {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Failed to create Ollama vision service: {}", e);
+            return None;
+        }
+    };
     // Check if Ollama is running (not whether the model exists — model loads on-demand)
     match svc.client.get(format!("{}/api/tags", svc.url)).send().await {
         Ok(resp) if resp.status().is_success() => {

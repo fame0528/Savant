@@ -388,7 +388,6 @@ pub enum ModelProvider {
     Xai,
     Fireworks,
     Novita,
-    NineRouter,
 }
 
 impl ModelProvider {
@@ -412,7 +411,6 @@ impl ModelProvider {
             ModelProvider::Xai => "xai",
             ModelProvider::Fireworks => "fireworks",
             ModelProvider::Novita => "novita",
-            ModelProvider::NineRouter => "nine_router",
         }
     }
 }
@@ -439,7 +437,6 @@ impl std::str::FromStr for ModelProvider {
             "xai" => Ok(ModelProvider::Xai),
             "fireworks" => Ok(ModelProvider::Fireworks),
             "novita" => Ok(ModelProvider::Novita),
-            "nine_router" => Ok(ModelProvider::NineRouter),
             other => Err(format!("Unknown model provider: '{}'", other)),
         }
     }

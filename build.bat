@@ -4,6 +4,11 @@ echo  Savant Build Script
 echo ========================================
 echo.
 
+:: Resolve repo root from script location
+set "REPO_ROOT=%~dp0"
+:: Remove trailing backslash
+if "%REPO_ROOT:~-1%"=="\" set "REPO_ROOT=%REPO_ROOT:~0,-1%"
+
 echo [1/4] Killing node processes...
 taskkill /F /IM node.exe >nul 2>&1
 if %errorlevel% equ 0 (
@@ -15,9 +20,9 @@ timeout /t 2 /nobreak >nul
 
 echo.
 echo [2/4] Removing Next.js lock file...
-del /F /Q "C:\Users\spenc\dev\Savant\dashboard\.next\lock" >nul 2>&1
-if exist "C:\Users\spenc\dev\Savant\dashboard\.next\lock" (
-    rmdir /S /Q "C:\Users\spenc\dev\Savant\dashboard\.next" >nul 2>&1
+del /F /Q "%REPO_ROOT%\dashboard\.next\lock" >nul 2>&1
+if exist "%REPO_ROOT%\dashboard\.next\lock" (
+    rmdir /S /Q "%REPO_ROOT%\dashboard\.next" >nul 2>&1
     echo   .next directory removed.
 ) else (
     echo   Lock file removed.
@@ -25,7 +30,7 @@ if exist "C:\Users\spenc\dev\Savant\dashboard\.next\lock" (
 
 echo.
 echo [3/4] Building dashboard...
-cd /d "C:\Users\spenc\dev\Savant"
+cd /d "%REPO_ROOT%"
 call npm --prefix dashboard run build
 if %errorlevel% neq 0 (
     echo.
@@ -72,7 +77,7 @@ echo  BUILD COMPLETE
 echo ========================================
 echo.
 echo Installers are located at:
-echo   MSI:  target\release\bundle\msi\Savant_0.3.0_x64_en-US.msi
-echo   EXE:  target\release\bundle\nsis\Savant_0.3.0_x64-setup.exe
+echo   MSI:  target\release\bundle\msi\Savant CLI Companion_0.3.2_x64_en-US.msi
+echo   EXE:  target\release\bundle\nsis\Savant CLI Companion_0.3.2_x64-setup.exe
 echo.
 pause

@@ -50,7 +50,7 @@ These 15 laws are absolute. Laws 1-4 are the Immutable Laws governing process. L
 | # | Law | Directive | Enforcement |
 |---|-----|-----------|-------------|
 | **1** | **Read 0-EOF before touch** | Every file read completely before any edit. No exceptions. No skimming. No assumptions. | Zero tolerance. Violation is a critical error. |
-| **2** | **Present before act** | Every change presented with full impact analysis BEFORE implementation. No silent autonomous changes. | User approval is mandatory before any code is written. |
+| **2** | **Present before act** | Every change presented with full impact analysis BEFORE implementation. No silent autonomous changes. Scope reduction (deferral, cancellation, skipping) requires the same approval as implementation. | User approval is mandatory before any code is written or any approved work item is dropped. |
 | **3** | **Verify before proceed** | Every change verified with `cargo check --workspace` and `npx tsc --noEmit` before moving on. | No broken builds ever. Zero errors, zero warnings. |
 | **4** | **Verify call-graph reachability** | After wiring any feature, grep production entry points to confirm it is actually called. | Compilation is NOT verification. Zero grep results = NOT wired. Do not mark complete. |
 
@@ -141,6 +141,7 @@ After every tool response, verify against the Laws above. This is the enforcemen
 | 12 | Tests written + passing? | Write/run tests |
 | 13 | Tracking updated? | Update now (Law 10) |
 | 14 | Sensitive data safe? | Redact (Law 12) |
+| 15 | All approved items accounted for? If any deferred/cancelled, was user notified BEFORE commit? | Present now (Law 2) |
 
 ---
 
@@ -506,6 +507,7 @@ AUTONOMOUS WORKFLOW
 | Minimizing scope to reduce effort | We do it right, not fast | — |
 | "Good enough" | Good enough is never good enough | — |
 | Skipping an issue because "it's not in scope" | Flag it for guidance | — |
+| Deferring or cancelling approved work items without presenting to user | Scope reduction is a silent autonomous decision — violates Law 2 | 2 |
 | Pushing without approval | Hard violation of the Push Gate | — |
 | Writing pseudo-code or placeholders | Every line must be production-ready | 5 |
 

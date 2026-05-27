@@ -152,6 +152,7 @@
 .checkOk {
   color: #00ff00;
   font-weight: bold;
+  font-size: 24px;
 }
 
 .checkFail {
@@ -162,15 +163,84 @@
 .issue {
   font-size: 12px;
   color: #ff4444;
-  padding: 8px 12px;
+  padding: 12px;
   background: rgba(255, 68, 68, 0.1);
   border-radius: 6px;
   border: 1px solid rgba(255, 68, 68, 0.2);
 }
 
-.issue a {
+.issueRow {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.issueIcon {
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.issueSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #999;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
   color: #00fbff;
   text-decoration: underline;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  display: inline;
+}
+
+.linkBtn:hover {
+  color: #66fcff;
+}
+
+.pollStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 10px;
+  color: #666;
+}
+
+.pollDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #00fbff;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.success {
+  font-size: 12px;
+  color: #00ff00;
+  padding: 8px 12px;
+  background: rgba(0, 255, 0, 0.08);
+  border-radius: 6px;
+  border: 1px solid rgba(0, 255, 0, 0.2);
+}
+
+.elapsed {
+  font-size: 11px;
+  color: #666;
+  text-align: center;
+  font-family: monospace;
 }
 
 .instruction {
@@ -192,12 +262,17 @@
   font-weight: 700;
   cursor: pointer;
   font-size: 13px;
+  transition: all 0.2s;
 }
 
 .installBtn:disabled {
   background: #333;
   color: #666;
   cursor: not-allowed;
+}
+
+.installBtn:not(:disabled):hover {
+  background: #33fcff;
 }
 
 .statusMsg {
@@ -215,6 +290,12 @@
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
+  align-self: center;
+}
+
+.retryBtn:hover {
+  border-color: #555;
+  color: #888;
 }
 
 .skipBtn {
@@ -224,6 +305,10 @@
   border: none;
   cursor: pointer;
   font-size: 11px;
+}
+
+.skipBtn:hover {
+  color: #666;
 }
 
 .spinner {
@@ -271,8 +356,87 @@
   border-color: #00fbff;
 }
 
+.browseBtn {
+  padding: 10px 14px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  color: #888;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.browseBtn:hover {
+  background: #222;
+  border-color: #00fbff;
+  color: #00fbff;
+}
+
 .inputHint {
   font-size: 10px;
   color: #555;
   margin-top: -8px;
+}
+
+.startOllamaBtn {
+  padding: 6px 14px;
+  background: #00fbff;
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.2s;
+}
+
+.startOllamaBtn:disabled {
+  background: #333;
+  color: #666;
+  cursor: wait;
+}
+
+.startOllamaBtn:not(:disabled):hover {
+  background: #33fcff;
+}
+
+.orDivider {
+  color: #555;
+  font-size: 10px;
+}
+
+.startOllamaMsg {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #00fbff;
+  font-family: monospace;
+}
+
+.progressBar {
+  position: relative;
+  height: 24px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #2a2a2a;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #00fbff 0%, #00cc99 100%);
+  transition: width 0.3s ease;
+}
+
+.progressLabel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  font-family: monospace;
 }

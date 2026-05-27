@@ -9,7 +9,14 @@ set "REPO_ROOT=%~dp0"
 :: Remove trailing backslash
 if "%REPO_ROOT:~-1%"=="\" set "REPO_ROOT=%REPO_ROOT:~0,-1%"
 
-echo [1/4] Killing node processes...
+:: Parse argument (default: both)
+set "BUILD_TARGET=%1"
+if "%BUILD_TARGET%"=="" set "BUILD_TARGET=both"
+
+echo Build target: %BUILD_TARGET%
+echo.
+
+echo [1/5] Killing node processes...
 taskkill /F /IM node.exe >nul 2>&1
 if %errorlevel% equ 0 (
     echo   Node processes killed.
@@ -19,7 +26,7 @@ if %errorlevel% equ 0 (
 timeout /t 2 /nobreak >nul
 
 echo.
-echo [2/4] Removing Next.js lock file...
+echo [2/5] Removing Next.js lock file...
 del /F /Q "%REPO_ROOT%\dashboard\.next\lock" >nul 2>&1
 if exist "%REPO_ROOT%\dashboard\.next\lock" (
     rmdir /S /Q "%REPO_ROOT%\dashboard\.next" >nul 2>&1
@@ -29,7 +36,7 @@ if exist "%REPO_ROOT%\dashboard\.next\lock" (
 )
 
 echo.
-echo [3/4] Building dashboard...
+echo [3/5] Building dashboard...
 cd /d "%REPO_ROOT%"
 call npm --prefix dashboard run build
 if %errorlevel% neq 0 (
@@ -41,8 +48,7 @@ if %errorlevel% neq 0 (
 echo   Dashboard build complete.
 
 echo.
-echo [4/4] Building Tauri installer...
-echo   Compiling release binary...
+echo [4/5] Building Rust release binary...
 call cargo build --release
 if %errorlevel% neq 0 (
     echo.
@@ -52,32 +58,78 @@ if %errorlevel% neq 0 (
 )
 echo   Compilation complete.
 
+echo.
+echo [5/5] Building Tauri installers...
 echo   Waiting for antivirus scan to complete...
 timeout /t 10 /nobreak >nul
 
-echo   Running bundler...
-call cargo tauri build --bundles msi,nsis
+if /i "%BUILD_TARGET%"=="desktop" (
+    goto :build_desktop
+)
+if /i "%BUILD_TARGET%"=="cli" (
+    goto :build_cli
+)
+
+:build_both
+echo   Building Savant Desktop...
+call cargo tauri build --bundles msi,nsis --manifest-path crates\desktop\src-tauri\Cargo.toml
 if %errorlevel% neq 0 (
-    echo.
-    echo   Bundler failed, retrying after delay...
+    echo   Desktop build failed, retrying after delay...
     timeout /t 15 /nobreak >nul
-    call cargo tauri build --bundles msi,nsis
+    call cargo tauri build --bundles msi,nsis --manifest-path crates\desktop\src-tauri\Cargo.toml
+)
+echo.
+echo   Building CLI Companion...
+call cargo tauri build --bundles msi,nsis --manifest-path crates\cli\crates\gui\src-tauri\Cargo.toml
+if %errorlevel% neq 0 (
+    echo   CLI build failed, retrying after delay...
+    timeout /t 15 /nobreak >nul
+    call cargo tauri build --bundles msi,nsis --manifest-path crates\cli\crates\gui\src-tauri\Cargo.toml
+)
+goto :done
+
+:build_desktop
+echo   Building Savant Desktop...
+call cargo tauri build --bundles msi,nsis --manifest-path crates\desktop\src-tauri\Cargo.toml
+if %errorlevel% neq 0 (
+    echo   Desktop build failed, retrying after delay...
+    timeout /t 15 /nobreak >nul
+    call cargo tauri build --bundles msi,nsis --manifest-path crates\desktop\src-tauri\Cargo.toml
     if %errorlevel% neq 0 (
-        echo.
-        echo ERROR: Tauri build failed after retry!
-        echo   Try running as Administrator or excluding the target folder from antivirus.
+        echo ERROR: Desktop build failed after retry!
         pause
         exit /b 1
     )
 )
+goto :done
 
+:build_cli
+echo   Building CLI Companion...
+call cargo tauri build --bundles msi,nsis --manifest-path crates\cli\crates\gui\src-tauri\Cargo.toml
+if %errorlevel% neq 0 (
+    echo   CLI build failed, retrying after delay...
+    timeout /t 15 /nobreak >nul
+    call cargo tauri build --bundles msi,nsis --manifest-path crates\cli\crates\gui\src-tauri\Cargo.toml
+    if %errorlevel% neq 0 (
+        echo ERROR: CLI build failed after retry!
+        pause
+        exit /b 1
+    )
+)
+goto :done
+
+:done
 echo.
 echo ========================================
 echo  BUILD COMPLETE
 echo ========================================
 echo.
 echo Installers are located at:
-echo   MSI:  target\release\bundle\msi\Savant CLI Companion_0.3.2_x64_en-US.msi
-echo   EXE:  target\release\bundle\nsis\Savant CLI Companion_0.3.2_x64-setup.exe
+echo   Desktop MSI:  target\release\bundle\msi\Savant_*_x64_en-US.msi
+echo   Desktop EXE:  target\release\bundle\nsis\Savant_*_x64-setup.exe
+echo   CLI MSI:      target\release\bundle\msi\Savant CLI Companion_*_x64_en-US.msi
+echo   CLI EXE:      target\release\bundle\nsis\Savant CLI Companion_*_x64-setup.exe
+echo.
+echo Usage: build.bat [desktop^|cli^|both]
 echo.
 pause

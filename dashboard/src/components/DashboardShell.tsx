@@ -115,7 +115,15 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
   const isSystemReady = connectionStatus === 'NOMINAL' && isSessionReady && ctx.isMounted;
 
   // Gate: show loading screen after splash, before system is ready
-  const showSystemLoading = !showSplash && !isSystemReady;
+  // Auto-dismiss after 15s or allow manual skip
+  const [forceSkip, setForceSkip] = useState(false);
+  const showSystemLoading = !showSplash && !isSystemReady && !forceSkip;
+
+  useEffect(() => {
+    if (!showSystemLoading) return;
+    const timer = setTimeout(() => setForceSkip(true), 15000);
+    return () => clearTimeout(timer);
+  }, [showSystemLoading]);
 
   const handleIgnite = useCallback(() => {
     if (!inputValue.trim()) return;
@@ -210,11 +218,22 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               animation: 'spin 1s linear infinite'
             }} />
             <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', letterSpacing: '1px' }}>
-              {connectionStatus !== 'NOMINAL' ? 'Connecting to gateway...' :
+              {ctx.ignitionError ? `Startup error: ${ctx.ignitionError}` :
+               connectionStatus !== 'NOMINAL' ? 'Connecting to gateway...' :
                !isSessionReady ? 'Establishing session...' :
                'Initializing...'}
             </span>
           </div>
+          <button
+            onClick={() => setForceSkip(true)}
+            style={{
+              marginTop: '24px', padding: '8px 20px', background: 'transparent',
+              color: '#555', border: '1px solid #333', borderRadius: '6px',
+              cursor: 'pointer', fontSize: '11px', letterSpacing: '1px'
+            }}
+          >
+            Skip to Dashboard
+          </button>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
@@ -232,7 +251,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               <img src="/img/logo.png" alt="Savant Logo" style={{ maxHeight: '80%', maxWidth: '80%', objectFit: 'contain' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
             </div>
             {!isCollapsed && <h2 className="neon-text" style={{ fontSize: '1.2rem', margin: '4px 0 0 0', textAlign: 'center', letterSpacing: '4px', color: 'var(--accent)' }}>SAVANT</h2>}
-            {!isCollapsed && <span style={{ fontSize: '9px', color: '#666', letterSpacing: '1px', fontFamily: 'monospace' }}>{`v${process.env.NEXT_PUBLIC_VERSION || '0.0.1'}`}</span>}
+            {!isCollapsed && <span style={{ fontSize: '9px', color: '#666', letterSpacing: '1px', fontFamily: 'monospace' }}>{`v${process.env.NEXT_PUBLIC_VERSION || '0.3.2'}`}</span>}
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', width: '100%', paddingRight: isCollapsed ? '0' : '4px' }}>

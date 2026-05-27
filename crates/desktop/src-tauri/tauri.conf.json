@@ -1,11 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri-schema/v2/schema.json",
   "productName": "Savant",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "identifier": "com.savant.app",
   "build": {
     "beforeDevCommand": "node src-tauri/scripts/setup-updater-keys.js && npm --prefix dashboard run dev",
-    "beforeBuildCommand": "node src-tauri/scripts/setup-updater-keys.js",
+    "beforeBuildCommand": "npm --prefix ../../dashboard run build && node src-tauri/scripts/setup-updater-keys.js",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../../../dashboard/out"
   },
@@ -26,8 +26,8 @@
         "label": "logs",
         "title": "Savant — Agent Logs",
         "url": "logs.html",
-        "width": 2560,
-        "height": 1440,
+        "width": 1280,
+        "height": 800,
         "x": -2560,
         "y": 0,
         "resizable": true,
@@ -37,10 +37,9 @@
         "label": "browser",
         "title": "Savant — Agent Browser",
         "url": "browser-standalone.html",
-        "width": 2560,
-        "height": 1440,
-        "x": 5120,
-        "y": 0,
+        "width": 1280,
+        "height": 800,
+        "visible": false,
         "resizable": true,
         "fullscreen": false
       }

@@ -179,7 +179,7 @@ impl MemoryEnclave {
         // Apply MemoryConfig overrides to vector config
         let mut vector_config = config.vector_config;
         // Use MemoryConfig default_vector_dim if the VectorConfig has the default value
-        if vector_config.dimensions == 2560 && config.memory_config.default_vector_dim != 2560 {
+        if vector_config.dimensions == 768 && config.memory_config.default_vector_dim != 768 {
             vector_config.dimensions = config.memory_config.default_vector_dim;
         }
         // Apply MemoryConfig vector_max_elements

@@ -8,16 +8,33 @@ use tracing::{error, info, warn};
 #[allow(clippy::disallowed_methods)]
 const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(1000).expect("1000 is non-zero");
 
-const DEFAULT_MODEL: &str = "gemma4:e4b";
+const DEFAULT_MODEL: &str = "nomic-embed-text";
 const DEFAULT_URL: &str = "http://localhost:11434";
 
 /// Embedding service that uses Ollama for high-quality embeddings.
-/// No fallback — Ollama must be running or the system fails.
+/// Falls back to NullEmbeddingProvider when SAVANT_DISABLE_EMBEDDINGS=1.
 pub struct OllamaEmbeddingService {
     client: reqwest::Client,
     url: String,
     model: String,
     cache: tokio::sync::Mutex<LruCache<String, Vec<f32>>>,
+}
+
+/// No-op embedding provider for degraded mode.
+/// Returns zero vectors. Semantic search is disabled.
+pub struct NullEmbeddingProvider;
+
+#[async_trait]
+impl EmbeddingProvider for NullEmbeddingProvider {
+    async fn embed(&self, _text: &str) -> Result<Vec<f32>, SavantError> {
+        Ok(vec![0.0; 768])
+    }
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SavantError> {
+        Ok(texts.iter().map(|_| vec![0.0; 768]).collect())
+    }
+    fn dimensions(&self) -> usize {
+        768
+    }
 }
 
 impl OllamaEmbeddingService {
@@ -85,7 +102,7 @@ impl OllamaEmbeddingService {
     }
 
     pub fn dimensions(&self) -> usize {
-        2560
+        768
     }
 }
 
@@ -274,19 +291,29 @@ async fn ensure_model(client: &reqwest::Client, url: &str, model: &str) -> Resul
     Ok(())
 }
 
-/// Creates the embedding service. Ollama is REQUIRED — no fallback.
+/// Creates the embedding service.
 ///
 /// Startup sequence:
-/// 1. Check if Ollama is running
-/// 2. If not, try to auto-start it
-/// 3. Wait for Ollama to be ready
+/// 1. Check SAVANT_DISABLE_EMBEDDINGS env var — if "1", return NullEmbeddingProvider
+/// 2. Check if Ollama is running
+/// 3. If not, try to auto-start it
 /// 4. Check if embedding model exists, pull if needed
 /// 5. Return Ollama embedding service
 ///
-/// If any step fails, returns a hard error. No silent fallback.
-pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, SavantError> {
+/// If any step fails and SAVANT_DISABLE_EMBEDDINGS=1, returns NullEmbeddingProvider.
+/// Otherwise returns a hard error.
+pub async fn create_embedding_service(model_override: Option<&str>) -> Result<Box<dyn EmbeddingProvider>, SavantError> {
+    // Check if embeddings are explicitly disabled
+    if std::env::var("SAVANT_DISABLE_EMBEDDINGS").map(|v| v == "1").unwrap_or(false) {
+        warn!("SAVANT_DISABLE_EMBEDDINGS=1 — embedding service disabled, using null provider");
+        return Ok(Box::new(NullEmbeddingProvider));
+    }
+
     let url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
-    let model = std::env::var("OLLAMA_EMBED_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+    let model = model_override
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("OLLAMA_EMBED_MODEL").ok())
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
     let client = crate::net::secure_client_fallible()?;
 
     // Step 1: Check if Ollama is already running
@@ -320,10 +347,11 @@ pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, Sa
     let ollama = OllamaEmbeddingService::with_config(&url, &model)?;
     // Verify it works by embedding a test string
     match ollama.embed("test").await {
-        Ok(_) => {
+        Ok(embedding) => {
+            let dims = embedding.len();
             info!(
-                "Ollama embedding service initialized (model={}, dims=2560)",
-                model
+                "Ollama embedding service initialized (model={}, dims={})",
+                model, dims
             );
             Ok(Box::new(ollama))
         }
@@ -335,8 +363,13 @@ pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, Sa
 }
 
 /// Creates a fallback embedding service when Ollama is unavailable.
-/// Currently returns an error — fastembed crate not yet integrated.
+/// If SAVANT_DISABLE_EMBEDDINGS=1, returns a null provider (degraded mode).
+/// Otherwise returns an error.
 fn create_fastembed_fallback() -> Result<Box<dyn EmbeddingProvider>, SavantError> {
+    if std::env::var("SAVANT_DISABLE_EMBEDDINGS").map(|v| v == "1").unwrap_or(false) {
+        warn!("Ollama unavailable but SAVANT_DISABLE_EMBEDDINGS=1 — using null embedding provider");
+        return Ok(Box::new(NullEmbeddingProvider));
+    }
     Err(SavantError::Unknown(
         "Embedding service unavailable: Ollama is not running and fastembed fallback \
          is not yet integrated. Install Ollama from https://ollama.com/download \

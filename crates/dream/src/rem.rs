@@ -67,9 +67,9 @@ impl RemController {
         }
     }
 
-    /// Creates a default REM controller (embedding dimension 2560).
+    /// Creates a default REM controller (embedding dimension 768).
     pub fn default_controller() -> Self {
-        Self::new(4, 6, 2560)
+        Self::new(4, 6, 768)
     }
 
     /// Runs the REM exploration cycle.
@@ -240,7 +240,7 @@ mod tests {
         let controller = RemController::default_controller();
         assert_eq!(controller.cluster_sample_count, 4);
         assert_eq!(controller.max_associations, 6);
-        assert_eq!(controller.embedding_dimension, 2560);
+        assert_eq!(controller.embedding_dimension, 768);
     }
 
     #[test]

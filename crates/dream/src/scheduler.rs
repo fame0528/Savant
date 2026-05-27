@@ -194,7 +194,7 @@ impl DreamScheduler {
         let rem_controller = super::rem::RemController::new(
             5,    // cluster_sample_count
             3,    // max_associations
-            2560, // embedding_dimension — must match vector engine dimensions
+            768, // embedding_dimension — must match vector engine dimensions
         );
         let rem_result = match tokio::time::timeout(
             Duration::from_secs(self.config.rem_duration_secs),

@@ -54,6 +54,7 @@ pub struct SwarmConfig {
     pub config_file: Option<std::path::PathBuf>,
     pub privacy: savant_core::config::PrivacyConfig,
     pub trajectory: savant_core::config::TrajectoryConfig,
+    pub embedding_model: String,
 }
 
 impl Default for SwarmConfig {
@@ -67,6 +68,7 @@ impl Default for SwarmConfig {
             config_file: None,
             privacy: savant_core::config::PrivacyConfig::default(),
             trajectory: savant_core::config::TrajectoryConfig::default(),
+            embedding_model: "nomic-embed-text".to_string(),
         }
     }
 }
@@ -147,9 +149,8 @@ impl SwarmController {
         let tools = Arc::new(registry.tools);
 
         // 2. Initialize Embedding Service FIRST (required by memory engine)
-        // Ollama Gemma for embeddings, fastembed fallback
         let embedding_service: Arc<dyn savant_core::traits::EmbeddingProvider> =
-            create_embedding_service()
+            create_embedding_service(Some(&config.embedding_model))
                 .await
                 .map_err(|e| {
                     savant_core::error::SavantError::Unknown(format!(

@@ -47,7 +47,7 @@ impl SavantPathResolver {
     }
 
     pub fn config_file(&self) -> PathBuf {
-        self.base_config_path.join("config").join("savant.toml")
+        self.base_config_path.join("savant.toml")
     }
 
     pub fn env_file(&self) -> PathBuf {

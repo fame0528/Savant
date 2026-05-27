@@ -130,12 +130,27 @@ pub struct VectorConfig {
 impl Default for VectorConfig {
     fn default() -> Self {
         Self {
-            dimensions: 2560, // Must match OllamaEmbeddingService::dimensions()
+            dimensions: 768, // Must match OllamaEmbeddingService::dimensions()
             hnsw_m: 16,
             hnsw_ef_construction: 200,
             hnsw_ef_search: 50,
             use_quantization: true,
             max_elements: 1_000_000, // Sufficient for single-machine agent memory
+        }
+    }
+}
+
+impl VectorConfig {
+    /// Test-safe config with small dimensions and capacity.
+    /// Prevents STATUS_STACK_BUFFER_OVERRUN from HNSW pre-allocating 1M-element structures.
+    pub fn test_config() -> Self {
+        Self {
+            dimensions: 64,
+            hnsw_m: 8,
+            hnsw_ef_construction: 50,
+            hnsw_ef_search: 20,
+            use_quantization: false,
+            max_elements: 100,
         }
     }
 }
@@ -233,8 +248,8 @@ impl SemanticVectorEngine {
         }))
     }
 
-    /// Convenience: Create with default configuration (2560 dims, quantization enabled).
-    pub fn default_2560() -> Result<Arc<Self>, MemoryError> {
+    /// Convenience: Create with default configuration (768 dims, quantization enabled).
+    pub fn default_768() -> Result<Arc<Self>, MemoryError> {
         Self::new("./ruvector.db", VectorConfig::default())
     }
 
@@ -708,8 +723,9 @@ mod tests {
 
     #[test]
     fn test_vector_engine_creation() {
-        let engine = SemanticVectorEngine::default_2560().unwrap();
-        assert_eq!(engine.config().dimensions, 2560);
+        let engine = SemanticVectorEngine::new("./ruvector_test_create.db", VectorConfig::test_config()).unwrap();
+        assert_eq!(engine.config().dimensions, 64);
+        std::fs::remove_file("./ruvector_test_create.db").ok();
     }
 
     #[test]
@@ -727,66 +743,62 @@ mod tests {
 
     #[test]
     fn test_dimension_mismatch_error() {
-        let engine = SemanticVectorEngine::default_2560().unwrap();
+        let engine = SemanticVectorEngine::new("./ruvector_test_mismatch.db", VectorConfig::test_config()).unwrap();
         let wrong_dims = vec![0.1; 128];
         let result = engine.index_memory("test", &wrong_dims);
         assert!(matches!(result, Err(MemoryError::DimensionMismatch { .. })));
+        std::fs::remove_file("./ruvector_test_mismatch.db").ok();
     }
 
     #[test]
     fn test_vector_count_initially_zero() {
-        let engine = SemanticVectorEngine::default_2560().unwrap();
+        let engine = SemanticVectorEngine::new("./ruvector_test_zero.db", VectorConfig::test_config()).unwrap();
         assert_eq!(engine.vector_count(), 0);
+        std::fs::remove_file("./ruvector_test_zero.db").ok();
     }
 
     #[test]
     fn test_vector_count_increments() {
-        let db_path = format!("./ruvector_test_count_{}.db", std::process::id());
-        let engine = SemanticVectorEngine::new(&db_path, VectorConfig::default()).unwrap();
-        let embedding = vec![0.1; 2560];
+        let dir = tempdir().unwrap();
+        let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::test_config()).unwrap();
+        let embedding = vec![0.1; 64];
         engine.index_memory("mem-1", &embedding).unwrap();
         assert_eq!(engine.vector_count(), 1);
 
         engine.index_memory("mem-2", &embedding).unwrap();
         assert_eq!(engine.vector_count(), 2);
-        std::fs::remove_file(&db_path).ok();
     }
 
     #[test]
     fn test_remove_decrements_count() {
-        let db_path = format!("./ruvector_test_remove_{}.db", std::process::id());
-        let engine = SemanticVectorEngine::new(&db_path, VectorConfig::default()).unwrap();
-        let embedding = vec![0.1; 2560];
+        let dir = tempdir().unwrap();
+        let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::test_config()).unwrap();
+        let embedding = vec![0.1; 64];
         engine.index_memory("mem-1", &embedding).unwrap();
         engine.index_memory("mem-2", &embedding).unwrap();
         assert_eq!(engine.vector_count(), 2);
 
         engine.remove("mem-1").unwrap();
         assert_eq!(engine.vector_count(), 1);
-        std::fs::remove_file(&db_path).ok();
     }
 
     #[test]
     fn test_save_and_load_persistence() {
         let dir = tempdir().unwrap();
 
-        // Create engine and index some vectors
-        let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::default()).unwrap();
-        engine.index_memory("mem-1", &vec![0.1; 2560]).unwrap();
-        engine.index_memory("mem-2", &vec![0.2; 2560]).unwrap();
-        engine.index_memory("mem-3", &vec![0.3; 2560]).unwrap();
+        let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::test_config()).unwrap();
+        engine.index_memory("mem-1", &vec![0.1; 64]).unwrap();
+        engine.index_memory("mem-2", &vec![0.2; 64]).unwrap();
+        engine.index_memory("mem-3", &vec![0.3; 64]).unwrap();
         assert_eq!(engine.vector_count(), 3);
 
-        // Save to disk
         engine.save_to_path(dir.path()).unwrap();
 
-        // Verify file exists
         let persist_file = dir.path().join("vectors.rkyv");
         assert!(persist_file.exists());
 
-        // Load from disk
         let loaded =
-            SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::default()).unwrap();
+            SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::test_config()).unwrap();
         assert_eq!(loaded.vector_count(), 3);
     }
 
@@ -794,21 +806,18 @@ mod tests {
     fn test_save_and_load_preserves_search() {
         let dir = tempdir().unwrap();
 
-        // Create engine with known vectors
-        let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::default()).unwrap();
-        let query = vec![1.0; 2560];
-        let similar = vec![0.9; 2560];
-        let dissimilar = vec![-1.0; 2560];
+        let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::test_config()).unwrap();
+        let query = vec![1.0; 64];
+        let similar = vec![0.9; 64];
+        let dissimilar = vec![-1.0; 64];
 
         engine.index_memory("similar", &similar).unwrap();
         engine.index_memory("dissimilar", &dissimilar).unwrap();
 
-        // Save and reload
         engine.save_to_path(dir.path()).unwrap();
         let loaded =
-            SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::default()).unwrap();
+            SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::test_config()).unwrap();
 
-        // Search should return results
         let results = loaded.recall(&query, 2, None).unwrap();
         assert!(!results.is_empty());
     }
@@ -816,7 +825,7 @@ mod tests {
     #[test]
     fn test_load_nonexistent_file_fails() {
         let dir = tempdir().unwrap();
-        let result = SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::default());
+        let result = SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::test_config());
         let err = result.err().expect("should fail for nonexistent file");
         assert!(err.to_string().contains("not found"));
     }
@@ -826,8 +835,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let nested = dir.path().join("deep/nested/path");
 
-        let engine = SemanticVectorEngine::new(&nested, VectorConfig::default()).unwrap();
-        engine.index_memory("mem-1", &vec![0.1; 2560]).unwrap();
+        let engine = SemanticVectorEngine::new(&nested, VectorConfig::test_config()).unwrap();
+        engine.index_memory("mem-1", &vec![0.1; 64]).unwrap();
         engine.save_to_path(&nested).unwrap();
 
         assert!(nested.join("vectors.rkyv").exists());
@@ -838,10 +847,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let persist_file = dir.path().join("vectors.rkyv");
 
-        // Write invalid magic
         std::fs::write(&persist_file, b"BADMAGIC").unwrap();
 
-        let result = SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::default());
+        let result = SemanticVectorEngine::load_from_path(dir.path(), VectorConfig::test_config());
         let err = result.err().expect("should fail for invalid magic");
         assert!(err.to_string().contains("Invalid persistence file format"));
     }

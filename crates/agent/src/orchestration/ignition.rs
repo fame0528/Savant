@@ -361,6 +361,7 @@ impl IgnitionService {
             )),
             privacy: config.privacy.clone(),
             trajectory: config.trajectory.clone(),
+            embedding_model: config.browser.embedding_model.clone(),
         };
 
         let swarm = SwarmController::new(

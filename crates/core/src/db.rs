@@ -12,8 +12,8 @@ use tracing::{debug, info, warn};
 const DEDUP_WINDOW_SIZE: usize = 100;
 
 /// Default vector dimension for CortexaDB embeddings (fallback).
-/// Must match OllamaEmbeddingService::dimensions() (2560 for gemma4:e4b).
-const DEFAULT_VECTOR_DIM: usize = 2560;
+/// Must match OllamaEmbeddingService::dimensions() (768 for nomic-embed-text).
+const DEFAULT_VECTOR_DIM: usize = 768;
 
 /// Maximum entries to retrieve per collection query.
 const MAX_BATCH_SIZE: usize = 100_000;

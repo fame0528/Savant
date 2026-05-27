@@ -53,7 +53,7 @@ pub struct MemoryConfig {
     /// Maximum synthesized insights to retain. Default: 1,000.
     #[serde(default = "default_max_insights")]
     pub max_insights: usize,
-    /// Default vector dimension for embeddings. Default: 2560.
+    /// Default vector dimension for embeddings. Default: 768.
     #[serde(default = "default_default_vector_dim")]
     pub default_vector_dim: usize,
     /// Maximum results returned from recall/search. Default: 5.
@@ -108,7 +108,7 @@ fn default_max_insights() -> usize {
     1_000
 }
 fn default_default_vector_dim() -> usize {
-    2560
+    768
 }
 fn default_max_recall_results() -> usize {
     5
@@ -438,7 +438,7 @@ pub struct MemoryEntry {
     pub importance: u8,
     /// Associated tags for filtering
     pub tags: Vec<String>,
-    /// Vector embedding (2560 dimensions for gemma4:e4b) for semantic search
+    /// Vector embedding (768 dimensions for nomic-embed-text) for semantic search
     /// Stored as raw f32 array; actual length determined by embedding model
     pub embedding: Vec<f32>,
     /// Creation timestamp

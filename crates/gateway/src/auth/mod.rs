@@ -81,6 +81,14 @@ pub async fn authenticate(
         // Check for Dashboard API key authentication
         if let Some(provided_key) = auth_str.strip_prefix("DASHBOARD_API_KEY:") {
             if let Some(expected_key) = dashboard_api_key {
+                if expected_key.is_empty() {
+                    // No key configured — accept dashboard connection (localhost Tauri mode)
+                    debug!("Dashboard authentication accepted (no key configured)");
+                    return Ok(AuthenticatedSession {
+                        session_id: SessionId(format!("dash-{}", uuid::Uuid::new_v4())),
+                        public_key: [0u8; 32],
+                    });
+                }
                 if constant_time_eq(provided_key.as_bytes(), expected_key.as_bytes()) {
                     debug!("Dashboard authentication accepted");
                     return Ok(AuthenticatedSession {
@@ -93,10 +101,12 @@ pub async fn authenticate(
                     "Invalid dashboard API key".to_string(),
                 ));
             }
-            warn!("Dashboard authentication failed: no API key configured");
-            return Err(SavantError::AuthError(
-                "Dashboard API key not configured".to_string(),
-            ));
+            // No key configured at all — accept dashboard connection (localhost Tauri mode)
+            debug!("Dashboard authentication accepted (no key configured)");
+            return Ok(AuthenticatedSession {
+                session_id: SessionId(format!("dash-{}", uuid::Uuid::new_v4())),
+                public_key: [0u8; 32],
+            });
         }
     }
 

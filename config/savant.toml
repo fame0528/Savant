@@ -189,7 +189,7 @@ max_screenshot_size_kb = 2048
 agent_control_enabled = true
 vision_model = "gemma4"
 vision_model_provider = "ollama"
-embedding_model = "gemma4"
+embedding_model = "nomic-embed-text"
 
 [evolution]
 enabled = false

@@ -341,6 +341,14 @@ pub async fn start_gateway(
             axum::routing::post(crate::handlers::setup::setup_install_model_handler),
         )
         .route(
+            "/api/setup/install-model-stream",
+            axum::routing::post(crate::handlers::setup::setup_install_model_stream_handler),
+        )
+        .route(
+            "/api/setup/start-ollama",
+            axum::routing::post(crate::handlers::setup::setup_start_ollama_handler),
+        )
+        .route(
             "/api/config/set",
             axum::routing::post(crate::handlers::setup::config_set_handler),
         )

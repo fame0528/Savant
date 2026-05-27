@@ -7,9 +7,19 @@
 // compile error, making the panic path statically unreachable.
 
 use crate::server::GatewayState;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{
+        sse::{Event, Sse},
+        IntoResponse,
+    },
+    Json,
+};
+use futures::stream::Stream;
 use serde::Deserialize;
 use std::sync::Arc;
+use std::convert::Infallible;
 
 /// Validate that a section/key name contains only safe characters.
 fn is_valid_identifier(s: &str) -> bool {
@@ -168,6 +178,7 @@ pub async fn config_set_handler(
 }
 
 /// GET /api/setup/check — Check Ollama/LM Studio + model availability
+/// Auto-detects ANY installed gemma model, not just the configured one.
 pub async fn setup_check_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let configured_model = state.config.read().await.browser.embedding_model.clone();
 
@@ -176,6 +187,7 @@ pub async fn setup_check_handler(State(state): State<Arc<GatewayState>>) -> impl
         "ollama_installed": false,
         "model_available": false,
         "model_name": configured_model,
+        "installed_models": [],
         "issues": [],
         "instructions": [],
         "providers": [],
@@ -185,41 +197,80 @@ pub async fn setup_check_handler(State(state): State<Arc<GatewayState>>) -> impl
     let mut instructions: Vec<String> = Vec::new();
     let mut providers: Vec<serde_json::Value> = Vec::new();
 
-    // Check Ollama
+    // Check Ollama — get ALL models, find any gemma
     let ollama_url =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
-    let ollama_result = check_provider(&ollama_url, "Ollama", &configured_model).await;
+    let ollama_result = check_provider_auto(&ollama_url, "Ollama").await;
     if ollama_result.running {
         checks["ollama_running"] = serde_json::Value::Bool(true);
         checks["ollama_installed"] = serde_json::Value::Bool(true);
-        if ollama_result.model_available {
+        checks["installed_models"] = serde_json::Value::Array(
+            ollama_result
+                .installed_models
+                .iter()
+                .map(|m| serde_json::Value::String(m.clone()))
+                .collect(),
+        );
+
+        // Find best model: exact configured match > any gemma > first model
+        let best_model = find_best_model(
+            &configured_model,
+            &ollama_result.installed_models,
+        );
+
+        if let Some(found) = best_model {
             checks["model_available"] = serde_json::Value::Bool(true);
+            checks["model_name"] = serde_json::Value::String(found.clone());
+
+            // Write back to config so downstream uses the actual model name
+            if found != configured_model {
+                let mut config = state.config.write().await;
+                config.browser.embedding_model = "nomic-embed-text".to_string();
+                config.browser.vision_model = found.clone();
+                let config_path = savant_core::config::Config::primary_config_path();
+                let _ = config.save(&config_path);
+                tracing::info!("[setup] Auto-detected vision model '{}', embedding model 'nomic-embed-text', updated config", found);
+            }
         }
     }
     providers.push(serde_json::json!({
         "name": "Ollama",
         "url": ollama_url,
         "running": ollama_result.running,
-        "model_available": ollama_result.model_available,
+        "model_available": checks["model_available"],
+        "models": ollama_result.installed_models,
         "error": ollama_result.error,
     }));
 
     // Check LM Studio
     let lmstudio_url =
         std::env::var("LMSTUDIO_URL").unwrap_or_else(|_| "http://localhost:1234".to_string());
-    let lmstudio_result = check_provider(&lmstudio_url, "LM Studio", &configured_model).await;
+    let lmstudio_result = check_provider_auto(&lmstudio_url, "LM Studio").await;
     if lmstudio_result.running {
         checks["lmstudio_running"] = serde_json::Value::Bool(true);
         checks["lmstudio_installed"] = serde_json::Value::Bool(true);
-        if lmstudio_result.model_available {
-            checks["model_available"] = serde_json::Value::Bool(true);
+
+        if !checks["model_available"].as_bool().unwrap_or(false) {
+            let best = find_best_model(&configured_model, &lmstudio_result.installed_models);
+            if let Some(found) = best {
+                checks["model_available"] = serde_json::Value::Bool(true);
+                checks["model_name"] = serde_json::Value::String(found);
+            }
+        }
+
+        // Merge installed models
+        if let serde_json::Value::Array(ref mut arr) = checks["installed_models"] {
+            for m in &lmstudio_result.installed_models {
+                arr.push(serde_json::Value::String(m.clone()));
+            }
         }
     }
     providers.push(serde_json::json!({
         "name": "LM Studio",
         "url": lmstudio_url,
         "running": lmstudio_result.running,
-        "model_available": lmstudio_result.model_available,
+        "model_available": checks["model_available"],
+        "models": lmstudio_result.installed_models,
         "error": lmstudio_result.error,
     }));
 
@@ -232,8 +283,8 @@ pub async fn setup_check_handler(State(state): State<Arc<GatewayState>>) -> impl
         );
         instructions.push("Start the provider and return here.".to_string());
     } else if !checks["model_available"].as_bool().unwrap_or(false) {
-        issues.push(format!("Model '{}' not found", configured_model));
-        instructions.push("Select a model variant during setup to auto-install.".to_string());
+        issues.push("No suitable model found".to_string());
+        instructions.push("A model will be auto-installed during setup.".to_string());
     }
 
     checks["issues"] =
@@ -249,14 +300,42 @@ pub async fn setup_check_handler(State(state): State<Arc<GatewayState>>) -> impl
     Json(checks).into_response()
 }
 
+/// Find the best model from installed list.
+/// Priority: exact configured match > gemma model (largest) > first model.
+fn find_best_model(configured: &str, installed: &[String]) -> Option<String> {
+    if installed.is_empty() {
+        return None;
+    }
+
+    // 1. Exact match
+    if installed.iter().any(|m| m == configured) {
+        return Some(configured.to_string());
+    }
+
+    // 2. Prefix match (e.g., configured "gemma4" matches "gemma4:31b")
+    if let Some(m) = installed.iter().find(|m| m.starts_with(configured)) {
+        return Some(m.clone());
+    }
+
+    // 3. Any gemma model (prefer larger = later in sorted list)
+    let gemma_models: Vec<&String> = installed.iter().filter(|m| m.contains("gemma")).collect();
+    if !gemma_models.is_empty() {
+        return Some(gemma_models.last().unwrap().to_string());
+    }
+
+    // 4. First available model
+    Some(installed[0].clone())
+}
+
 struct ProviderCheck {
     running: bool,
-    model_available: bool,
+    _model_available: bool,
+    installed_models: Vec<String>,
     error: Option<String>,
 }
 
-async fn check_provider(url: &str, name: &str, configured_model: &str) -> ProviderCheck {
-    // Use a longer timeout for local providers — first response can be slow
+/// Check a provider and return ALL installed models (not just the configured one).
+async fn check_provider_auto(url: &str, name: &str) -> ProviderCheck {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .connect_timeout(std::time::Duration::from_secs(8))
@@ -266,96 +345,105 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
         Err(_) => {
             return ProviderCheck {
                 running: false,
-                model_available: false,
+                _model_available: false,
+                installed_models: vec![],
                 error: Some(format!("Internal error checking {}", name)),
             };
         }
     };
 
-    // Try /api/tags (Ollama) first, then /v1/models (LM Studio / OpenAI-compatible)
     let tags_url = format!("{}/api/tags", url);
     let models_url = format!("{}/v1/models", url);
 
-    // Try Ollama-style endpoint
+    // Try Ollama /api/tags first
     match client.get(&tags_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             if let Ok(body) = resp.json::<serde_json::Value>().await {
                 let models = body["models"].as_array().cloned().unwrap_or_default();
-                let has_model = models.iter().any(|m| {
-                    let name = m["name"].as_str().unwrap_or("");
-                    name == configured_model || name.starts_with(configured_model)
-                });
+                let names: Vec<String> = models
+                    .iter()
+                    .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+                    .collect();
                 return ProviderCheck {
                     running: true,
-                    model_available: has_model,
+                    _model_available: false, // caller decides
+                    installed_models: names,
                     error: None,
                 };
             }
             ProviderCheck {
                 running: true,
-                model_available: false,
+                _model_available: false,
+                installed_models: vec![],
                 error: None,
             }
         }
-        Ok(_ollama_resp) => {
-            // Ollama responded but we couldn't parse models — try LM Studio / OpenAI-compatible
+        Ok(_) => {
+            // Ollama responded with error — try LM Studio / OpenAI-compatible
             match client.get(&models_url).send().await {
                 Ok(resp2) if resp2.status().is_success() => {
                     if let Ok(body) = resp2.json::<serde_json::Value>().await {
                         let data = body["data"].as_array().cloned().unwrap_or_default();
-                        let has_model = data.iter().any(|m| {
-                            let id = m["id"].as_str().unwrap_or("");
-                            id == configured_model || id.starts_with(configured_model)
-                        });
+                        let names: Vec<String> = data
+                            .iter()
+                            .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                            .collect();
                         return ProviderCheck {
                             running: true,
-                            model_available: has_model,
+                            _model_available: false,
+                            installed_models: names,
                             error: None,
                         };
                     }
                     ProviderCheck {
                         running: true,
-                        model_available: false,
+                        _model_available: false,
+                        installed_models: vec![],
                         error: None,
                     }
                 }
                 Ok(_) => ProviderCheck {
                     running: false,
-                    model_available: false,
+                    _model_available: false,
+                    installed_models: vec![],
                     error: Some(format!("{} returned an error response", name)),
                 },
                 Err(_) => ProviderCheck {
                     running: false,
-                    model_available: false,
+                    _model_available: false,
+                    installed_models: vec![],
                     error: Some(format!("{} not reachable", name)),
                 },
             }
         }
         Err(_) => {
-            // Try LM Studio / OpenAI-compatible endpoint as fallback
+            // Ollama not reachable — try LM Studio / OpenAI-compatible
             match client.get(&models_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     if let Ok(body) = resp.json::<serde_json::Value>().await {
                         let data = body["data"].as_array().cloned().unwrap_or_default();
-                        let has_model = data.iter().any(|m| {
-                            let id = m["id"].as_str().unwrap_or("");
-                            id == configured_model || id.starts_with(configured_model)
-                        });
+                        let names: Vec<String> = data
+                            .iter()
+                            .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                            .collect();
                         return ProviderCheck {
                             running: true,
-                            model_available: has_model,
+                            _model_available: false,
+                            installed_models: names,
                             error: None,
                         };
                     }
                     ProviderCheck {
                         running: true,
-                        model_available: false,
+                        _model_available: false,
+                        installed_models: vec![],
                         error: None,
                     }
                 }
                 Ok(_) => ProviderCheck {
                     running: false,
-                    model_available: false,
+                    _model_available: false,
+                    installed_models: vec![],
                     error: Some(format!("{} returned an error response", name)),
                 },
                 Err(e2) => {
@@ -366,13 +454,15 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
                     {
                         return ProviderCheck {
                             running: false,
-                            model_available: false,
+                            _model_available: false,
+                            installed_models: vec![],
                             error: Some(format!("{} is not running", name)),
                         };
                     }
                     ProviderCheck {
                         running: false,
-                        model_available: false,
+                        _model_available: false,
+                        installed_models: vec![],
                         error: Some(format!("Cannot connect to {}", name)),
                     }
                 }
@@ -387,6 +477,133 @@ fn is_valid_model_name(s: &str) -> bool {
         && s.len() <= 128
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || ":.-_/".contains(c))
+}
+
+/// POST /api/setup/start-ollama — Attempt to launch Ollama if installed
+pub async fn setup_start_ollama_handler() -> impl IntoResponse {
+    let result = launch_ollama().await;
+    match result {
+        Ok(msg) => Json(serde_json::json!({
+            "status": "success",
+            "message": msg,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": e,
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn launch_ollama() -> Result<String, String> {
+    // Check if already running
+    let ollama_url =
+        std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let client = savant_core::net::secure_client_with_timeout(3, 3)
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    if client.get(format!("{}/api/tags", ollama_url)).send().await.is_ok() {
+        return Ok("Ollama is already running".to_string());
+    }
+
+    // Try to find and launch Ollama
+    #[cfg(target_os = "windows")]
+    {
+        // Try common Windows install paths
+        let candidates = [
+            format!(
+                "{}\\AppData\\Local\\Programs\\Ollama\\ollama app.exe",
+                std::env::var("USERPROFILE").unwrap_or_default()
+            ),
+            "C:\\Program Files\\Ollama\\ollama app.exe".to_string(),
+            "C:\\Program Files (x86)\\Ollama\\ollama app.exe".to_string(),
+        ];
+
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                match std::process::Command::new(path)
+                    .arg("serve")
+                    .spawn()
+                {
+                    Ok(_) => {
+                        // Wait for it to come up
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        return Ok(format!("Ollama launched from {}", path));
+                    }
+                    Err(_) => {
+                        // Try without args (GUI app)
+                        match std::process::Command::new(path).spawn() {
+                            Ok(_) => {
+                                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                return Ok(format!("Ollama GUI launched from {}", path));
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try `ollama` on PATH
+        if std::process::Command::new("ollama").arg("serve").spawn().is_ok() {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            return Ok("Ollama launched from PATH".to_string());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Try opening the Ollama app
+        match std::process::Command::new("open")
+            .args(["-a", "Ollama"])
+            .spawn()
+        {
+            Ok(_) => {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                return Ok("Ollama launched via macOS open".to_string());
+            }
+            Err(_) => {}
+        }
+
+        // Try PATH
+        match std::process::Command::new("ollama").arg("serve").spawn() {
+            Ok(_) => {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                return Ok("Ollama launched from PATH".to_string());
+            }
+            Err(_) => {}
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try systemd
+        match std::process::Command::new("systemctl")
+            .args(["--user", "start", "ollama"])
+            .spawn()
+        {
+            Ok(_) => {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                return Ok("Ollama started via systemctl".to_string());
+            }
+            Err(_) => {}
+        }
+
+        // Try PATH
+        match std::process::Command::new("ollama").arg("serve").spawn() {
+            Ok(_) => {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                return Ok("Ollama launched from PATH".to_string());
+            }
+            Err(_) => {}
+        }
+    }
+
+    Err("Ollama not found. Install it from https://ollama.com/download".to_string())
 }
 
 /// POST /api/setup/install-model — Pull a model via Ollama
@@ -445,4 +662,103 @@ pub async fn setup_install_model_handler(
         )
             .into_response(),
     }
+}
+
+/// POST /api/setup/install-model-stream — Pull a model via Ollama with SSE progress
+/// Returns Server-Sent Events with progress updates.
+pub async fn setup_install_model_stream_handler(
+    State(_state): State<Arc<GatewayState>>,
+    Json(body): Json<InstallModelRequest>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let ollama_url =
+        std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let model = body.model.clone();
+    let valid = is_valid_model_name(&body.model);
+
+    let stream = async_stream::stream! {
+        if !valid {
+            yield Ok(Event::default().data(
+                serde_json::json!({"status": "error", "message": "Invalid model name"}).to_string(),
+            ));
+            return;
+        }
+
+        let resp = match savant_core::net::secure_client()
+            .post(format!("{}/api/pull", ollama_url))
+            .json(&serde_json::json!({
+                "name": model,
+                "stream": true
+            }))
+            .timeout(std::time::Duration::from_secs(600))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                yield Ok(Event::default().data(
+                    serde_json::json!({"status": "error", "message": format!("Cannot connect to Ollama: {}", e)}).to_string(),
+                ));
+                return;
+            }
+        };
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            yield Ok(Event::default().data(
+                serde_json::json!({"status": "error", "message": format!("Ollama returned {}", status)}).to_string(),
+            ));
+            return;
+        }
+
+        let mut byte_stream = resp.bytes_stream();
+        use futures::StreamExt;
+        let mut buffer = String::new();
+
+        while let Some(chunk_result) = byte_stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    buffer.push_str(&String::from_utf8_lossy(&chunk));
+                    while let Some(newline_pos) = buffer.find('\n') {
+                        let line = buffer[..newline_pos].trim().to_string();
+                        buffer = buffer[newline_pos + 1..].to_string();
+                        if line.is_empty() { continue; }
+
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let status = parsed["status"].as_str().unwrap_or("pulling");
+                            let completed = parsed["completed"].as_u64();
+                            let total = parsed["total"].as_u64();
+
+                            let event_data = serde_json::json!({
+                                "status": "progress",
+                                "message": status,
+                                "completed": completed,
+                                "total": total,
+                            });
+                            yield Ok(Event::default().data(event_data.to_string()));
+
+                            if status.contains("success") {
+                                yield Ok(Event::default().data(
+                                    serde_json::json!({"status": "success", "message": "Model installed successfully"}).to_string(),
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    yield Ok(Event::default().data(
+                        serde_json::json!({"status": "error", "message": format!("Stream error: {}", e)}).to_string(),
+                    ));
+                    return;
+                }
+            }
+        }
+
+        // Stream ended without explicit success — assume it worked
+        yield Ok(Event::default().data(
+            serde_json::json!({"status": "success", "message": "Model installed successfully"}).to_string(),
+        ));
+    };
+
+    Sse::new(stream)
 }

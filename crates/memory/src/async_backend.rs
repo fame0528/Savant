@@ -1138,13 +1138,13 @@ mod tests {
     use savant_core::traits::EmbeddingProvider;
     use savant_core::types::{AgentOutputChannel, ChatRole, SessionId};
 
-    /// Mock embedding provider for tests — returns fixed 2560-dim zero vectors.
+    /// Mock embedding provider for tests — returns fixed 768-dim zero vectors.
     struct MockEmbeddingProvider;
 
     #[async_trait::async_trait]
     impl EmbeddingProvider for MockEmbeddingProvider {
         async fn embed(&self, _text: &str) -> Result<Vec<f32>, SavantError> {
-            Ok(vec![0.0; 2560])
+            Ok(vec![0.0; 768])
         }
         async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SavantError> {
             Ok(texts.iter().map(|_| vec![0.0; 64]).collect())

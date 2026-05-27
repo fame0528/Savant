@@ -103,6 +103,7 @@ export interface DashboardState {
   setConnectionStatus: (s: 'NOMINAL' | 'OFFLINE') => void;
   setIsReady: (b: boolean) => void;
   setIsMounted: (b: boolean) => void;
+  ignitionError: string | null;
   setTypingAgents: (set: Set<string>) => void;
   setSyncedLanes: (set: Set<string>) => void;
   setCollapsedInsights: (set: Set<string>) => void;
@@ -257,6 +258,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [isReady, setIsReady] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   const [isSessionReady, setIsSessionReady] = useState(false);
+  const [ignitionError, setIgnitionError] = useState<string | null>(null);
   const [typingAgents, setTypingAgents] = useState<Set<string>>(new Set());
   const [syncedLanes, setSyncedLanes] = useState<Set<string>>(new Set());
   
@@ -683,6 +685,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         logger.error('Ignition', 'Ignition Failure:', e);
         setConnectionStatus('OFFLINE');
         setIsMounted(true);
+        setIgnitionError(e instanceof Error ? e.message : String(e));
       }
     };
     initTauri();
@@ -832,6 +835,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     isReady, setIsReady,
     isMounted, setIsMounted,
     isSessionReady,
+    ignitionError,
     typingAgents, setTypingAgents,
     syncedLanes, setSyncedLanes,
     collapsedInsights, setCollapsedInsights,

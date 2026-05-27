@@ -536,7 +536,7 @@ fn default_vision_provider() -> String {
     "ollama".to_string()
 }
 fn default_embedding_model() -> String {
-    "gemma4".to_string()
+    "nomic-embed-text".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -556,11 +556,11 @@ impl Default for BrowserConfig {
 
 /// Controls the personality evolution system.
 /// Each agent independently evolves its SOUL.md based on user interactions.
-/// Default is OFF (opt-in) — set enabled=true to activate.
+/// Default is ON — set enabled=false to disable for isolated testing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvolutionConfig {
-    /// Master toggle: false = no evolution, agent behaves as static/pre-evolution
-    #[serde(default)]
+    /// Master toggle: true = evolution active, agent evolves from interactions
+    #[serde(default = "EvolutionConfig::default_enabled")]
     pub enabled: bool,
     /// How frequently the agent proposes mutations (0.0-1.0, lower = rarer)
     #[serde(default = "EvolutionConfig::default_mutation_rate")]
@@ -595,6 +595,9 @@ pub struct EvolutionConfig {
 }
 
 impl EvolutionConfig {
+    fn default_enabled() -> bool {
+        true
+    }
     fn default_mutation_rate() -> f32 {
         0.3
     }
@@ -627,7 +630,7 @@ impl EvolutionConfig {
 impl Default for EvolutionConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             mutation_rate: Self::default_mutation_rate(),
             require_approval: Self::default_require_approval(),
             immutable_sections: vec!["Core Laws".to_string()],

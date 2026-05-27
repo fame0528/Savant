@@ -113,10 +113,17 @@
 
         function copyAllLogs() {
             const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
-            if (window.__TAURI__ && window.__TAURI__.clipboard) {
-                window.__TAURI__.clipboard.writeText(lines).then(() => {
+            if (!lines) {
+                statusEl.textContent = 'No logs to copy';
+                statusEl.style.color = '#f9e2af';
+                return;
+            }
+            // Tauri v2 clipboard plugin
+            if (window.__TAURI__ && window.__TAURI__.core) {
+                window.__TAURI__.core.invoke('plugin:clipboard-manager|write_text', { text: lines }).then(() => {
                     showCopied();
-                }).catch(() => {
+                }).catch((e) => {
+                    console.error('[logs] Tauri clipboard invoke failed:', e);
                     fallbackCopy(lines);
                 });
             } else {

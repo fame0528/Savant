@@ -24,8 +24,8 @@ use crate::models::{verify_tool_pair_integrity, AgentMessage};
 
 /// Vector dimension for CortexaDB embeddings (default fallback only).
 /// Actual dimension should come from LsmConfig.vector_dimension.
-/// Must match OllamaEmbeddingService::dimensions() (2560 for gemma4:e4b).
-const DEFAULT_VECTOR_DIM: usize = 2560;
+/// Must match OllamaEmbeddingService::dimensions() (768 for nomic-embed-text).
+const DEFAULT_VECTOR_DIM: usize = 768;
 
 /// Maximum entries to retrieve per collection query.
 const MAX_BATCH_SIZE: usize = 100_000;
@@ -77,7 +77,7 @@ pub struct LsmStorageEngine {
 /// Configuration for the CortexaDB storage engine.
 #[derive(Debug, Clone)]
 pub struct LsmConfig {
-    /// Vector dimension for embeddings (default: 2560)
+    /// Vector dimension for embeddings (default: 768)
     pub vector_dimension: usize,
     /// Sync policy: true = sync after every write, false = async (default: true)
     pub strict_sync: bool,

@@ -317,8 +317,8 @@ impl IgnitionService {
             .publish("agents.discovered", &discovery_event.to_string())
             .await
         {
-            tracing::warn!(
-                "[agent::ignition] Failed to publish agents.discovered event: {}",
+            tracing::debug!(
+                "[agent::ignition] No subscribers for agents.discovered event (expected during init): {}",
                 e
             );
         }

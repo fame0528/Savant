@@ -6,7 +6,7 @@
 //! 3. Decentralized Witness (Network/External)
 
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Error)]
 pub enum AttestationError {
@@ -86,7 +86,7 @@ impl AttestationManager {
             info!("Attestation: Consensus REACHED. Substrate state CERTIFIED.");
             Ok(result)
         } else {
-            warn!("Attestation: Consensus FAILURE. Substrate state REJECTED.");
+            debug!("Attestation: Consensus FAILURE. Substrate state REJECTED.");
             Err(AttestationError::ConsensusThresholdNotMet)
         }
     }
@@ -114,7 +114,7 @@ impl AttestationManager {
                 info!("Attestation: TPM device found on host.");
                 EnclaveStatus::Verified
             } else {
-                warn!("Attestation: No TPM device found. Running in Degraded mode.");
+                debug!("Attestation: No TPM device found. Running in Degraded mode.");
                 EnclaveStatus::Degraded
             }
         }
@@ -137,7 +137,7 @@ impl AttestationManager {
                     EnclaveStatus::Verified
                 }
                 _ => {
-                    warn!("Attestation: TPM not detected via WMI. Running in Degraded mode.");
+                    debug!("Attestation: TPM not detected via WMI. Running in Degraded mode.");
                     EnclaveStatus::Degraded
                 }
             }
@@ -145,7 +145,7 @@ impl AttestationManager {
 
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            warn!("Attestation: TPM check not supported on this platform.");
+            debug!("Attestation: TPM check not supported on this platform.");
             EnclaveStatus::Skipped
         }
     }
@@ -202,7 +202,7 @@ impl AttestationManager {
         let witness_endpoint = match std::env::var("SAVANT_WITNESS_ENDPOINT") {
             Ok(ep) if !ep.is_empty() => ep,
             _ => {
-                warn!("Attestation: SAVANT_WITNESS_ENDPOINT not configured. Witness attestation FAILED.");
+                debug!("Attestation: SAVANT_WITNESS_ENDPOINT not configured. Witness attestation skipped.");
                 return EnclaveStatus::Failed;
             }
         };

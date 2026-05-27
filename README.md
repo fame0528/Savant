@@ -157,8 +157,6 @@ Savant implements a **mandatory security gate** for all skills. Every skill must
 
 <img src="img/savant.png" alt="Savant Logo" width="100" />
 
-<img src="img/dashboard.png" alt="Savant Real-Time Dashboard" width="850" />
-
 </div>
 
 Savant features a high-fidelity **Observability Dashboard** built with Next.js and Tauri. It provides real-time telemetry from the Axum gateway, strategic synthesis visualization, and direct monitoring of the Hybrid Memory Engine.

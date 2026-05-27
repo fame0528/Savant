@@ -586,6 +586,12 @@ pub struct EvolutionConfig {
     /// OCEAN Euclidean distance below which two agents trigger a convergence warning
     #[serde(default = "EvolutionConfig::default_divergence_threshold")]
     pub divergence_threshold: f32,
+    /// Quiet hours start (UTC hour, 0-23). Default: 3 (3AM UTC = 11PM EDT)
+    #[serde(default = "EvolutionConfig::default_quiet_hours_start")]
+    pub quiet_hours_start: u8,
+    /// Quiet hours end (UTC hour, 0-23). Default: 11 (11AM UTC = 7AM EDT)
+    #[serde(default = "EvolutionConfig::default_quiet_hours_end")]
+    pub quiet_hours_end: u8,
 }
 
 impl EvolutionConfig {
@@ -610,6 +616,12 @@ impl EvolutionConfig {
     fn default_divergence_threshold() -> f32 {
         0.1
     }
+    fn default_quiet_hours_start() -> u8 {
+        3 // 3AM UTC = 11PM EDT
+    }
+    fn default_quiet_hours_end() -> u8 {
+        11 // 11AM UTC = 7AM EDT
+    }
 }
 
 impl Default for EvolutionConfig {
@@ -624,6 +636,8 @@ impl Default for EvolutionConfig {
             digestion_cooldown_days: Self::default_digestion_cooldown_days(),
             min_conversations_before_evolution: Self::default_min_conversations(),
             divergence_threshold: Self::default_divergence_threshold(),
+            quiet_hours_start: Self::default_quiet_hours_start(),
+            quiet_hours_end: Self::default_quiet_hours_end(),
         }
     }
 }

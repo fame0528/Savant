@@ -132,11 +132,22 @@ impl ConsciousnessDaemon {
         workspace_path: std::path::PathBuf,
         shutdown: CancellationToken,
     ) -> Self {
+        Self::with_quiet_hours(llm, workspace_path, shutdown, 3, 11)
+    }
+
+    /// Create a daemon with custom quiet hours (UTC).
+    pub fn with_quiet_hours(
+        llm: Arc<dyn savant_core::traits::LlmProvider>,
+        workspace_path: std::path::PathBuf,
+        shutdown: CancellationToken,
+        quiet_start_utc: u8,
+        quiet_end_utc: u8,
+    ) -> Self {
         Self {
             entropy: EntropyCalculator::new(),
             synthesizer: NarrativeSynthesizer::new(2000),
             wonder: WonderEngine::new(),
-            budget: ConsciousnessBudget::new(),
+            budget: ConsciousnessBudget::with_quiet_hours(quiet_start_utc, quiet_end_utc),
             anti_echo: AntiEchoChamber::new(),
             current_state: ConsciousnessState::Idle,
             current_narrative: String::new(),

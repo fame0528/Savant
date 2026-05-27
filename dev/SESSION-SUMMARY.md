@@ -19,9 +19,11 @@
 ## What Happened This Session
 
 ### Problem
+
 User installed v0.3.2 release. App **failed to fully boot** — IGNITION FAILED at the embedding service. This was the 3rd-4th attempt on v0.3.2 without a successful launch.
 
 ### Root Cause (from boot log analysis)
+
 `gemma4:e4b` is a **text generation model**, NOT an embedding model. Ollama returned "No embedding in Ollama response." The fastembed fallback was not implemented (just returned an error). Additionally, the config `embedding_model` value was **never read** by the embedding service — it always used the hardcoded default.
 
 ### 6 Failure Points Identified & Fixed
@@ -36,7 +38,9 @@ User installed v0.3.2 release. App **failed to fully boot** — IGNITION FAILED 
 | 6 | **Logs window wrong screen** | No `x`/`y` coordinates — OS placed on primary/middle screen | Added `"x": -2560, "y": 0` (left monitor) |
 
 ### Additional Finding
+
 **Vision model ≠ embedding model.** These were conflated everywhere:
+
 - `SetupWizard.tsx` wrote the same Gemma tag to both `vision_model` AND `embedding_model`
 - `setup_check_handler` auto-detected Gemma and wrote it to both fields
 - `gemma4:e4b` is valid for vision/generation but NOT for embeddings
@@ -48,6 +52,7 @@ User installed v0.3.2 release. App **failed to fully boot** — IGNITION FAILED 
 ## Files Changed (this session)
 
 ### Core Embedding Fix (Fix 1 — 14 files)
+
 | File | Change |
 |------|--------|
 | `crates/core/src/utils/ollama_embeddings.rs` | `DEFAULT_MODEL` → `"nomic-embed-text"`, `dimensions()` → 768, added `NullEmbeddingProvider`, `create_embedding_service(model_override)`, `SAVANT_DISABLE_EMBEDDINGS` check |
@@ -65,6 +70,7 @@ User installed v0.3.2 release. App **failed to fully boot** — IGNITION FAILED 
 | `crates/gateway/src/handlers/setup.rs` | `setup_check_handler` writes `embedding_model = "nomic-embed-text"` separately from vision |
 
 ### Config Wiring (Fix 2 — 3 files)
+
 | File | Change |
 |------|--------|
 | `crates/agent/src/swarm.rs` | Added `embedding_model: String` to `SwarmConfig`, passes to `create_embedding_service(Some(&config.embedding_model))` |
@@ -72,6 +78,7 @@ User installed v0.3.2 release. App **failed to fully boot** — IGNITION FAILED 
 | `crates/core/src/utils/ollama_embeddings.rs` | `create_embedding_service(model_override: Option<&str>)` — uses override > env var > default |
 
 ### Other Fixes (Fix 4-7 — 32 files)
+
 | File | Change |
 |------|--------|
 | `crates/desktop/src-tauri/src/paths.rs` | `config_file()` → `self.base_config_path.join("savant.toml")` (removed double nesting) |

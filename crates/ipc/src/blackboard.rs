@@ -470,6 +470,7 @@ impl CapabilityRegistry {
                 .blackboard_creator::<u64>()
                 .max_readers(1024)
                 .max_nodes(10)
+                .add::<AgentCardCopy>(0, AgentCardCopy::default())
                 .create()
             {
                 Ok(svc) => break svc,

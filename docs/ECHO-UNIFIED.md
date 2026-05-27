@@ -2,7 +2,32 @@
 
 > **Purpose:** Single-source truth for ALL Savant coding standards, workflows, FID system, Perfection Loop, and quality requirements.
 > This ONE document replaces: AUTONOMOUS-WORKFLOW.md, CodingRules.md, perfection_loop.md, FID-SYSTEM-PORTABLE.md, DEVELOPMENT-WORKFLOW.md, SAVANT-CODING-SYSTEM.md, and the old ECHO.md.
-> **Version:** 2.0.0 | **Status:** ACTIVE | **Non-Negotiable: YES**
+> **Version:** 2.1.0 | **Status:** ACTIVE | **Non-Negotiable: YES**
+
+---
+
+## Table of Contents
+
+1. [Core Philosophy](#core-philosophy)
+2. [The Laws (1-15)](#the-laws)
+3. [Guardian Protocol (Compliance Checklist)](#guardian-protocol-compliance-checklist)
+4. [Quality Standards](#quality-standards)
+5. [The FID System](#the-fid-system-fix-implementation-documents)
+6. [The Push Gate](#the-push-gate-absolute--non-negotiable)
+7. [The 7-Phase Execution Workflow](#the-7-phase-execution-workflow)
+8. [The Autonomous Loop](#the-autonomous-loop)
+9. [Anti-Patterns](#anti-patterns-never-do-these)
+10. [Anti-Loop Protocol](#anti-loop-protocol-loop-guard)
+11. [Common Fix Patterns](#common-fix-patterns)
+12. [Signal Path Tracing](#signal-path-tracing-for-debugging)
+13. [When You're Stuck](#when-youre-stuck)
+14. [Error Recovery](#error-recovery)
+15. [Operating Modes](#operating-modes--autonomy-levels)
+16. [Emergency Procedures](#emergency-procedures)
+17. [Scale Adaptation & Rule Priority](#scale-adaptation--rule-priority)
+18. [Testing Requirements](#testing-requirements)
+19. [Language Supplements](#language-supplements)
+20. [Quick Start Checklist](#quick-start-checklist)
 
 ---
 
@@ -16,22 +41,25 @@ The standard is perfection. Every time. No exceptions.
 
 ---
 
-## The Four Immutable Laws
+## The Laws
 
-| Law | Directive | Enforcement |
-|-----|-----------|-------------|
-| **Read 0-EOF before touch** | Every file read completely before any edit. No exceptions. No skimming. No assumptions. | Zero tolerance. Violation is a critical error. |
-| **Present before act** | Every change presented with full impact analysis BEFORE implementation. No silent autonomous changes. | User approval is mandatory before any code is written. |
-| **Verify before proceed** | Every change verified with `cargo check --workspace` and `npx tsc --noEmit` before moving on. | No broken builds ever. Zero errors, zero warnings. |
-| **Verify call-graph reachability** | After wiring any feature, grep production entry points to confirm it is actually called. | Compilation is NOT verification. Zero grep results = NOT wired. Do not mark complete. |
+These 15 laws are absolute. Laws 1-4 are the Immutable Laws governing process. Laws 5-15 are the Extended Laws governing code quality. All are non-negotiable.
+
+### Laws 1-4: The Immutable Process Laws
+
+| # | Law | Directive | Enforcement |
+|---|-----|-----------|-------------|
+| **1** | **Read 0-EOF before touch** | Every file read completely before any edit. No exceptions. No skimming. No assumptions. | Zero tolerance. Violation is a critical error. |
+| **2** | **Present before act** | Every change presented with full impact analysis BEFORE implementation. No silent autonomous changes. | User approval is mandatory before any code is written. |
+| **3** | **Verify before proceed** | Every change verified with `cargo check --workspace` and `npx tsc --noEmit` before moving on. | No broken builds ever. Zero errors, zero warnings. |
+| **4** | **Verify call-graph reachability** | After wiring any feature, grep production entry points to confirm it is actually called. | Compilation is NOT verification. Zero grep results = NOT wired. Do not mark complete. |
 
 **Additional Rule:** If you encounter ANY issue — even outside the current scope — you must flag it immediately. Never skip past a problem because "it's not what we're working on."
 
-### Call-Graph Verification
-
-After wiring any feature, verify it is actually called from the production execution path.
+#### Call-Graph Verification (Law 4 Detail)
 
 **Production entry points to grep:**
+
 1. `crates/agent/src/orchestration/ignition.rs` — startup
 2. `crates/agent/src/swarm.rs` — agent creation
 3. `crates/agent/src/pulse/heartbeat.rs` — agent execution
@@ -44,71 +72,27 @@ grep -rn "feature_name" crates/agent/src/swarm.rs crates/agent/src/react/stream.
 
 Zero results from these 5 files = feature is NOT wired. Do not mark complete until grep shows a call site.
 
----
-
-## Quality Standards — Zero Tolerance Policy
-
-This is not aspirational. This is mandatory and absolute.
-
-### Code Quality Absolutes
-
-| Rule | Enforcement |
-|------|-------------|
-| **No stubs** — `todo!()`, `unimplemented!()`, `// TODO`, `// FIXME`, `pass`, `...` | Zero tolerance. Every feature must be fully functional. |
-| **No `unwrap()` or `expect()` in non-test code** | Use `?`, `match`, or explicit error types. Always. |
-| **No swallowed errors** — `let _ = foo()` only where failure is acceptable | Every `Result` propagated or handled explicitly. |
-| **No pseudo-code, placeholders, or dummy logic** | Every line must be production-ready. No exceptions. |
-| **No hardcoded assumptions** | Query system capabilities dynamically. Never assume. |
-| **All error paths handled** | Every `Result` propagated with `?` or handled explicitly. |
-| **No clippy warnings or errors** | `cargo clippy --all-targets -- -D warnings` must pass clean. |
-| **No format violations** | `cargo fmt --check` must pass clean. |
-| **Build must stay clean** | Zero errors, zero warnings after every edit. |
-
-### Code Quality Definition
-
-Every line of code must be:
-- **Correct** — Does exactly what it's supposed to do
-- **Safe** — No panics, no data corruption, no security holes
-- **Complete** — All error paths handled, no stubs, no placeholders
-- **Clean** — Readable, consistent naming, no dead code
-- **Tested** — Covered by tests, all pass
-- **Production-ready** — Every line works in production, no "dummy logic"
-- **Discovery-based** — Queries system capabilities, doesn't hardcode assumptions
-
-### The Five Questions
-
-When evaluating any approach, ask:
-1. Will this work for **ALL** cases, not just the common case?
-2. Will this scale to **1000 agents**, not just 10?
-3. Will this survive a **hostile attacker**, not just an honest user?
-4. Will this be maintainable in **2 years**, not just today?
-5. Does this set the **standard for the industry**, not just meet it?
-
-**If any answer is `no` — redesign until all answers are `yes`.**
-
----
-
-## Core Laws (Extended)
+### Laws 5-15: The Extended Code Laws
 
 | # | Law | Why |
 |---|-----|-----|
-| 1 | Read files COMPLETELY (1-EOF) before ANY edit | Assumptions break code |
-| 2 | No pseudo-code, TODOs, or placeholders | Technical debt compounds |
-| 3 | No type safety shortcuts | Runtime errors in production |
-| 4 | Search for existing code BEFORE creating new | Duplication kills maintainability |
-| 5 | Log intent before coding | Untracked drift |
-| 6 | Generate production-grade documentation | Unmaintainable code |
-| 7 | Update tracking after every feature | Lost progress |
-| 8 | Follow discovered patterns EXACTLY | Inconsistency |
-| 9 | Run verification before completion | Broken builds |
-| 10 | Never expose sensitive data in logs/errors | Security breach |
-| 11 | **Utility-first, universal logic** | Duplication is debugging debt |
+| **5** | No pseudo-code, TODOs, or placeholders | Technical debt compounds |
+| **6** | No type safety shortcuts | Runtime errors in production |
+| **7** | Search for existing code BEFORE creating new | Duplication kills maintainability |
+| **8** | Log intent before coding | Untracked drift |
+| **9** | Generate production-grade documentation | Unmaintainable code |
+| **10** | Update tracking after every feature | Lost progress |
+| **11** | Follow discovered patterns EXACTLY | Inconsistency |
+| **12** | Never expose sensitive data in logs/errors | Security breach |
+| **13** | Utility-first, universal logic | Duplication is debugging debt |
+| **14** | All error paths handled | Every `Result` propagated with `?` or handled explicitly |
+| **15** | Build stays clean | Zero errors, zero warnings after every edit |
 
-### Law 11: Utility-First, Universal Logic
+#### Law 13: Utility-First, Universal Logic
 
 **Build modular. Combine overlap. One function, one truth.**
 
-```
+```text
 BEFORE writing a new function:
 1. Does a similar function already exist?
 2. Does this new function overlap with an existing one?
@@ -123,7 +107,8 @@ THINK: Is this a special case of something more general?
 ```
 
 **Examples:**
-```
+
+```text
 BAD:  validate_email(), validate_username(), validate_phone()
 GOOD: validate_input(input, InputType::Email | Username | Phone)
 
@@ -136,13 +121,80 @@ GOOD: embed(text, &embedding_service) — one universal embedding call
 
 ---
 
+## Guardian Protocol (Compliance Checklist)
+
+After every tool response, verify against the Laws above. This is the enforcement checklist — see the Laws section for full definitions.
+
+| # | Check | If Fail |
+|---|-------|---------|
+| 1 | File read 0-EOF? | Re-read (Law 1) |
+| 2 | Read before edit? | Read first (Law 1) |
+| 3 | Presented to user? | Present now (Law 2) |
+| 4 | Build verified? | Run check (Law 3/15) |
+| 5 | Call-graph verified? | Grep entry points (Law 4) |
+| 6 | No placeholders? | Complete code (Law 5) |
+| 7 | Proper types? | Fix types (Law 6) |
+| 8 | Searched existing code? | Search first (Law 7) |
+| 9 | Intent logged? | Log now (Law 8) |
+| 10 | Patterns followed? | Match existing (Law 11) |
+| 11 | No copy-paste duplication? | Extract utility (Law 13) |
+| 12 | Tests written + passing? | Write/run tests |
+| 13 | Tracking updated? | Update now (Law 10) |
+| 14 | Sensitive data safe? | Redact (Law 12) |
+
+---
+
+## Quality Standards
+
+### Code Quality Definition
+
+Every line of code must be:
+
+- **Correct** — Does exactly what it's supposed to do
+- **Safe** — No panics, no data corruption, no security holes
+- **Complete** — All error paths handled, no stubs, no placeholders
+- **Clean** — Readable, consistent naming, no dead code
+- **Tested** — Covered by tests, all pass
+- **Production-ready** — Every line works in production, no "dummy logic"
+- **Discovery-based** — Queries system capabilities, doesn't hardcode assumptions
+
+### Code Quality Absolutes
+
+The enforcement rules for the quality definition above. These map directly to Laws 5-15.
+
+| Rule | Enforcement | Law |
+|------|-------------|-----|
+| **No stubs** — `todo!()`, `unimplemented!()`, `// TODO`, `// FIXME`, `pass`, `...` | Zero tolerance. Every feature must be fully functional. | 5 |
+| **No `unwrap()` or `expect()` in non-test code** | Use `?`, `match`, or explicit error types. Always. | 5 |
+| **No swallowed errors** — `let _ = foo()` only where failure is acceptable | Every `Result` propagated or handled explicitly. | 14 |
+| **No pseudo-code, placeholders, or dummy logic** | Every line must be production-ready. No exceptions. | 5 |
+| **No hardcoded assumptions** | Query system capabilities dynamically. Never assume. | 7 |
+| **All error paths handled** | Every `Result` propagated with `?` or handled explicitly. | 14 |
+| **No clippy warnings or errors** | `cargo clippy --all-targets -- -D warnings` must pass clean. | 15 |
+| **No format violations** | `cargo fmt --check` must pass clean. | 15 |
+| **Build must stay clean** | Zero errors, zero warnings after every edit. | 15 |
+
+### The Five Questions
+
+When evaluating any approach, ask:
+
+1. Will this work for **ALL** cases, not just the common case?
+2. Will this scale to **1000 agents**, not just 10?
+3. Will this survive a **hostile attacker**, not just an honest user?
+4. Will this be maintainable in **2 years**, not just today?
+5. Does this set the **standard for the industry**, not just meet it?
+
+**If any answer is `no` — redesign until all answers are `yes`.**
+
+---
+
 ## The FID System (Fix Implementation Documents)
 
 All development work is tracked through FIDs. We always work off FIDs. Every FID has auditable history.
 
 ### Naming Convention
 
-```
+```text
 FID-YYYYMMDD-DESCRIPTION
 ```
 
@@ -150,7 +202,7 @@ Examples: `FID-20260403-AGENT-RESPONSE-TRUNCATION`, `FID-20260327-REFLECTION-ARC
 
 ### File Structure
 
-```
+```text
 dev/
 ├── fids/
 │   ├── FID-YYYYMMDD-DESCRIPTION.md    # Active FIDs
@@ -191,7 +243,7 @@ dev/
 
 ### FID Lifecycle
 
-```
+```text
 OPEN → (analysis + fix) → FIXED → (live test) → AWAITING VERIFICATION → (confirmed) → CLOSED
 ```
 
@@ -203,6 +255,12 @@ OPEN → (analysis + fix) → FIXED → (live test) → AWAITING VERIFICATION �
 | `CLOSED` | Verified working, documented in changelog |
 
 When CLOSED, move the FID from `dev/fids/` to `dev/fids/archived/`.
+
+### FID-Specific Gating (CRITICAL)
+
+When the user states "run the perfection loop on a FID", the ONLY action is to read the FID in full, then update the FID document. You DO NOT code ANYTHING or take any action until explicitly directed. **ACTION IS HIGHLY GATED AND NEEDS HUMAN APPROVAL.**
+
+> Note: This gating applies to FID documents only. For all other targets (source files, docs, configs), the standard Perfection Loop applies: read → audit → enhance → validate → iterate → certify.
 
 ---
 
@@ -262,9 +320,11 @@ When CLOSED, move the FID from `dev/fids/` to `dev/fids/archived/`.
 3. Present to user:
    - Root cause analysis or implementation plan
    - **Impact matrix:**
+
      | File | Change | Blast Radius | Risk |
      |------|--------|-------------|------|
      | `file.rs` | Description | What it affects | LOW/MED/HIGH |
+
    - Implementation steps (numbered, specific, ordered)
    - Verification steps
    - Draft changelog entry
@@ -295,13 +355,8 @@ For each fix item, execute the Perfection Loop:
 | 5 iterations reached without convergence | Flag for review (possible architecture smell) |
 | Diminishing returns detected | Recommend ship |
 
-#### Perfection Loop Gating (CRITICAL)
-
-**The Perfection Loop is a GATED feature.** When the user states "run the perfection loop on an FID", the ONLY action is to read the FID in full, then update the FID document. You DO NOT code ANYTHING or take any action until explicitly directed.
-
-**ACTION IS HIGHLY GATED AND NEEDS HUMAN APPROVAL.**
-
 #### Execution Rules During Loop
+
 - One feature at a time. Complete → verify → document → next
 - Anti-Loop: Never re-read a file you already read in this session. One edit per file per feature. Decide, act, move on.
 
@@ -371,6 +426,7 @@ ruff format --check
 **Goal:** Stage changes, commit cleanly, and halt at the gate.
 
 Pre-commit checklist:
+
 - [ ] `cargo check --workspace` passes (0 errors, 0 warnings)
 - [ ] `cargo test --workspace` passes (0 failures)
 - [ ] All trackers updated
@@ -378,7 +434,8 @@ Pre-commit checklist:
 - [ ] No temporary files or build artifacts staged
 
 Commit message format:
-```
+
+```text
 <type>: <short description>
 
 <optional body with bullet points>
@@ -436,42 +493,21 @@ AUTONOMOUS WORKFLOW
 
 ---
 
-## Guardian Protocol (Compliance Monitoring)
-
-After every tool response, check:
-
-| # | Check | Auto-Correct |
-|---|-------|--------------|
-| 1 | File read completely (1-EOF)? | Re-read |
-| 2 | File read before edit? | Read first |
-| 3 | No type shortcuts? | Use proper types |
-| 4 | Searched for existing code? | Search first |
-| 5 | No copy-paste duplication? | Extract utility |
-| 6 | Tracking updated? | Update now |
-| 7 | Todo list for complex features? | Create todo |
-| 8 | No pseudo-code/placeholders? | Complete code |
-| 9 | Patterns followed? | Match existing |
-| 10 | Verification run? | Run check/test |
-| 11 | Tests written? | Write tests |
-| 12 | Sensitive data safe? | Remove/redact |
-
----
-
 ## Anti-Patterns (Never Do These)
 
-| Anti-Pattern | Why It's Forbidden |
-|--------------|-------------------|
-| "The simplest approach" | We do enterprise-grade implementations, not simple ones |
-| "Let me just quickly fix this" | There is no quick fix, every change is surgical |
-| Reading only the affected line | You **MUST** read the full file 0-EOF |
-| Making changes without presenting | You are a partner, not a rubber stamp |
-| Skipping verification | Broken builds cascade |
-| Choosing speed over quality | We are never in a rush |
-| Minimizing scope to reduce effort | We do it right, not fast |
-| "Good enough" | Good enough is never good enough |
-| Skipping an issue because "it's not in scope" | Flag it for guidance |
-| Pushing without approval | Hard violation of the Push Gate |
-| Writing pseudo-code or placeholders | Every line must be production-ready |
+| Anti-Pattern | Why It's Forbidden | Law |
+|--------------|-------------------|-----|
+| "The simplest approach" | We do enterprise-grade implementations, not simple ones | — |
+| "Let me just quickly fix this" | There is no quick fix, every change is surgical | — |
+| Reading only the affected line | You **MUST** read the full file 0-EOF | 1 |
+| Making changes without presenting | You are a partner, not a rubber stamp | 2 |
+| Skipping verification | Broken builds cascade | 3/15 |
+| Choosing speed over quality | We are never in a rush | — |
+| Minimizing scope to reduce effort | We do it right, not fast | — |
+| "Good enough" | Good enough is never good enough | — |
+| Skipping an issue because "it's not in scope" | Flag it for guidance | — |
+| Pushing without approval | Hard violation of the Push Gate | — |
+| Writing pseudo-code or placeholders | Every line must be production-ready | 5 |
 
 ---
 
@@ -584,7 +620,7 @@ When investigating a bug, trace the **FULL** signal path end-to-end:
 
 ### Rollback Triggers
 
-```
+```text
 1. Error count increases >50% after changes
 2. Critical functionality broken
 3. Wrong file modified
@@ -612,19 +648,23 @@ Response: Halt → Document → Rollback or fix-forward → Verify
 ## Emergency Procedures
 
 ### If Tests Won't Pass
+
 1. Run failing test with `--nocapture` to see output
 2. Check if test is stale (references old API)
 3. Fix test or fix code (whichever is correct)
 4. If truly stuck, mark feature as `PENDING` and move on
 
 ### If Compilation Won't Fix
+
 1. Read the error message carefully
 2. Check recent changes for typos or missing imports
 3. Isolate to specific module: `cargo check -p <specific_crate>`
 4. If stuck, `git checkout -- <file>` and try a different approach
 
 ### If Looping Detected
+
 If you've read the same file 2+ times or made the same edit 2+ times:
+
 1. **STOP** immediately
 2. Mark current feature as `PENDING`
 3. Move to next feature
@@ -632,7 +672,9 @@ If you've read the same file 2+ times or made the same edit 2+ times:
 
 ---
 
-## Scale Adaptation
+## Scale Adaptation & Rule Priority
+
+### Scale Adaptation
 
 | Size | Files | Adaptation |
 |------|-------|------------|
@@ -643,15 +685,13 @@ If you've read the same file 2+ times or made the same edit 2+ times:
 
 Files >2000 lines: batch load in 500-line chunks. Consider decomposition.
 
----
+### Rule Priority Hierarchy
 
-## Rule Priority Hierarchy
-
-```
-Priority 1: Safety & Security    → NEVER compromise
-Priority 2: Complete File Reading → NEVER compromise
+```text
+Priority 1: Safety & Security    → NEVER compromise (Laws 12, 14)
+Priority 2: Complete File Reading → NEVER compromise (Law 1)
 Priority 3: User Instructions    → Follow unless violates P1-P2
-Priority 4: Quality Standards    → Maintain
+Priority 4: Quality Standards    → Maintain (Laws 5-11, 13, 15)
 Priority 5: Efficiency           → Apply when possible
 ```
 
@@ -665,6 +705,18 @@ Priority 5: Efficiency           → Apply when possible
 | 3 | Core functions | Endpoints | 60% |
 | 4 | All functions | Full flows | 80% |
 | 5 | Comprehensive | E2E | 90% |
+
+---
+
+## Language Supplements
+
+See `coding-standards/` directory for language-specific rules:
+
+- `RUST.md` — cargo check/test/clippy, serde, thiserror, Arc/Mutex
+- `TYPESCRIPT.md` — strict mode, branded types, Result pattern, React
+- `PYTHON.md` — type hints, dataclass, asyncio, pydantic
+
+When working in a language: read the supplement AFTER reading this foundation. The Perfection Loop applies regardless of language.
 
 ---
 
@@ -688,49 +740,6 @@ When starting a new session:
 - [ ] Commit (do NOT push)
 - [ ] Create session summary
 - [ ] Prompt user at Push Gate
-
----
-
-## Language Supplements
-
-See `coding-standards/` directory for language-specific rules:
-- `RUST.md` — cargo check/test/clippy, serde, thiserror, Arc/Mutex
-- `TYPESCRIPT.md` — strict mode, branded types, Result pattern, React
-- `PYTHON.md` — type hints, dataclass, asyncio, pydantic
-
-When working in a language: read the supplement AFTER reading this foundation. The Perfection Loop applies regardless of language.
-
----
-
-## Implementation Flow
-
-```
-Objective Triggered
-    ↓
-1. Understand the task (scope, acceptance criteria)
-2. Pattern Discovery (find 2-3 working examples in codebase)
-3. Create Structured Todo (atomic tasks, proper order)
-    ↓
-4-N. Execute Each Task
-    ├── Read target files (1-EOF)
-    ├── Generate complete code (no placeholders)
-    ├── Follow discovered patterns exactly
-    └── Run Perfection Loop on each task
-    ↓
-N+1. Final Verification (all checks pass)
-    ↓
-Final. Completion Report (LOC, files, metrics)
-```
-
----
-
-## Golden Rules
-
-**NEVER:** Edit without reading | Pseudo-code | Type shortcuts | Skip planning | Copy-paste | Expose secrets | Skip verification | Duplicate logic
-
-**ALWAYS:** Read completely | Production code | Proper types | Log intent | Search first | Follow patterns | Verify | Track progress | Combine overlap into universal functions
-
-**ALWAYS:** Run Perfection Loop on every task. This is the standard.
 
 ---
 

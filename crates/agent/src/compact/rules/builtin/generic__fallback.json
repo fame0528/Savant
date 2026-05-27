@@ -24,7 +24,12 @@
         "tail_lines": 50,
         "max_chars": 8000
     },
-    "failure_mode": "aggressive_truncate",
+    "failure_mode": {
+        "aggressive_truncate": {
+            "head_lines": 100,
+            "tail_lines": 50
+        }
+    },
     "budget_ms": 5,
     "output_hint": "text",
     "min_compression_ratio": 0.0

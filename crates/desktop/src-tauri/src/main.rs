@@ -152,12 +152,31 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
     let config_path_str = if config_path.exists() {
         Some(config_path.to_string_lossy().into_owned())
     } else {
-        warn!("  config not found at {:?} — using defaults", config_path);
-        if let Err(e) = app_handle.emit("system-log-event", "  config: NOT FOUND (using defaults)")
-        {
-            eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+        // Fallback: check ~/.savant/savant.toml (Config::load_from default)
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string());
+        let global_config = std::path::PathBuf::from(&home)
+            .join(".savant")
+            .join("savant.toml");
+        if global_config.exists() {
+            info!(
+                "  config not found at {:?}, using global fallback: {:?}",
+                config_path, global_config
+            );
+            Some(global_config.to_string_lossy().into_owned())
+        } else {
+            warn!(
+                "  config not found at {:?} or {:?} — using defaults",
+                config_path, global_config
+            );
+            if let Err(e) =
+                app_handle.emit("system-log-event", "  config: NOT FOUND (using defaults)")
+            {
+                eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+            }
+            None
         }
-        None
     };
 
     // Set SAVANT_PROJECT_ROOT for Config::load_from to anchor project root.

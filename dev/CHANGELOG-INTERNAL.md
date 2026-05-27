@@ -8,7 +8,23 @@
 
 ## [Unreleased]
 
-_No changes yet. This section tracks work after the v0.3.2 release._
+### 2026-05-27: Onboarding Boot Failures — 6 Fixes
+
+**FID:** `FID-20260527-ONBOARDING-BOOT-FAILURES.md`
+
+**Problem:** Post-install onboarding completely broken. Agent silently dies during boot. Consciousness daemon gets 401 on every LLM call. Config path mismatch between desktop and ignition. Browser config relative path fails in packaged builds. FileIndexer creates DB at double-nested path.
+
+**Root Cause:** 6 distinct failures — CapabilityRegistry missing `.add()` seed entry, consciousness provider missing env var fallback, two independent config resolvers disagreeing on paths, relative path fallback in ignition, FileIndexer double-joining `.savant`, compact rule JSON using unit variant for struct variant enum.
+
+**Fix:**
+- `crates/ipc/src/blackboard.rs` (+1 line): Added `.add::<AgentCardCopy>(0, AgentCardCopy::default())` before `.create()` in `CapabilityRegistry::new()`
+- `crates/agent/src/swarm.rs` (+4/-1 lines): Added `OR_MASTER_KEY`/`OPENROUTER_API_KEY` env var fallback in `create_consciousness_provider()`
+- `crates/agent/src/swarm.rs` (+1/-1 lines): Fixed FileIndexer double `.savant` path
+- `crates/desktop/src-tauri/src/main.rs` (+14/-5 lines): Added `~/.savant/savant.toml` fallback when desktop config path missing
+- `crates/agent/src/orchestration/ignition.rs` (+3/-1 lines): Replaced relative `"config/savant.toml"` fallback with `Config::primary_config_path()`
+- `crates/agent/src/compact/rules/builtin/generic__fallback.json` (+4/-1 lines): Fixed `failure_mode` from unit variant to struct variant
+
+**Status:** Code changes implemented, verification passed
 
 ---
 

@@ -356,9 +356,11 @@ impl IgnitionService {
             skills_path: config.resolve_path("./skills"),
             blackboard_name: "savant_swarm".into(),
             collective_name: "savant_collective".into(),
-            config_file: Some(std::path::PathBuf::from(
-                config_path.unwrap_or("config/savant.toml"),
-            )),
+            config_file: Some(
+                config_path
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(Config::primary_config_path),
+            ),
             privacy: config.privacy.clone(),
             trajectory: config.trajectory.clone(),
             embedding_model: config.browser.embedding_model.clone(),

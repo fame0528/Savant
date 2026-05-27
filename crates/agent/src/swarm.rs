@@ -525,7 +525,7 @@ impl SwarmController {
         let ws_path = agent_cfg.workspace_path.clone();
         let agent_id_for_index = agent_id.clone();
         tokio::spawn(async move {
-            let db_path = ws_path.join(".savant").join("file_index.db");
+            let db_path = ws_path.join("file_index.db");
             let indexer = savant_core::fs::FileIndexer::new(db_path);
             if let Err(e) = indexer.init_db() {
                 tracing::warn!(
@@ -1452,7 +1452,12 @@ impl SwarmController {
             .model
             .clone()
             .unwrap_or_else(|| "openrouter/healer-alpha".to_string());
-        let api_key = agent_cfg.api_key.clone().unwrap_or_default();
+        let api_key = agent_cfg
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("OR_MASTER_KEY").ok())
+            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+            .unwrap_or_default();
 
         match agent_cfg.model_provider {
             ModelProvider::OpenRouter | ModelProvider::OpenGateway => {

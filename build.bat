@@ -72,50 +72,60 @@ if /i "%BUILD_TARGET%"=="cli" (
 
 :build_both
 echo   Building Savant Desktop...
-call cargo tauri build --bundles msi,nsis --manifest-path crates\desktop\src-tauri\Cargo.toml
+cd /d "%REPO_ROOT%\crates\desktop\src-tauri"
+call cargo tauri build --bundles msi,nsis
 if %errorlevel% neq 0 (
     echo   Desktop build failed, retrying after delay...
     timeout /t 15 /nobreak >nul
-    call cargo tauri build --bundles msi,nsis --manifest-path crates\desktop\src-tauri\Cargo.toml
+    call cargo tauri build --bundles msi,nsis
 )
+cd /d "%REPO_ROOT%"
 echo.
 echo   Building CLI Companion...
-call cargo tauri build --bundles msi,nsis --manifest-path crates\cli\crates\gui\src-tauri\Cargo.toml
+cd /d "%REPO_ROOT%\crates\cli\crates\gui\src-tauri"
+call cargo tauri build --bundles msi,nsis
 if %errorlevel% neq 0 (
     echo   CLI build failed, retrying after delay...
     timeout /t 15 /nobreak >nul
-    call cargo tauri build --bundles msi,nsis --manifest-path crates\cli\crates\gui\src-tauri\Cargo.toml
+    call cargo tauri build --bundles msi,nsis
 )
+cd /d "%REPO_ROOT%"
 goto :done
 
 :build_desktop
 echo   Building Savant Desktop...
-call cargo tauri build --bundles msi,nsis --manifest-path crates\desktop\src-tauri\Cargo.toml
+cd /d "%REPO_ROOT%\crates\desktop\src-tauri"
+call cargo tauri build --bundles msi,nsis
 if %errorlevel% neq 0 (
     echo   Desktop build failed, retrying after delay...
     timeout /t 15 /nobreak >nul
-    call cargo tauri build --bundles msi,nsis --manifest-path crates\desktop\src-tauri\Cargo.toml
+    call cargo tauri build --bundles msi,nsis
     if %errorlevel% neq 0 (
         echo ERROR: Desktop build failed after retry!
+        cd /d "%REPO_ROOT%"
         pause
         exit /b 1
     )
 )
+cd /d "%REPO_ROOT%"
 goto :done
 
 :build_cli
 echo   Building CLI Companion...
-call cargo tauri build --bundles msi,nsis --manifest-path crates\cli\crates\gui\src-tauri\Cargo.toml
+cd /d "%REPO_ROOT%\crates\cli\crates\gui\src-tauri"
+call cargo tauri build --bundles msi,nsis
 if %errorlevel% neq 0 (
     echo   CLI build failed, retrying after delay...
     timeout /t 15 /nobreak >nul
-    call cargo tauri build --bundles msi,nsis --manifest-path crates\cli\crates\gui\src-tauri\Cargo.toml
+    call cargo tauri build --bundles msi,nsis
     if %errorlevel% neq 0 (
         echo ERROR: CLI build failed after retry!
+        cd /d "%REPO_ROOT%"
         pause
         exit /b 1
     )
 )
+cd /d "%REPO_ROOT%"
 goto :done
 
 :done

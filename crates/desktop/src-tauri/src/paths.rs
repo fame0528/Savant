@@ -40,6 +40,28 @@ impl SavantPathResolver {
             })?;
         }
 
+        // Workspaces directory — required for agent discovery
+        let workspaces_dir = app_data_dir.join("workspaces");
+        if !workspaces_dir.exists() {
+            std::fs::create_dir_all(&workspaces_dir).map_err(|e| {
+                format!(
+                    "Failed to create workspaces directory at {:?}: {}",
+                    workspaces_dir, e
+                )
+            })?;
+        }
+
+        // Scaffold default agent (.savant) if workspaces is empty
+        let default_agent_dir = workspaces_dir.join(".savant");
+        if !default_agent_dir.exists() {
+            std::fs::create_dir_all(&default_agent_dir).map_err(|e| {
+                format!(
+                    "Failed to create default agent directory at {:?}: {}",
+                    default_agent_dir, e
+                )
+            })?;
+        }
+
         Ok(Self {
             base_data_path: app_data_dir,
             base_config_path: config_dir,

@@ -240,7 +240,14 @@ pub async fn start_gateway(
             std::env::var("SAVANT_CORS_ORIGINS")
                 .ok()
                 .map(|s| s.split(',').map(|o| o.trim().to_string()).collect())
-                .unwrap_or_else(|| vec!["http://localhost:3000".to_string()])
+                .unwrap_or_else(|| {
+                    vec![
+                        "http://localhost:3000".to_string(),
+                        "http://127.0.0.1:3000".to_string(),
+                        "tauri://localhost".to_string(),
+                        "https://tauri.localhost".to_string(),
+                    ]
+                })
         } else {
             config.server.cors_origins.clone()
         };

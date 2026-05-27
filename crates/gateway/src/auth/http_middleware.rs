@@ -16,7 +16,15 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 /// Paths that do not require authentication.
-const PUBLIC_PATHS: &[&str] = &["/health", "/live", "/ready", "/ws", "/ws/canvas"];
+const PUBLIC_PATHS: &[&str] = &[
+    "/health",
+    "/live",
+    "/ready",
+    "/ws",
+    "/ws/canvas",
+    "/api/setup/",
+    "/api/config/",
+];
 
 /// Constant-time byte comparison to prevent timing attacks.
 ///

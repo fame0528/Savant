@@ -17,7 +17,12 @@ static VISION_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock
     reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
-        .expect("CRITICAL: Failed to build vision HTTP client")
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "Failed to build custom vision HTTP client, falling back to default: {e}"
+            );
+            reqwest::Client::new()
+        })
 });
 
 pub struct BrowserTool {
@@ -305,7 +310,11 @@ impl BrowserTool {
     ) -> Result<String, SavantError> {
         let patterns: Vec<String> = payload["patterns"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         if patterns.is_empty() {
             return Err(SavantError::InvalidInput(String::from(
@@ -529,14 +538,16 @@ async fn call_vision_model(
         "stream": false,
     });
 
+    let ollama_url = format!("{}/api/generate", config.ollama_url);
     let resp = VISION_CLIENT
-        .post("http://127.0.0.1:11434/api/generate")
+        .post(&ollama_url)
         .json(&body)
         .send()
         .await
         .map_err(|e| {
             SavantError::OperationFailed(format!(
-                "Ollama request failed. Is Ollama running on port 11434? Error: {e}"
+                "Ollama request failed. Is Ollama running at {}? Error: {e}",
+                config.ollama_url
             ))
         })?;
 

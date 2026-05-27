@@ -173,7 +173,10 @@ impl Engine {
                 Command::Delete(id) => {
                     // Delete may refer to a missing segment entry in crash scenarios.
                     if let Err(e) = segments.delete_entry(*id) {
-                        log::debug!("[cortexadb] Delete entry failed (may be expected during recovery): {}", e);
+                        log::debug!(
+                            "[cortexadb] Delete entry failed (may be expected during recovery): {}",
+                            e
+                        );
                     }
                 }
                 Command::Connect { .. } | Command::Disconnect { .. } => {}

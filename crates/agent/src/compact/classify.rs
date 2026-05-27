@@ -2,7 +2,15 @@
 
 use crate::compact::schema::*;
 use aho_corasick::AhoCorasick;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+
+/// Empty Aho-Corasick automaton used as fallback when pattern compilation fails.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "empty string pattern is a known-valid Aho-Corasick input"
+)]
+static EMPTY_AC: LazyLock<AhoCorasick> =
+    LazyLock::new(|| AhoCorasick::new([""]).expect("empty pattern is always valid"));
 
 /// Result of classifying a tool output against the rule registry.
 #[derive(Debug, Clone)]
@@ -21,8 +29,7 @@ pub struct ClassificationResult {
 pub struct RuleMatcher {
     /// Aho-Corasick automaton for tool name matching.
     tool_ac: AhoCorasick,
-    /// Pattern strings (for index -> rule mapping).
-    #[allow(dead_code)]
+    /// Pattern strings (for index -> rule mapping). Exposed for diagnostic use.
     tool_patterns: Vec<String>,
     /// Rule indices corresponding to patterns.
     tool_rule_indices: Vec<Vec<usize>>,
@@ -54,7 +61,7 @@ impl RuleMatcher {
             tool_rule_indices.push(indices);
         }
 
-        let tool_ac = AhoCorasick::new(&tool_patterns).unwrap_or_else(|_| AhoCorasick::new([""]).unwrap());
+        let tool_ac = AhoCorasick::new(&tool_patterns).unwrap_or_else(|_| EMPTY_AC.clone());
 
         Self {
             tool_ac,
@@ -176,7 +183,11 @@ impl RuleMatcher {
         }
 
         // Output heuristic matching
-        let probe = if output.len() > 512 { &output[..512] } else { output };
+        let probe = if output.len() > 512 {
+            &output[..512]
+        } else {
+            output
+        };
         for heuristic in &rule.heuristic_regexes {
             if heuristic.is_match(probe) {
                 score += 15;
@@ -193,7 +204,11 @@ impl RuleMatcher {
             return true;
         }
         // Check entropy of first 256 bytes
-        let sample = if output.len() > 256 { &output[..256] } else { output };
+        let sample = if output.len() > 256 {
+            &output[..256]
+        } else {
+            output
+        };
         Self::calculate_entropy(sample) > 7.5
     }
 
@@ -252,9 +267,17 @@ impl RuleMatcher {
         self.rules.len()
     }
 
+    /// Returns the compiled tool name patterns for diagnostic display.
+    pub fn tool_patterns(&self) -> &[String] {
+        &self.tool_patterns
+    }
+
     /// Finds the generic/fallback rule.
     pub fn find_fallback(&self) -> Option<Arc<CompiledRule>> {
-        self.rules.iter().find(|r| r.rule.id == "generic/fallback").cloned()
+        self.rules
+            .iter()
+            .find(|r| r.rule.id == "generic/fallback")
+            .cloned()
     }
 }
 

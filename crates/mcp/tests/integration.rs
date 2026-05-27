@@ -4,13 +4,11 @@
 
 use savant_mcp::circuit::CircuitBreaker;
 use std::collections::HashMap;
-use std::hash::Hasher;
 
-/// Helper to hash an auth token the same way the server does
+/// Helper to hash an auth token the same way the server does (blake3)
 fn hash_token(token: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hasher.write(token.as_bytes());
-    format!("{:x}", hasher.finish())
+    let hash = blake3::hash(token.as_bytes());
+    hash.to_hex().to_string()
 }
 
 // ============================================================================
@@ -153,7 +151,7 @@ fn test_circuit_breaker_concurrent_failures() {
     }
 
     for h in handles {
-        h.join().unwrap();
+        h.join().expect("thread should not panic");
     }
 
     assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Open);
@@ -169,4 +167,3 @@ fn test_circuit_breaker_reset() {
     assert_eq!(cb.state(), savant_mcp::circuit::BreakerState::Closed);
     assert!(cb.allow_request());
 }
-

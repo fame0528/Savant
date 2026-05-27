@@ -34,6 +34,13 @@ pub trait LlmProvider: Send + Sync {
     fn context_window(&self) -> Option<usize> {
         None
     }
+
+    /// Returns true if the underlying model supports multimodal input (images).
+    /// When true, the provider should handle `ChatMessage.images` as inline image data.
+    /// When false, the agent loop will use the vision service to describe images instead.
+    fn supports_multimodal(&self) -> bool {
+        false
+    }
 }
 
 /// OMEGA-VIII: Semantic Embedding Provider Trait
@@ -113,6 +120,52 @@ pub trait MemoryBackend: Send + Sync {
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<crate::types::TurnState>, SavantError>;
+
+    // --- Memory Lifecycle Operations (default no-ops for backends that don't support them) ---
+
+    /// Run the promotion cycle — score, archive, and promote memories based on access patterns.
+    async fn run_promotion_cycle(&self, _agent_id: &str) -> Result<(), SavantError> {
+        Ok(())
+    }
+
+    /// Synthesize lessons from recurring memory patterns.
+    async fn synthesize_lessons(&self, _agent_id: &str) -> Result<(), SavantError> {
+        Ok(())
+    }
+
+    /// Synthesize insights from concept clusters in the MAGMA graph.
+    async fn synthesize_insights(&self, _agent_id: &str) -> Result<(), SavantError> {
+        Ok(())
+    }
+
+    /// Retrieve synthesized lessons as formatted context for agent injection.
+    async fn get_lessons_context(&self) -> String {
+        String::new()
+    }
+
+    /// Retrieve synthesized insights as formatted context for agent injection.
+    async fn get_insights_context(&self) -> String {
+        String::new()
+    }
+
+    /// Extract entities from recent memories and populate the entity graph.
+    async fn extract_entities(&self, _agent_id: &str) -> Result<(), SavantError> {
+        Ok(())
+    }
+
+    /// Restore memory state from a snapshot.
+    async fn restore_state(&self, _agent_id: &str) -> Result<(), SavantError> {
+        Ok(())
+    }
+
+    /// Auto-recall relevant memories for the current context.
+    async fn auto_recall(
+        &self,
+        _agent_id: &str,
+        _query: &str,
+    ) -> Result<Vec<ChatMessage>, SavantError> {
+        Ok(vec![])
+    }
 }
 
 #[async_trait]
@@ -238,6 +291,18 @@ pub trait Tool: Send + Sync {
     /// Default: 60. Override for tools that need more time.
     fn timeout_secs(&self) -> u64 {
         60
+    }
+
+    /// When this tool should be used. Helps the LLM pick the right tool.
+    /// Default: empty (no guidance). Override to provide usage heuristics.
+    fn when_to_use(&self) -> &str {
+        ""
+    }
+
+    /// When this tool should NOT be used. Helps prevent wrong tool selection.
+    /// Default: empty (no guidance). Override to provide anti-patterns.
+    fn when_not_to_use(&self) -> &str {
+        ""
     }
 
     /// Execute the tool with a JSON payload.

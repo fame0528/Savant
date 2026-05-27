@@ -37,7 +37,10 @@ impl FreeModelRouter {
     /// Currently only has one option: openrouter/free.
     pub fn select_model(attempt: u32) -> ModelAttempt {
         if attempt > 0 {
-            warn!("Model selection: attempt {} — only cloud fallback available", attempt);
+            warn!(
+                "Model selection: attempt {} — only cloud fallback available",
+                attempt
+            );
         }
         ModelAttempt {
             model: FREE_ROUTER.to_string(),

@@ -3,7 +3,6 @@ use crate::traits::EmbeddingProvider;
 use async_trait::async_trait;
 use lru::LruCache;
 use std::num::NonZeroUsize;
-use std::sync::Mutex;
 use tracing::{error, info, warn};
 
 #[allow(clippy::disallowed_methods)]
@@ -18,7 +17,7 @@ pub struct OllamaEmbeddingService {
     client: reqwest::Client,
     url: String,
     model: String,
-    cache: Mutex<LruCache<String, Vec<f32>>>,
+    cache: tokio::sync::Mutex<LruCache<String, Vec<f32>>>,
 }
 
 impl OllamaEmbeddingService {
@@ -34,7 +33,7 @@ impl OllamaEmbeddingService {
             client: crate::net::secure_client_fallible()?,
             url,
             model,
-            cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),
+            cache: tokio::sync::Mutex::new(LruCache::new(CACHE_CAPACITY)),
         })
     }
 
@@ -47,7 +46,7 @@ impl OllamaEmbeddingService {
             client: crate::net::secure_client_fallible()?,
             url: url.to_string(),
             model: model.to_string(),
-            cache: Mutex::new(LruCache::new(CACHE_CAPACITY)),
+            cache: tokio::sync::Mutex::new(LruCache::new(CACHE_CAPACITY)),
         })
     }
 
@@ -95,10 +94,7 @@ impl EmbeddingProvider for OllamaEmbeddingService {
     async fn embed(&self, text: &str) -> Result<Vec<f32>, SavantError> {
         // Check cache
         {
-            let mut cache = self
-                .cache
-                .lock()
-                .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
+            let mut cache = self.cache.lock().await;
             if let Some(cached) = cache.get(text) {
                 return Ok(cached.clone());
             }
@@ -108,10 +104,7 @@ impl EmbeddingProvider for OllamaEmbeddingService {
 
         // Cache result
         {
-            let mut cache = self
-                .cache
-                .lock()
-                .map_err(|_| SavantError::Unknown("Cache lock poisoned".to_string()))?;
+            let mut cache = self.cache.lock().await;
             cache.put(text.to_string(), embedding.clone());
         }
 
@@ -308,27 +301,46 @@ pub async fn create_embedding_service() -> Result<Box<dyn EmbeddingProvider>, Sa
         match auto_start_ollama().await {
             Ok(()) => info!("Ollama auto-started successfully"),
             Err(e) => {
-                error!("CRITICAL: Cannot start Ollama: {}", e);
-                error!("Ollama is required for vector embeddings. The system cannot function without it.");
-                error!("Install from: https://ollama.com/download");
-                error!("Then run: ollama pull <your-gemma-variant>");
-                return Err(SavantError::Unknown(format!(
-                    "Ollama is not running and could not be auto-started: {}. \
-                     Install Ollama from https://ollama.com/download and run: ollama pull <your-gemma-variant>",
-                    e
-                )));
+                error!("Ollama auto-start failed: {}. Falling back to fastembed.", e);
+                return create_fastembed_fallback();
             }
         }
     }
 
     // Step 3: Ensure the embedding model is available
-    ensure_model(&client, &url, &model).await?;
+    match ensure_model(&client, &url, &model).await {
+        Ok(()) => {}
+        Err(e) => {
+            warn!("Ollama model check failed: {}. Falling back to fastembed.", e);
+            return create_fastembed_fallback();
+        }
+    }
 
-    // Step 4: Create and return the Ollama embedding service
+    // Step 4: Test the embedding service
     let ollama = OllamaEmbeddingService::with_config(&url, &model)?;
-    info!(
-        "Ollama embedding service initialized (model={}, dims=2560)",
-        model
-    );
-    Ok(Box::new(ollama))
+    // Verify it works by embedding a test string
+    match ollama.embed("test").await {
+        Ok(_) => {
+            info!(
+                "Ollama embedding service initialized (model={}, dims=2560)",
+                model
+            );
+            Ok(Box::new(ollama))
+        }
+        Err(e) => {
+            warn!("Ollama embedding test failed: {}. Falling back to fastembed.", e);
+            create_fastembed_fallback()
+        }
+    }
+}
+
+/// Creates a fallback embedding service when Ollama is unavailable.
+/// Currently returns an error — fastembed crate not yet integrated.
+fn create_fastembed_fallback() -> Result<Box<dyn EmbeddingProvider>, SavantError> {
+    Err(SavantError::Unknown(
+        "Embedding service unavailable: Ollama is not running and fastembed fallback \
+         is not yet integrated. Install Ollama from https://ollama.com/download \
+         or set SAVANT_DISABLE_EMBEDDINGS=1 to skip embedding features."
+            .to_string(),
+    ))
 }

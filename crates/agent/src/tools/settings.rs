@@ -1,9 +1,14 @@
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 
 /// Internal Settings Tool
@@ -26,12 +31,20 @@ impl SettingsTool {
         }
     }
 
-    fn read_settings(&self) -> Result<HashMap<String, String>, String> {
+    /// PB-20: Creates a SettingsTool with the settings file resolved within the workspace.
+    pub fn with_workspace(workspace_dir: &std::path::Path) -> Self {
+        Self {
+            settings_path: workspace_dir.join("settings.json"),
+        }
+    }
+
+    async fn read_settings(&self) -> Result<HashMap<String, String>, String> {
         if !self.settings_path.exists() {
             return Ok(HashMap::new());
         }
 
-        let content = fs::read_to_string(&self.settings_path)
+        let content = tokio::fs::read_to_string(&self.settings_path)
+            .await
             .map_err(|e| format!("Failed to read settings: {}", e))?;
 
         let settings: HashMap<String, String> = serde_json::from_str(&content)
@@ -40,11 +53,12 @@ impl SettingsTool {
         Ok(settings)
     }
 
-    fn write_settings(&self, settings: &HashMap<String, String>) -> Result<(), String> {
+    async fn write_settings(&self, settings: &HashMap<String, String>) -> Result<(), String> {
         let content = serde_json::to_string_pretty(settings)
             .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 
-        fs::write(&self.settings_path, content)
+        tokio::fs::write(&self.settings_path, content)
+            .await
             .map_err(|e| format!("Failed to write settings: {}", e))?;
 
         Ok(())
@@ -78,6 +92,7 @@ impl Tool for SettingsTool {
 
         let mut settings = self
             .read_settings()
+            .await
             .map_err(SavantError::OperationFailed)?;
 
         match action {
@@ -114,6 +129,7 @@ impl Tool for SettingsTool {
 
                 settings.insert(key.to_string(), value.to_string());
                 self.write_settings(&settings)
+                    .await
                     .map_err(SavantError::OperationFailed)?;
 
                 Ok(format!("Successfully updated setting: {} = {}", key, value))

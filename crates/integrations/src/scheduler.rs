@@ -8,8 +8,8 @@ use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
 use tokio::sync::watch;
+use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
@@ -65,14 +65,18 @@ impl SyncScheduler {
 
         loop {
             tokio::select! {
-                _ = shutdown_rx.wait_for(|v| *v) => {
-                    info!("[integrations] Sync scheduler shutting down gracefully");
-                    // Persist state before exit
-                    let state = self.state.read().await;
-                    if let Err(e) = state.save(&self.state_path).await {
-                        warn!("[integrations] Failed to persist sync state on shutdown: {}", e);
+                result = shutdown_rx.changed() => {
+                    // Check if shutdown was requested (avoids holding Ref across await)
+                    let should_shutdown = result.is_ok() && *shutdown_rx.borrow();
+                    if should_shutdown {
+                        info!("[integrations] Sync scheduler shutting down gracefully");
+                        // Persist state before exit
+                        let state = self.state.read().await;
+                        if let Err(e) = state.save(&self.state_path).await {
+                            warn!("[integrations] Failed to persist sync state on shutdown: {}", e);
+                        }
+                        break;
                     }
-                    break;
                 }
                 _ = ticker.tick() => {
                     if let Err(e) = self.sync_all().await {
@@ -164,11 +168,7 @@ impl SyncScheduler {
                     new_count += 1;
                 }
             }
-            state.update_cursor(
-                &kind.to_string(),
-                result.next_cursor.clone(),
-                new_count,
-            );
+            state.update_cursor(&kind.to_string(), result.next_cursor.clone(), new_count);
             state.increment_daily_count(new_count as u32);
         }
 
@@ -214,7 +214,9 @@ mod tests {
     fn test_sync_cursor_update() {
         let mut state = SyncState::default();
         state.update_cursor("gmail", Some("cursor123".to_string()), 10);
-        let cursor = state.get_cursor("gmail").expect("cursor should exist after update");
+        let cursor = state
+            .get_cursor("gmail")
+            .expect("cursor should exist after update");
         assert_eq!(cursor.cursor, Some("cursor123".to_string()));
         assert_eq!(cursor.last_fetch_count, 10);
     }

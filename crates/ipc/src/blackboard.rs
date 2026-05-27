@@ -214,7 +214,9 @@ impl SwarmBlackboard {
                 Err(e) => {
                     return Err(SwarmIpcError::ServiceCreation(format!(
                         "Blackboard '{}' creation failed after {} attempts: {}",
-                        base_name, max_attempts + 1, e
+                        base_name,
+                        max_attempts + 1,
+                        e
                     )));
                 }
             }
@@ -457,9 +459,11 @@ impl CapabilityRegistry {
                 format!("{}_{}", base_name, attempt)
             };
 
-            let iox_name: iceoryx2::prelude::ServiceName = candidate.as_str().try_into().map_err(|e: iceoryx2::service::service_name::ServiceNameError| {
-                SwarmIpcError::ServiceCreation(e.to_string())
-            })?;
+            let iox_name: iceoryx2::prelude::ServiceName = candidate.as_str().try_into().map_err(
+                |e: iceoryx2::service::service_name::ServiceNameError| {
+                    SwarmIpcError::ServiceCreation(e.to_string())
+                },
+            )?;
 
             match node
                 .service_builder(&iox_name)
@@ -479,7 +483,9 @@ impl CapabilityRegistry {
                 Err(e) => {
                     return Err(SwarmIpcError::ServiceCreation(format!(
                         "CapabilityRegistry '{}' creation failed after {} attempts: {}",
-                        base_name, max_attempts + 1, e
+                        base_name,
+                        max_attempts + 1,
+                        e
                     )));
                 }
             }
@@ -508,10 +514,12 @@ impl CapabilityRegistry {
             SwarmIpcError::AccessViolation(format!("Failed to create writer: {}", e))
         })?;
 
-        let entry = writer.entry::<AgentCardCopy>(&agent_id)
-            .map_err(|e| SwarmIpcError::AccessViolation(format!(
-                "Agent {} not found in registry: {}", agent_id, e
-            )))?;
+        let entry = writer.entry::<AgentCardCopy>(&agent_id).map_err(|e| {
+            SwarmIpcError::AccessViolation(format!(
+                "Agent {} not found in registry: {}",
+                agent_id, e
+            ))
+        })?;
 
         entry.update_with_copy(AgentCardCopy::from_agent_card(*card));
 
@@ -525,7 +533,10 @@ impl CapabilityRegistry {
     }
 
     /// Reads an AgentCard for the given agent_id.
-    pub fn get_agent(&self, agent_id: u64) -> Result<crate::a2a::agent_card::AgentCard, SwarmIpcError> {
+    pub fn get_agent(
+        &self,
+        agent_id: u64,
+    ) -> Result<crate::a2a::agent_card::AgentCard, SwarmIpcError> {
         let reader = self.service.reader_builder().create().map_err(|e| {
             SwarmIpcError::AccessViolation(format!("Failed to create reader: {}", e))
         })?;
@@ -546,9 +557,7 @@ impl CapabilityRegistry {
         let Ok(reader) = self.service.reader_builder().create() else {
             return false;
         };
-        reader
-            .entry::<AgentCardCopy>(&agent_id)
-            .is_ok()
+        reader.entry::<AgentCardCopy>(&agent_id).is_ok()
     }
 
     /// Removes an agent from the registry.
@@ -610,6 +619,53 @@ impl CapabilityRegistry {
         best.map(|(id, card, _)| (id, card))
     }
 
+    /// Finds the top N agents matching the required skills and semantic similarity.
+    ///
+    /// Returns up to `top_n` agents sorted by match score (best first).
+    /// Used for speculative delegation where multiple agents try the same task
+    /// and the best result is selected via entropy-based scoring.
+    pub fn find_top_agents(
+        &self,
+        required_skills: u128,
+        top_n: usize,
+        semantic_similarity_fn: &dyn Fn(&crate::a2a::agent_card::AgentCard) -> f32,
+    ) -> Vec<(u64, crate::a2a::agent_card::AgentCard)> {
+        let reader = match self.service.reader_builder().create() {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut candidates: Vec<(u64, crate::a2a::agent_card::AgentCard, f32)> = Vec::new();
+
+        let ids = match self.registered_ids.read() {
+            Ok(ids) => ids,
+            Err(_) => return Vec::new(),
+        };
+
+        for agent_id in ids.iter() {
+            if let Ok(entry) = reader.entry::<AgentCardCopy>(agent_id) {
+                let card = entry.get().to_agent_card();
+                if !card.is_available() {
+                    continue;
+                }
+                if !card.has_skills(required_skills) {
+                    continue;
+                }
+                let similarity = semantic_similarity_fn(&card);
+                let score = card.match_score(similarity, required_skills);
+                candidates.push((*agent_id, card, score));
+            }
+        }
+
+        // Sort by score descending (best first)
+        candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(top_n);
+        candidates
+            .into_iter()
+            .map(|(id, card, _)| (id, card))
+            .collect()
+    }
+
     /// Returns the service name for this registry.
     pub fn service_name(&self) -> &str {
         &self.service_name
@@ -618,10 +674,7 @@ impl CapabilityRegistry {
 
 impl Drop for CapabilityRegistry {
     fn drop(&mut self) {
-        info!(
-            "Shutting down capability registry '{}'",
-            self.service_name
-        );
+        info!("Shutting down capability registry '{}'", self.service_name);
     }
 }
 
@@ -646,6 +699,8 @@ impl Default for AgentCardCopy {
 impl AgentCardCopy {
     fn from_agent_card(card: crate::a2a::agent_card::AgentCard) -> Self {
         let mut data = [0u8; std::mem::size_of::<crate::a2a::agent_card::AgentCard>()];
+        // SAFETY: AgentCard is #[repr(C)], so its memory layout is stable and deterministic.
+        // The size is known at compile time and we're copying exactly that many bytes.
         let card_bytes = unsafe {
             std::slice::from_raw_parts(
                 &card as *const _ as *const u8,
@@ -658,6 +713,8 @@ impl AgentCardCopy {
 
     fn to_agent_card(self) -> crate::a2a::agent_card::AgentCard {
         let mut card = crate::a2a::agent_card::AgentCard::new([0u8; 32], "");
+        // SAFETY: AgentCard is #[repr(C)], so its memory layout is stable and deterministic.
+        // We're writing exactly size_of::<AgentCard>() bytes into a properly initialized instance.
         let card_bytes = unsafe {
             std::slice::from_raw_parts_mut(
                 &mut card as *mut _ as *mut u8,
@@ -683,7 +740,7 @@ mod capability_registry_tests {
     }
 
     #[test]
-    #[ignore] // Requires iceoryx2 runtime environment
+    #[cfg(target_os = "linux")] // iceoryx2 requires POSIX shared memory runtime (Linux only)
     fn test_capability_registry_creation() {
         let registry = CapabilityRegistry::new("test_cap_registry", 128);
         assert!(registry.is_ok());

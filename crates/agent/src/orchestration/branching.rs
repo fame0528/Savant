@@ -38,17 +38,17 @@ impl HyperCausalEngine {
         Self { max_branches }
     }
 
+    /// Returns the maximum number of parallel branches this engine supports.
+    pub fn max_branches(&self) -> usize {
+        self.max_branches
+    }
+
     /// Tools with side effects must NOT be executed speculatively.
     /// These tools modify state and running them 3x would cause data corruption.
     fn is_side_effect_tool(name: &str) -> bool {
         matches!(
             name,
-            "file_delete"
-                | "file_move"
-                | "file_create"
-                | "file_atomic_edit"
-                | "shell"
-                | "foundation"
+            "file_delete" | "file_move" | "file_create" | "file_atomic_edit" | "foundation"
         )
     }
 
@@ -65,7 +65,26 @@ impl HyperCausalEngine {
                 "HCC: Side-effect tool '{}' detected — executing directly (no speculation)",
                 tool.name()
             );
-            return tool.execute(payload).await;
+            // Wrap in tokio::spawn to isolate panics — tool panic must not crash the agent
+            let tool_name = tool.name().to_string();
+            let handle = tokio::spawn(async move { tool.execute(payload).await });
+            return match handle.await {
+                Ok(result) => result,
+                Err(join_err) if join_err.is_panic() => {
+                    tracing::error!(
+                        tool = tool_name,
+                        "Tool panicked during execution — agent continues"
+                    );
+                    Err(SavantError::Unknown(format!(
+                        "Tool '{}' panicked during execution",
+                        tool_name
+                    )))
+                }
+                Err(join_err) => Err(SavantError::Unknown(format!(
+                    "Tool '{}' task cancelled: {}",
+                    tool_name, join_err
+                ))),
+            };
         }
 
         info!(
@@ -91,20 +110,33 @@ impl HyperCausalEngine {
                     // Informational Density: Lower compression ratio = Higher entropy/originality
                     match zstd::Encoder::new(Vec::new(), 3) {
                         Ok(mut encoder) => {
-                            encoder.write_all(res.as_bytes()).unwrap_or_default();
-                            let compressed = encoder.finish().unwrap_or_default();
-
-                            let original_size = res.len() as f32;
-                            let compressed_size = compressed.len() as f32;
-
-                            // Ratio of informational novelty (higher is better)
-                            if original_size > 0.0 {
-                                compressed_size / original_size
-                            } else {
+                            if let Err(e) = encoder.write_all(res.as_bytes()) {
+                                tracing::warn!("Zstd write failed: {}", e);
                                 0.0
+                            } else {
+                                match encoder.finish() {
+                                    Ok(compressed) => {
+                                        let original_size = res.len() as f32;
+                                        let compressed_size = compressed.len() as f32;
+
+                                        // Ratio of informational novelty (higher is better)
+                                        if original_size > 0.0 {
+                                            compressed_size / original_size
+                                        } else {
+                                            0.0
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Zstd finish failed: {}", e);
+                                        0.0
+                                    }
+                                }
                             }
                         }
-                        Err(_) => 0.0,
+                        Err(e) => {
+                            tracing::warn!("Zstd encoder creation failed: {}", e);
+                            0.0
+                        }
                     }
                 } else {
                     0.0
@@ -223,20 +255,37 @@ impl HyperCausalEngine {
             if let Ok((idx, Ok(ref text))) = result {
                 let entropy_gain = match zstd::Encoder::new(Vec::new(), 3) {
                     Ok(mut encoder) => {
-                        encoder.write_all(text.as_bytes()).unwrap_or_default();
-                        let compressed = encoder.finish().unwrap_or_default();
-                        let original_size = text.len() as f32;
-                        let compressed_size = compressed.len() as f32;
-                        if original_size > 0.0 {
-                            compressed_size / original_size
-                        } else {
+                        if let Err(e) = encoder.write_all(text.as_bytes()) {
+                            tracing::warn!("Zstd write failed: {}", e);
                             0.0
+                        } else {
+                            match encoder.finish() {
+                                Ok(compressed) => {
+                                    let original_size = text.len() as f32;
+                                    let compressed_size = compressed.len() as f32;
+                                    if original_size > 0.0 {
+                                        compressed_size / original_size
+                                    } else {
+                                        0.0
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Zstd finish failed: {}", e);
+                                    0.0
+                                }
+                            }
                         }
                     }
-                    Err(_) => 0.0,
+                    Err(e) => {
+                        tracing::warn!("Zstd encoder creation failed: {}", e);
+                        0.0
+                    }
                 };
 
-                if best.as_ref().is_none_or(|(_, _, best_entropy)| entropy_gain < *best_entropy) {
+                if best
+                    .as_ref()
+                    .is_none_or(|(_, _, best_entropy)| entropy_gain < *best_entropy)
+                {
                     best = Some((idx, text.clone(), entropy_gain));
                 }
             }
@@ -261,6 +310,7 @@ impl HyperCausalEngine {
 }
 
 #[cfg(test)]
+#[expect(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use async_trait::async_trait;

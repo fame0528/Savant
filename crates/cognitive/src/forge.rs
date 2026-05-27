@@ -21,6 +21,10 @@ impl From<ConfigChromosome> for DspConfig {
             beta: c.beta,
             max_speculative_steps: 10,
             max_history_size: 1000,
+            genetic_max_generations: 100,
+            genetic_convergence_threshold: 0.01,
+            genetic_population_size: 50,
+            genetic_mutation_rate: 0.1,
         }
     }
 }
@@ -29,6 +33,8 @@ impl From<ConfigChromosome> for DspConfig {
 pub struct GeneticForge {
     pub population_size: usize,
     pub mutation_rate: f32,
+    pub max_generations: usize,
+    pub convergence_threshold: f32,
 }
 
 impl GeneticForge {
@@ -36,6 +42,19 @@ impl GeneticForge {
         Self {
             population_size,
             mutation_rate,
+            max_generations: 100,
+            convergence_threshold: 0.01,
+        }
+    }
+
+    /// Creates a GeneticForge from a DspConfig, reading genetic parameters
+    /// from the configuration instead of using hardcoded values.
+    pub fn from_config(config: &DspConfig) -> Self {
+        Self {
+            population_size: config.genetic_population_size,
+            mutation_rate: config.genetic_mutation_rate,
+            max_generations: config.genetic_max_generations,
+            convergence_threshold: config.genetic_convergence_threshold,
         }
     }
 
@@ -61,8 +80,8 @@ impl GeneticForge {
         let mut generations_since_improvement = 0;
         const CONVERGENCE_PLATEAU: usize = 3;
 
-        // Perform up to 50 generations of evolution with early stopping (HS-009)
-        for gen in 0..50 {
+        // Perform up to max_generations of evolution with early stopping (HS-009)
+        for gen in 0..self.max_generations {
             // 1. Evaluate Fitness (structured for potential SIMD autovectorization)
             let mut fitness_scores: Vec<(f32, ConfigChromosome)> = population
                 .iter()
@@ -78,7 +97,7 @@ impl GeneticForge {
             let current_best = fitness_scores[0].0;
 
             // 🏰 AAA: Convergence Detection Logic
-            if current_best > best_fitness + 1e-7 {
+            if current_best > best_fitness + self.convergence_threshold {
                 best_fitness = current_best;
                 generations_since_improvement = 0;
             } else {
@@ -103,8 +122,12 @@ impl GeneticForge {
 
             let mut next_gen = survivors.clone();
             while next_gen.len() < self.population_size {
-                let Some(parent1) = survivors.choose(&mut rng) else { break };
-                let Some(parent2) = survivors.choose(&mut rng) else { break };
+                let Some(parent1) = survivors.choose(&mut rng) else {
+                    break;
+                };
+                let Some(parent2) = survivors.choose(&mut rng) else {
+                    break;
+                };
                 let parent1 = *parent1;
                 let parent2 = *parent2;
 

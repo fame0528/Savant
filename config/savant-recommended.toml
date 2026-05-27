@@ -1,0 +1,78 @@
+# Savant Recommended Configuration
+# This config enables all features wired in FIDs A-G.
+# Copy to savant.toml and customize for your environment.
+# Features gated behind config toggles are enabled by default here.
+
+[ai]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-4"
+manifestation_model = "anthropic/claude-opus-4"
+temperature = 0.7
+top_p = 0.9
+frequency_penalty = 0.0
+presence_penalty = 0.0
+max_tokens = 4096
+
+[telemetry]
+log_level = "info"
+log_color = true
+enable_tracing = true
+panopticon_enabled = true
+otlp_endpoint = "http://localhost:4317"
+replay_max_events = 10000
+
+[obsidian]
+enabled = true
+vault_path = ""
+sync_interval_secs = 300
+max_files = 15000
+cold_storage_days = 90
+background_sync = true
+background_watcher = true
+file_extensions = ["md", "txt"]
+
+[evolution]
+enabled = true
+
+[privacy]
+enabled = true
+
+[trajectory]
+enabled = true
+max_events = 100000
+
+[mcp]
+servers = [
+  # Add your MCP servers here
+  # { name = "filesystem", url = "ws://localhost:3001/mcp" },
+  # { name = "github", url = "ws://localhost:3002/mcp", auth_token = "ghp_..." },
+]
+
+[integrations]
+# Add your provider configs here
+# [integrations.gmail]
+# access_token = "ya29..."
+# max_messages = 50
+# label_filters = ["INBOX", "IMPORTANT"]
+#
+# [integrations.notion]
+# integration_token = "secret_..."
+# database_ids = []
+# max_pages = 50
+
+[channels]
+[channels.discord]
+enabled = false
+# token = "your-discord-bot-token"
+
+[channels.telegram]
+enabled = false
+# token = "your-telegram-bot-token"
+
+[channels.whatsapp]
+enabled = false
+# api_token = "your-whatsapp-token"
+
+[channels.matrix]
+enabled = false
+# access_token = "your-matrix-token"

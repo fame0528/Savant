@@ -8,8 +8,10 @@
 //! speculation depth to achieve up to 1.65x latency reduction while preventing
 //! runaway token consumption.
 
+pub mod forge;
 pub mod predictor;
 pub mod synthesis;
-pub mod forge;
 
+pub use forge::GeneticForge;
 pub use predictor::{DspConfig, DspPredictor};
+pub use synthesis::SynthesisEngine;

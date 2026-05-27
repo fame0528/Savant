@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  gateway:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - savant-data:/app/data
+      - savant-workspaces:/app/workspaces
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  savant-data:
+  savant-workspaces:
+  ollama-data:

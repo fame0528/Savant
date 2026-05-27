@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tokio::fs;
 use tracing::{info, warn};
@@ -32,7 +32,7 @@ pub struct SyncState {
     /// Last budget reset date.
     pub last_budget_reset: Option<String>,
     /// Global dedup set (content hashes).
-    pub global_dedup: Vec<String>,
+    pub global_dedup: HashSet<String>,
 }
 
 impl SyncState {
@@ -42,7 +42,13 @@ impl SyncState {
             return Self::default();
         }
         match fs::read_to_string(path).await {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Ok(content) => serde_json::from_str(&content).unwrap_or_else(|e| {
+                warn!(
+                    "[integrations] Sync state file corrupted, resetting to default: {}",
+                    e
+                );
+                SyncState::default()
+            }),
             Err(e) => {
                 warn!("[integrations] Failed to load sync state: {}", e);
                 Self::default()
@@ -54,7 +60,9 @@ impl SyncState {
     pub async fn save(&self, path: &PathBuf) -> crate::error::IntegrationResult<()> {
         let content = serde_json::to_string_pretty(self)
             .map_err(crate::error::IntegrationError::SerializationError)?;
-        fs::write(path, content).await.map_err(crate::error::IntegrationError::IoError)?;
+        fs::write(path, content)
+            .await
+            .map_err(crate::error::IntegrationError::IoError)?;
         Ok(())
     }
 
@@ -73,14 +81,12 @@ impl SyncState {
 
     /// Adds a content hash to the dedup set.
     pub fn add_dedup(&mut self, hash: String) {
-        if !self.global_dedup.contains(&hash) {
-            self.global_dedup.push(hash);
-        }
+        self.global_dedup.insert(hash);
     }
 
     /// Checks if a content hash is in the dedup set.
     pub fn is_duplicate(&self, hash: &str) -> bool {
-        self.global_dedup.contains(&hash.to_string())
+        self.global_dedup.contains(hash)
     }
 
     /// Checks and resets daily budget if date changed.

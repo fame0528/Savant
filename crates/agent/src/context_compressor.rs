@@ -7,7 +7,6 @@ pub struct ContextCompressor {
     trigger_threshold: f64,
     preserve_head_turns: usize,
     preserve_tail_turns: usize,
-    #[allow(dead_code)]
     max_summary_tokens: usize,
     cooldown: Duration,
     last_compression: Mutex<Option<Instant>>,
@@ -62,11 +61,12 @@ impl ContextCompressor {
     pub fn partition<'a>(
         &self,
         messages: &'a [ChatMessage],
-    ) -> (Vec<&'a ChatMessage>, Vec<&'a ChatMessage>, Vec<&'a ChatMessage>) {
-        let head: Vec<&ChatMessage> = messages
-            .iter()
-            .take(self.preserve_head_turns)
-            .collect();
+    ) -> (
+        Vec<&'a ChatMessage>,
+        Vec<&'a ChatMessage>,
+        Vec<&'a ChatMessage>,
+    ) {
+        let head: Vec<&ChatMessage> = messages.iter().take(self.preserve_head_turns).collect();
         let tail: Vec<&ChatMessage> = messages
             .iter()
             .rev()
@@ -78,7 +78,11 @@ impl ContextCompressor {
         let middle: Vec<&ChatMessage> = messages
             .iter()
             .skip(self.preserve_head_turns)
-            .take(messages.len().saturating_sub(self.preserve_head_turns + self.preserve_tail_turns))
+            .take(
+                messages
+                    .len()
+                    .saturating_sub(self.preserve_head_turns + self.preserve_tail_turns),
+            )
             .collect();
         (head, middle, tail)
     }
@@ -111,8 +115,15 @@ impl ContextCompressor {
         )
     }
 
+    /// Estimate token count. Uses div_ceil for consistency with budget.rs.
     pub fn estimate_tokens(text: &str) -> usize {
-        text.len() / 4
+        text.len().div_ceil(4)
+    }
+
+    /// Returns the maximum token count for a compressed summary.
+    /// Callers should truncate LLM-generated summaries to this length.
+    pub fn max_summary_tokens(&self) -> usize {
+        self.max_summary_tokens
     }
 }
 

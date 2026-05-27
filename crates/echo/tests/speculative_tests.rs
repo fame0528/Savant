@@ -30,7 +30,7 @@ mod echo_speculative_tests {
 
         // Transition to half-open (reset_duration=0 means immediate)
         metrics.record_outcome(true); // This triggers time-based check
-        // After transition, need consecutive successes to reset
+                                      // After transition, need consecutive successes to reset
         metrics.record_outcome(true);
         metrics.record_outcome(true);
 

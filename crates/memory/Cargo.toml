@@ -1,8 +1,8 @@
 [package]
 name = "savant_memory"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [dependencies]
 # Storage substrate (CortexaDB vector+graph engine)
@@ -33,9 +33,11 @@ futures = "0.3"
 savant_core = { path = "../core" }
 savant_ipc = { path = "../ipc" }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+regex-lite = "0.1"
+lru = "0.12"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+[lints]
+workspace = true
 
 [dev-dependencies]
 tracing-subscriber = "0.3"
@@ -45,3 +47,4 @@ tempfile = "3"
 default = []
 persist_sync = []
 kani = []
+test-utils = []

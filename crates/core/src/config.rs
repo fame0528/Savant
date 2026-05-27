@@ -34,8 +34,17 @@ pub struct Config {
     pub project_root: PathBuf,
     #[serde(default)]
     pub proactive: ProactiveConfig,
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
+    #[serde(default)]
+    pub trajectory: TrajectoryConfig,
+    #[serde(default)]
+    pub resource_governor: ResourceGovernorConfig,
+    #[serde(default)]
+    pub integrations: IntegrationsConfig,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -55,6 +64,10 @@ impl Default for Config {
             browser: BrowserConfig::default(),
             project_root: PathBuf::from("."),
             proactive: ProactiveConfig::default(),
+            privacy: PrivacyConfig::default(),
+            trajectory: TrajectoryConfig::default(),
+            resource_governor: ResourceGovernorConfig::default(),
+            integrations: IntegrationsConfig::default(),
         }
     }
 }
@@ -71,6 +84,9 @@ pub struct AiConfig {
     pub max_tokens: u32,
     pub system_prompt: Option<String>,
     pub manifestation_system_prompt: Option<String>,
+    /// Base URL for local providers (e.g., Ollama at http://localhost:11434)
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +102,10 @@ pub struct ServerConfig {
     pub lane_capacity: usize,
     pub max_lane_concurrency: usize,
     pub dashboard_api_key: Option<String>,
+    /// Allowed CORS origins. Loaded from SAVANT_CORS_ORIGINS env var (comma-separated)
+    /// or from config file. Defaults to localhost:3000 if empty.
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,6 +162,23 @@ pub struct TelemetryConfig {
     pub log_level: String,
     pub log_color: bool,
     pub enable_tracing: bool,
+    /// Enable Panopticon distributed telemetry (OpenTelemetry OTLP export)
+    #[serde(default)]
+    pub panopticon_enabled: bool,
+    /// OTLP collector endpoint (e.g., "http://localhost:4317")
+    #[serde(default = "default_otlp_endpoint")]
+    pub otlp_endpoint: String,
+    /// Maximum replay events to retain in memory
+    #[serde(default = "default_replay_max_events")]
+    pub replay_max_events: usize,
+}
+
+fn default_otlp_endpoint() -> String {
+    "http://localhost:4317".to_string()
+}
+
+fn default_replay_max_events() -> usize {
+    10_000
 }
 
 /// MCP (Model Context Protocol) configuration.
@@ -149,6 +186,9 @@ pub struct TelemetryConfig {
 pub struct McpConfig {
     /// List of MCP server endpoints to connect to on startup
     pub servers: Vec<McpServerEntry>,
+    /// Port for the local MCP server to listen on (0 = disabled)
+    #[serde(default)]
+    pub server_port: u16,
 }
 
 /// A single MCP server entry.
@@ -166,6 +206,34 @@ impl AiConfig {
     /// Returns the inline system prompt or an empty string.
     pub fn resolved_system_prompt(&self) -> String {
         self.system_prompt.clone().unwrap_or_default()
+    }
+}
+
+impl Config {
+    /// Attempts to load a legacy OpenClaw config and migrate it to the current format.
+    /// Returns `Some(Config)` if migration succeeds, `None` if no legacy config found.
+    pub fn try_migrate_legacy(path: &std::path::Path) -> Option<Self> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Legacy config read failed for {:?}: {}", path, e);
+                return None;
+            }
+        };
+        let legacy: crate::migration::LegacyOpenClawConfig = match serde_json::from_str(&content) {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::warn!("Legacy config parse failed for {:?}: {}", path, e);
+                return None;
+            }
+        };
+        let agent_config: crate::types::AgentConfig = legacy.into();
+        // Build a minimal Config from the migrated agent config
+        let mut config = Config::default();
+        config.ai.model = agent_config.model.unwrap_or_default();
+        config.ai.system_prompt = Some(agent_config.system_prompt);
+        config.project_root = agent_config.workspace_path;
+        Some(config)
     }
 }
 
@@ -193,8 +261,8 @@ impl ObsidianConfig {
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
-            provider: "ollama".to_string(),
-            model: "gemma4".to_string(),
+            provider: "opengateway".to_string(),
+            model: "mimo-v2.5-pro".to_string(),
             manifestation_model: Some("gemma4".to_string()),
             temperature: 0.7,
             top_p: 1.0,
@@ -230,6 +298,7 @@ DENSITY REQUIREMENTS:
 CRITICAL RESTRAINT:
 - Output ONLY the raw Markdown content of the SOUL.md file. No preamble, no explanation.
 - DO NOT use placeholders. Generate a fully sentient identity."#.to_string()),
+            base_url: None,
         }
     }
 }
@@ -246,11 +315,14 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             port: 3000,
-            host: "0.0.0.0".to_string(),
+            host: "127.0.0.1".to_string(),
             max_connections: 1000,
             lane_capacity: 100,
             max_lane_concurrency: 10,
+            // Dashboard API key must be explicitly configured via environment or config file.
+            // Intentionally defaults to None — do NOT auto-generate, as the key could be logged.
             dashboard_api_key: None,
+            cors_origins: vec!["http://localhost:3000".to_string()],
         }
     }
 }
@@ -334,6 +406,9 @@ impl Default for TelemetryConfig {
             log_level: "info".to_string(),
             log_color: true,
             enable_tracing: false,
+            panopticon_enabled: false,
+            otlp_endpoint: default_otlp_endpoint(),
+            replay_max_events: default_replay_max_events(),
         }
     }
 }
@@ -368,6 +443,24 @@ pub struct ObsidianConfig {
     /// Directories eligible for cold storage (subdirectories of vault root)
     #[serde(default)]
     pub db_only_dirs: Vec<String>,
+    /// Toggle procedural memory projection (GH-23)
+    #[serde(default = "default_true")]
+    pub project_procedures: bool,
+    /// Toggle lessons/insights projection (GH-23)
+    #[serde(default = "default_true")]
+    pub project_lessons: bool,
+    /// Toggle MAGMA graph projection (GH-23)
+    #[serde(default = "default_true")]
+    pub project_graphs: bool,
+    /// Toggle Ebbinghaus retention tier visualization (GH-23)
+    #[serde(default = "default_true")]
+    pub project_retention_tiers: bool,
+    /// Toggle audit trail projection (noisy — off by default) (GH-23)
+    #[serde(default)]
+    pub project_audit_trail: bool,
+    /// Toggle multimodal image references (GH-23)
+    #[serde(default)]
+    pub project_multimodal: bool,
 }
 
 fn default_obsidian_sync_interval() -> u64 {
@@ -392,7 +485,18 @@ impl Default for ObsidianConfig {
             max_files: 15_000,
             cold_storage_days: 90,
             tombstone_prune_days: 30,
-            db_only_dirs: vec!["Episodic".to_string()],
+            db_only_dirs: vec![
+                "Episodic".to_string(),
+                "Graphs".to_string(),
+                "Retention".to_string(),
+                "Audit".to_string(),
+            ],
+            project_procedures: true,
+            project_lessons: true,
+            project_graphs: true,
+            project_retention_tiers: true,
+            project_audit_trail: false,
+            project_multimodal: false,
         }
     }
 }
@@ -525,6 +629,217 @@ impl Default for EvolutionConfig {
 }
 
 // ============================================================================
+// Privacy & Trajectory Configuration
+// ============================================================================
+
+fn default_sensitivity_threshold() -> f64 {
+    0.7
+}
+
+fn default_local_models() -> Vec<String> {
+    vec!["gemma4".to_string()]
+}
+
+fn default_trajectory_output_dir() -> String {
+    "./data/trajectories".to_string()
+}
+
+fn default_max_file_size_mb() -> u32 {
+    100
+}
+
+/// Controls content-aware privacy routing.
+/// When enabled, messages are scanned for PII before reaching cloud providers.
+/// High-sensitivity content is routed to local models instead.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyConfig {
+    /// Master toggle: false = no PII scanning, all requests go to cloud
+    #[serde(default)]
+    pub enabled: bool,
+    /// Sensitivity score (0.0-1.0) above which content is forced to local models
+    #[serde(default = "default_sensitivity_threshold")]
+    pub sensitivity_threshold: f64,
+    /// Model identifiers for local (on-device) inference
+    #[serde(default = "default_local_models")]
+    pub local_models: Vec<String>,
+    /// Model identifiers for cloud inference
+    #[serde(default)]
+    pub cloud_models: Vec<String>,
+    /// Whether to log routing decisions via tracing
+    #[serde(default = "default_true")]
+    pub log_decisions: bool,
+}
+
+impl Default for PrivacyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sensitivity_threshold: default_sensitivity_threshold(),
+            local_models: default_local_models(),
+            cloud_models: Vec::new(),
+            log_decisions: true,
+        }
+    }
+}
+
+/// Controls trajectory recording for RL training data export.
+/// When enabled, agent conversations are recorded in ShareGPT JSONL format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrajectoryConfig {
+    /// Master toggle: false = no trajectory recording
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Directory where trajectory JSONL files are written
+    #[serde(default = "default_trajectory_output_dir")]
+    pub output_dir: String,
+    /// Whether to apply TOON compression to uniform JSON arrays in tool results
+    #[serde(default = "default_true")]
+    pub compress_tool_results: bool,
+    /// Maximum file size in MB before rotation
+    #[serde(default = "default_max_file_size_mb")]
+    pub max_file_size_mb: u32,
+}
+
+/// CPU/memory-aware agent spawning with adaptive concurrency.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceGovernorConfig {
+    /// Master toggle
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// How often to poll system resources (seconds)
+    #[serde(default = "default_governor_monitor_interval")]
+    pub monitor_interval_secs: u64,
+    /// Memory pressure: medium threshold (%)
+    #[serde(default = "default_governor_mem_medium")]
+    pub memory_medium_pct: f64,
+    /// Memory pressure: high threshold (%)
+    #[serde(default = "default_governor_mem_high")]
+    pub memory_high_pct: f64,
+    /// Memory pressure: critical threshold (%)
+    #[serde(default = "default_governor_mem_critical")]
+    pub memory_critical_pct: f64,
+    /// CPU pressure: medium threshold (%)
+    #[serde(default = "default_governor_cpu_medium")]
+    pub cpu_medium_pct: f64,
+    /// CPU pressure: high threshold (%)
+    #[serde(default = "default_governor_cpu_high")]
+    pub cpu_high_pct: f64,
+    /// CPU pressure: critical threshold (%)
+    #[serde(default = "default_governor_cpu_critical")]
+    pub cpu_critical_pct: f64,
+    /// Max concurrent agents at Low pressure
+    #[serde(default = "default_governor_max_low")]
+    pub max_agents_low: usize,
+    /// Max concurrent agents at Medium pressure
+    #[serde(default = "default_governor_max_medium")]
+    pub max_agents_medium: usize,
+    /// Max concurrent agents at High pressure
+    #[serde(default = "default_governor_max_high")]
+    pub max_agents_high: usize,
+    /// Max concurrent agents at Critical pressure
+    #[serde(default = "default_governor_max_critical")]
+    pub max_agents_critical: usize,
+    /// Max deferral retries before dropping agent (60 × 5s = 5 min)
+    #[serde(default = "default_governor_max_deferral")]
+    pub max_deferral_retries: u32,
+}
+
+fn default_governor_monitor_interval() -> u64 { 5 }
+fn default_governor_mem_medium() -> f64 { 60.0 }
+fn default_governor_mem_high() -> f64 { 80.0 }
+fn default_governor_mem_critical() -> f64 { 92.0 }
+fn default_governor_cpu_medium() -> f64 { 70.0 }
+fn default_governor_cpu_high() -> f64 { 85.0 }
+fn default_governor_cpu_critical() -> f64 { 95.0 }
+fn default_governor_max_low() -> usize { 16 }
+fn default_governor_max_medium() -> usize { 8 }
+fn default_governor_max_high() -> usize { 4 }
+fn default_governor_max_critical() -> usize { 1 }
+fn default_governor_max_deferral() -> u32 { 60 }
+
+impl Default for TrajectoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            output_dir: default_trajectory_output_dir(),
+            compress_tool_results: true,
+            max_file_size_mb: default_max_file_size_mb(),
+        }
+    }
+}
+
+impl Default for ResourceGovernorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            monitor_interval_secs: default_governor_monitor_interval(),
+            memory_medium_pct: default_governor_mem_medium(),
+            memory_high_pct: default_governor_mem_high(),
+            memory_critical_pct: default_governor_mem_critical(),
+            cpu_medium_pct: default_governor_cpu_medium(),
+            cpu_high_pct: default_governor_cpu_high(),
+            cpu_critical_pct: default_governor_cpu_critical(),
+            max_agents_low: default_governor_max_low(),
+            max_agents_medium: default_governor_max_medium(),
+            max_agents_high: default_governor_max_high(),
+            max_agents_critical: default_governor_max_critical(),
+            max_deferral_retries: default_governor_max_deferral(),
+        }
+    }
+}
+
+// ============================================================================
+// Integrations Configuration (External Service Providers)
+// ============================================================================
+
+/// Controls external service provider integrations (Gmail, Notion, etc.).
+/// Each provider is gated behind its own config — unconfigured providers
+/// are silently skipped at startup.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IntegrationsConfig {
+    /// Gmail integration settings.
+    #[serde(default)]
+    pub gmail: Option<GmailIntegrationConfig>,
+    /// Notion integration settings.
+    #[serde(default)]
+    pub notion: Option<NotionIntegrationConfig>,
+}
+
+/// Gmail provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GmailIntegrationConfig {
+    /// OAuth2 access token for Gmail API.
+    pub access_token: String,
+    /// Maximum messages per fetch cycle.
+    #[serde(default = "default_gmail_max_messages")]
+    pub max_messages: usize,
+    /// Label filters (e.g., ["INBOX", "IMPORTANT"]). Empty = all.
+    #[serde(default)]
+    pub label_filters: Vec<String>,
+}
+
+fn default_gmail_max_messages() -> usize {
+    50
+}
+
+/// Notion provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotionIntegrationConfig {
+    /// Notion API integration token.
+    pub integration_token: String,
+    /// Database IDs to sync. Empty = all accessible.
+    #[serde(default)]
+    pub database_ids: Vec<String>,
+    /// Maximum pages per fetch cycle.
+    #[serde(default = "default_notion_max_pages")]
+    pub max_pages: usize,
+}
+
+fn default_notion_max_pages() -> usize {
+    50
+}
+
+// ============================================================================
 // Config implementation
 // ============================================================================
 
@@ -558,13 +873,38 @@ impl Config {
         paths
     }
 
-    /// Loads config from files, then environment overrides
-    pub fn load() -> Result<Self, SavantError> {
-        Self::load_from(None)
+    /// RC-30: Validate config values after deserialization.
+    pub fn validate(&self) -> Result<(), SavantError> {
+        if self.swarm.heartbeat_interval == 0 {
+            return Err(SavantError::ConfigError(
+                "swarm.heartbeat_interval must be > 0".to_string(),
+            ));
+        }
+        if self.ai.max_tokens == 0 {
+            return Err(SavantError::ConfigError(
+                "ai.max_tokens must be > 0".to_string(),
+            ));
+        }
+        if self.memory.cache_size_mb == 0 {
+            return Err(SavantError::ConfigError(
+                "memory.cache_size_mb must be > 0".to_string(),
+            ));
+        }
+        Ok(())
     }
 
-    /// Loads config from a specific path, or discovers config files if None
-    pub fn load_from(path: Option<&str>) -> Result<Self, SavantError> {
+    /// Loads config from files, then environment overrides
+    pub fn load() -> Result<Self, SavantError> {
+        Self::load_from(None, None)
+    }
+
+    /// Loads config from a specific path, or discovers config files if None.
+    /// `project_root` overrides the SAVANT_PROJECT_ROOT env var for callers
+    /// (e.g., desktop app) that know the root explicitly.
+    pub fn load_from(
+        path: Option<&str>,
+        project_root: Option<PathBuf>,
+    ) -> Result<Self, SavantError> {
         let mut figment =
             Figment::new().merge(figment::providers::Serialized::defaults(Self::default()));
 
@@ -588,57 +928,91 @@ impl Config {
         let mut config: Config = figment
             .merge(Env::prefixed("SAVANT_"))
             .extract()
-            .map_err(|e| SavantError::ConfigError(format!("Config load error: {}", e)))?;
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Config extraction failed ({}), falling back to defaults",
+                    e
+                );
+                Config::default()
+            });
+
+        // RC-30: Validate config values
+        config.validate()?;
 
         // Determine project root
-        // Priority: 1) SAVANT_PROJECT_ROOT env var, 2) config file location, 3) search up for Cargo.toml/.git
+        // Priority: 1) project_root param, 2) SAVANT_PROJECT_ROOT env var, 3) config file location, 4) search up for Cargo.toml/.git
+        let mut root_resolved = false;
 
-        // Check for explicit project root override
-        if let Ok(env_root) = std::env::var("SAVANT_PROJECT_ROOT") {
-            let root_path = PathBuf::from(&env_root);
-            if root_path.exists() {
-                config.project_root = root_path;
+        // 1. Check for explicit project root from caller (e.g., desktop app)
+        if let Some(ref root) = project_root {
+            if root.exists() {
+                config.project_root = root.clone();
+                root_resolved = true;
                 tracing::info!(
-                    "config: Project root from SAVANT_PROJECT_ROOT: {:?}",
+                    "config: Project root from parameter: {:?}",
                     config.project_root
                 );
             }
-        } else if let Some(path) = config_file_path {
-            // If config is in ~/.savant/, don't use that as project root — search for actual project
-            let is_user_config = path.to_string_lossy().contains(".savant")
-                && path
-                    .parent()
-                    .map(|p| p.ends_with(".savant"))
-                    .unwrap_or(false);
+        }
 
-            if is_user_config {
-                // Installed app: search for dev project with Cargo.toml
-                if let Ok(mut dir) = std::env::current_dir() {
-                    for _ in 0..10 {
-                        if dir.join("Cargo.toml").exists() || dir.join(".git").exists() {
-                            config.project_root = dir;
-                            tracing::info!(
-                                "config: Found dev project root from installed location"
-                            );
-                            break;
-                        }
-                        if let Some(parent) = dir.parent() {
-                            dir = parent.to_path_buf();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                // If still pointing to ~/.savant, leave it — user should set SAVANT_PROJECT_ROOT
-            } else if let Some(parent) = path.parent() {
-                if parent.ends_with("config") {
-                    config.project_root = parent.parent().unwrap_or(Path::new(".")).to_path_buf();
-                } else {
-                    config.project_root = parent.to_path_buf();
+        // 2. Check for explicit project root override from env
+        if !root_resolved {
+            if let Ok(env_root) = std::env::var("SAVANT_PROJECT_ROOT") {
+                let root_path = PathBuf::from(&env_root);
+                if root_path.exists() {
+                    config.project_root = root_path;
+                    root_resolved = true;
+                    tracing::info!(
+                        "config: Project root from SAVANT_PROJECT_ROOT: {:?}",
+                        config.project_root
+                    );
                 }
             }
-        } else {
-            // Fallback: Search upwards for Cargo.toml or .git to identify project root
+        }
+
+        // 3. Derive from config file location
+        if !root_resolved {
+            if let Some(path) = config_file_path {
+                let is_user_config = path.to_string_lossy().contains(".savant")
+                    && path
+                        .parent()
+                        .map(|p| p.ends_with(".savant"))
+                        .unwrap_or(false);
+
+                if is_user_config {
+                    // Installed app: search for dev project with Cargo.toml
+                    if let Ok(mut dir) = std::env::current_dir() {
+                        for _ in 0..10 {
+                            if dir.join("Cargo.toml").exists() || dir.join(".git").exists() {
+                                config.project_root = dir;
+                                root_resolved = true;
+                                tracing::info!(
+                                    "config: Found dev project root from installed location"
+                                );
+                                break;
+                            }
+                            if let Some(parent) = dir.parent() {
+                                dir = parent.to_path_buf();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    // If still pointing to ~/.savant, leave it — user should set SAVANT_PROJECT_ROOT
+                } else if let Some(parent) = path.parent() {
+                    if parent.ends_with("config") {
+                        config.project_root =
+                            parent.parent().unwrap_or(Path::new(".")).to_path_buf();
+                    } else {
+                        config.project_root = parent.to_path_buf();
+                    }
+                    root_resolved = true;
+                }
+            }
+        }
+
+        // 4. Fallback: Search upwards for Cargo.toml or .git to identify project root
+        if !root_resolved {
             if let Ok(mut dir) = std::env::current_dir() {
                 for _ in 0..10 {
                     if dir.join("Cargo.toml").exists() || dir.join(".git").exists() {
@@ -657,6 +1031,16 @@ impl Config {
         // Canonicalize project root to avoid relative path issues
         if let Ok(abs_root) = config.project_root.canonicalize() {
             config.project_root = abs_root;
+        }
+
+        if let Ok(host_override) = std::env::var("SAVANT_SERVER_HOST") {
+            if !host_override.is_empty() {
+                tracing::info!(
+                    "config: Overriding server.host from SAVANT_SERVER_HOST: {}",
+                    host_override
+                );
+                config.server.host = host_override;
+            }
         }
 
         tracing::info!("config: Project root anchored at {:?}", config.project_root);
@@ -682,9 +1066,10 @@ impl Config {
             std::fs::create_dir_all(parent).map_err(SavantError::IoError)?;
         }
 
-        // Atomic write: write to .tmp, then rename
-        let mut tmp_path = path.to_path_buf();
-        tmp_path.set_extension("toml.tmp");
+        // Atomic write: write to a unique temp file, then rename.
+        // Using a unique name prevents concurrent writers from corrupting
+        // each other's temp file before the atomic rename.
+        let tmp_path = path.with_extension(format!("toml.tmp.{}", uuid::Uuid::new_v4()));
 
         #[cfg(unix)]
         {
@@ -780,6 +1165,77 @@ impl Config {
 }
 
 // ============================================================================
+// Keyring integration for secure secret storage
+// ============================================================================
+
+/// Loads a secret from the system keyring.
+/// Falls back to environment variable if keyring is unavailable.
+///
+/// # Arguments
+/// * `name` - The secret name (e.g., "OPENROUTER_API_KEY")
+///
+/// # Returns
+/// The secret value, or None if not found in keyring or environment.
+///
+/// # Migration from .env
+/// To migrate from .env to keyring:
+/// 1. Run `keyring set savant <SECRET_NAME>` and enter the value
+/// 2. Remove the entry from .env
+/// 3. The function will find it in keyring on next access
+pub fn load_secret(name: &str) -> Option<String> {
+    // Try keyring first
+    match keyring::Entry::new("savant", name) {
+        Ok(entry) => match entry.get_password() {
+            Ok(value) if !value.is_empty() => {
+                tracing::debug!("Secret '{}' loaded from keyring", name);
+                return Some(value);
+            }
+            Ok(_) => {
+                tracing::debug!("Secret '{}' empty in keyring, trying env var", name);
+            }
+            Err(keyring::Error::NoEntry) => {
+                tracing::debug!("Secret '{}' not in keyring, trying env var", name);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Secret '{}' keyring read error: {}, falling back to env var",
+                    name,
+                    e
+                );
+            }
+        },
+        Err(e) => {
+            tracing::warn!(
+                "Secret '{}' keyring access error: {}, falling back to env var",
+                name,
+                e
+            );
+        }
+    }
+
+    // Fall back to environment variable
+    std::env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+/// Stores a secret in the system keyring.
+///
+/// # Arguments
+/// * `name` - The secret name (e.g., "OPENROUTER_API_KEY")
+/// * `value` - The secret value to store
+///
+/// # Returns
+/// Ok(()) if stored successfully, or an error message.
+pub fn store_secret(name: &str, value: &str) -> Result<(), String> {
+    let entry =
+        keyring::Entry::new("savant", name).map_err(|e| format!("Keyring access error: {}", e))?;
+    entry
+        .set_password(value)
+        .map_err(|e| format!("Keyring write error: {}", e))?;
+    tracing::info!("Secret '{}' stored in keyring", name);
+    Ok(())
+}
+
+// ============================================================================
 // Backward-compatible types for migration.rs and registry.rs
 // ============================================================================
 
@@ -825,12 +1281,13 @@ pub struct OpenRouterMgmtConfig {
     pub auto_keygen: bool,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for AgentDefaults {
     fn default() -> Self {
         let config = Config::default();
         Self {
             model_provider: config.ai.provider.clone(),
-            system_prompt: config.ai.system_prompt.clone().unwrap_or_default(),
+            system_prompt: config.ai.resolved_system_prompt(),
             heartbeat_interval: config.swarm.heartbeat_interval,
             env_vars: HashMap::new(),
             openrouter_mgmt: None,

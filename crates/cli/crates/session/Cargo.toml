@@ -1,0 +1,22 @@
+[package]
+name = "savant_cli_session"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Session persistence for Savant CLI — JSONL append-only logs, crash recovery, branching"
+
+[dependencies]
+savant_core = { workspace = true }
+savant_obsidian = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+blake3 = "1.5"
+
+[lints]
+workspace = true

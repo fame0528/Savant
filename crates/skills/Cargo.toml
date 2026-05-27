@@ -1,7 +1,8 @@
 [package]
 name = "savant_skills"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 savant_core = { path = "../core" }
@@ -20,7 +21,7 @@ futures = { workspace = true }
 walkdir = "2.4"
 uuid = { version = "1.22.0", features = ["v4"] }
 async-trait = "0.1"
-wassette = { git = "https://github.com/microsoft/wassette", branch = "main" }
+wassette = { git = "https://github.com/microsoft/wassette", rev = "dc7493965ab2aa9a671235b1b55b852c03702ffc" }
 regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 tempfile = "3"
@@ -37,3 +38,6 @@ windows = { workspace = true }
 
 [dev-dependencies]
 wat = "1"
+
+[lints]
+workspace = true

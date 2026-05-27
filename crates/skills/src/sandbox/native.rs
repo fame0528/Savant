@@ -119,7 +119,11 @@ impl LegacyNativeExecutor {
                         "Script file is empty (possible swap attack)",
                     ));
                 }
-                // Keep script_file alive until exec replaces the process image
+                // SAFETY: Intentionally leaking the file descriptor so it remains open
+                // until exec() replaces the process image. If exec() succeeds, the fd is
+                // reclaimed by the OS. If exec() fails, the child process exits via the
+                // error handling below, and the fd is reclaimed on process exit.
+                // We cannot use OwnedFd here because the fd must outlive the pre_exec closure.
                 std::mem::forget(script_file);
 
                 // 1. Drop Capabilities (prevent privilege escalation)

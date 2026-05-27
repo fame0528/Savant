@@ -1,5 +1,4 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::disallowed_methods)]
 
 //! Savant Gateway Crate
 //! WebSocket control plane (axum + tokio-tungstenite).

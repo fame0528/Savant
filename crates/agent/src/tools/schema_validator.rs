@@ -165,7 +165,12 @@ fn validate_lenient(schema: &Value, _path: &str, _errors: &mut Vec<SchemaError>,
         // Object validation (relaxed: properties not strictly required)
         if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
             for (key, prop_schema) in props {
-                validate_lenient(prop_schema, &format!("{}.{}", _path, key), _errors, depth + 1);
+                validate_lenient(
+                    prop_schema,
+                    &format!("{}.{}", _path, key),
+                    _errors,
+                    depth + 1,
+                );
             }
         }
     }
@@ -179,6 +184,7 @@ fn validate_lenient(schema: &Value, _path: &str, _errors: &mut Vec<SchemaError>,
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -292,5 +298,36 @@ mod tests {
         }
         let result = validate_strict_schema(&schema);
         assert!(result.is_err());
+    }
+
+    /// Validates all registered tool schemas against validation rules.
+    /// CI catches bad schemas at compile time, not runtime.
+    #[test]
+    fn test_all_tool_schemas_valid() {
+        use savant_core::traits::Tool;
+        use std::sync::Arc;
+        // Only test tools that can be constructed without complex dependencies
+        let tools: Vec<Arc<dyn Tool>> = vec![
+            Arc::new(crate::tools::SettingsTool::new()),
+            Arc::new(crate::tools::LibrarianTool::new(std::path::PathBuf::from(
+                "skills",
+            ))),
+        ];
+
+        let mut failures = Vec::new();
+        for tool in &tools {
+            let schema = tool.parameters_schema();
+            if let Err(errors) = validate_tool_schema(&schema) {
+                failures.push(format!(
+                    "Tool '{}' validation failed: {:?}",
+                    tool.name(),
+                    errors
+                ));
+            }
+        }
+
+        if !failures.is_empty() {
+            panic!("Tool schema validation failed:\n{}", failures.join("\n"));
+        }
     }
 }

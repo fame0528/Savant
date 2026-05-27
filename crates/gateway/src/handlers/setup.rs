@@ -1,4 +1,10 @@
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
+#![allow(clippy::disallowed_methods)]
 //! Setup wizard handlers for first-launch dependency checks and config.
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
 
 use crate::server::GatewayState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
@@ -8,6 +14,23 @@ use std::sync::Arc;
 /// Validate that a section/key name contains only safe characters.
 fn is_valid_identifier(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Security-critical config fields that cannot be changed at runtime.
+/// Changing these requires a restart with updated config files.
+pub const IMMUTABLE_FIELDS: &[(&str, &str)] = &[
+    ("server", "dashboard_api_key"),
+    ("server", "host"),
+    ("server", "port"),
+    ("server", "signing_key"),
+    ("security", "enable_blocklist_sync"),
+];
+
+/// Check if a config field is immutable at runtime.
+pub fn is_immutable_config_field(section: &str, key: &str) -> bool {
+    IMMUTABLE_FIELDS
+        .iter()
+        .any(|(s, k)| *s == section && *k == key)
 }
 
 #[derive(Debug, Deserialize)]
@@ -23,8 +46,9 @@ pub struct ConfigSetRequest {
 }
 
 /// POST /api/config/set — Update a config value and save to disk
+/// GTW-02/GTW-03: Uses in-memory config with write lock instead of re-reading from disk.
 pub async fn config_set_handler(
-    State(_state): State<Arc<GatewayState>>,
+    State(state): State<Arc<GatewayState>>,
     Json(body): Json<ConfigSetRequest>,
 ) -> impl IntoResponse {
     // Validate input to prevent injection
@@ -39,21 +63,27 @@ pub async fn config_set_handler(
             .into_response();
     }
 
-    let config_path = savant_core::config::Config::primary_config_path();
+    // Block runtime changes to security-critical fields
+    if is_immutable_config_field(&body.section, &body.key) {
+        tracing::warn!(
+            "[config] Blocked attempt to modify immutable field: {}.{}",
+            body.section,
+            body.key
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": format!(
+                    "Field '{}.{}' is immutable at runtime. Update the config file and restart.",
+                    body.section, body.key
+                )
+            })),
+        )
+            .into_response();
+    }
 
-    let mut config = match savant_core::config::Config::load() {
-        Ok(c) => c,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "status": "error",
-                    "message": "Failed to load configuration"
-                })),
-            )
-                .into_response();
-        }
-    };
+    let mut config = state.config.write().await;
 
     let result = match body.section.as_str() {
         "browser" => match body.key.as_str() {
@@ -62,11 +92,13 @@ pub async fn config_set_handler(
                 Ok(())
             }
             "embedding_model" => {
-                config.browser.embedding_model = body.value.as_str().unwrap_or("gemma4").to_string();
+                config.browser.embedding_model =
+                    body.value.as_str().unwrap_or("gemma4").to_string();
                 Ok(())
             }
             "vision_model_provider" => {
-                config.browser.vision_model_provider = body.value.as_str().unwrap_or("ollama").to_string();
+                config.browser.vision_model_provider =
+                    body.value.as_str().unwrap_or("ollama").to_string();
                 Ok(())
             }
             "enabled" => {
@@ -106,6 +138,7 @@ pub async fn config_set_handler(
 
     match result {
         Ok(()) => {
+            let config_path = savant_core::config::Config::primary_config_path();
             if config.save(&config_path).is_err() {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -135,10 +168,8 @@ pub async fn config_set_handler(
 }
 
 /// GET /api/setup/check — Check Ollama/LM Studio + model availability
-pub async fn setup_check_handler(State(_state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let configured_model = savant_core::config::Config::load()
-        .map(|c| c.browser.embedding_model.clone())
-        .unwrap_or_else(|_| "gemma4".to_string());
+pub async fn setup_check_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let configured_model = state.config.read().await.browser.embedding_model.clone();
 
     let mut checks = serde_json::json!({
         "ollama_running": false,
@@ -178,8 +209,8 @@ pub async fn setup_check_handler(State(_state): State<Arc<GatewayState>>) -> imp
         std::env::var("LMSTUDIO_URL").unwrap_or_else(|_| "http://localhost:1234".to_string());
     let lmstudio_result = check_provider(&lmstudio_url, "LM Studio", &configured_model).await;
     if lmstudio_result.running {
-        checks["ollama_running"] = serde_json::Value::Bool(true);
-        checks["ollama_installed"] = serde_json::Value::Bool(true);
+        checks["lmstudio_running"] = serde_json::Value::Bool(true);
+        checks["lmstudio_installed"] = serde_json::Value::Bool(true);
         if lmstudio_result.model_available {
             checks["model_available"] = serde_json::Value::Bool(true);
         }
@@ -195,7 +226,10 @@ pub async fn setup_check_handler(State(_state): State<Arc<GatewayState>>) -> imp
     // If neither is running, populate issues
     if !ollama_result.running && !lmstudio_result.running {
         issues.push("No local AI provider detected".to_string());
-        instructions.push("Install Ollama (https://ollama.com/download) or LM Studio (https://lmstudio.ai)".to_string());
+        instructions.push(
+            "Install Ollama (https://ollama.com/download) or LM Studio (https://lmstudio.ai)"
+                .to_string(),
+        );
         instructions.push("Start the provider and return here.".to_string());
     } else if !checks["model_available"].as_bool().unwrap_or(false) {
         issues.push(format!("Model '{}' not found", configured_model));
@@ -229,11 +263,11 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
         .build()
     {
         Ok(c) => c,
-        Err(e) => {
+        Err(_) => {
             return ProviderCheck {
                 running: false,
                 model_available: false,
-                error: Some(format!("{} client build failed: {}", name, e)),
+                error: Some(format!("Internal error checking {}", name)),
             };
         }
     };
@@ -285,23 +319,19 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
                         error: None,
                     }
                 }
-                Ok(resp2) => {
-                    ProviderCheck {
-                        running: false,
-                        model_available: false,
-                        error: Some(format!("{} returned status {}", name, resp2.status())),
-                    }
-                }
-                Err(e2) => {
-                    ProviderCheck {
-                        running: false,
-                        model_available: false,
-                        error: Some(format!("{} not reachable: {}", name, e2)),
-                    }
-                }
+                Ok(_) => ProviderCheck {
+                    running: false,
+                    model_available: false,
+                    error: Some(format!("{} returned an error response", name)),
+                },
+                Err(_) => ProviderCheck {
+                    running: false,
+                    model_available: false,
+                    error: Some(format!("{} not reachable", name)),
+                },
             }
         }
-        Err(e) => {
+        Err(_) => {
             // Try LM Studio / OpenAI-compatible endpoint as fallback
             match client.get(&models_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
@@ -317,22 +347,23 @@ async fn check_provider(url: &str, name: &str, configured_model: &str) -> Provid
                             error: None,
                         };
                     }
-ProviderCheck {
+                    ProviderCheck {
                         running: true,
                         model_available: false,
                         error: None,
                     }
                 }
-                Ok(resp) => {
-                    ProviderCheck {
-                        running: false,
-                        model_available: false,
-                        error: Some(format!("{} returned status {:?} (Ollama) and {:?} (OpenAI)", name, e.status(), resp.status())),
-                    }
-                }
+                Ok(_) => ProviderCheck {
+                    running: false,
+                    model_available: false,
+                    error: Some(format!("{} returned an error response", name)),
+                },
                 Err(e2) => {
-                    let err_str = format!("{} / {}", e, e2);
-                    if err_str.contains("Connection refused") || err_str.contains("connect error") || err_str.contains("timed out") {
+                    let err_str = format!("{}", e2);
+                    if err_str.contains("Connection refused")
+                        || err_str.contains("connect error")
+                        || err_str.contains("timed out")
+                    {
                         return ProviderCheck {
                             running: false,
                             model_available: false,
@@ -352,7 +383,10 @@ ProviderCheck {
 
 /// Validate that a model name contains only safe characters (alphanumeric, colon, dash, underscore, dot, slash).
 fn is_valid_model_name(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || ":.-_/".contains(c))
+    !s.is_empty()
+        && s.len() <= 128
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || ":.-_/".contains(c))
 }
 
 /// POST /api/setup/install-model — Pull a model via Ollama

@@ -1,3 +1,9 @@
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
@@ -19,15 +25,16 @@ const BLOCKED_FILES: &[&str] = &[
 ];
 
 /// Evolution staging files the agent CAN access for proposing mutations.
-const EVOLUTION_STAGING_FILES: &[&str] = &[
-    "SOUL.proposed.md",
-];
+const EVOLUTION_STAGING_FILES: &[&str] = &["SOUL.proposed.md"];
 
 /// Checks if a path targets a blocked file. Returns the filename if blocked, None otherwise.
 /// Evolution staging files (SOUL.proposed.md) are exempt from blocking.
 fn check_blocked(path: &Path) -> Option<String> {
     if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-        if EVOLUTION_STAGING_FILES.iter().any(|s| s.eq_ignore_ascii_case(filename)) {
+        if EVOLUTION_STAGING_FILES
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(filename))
+        {
             return None;
         }
         if BLOCKED_FILES
@@ -46,25 +53,19 @@ fn check_blocked(path: &Path) -> Option<String> {
 pub(crate) fn secure_resolve_path(workspace: &Path, target: &str) -> Result<PathBuf, SavantError> {
     let target_path = Path::new(target);
 
-    // If the target is an absolute path, validate it's under an allowed root
-    // (project root or workspace). The project root is two levels above the workspace
-    // (workspaces/workspace-name -> workspaces -> project_root).
+    // If the target is an absolute path, validate it's under the workspace root.
+    // Project root access was previously allowed but is too permissive for file operations.
     if target_path.is_absolute() {
         let canonical = target_path
             .canonicalize()
             .unwrap_or_else(|_| target_path.to_path_buf());
-        let project_root = workspace
-            .parent()
-            .and_then(|p| p.parent())
-            .unwrap_or(workspace);
 
-        // Allow access to project root and below
-        if canonical.starts_with(project_root) {
+        if canonical.starts_with(workspace) {
             return Ok(canonical);
         }
 
         return Err(SavantError::Unknown(format!(
-            "Access denied: path '{}' is outside the project directory.",
+            "Access denied: path '{}' is outside the workspace directory.",
             target
         )));
     }
@@ -211,14 +212,8 @@ impl Tool for FileDeleteTool {
             )));
         }
 
-        let full_path = self.workspace_dir.join(path_str);
-
-        // Security Check: Prevent path traversal attacks
-        if full_path.canonicalize().map_or(true, |p| {
-            !p.starts_with(self.workspace_dir.canonicalize().unwrap_or_default())
-        }) {
-            return Err(SavantError::Unknown("Path traversal detected".into()));
-        }
+        // PB-22: Use shared path validation instead of manual canonicalization
+        let full_path = secure_resolve_path(&self.workspace_dir, path_str)?;
 
         if !full_path.exists() {
             return Ok(
@@ -228,9 +223,9 @@ impl Tool for FileDeleteTool {
         }
 
         if full_path.is_dir() {
-            std::fs::remove_dir_all(&full_path)?;
+            tokio::fs::remove_dir_all(&full_path).await?;
         } else {
-            std::fs::remove_file(&full_path)?;
+            tokio::fs::remove_file(&full_path).await?;
         }
 
         // AudioScape: Log the deletion event
@@ -362,14 +357,36 @@ impl Tool for FileAtomicEditTool {
             content = content.replace(target, value);
         }
 
-        fs::write(&path, content).await.map_err(|e| {
-            // Attempt rollback if write fails
-            // Note: Since this is async-ification, we keep logic but must ensure sync/async parity
-            SavantError::Unknown(format!("AtomicEdit: Write failed: {}", e))
-        })?;
+        if let Err(write_err) = fs::write(&path, &content).await {
+            // PB-14: Actual rollback — restore from backup on write failure
+            if let Err(rollback_err) = fs::copy(&backup_path, &path).await {
+                tracing::error!(
+                    "[foundation] AtomicEdit: Write failed AND rollback failed! \
+                     Backup at {:?}, original at {:?}. Write error: {}, Rollback error: {}",
+                    backup_path,
+                    path,
+                    write_err,
+                    rollback_err
+                );
+            } else {
+                tracing::warn!(
+                    "[foundation] AtomicEdit: Write failed, rolled back from backup. Error: {}",
+                    write_err
+                );
+            }
+            // Clean up backup after rollback
+            let _ = fs::remove_file(&backup_path).await;
+            return Err(SavantError::Unknown(format!(
+                "AtomicEdit: Write failed (rolled back): {}",
+                write_err
+            )));
+        }
 
         if let Err(e) = fs::remove_file(&backup_path).await {
-            tracing::warn!("[foundation] Failed to remove backup file after atomic edit: {}", e);
+            tracing::warn!(
+                "[foundation] Failed to remove backup file after atomic edit: {}",
+                e
+            );
         }
         Ok(format!(
             "Successfully applied {} replacements to {:?}.",

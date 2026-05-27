@@ -12,10 +12,10 @@ use tracing::{debug, info, warn};
 const DEDUP_WINDOW_SIZE: usize = 100;
 
 /// Default vector dimension for CortexaDB embeddings (fallback).
-const DEFAULT_VECTOR_DIM: usize = 384;
+/// Must match OllamaEmbeddingService::dimensions() (2560 for gemma4:e4b).
+const DEFAULT_VECTOR_DIM: usize = 2560;
 
 /// Maximum entries to retrieve per collection query.
-#[allow(dead_code)]
 const MAX_BATCH_SIZE: usize = 100_000;
 
 /// Maps an agent_id to a CortexaDB collection name.
@@ -181,8 +181,15 @@ impl Storage {
             .get_all_in_collection(&coll)
             .map_err(|e| SavantError::StorageError(e.to_string()))?;
 
-        let mut entries: Vec<(u64, ChatMessage)> = Vec::with_capacity(memories.len());
-        for mem in &memories {
+        // Cap retrieval at MAX_BATCH_SIZE to prevent unbounded memory growth
+        let capped: Vec<_> = if memories.len() > MAX_BATCH_SIZE {
+            memories[memories.len() - MAX_BATCH_SIZE..].to_vec()
+        } else {
+            memories
+        };
+
+        let mut entries: Vec<(u64, ChatMessage)> = Vec::with_capacity(capped.len());
+        for mem in &capped {
             let ts = mem
                 .metadata
                 .get("timestamp")

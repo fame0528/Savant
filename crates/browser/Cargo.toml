@@ -1,7 +1,8 @@
 [package]
 name = "savant_browser"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 savant_core = { workspace = true }
@@ -17,6 +18,9 @@ thiserror = { workspace = true }
 chromiumoxide = "0.9"
 url = "2.5"
 futures = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, default-features = false }
 regex = "1.10"
 toml = "0.8"
+
+[lints]
+workspace = true

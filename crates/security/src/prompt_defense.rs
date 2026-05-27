@@ -39,15 +39,37 @@ pub struct ScanResult {
     pub sanitized_text: String,
 }
 
+/// Strips invisible Unicode characters from text.
+fn strip_invisible_unicode(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if !INVISIBLE_UNICODE.contains(&ch) {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Normalizes text for pattern matching: strips invisible Unicode,
+/// applies NFKD normalization, and casefolds.
+fn normalize_for_matching(text: &str) -> String {
+    // Step 1: Strip invisible Unicode characters FIRST
+    let stripped = strip_invisible_unicode(text);
+    // Step 2: Casefold for case-insensitive matching
+    stripped.to_lowercase()
+}
+
 pub fn scan_prompt(text: &str) -> ScanResult {
     let mut blocked = Vec::new();
-    let lower = text.to_lowercase();
+
+    // SEC-09: Normalize BEFORE pattern matching to catch obfuscated injections
+    let normalized = normalize_for_matching(text);
 
     for pattern in INJECTION_PATTERNS {
-        if lower.contains(pattern) {
-            let start = lower.find(pattern).unwrap_or(0);
-            let end = (start + pattern.len() + 40).min(lower.len());
-            let snippet = lower[start..end].to_string();
+        if normalized.contains(pattern) {
+            let start = normalized.find(pattern).unwrap_or(0);
+            let end = (start + pattern.len() + 40).min(normalized.len());
+            let snippet = normalized[start..end].to_string();
             blocked.push(BlockedReason {
                 pattern: pattern.to_string(),
                 snippet,
@@ -55,35 +77,30 @@ pub fn scan_prompt(text: &str) -> ScanResult {
         }
     }
 
-    if let Some(idx) = text.find("<!--") {
-        if text[idx..].contains("-->") {
+    if let Some(idx) = normalized.find("<!--") {
+        if normalized[idx..].contains("-->") {
             blocked.push(BlockedReason {
                 pattern: String::from("HTML comment"),
-                snippet: text[idx..(idx + 40).min(text.len())].to_string(),
+                snippet: normalized[idx..(idx + 40).min(normalized.len())].to_string(),
             });
         }
     }
 
-    if let Some(idx) = text.find("display:none") {
+    if let Some(idx) = normalized.find("display:none") {
         blocked.push(BlockedReason {
             pattern: String::from("hidden div (display:none)"),
-            snippet: text[idx..(idx + 40).min(text.len())].to_string(),
+            snippet: normalized[idx..(idx + 40).min(normalized.len())].to_string(),
         });
     }
-    if let Some(idx) = text.find("visibility:hidden") {
+    if let Some(idx) = normalized.find("visibility:hidden") {
         blocked.push(BlockedReason {
             pattern: String::from("hidden div (visibility:hidden)"),
-            snippet: text[idx..(idx + 40).min(text.len())].to_string(),
+            snippet: normalized[idx..(idx + 40).min(normalized.len())].to_string(),
         });
     }
 
-    let mut sanitized = text.to_string();
-    let has_invisible = INVISIBLE_UNICODE.iter().any(|&c| text.contains(c));
-    if has_invisible {
-        for &c in INVISIBLE_UNICODE {
-            sanitized = sanitized.replace(c, "");
-        }
-    }
+    // Sanitized text has invisible chars stripped but preserves original case
+    let sanitized = strip_invisible_unicode(text);
 
     ScanResult {
         passed: blocked.is_empty(),
@@ -93,7 +110,6 @@ pub fn scan_prompt(text: &str) -> ScanResult {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

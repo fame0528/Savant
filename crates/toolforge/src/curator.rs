@@ -7,6 +7,8 @@ use crate::registry::SharedToolRegistry;
 pub struct CollectiveCurator {
     registry: Arc<SharedToolRegistry>,
     provenance: Arc<ProvenanceTracker>,
+    /// Number of days of inactivity before a tool is auto-archived (default: 30)
+    inactivity_threshold_days: u64,
 }
 
 impl CollectiveCurator {
@@ -14,7 +16,14 @@ impl CollectiveCurator {
         CollectiveCurator {
             registry,
             provenance,
+            inactivity_threshold_days: 30,
         }
+    }
+
+    /// Sets a custom inactivity threshold in days.
+    pub fn with_inactivity_threshold(mut self, days: u64) -> Self {
+        self.inactivity_threshold_days = days;
+        self
     }
 
     pub async fn run_auto_transitions(&self) {
@@ -22,7 +31,10 @@ impl CollectiveCurator {
         let entries = self.provenance.replay();
         let now = chrono::Utc::now();
 
-        let mut tool_last_action: std::collections::HashMap<String, (String, chrono::DateTime<chrono::Utc>)> = std::collections::HashMap::new();
+        let mut tool_last_action: std::collections::HashMap<
+            String,
+            (String, chrono::DateTime<chrono::Utc>),
+        > = std::collections::HashMap::new();
         let mut tool_pinned: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for entry in &entries {
@@ -43,7 +55,7 @@ impl CollectiveCurator {
                 continue;
             }
             let days_inactive = (now - *last_ts).num_days();
-            if days_inactive > 30 {
+            if days_inactive > self.inactivity_threshold_days as i64 {
                 self.registry.remove(name);
                 info!("[toolforge::curator] Auto-archived stale tool: {name} ({days_inactive} days inactive)");
             }

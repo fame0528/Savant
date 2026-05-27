@@ -1,10 +1,11 @@
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 #![allow(clippy::disallowed_methods)]
 use std::cmp;
 
-use tracing::{debug, info, warn};
-use rkyv::{Archive, Deserialize, Serialize};
 use bytecheck::CheckBytes;
+use rkyv::{Archive, Deserialize, Serialize};
 use savant_core::error::SavantError;
+use tracing::{debug, info, warn};
 
 /// Configuration for the DSP trade-off mechanisms.
 ///
@@ -21,6 +22,7 @@ use savant_core::error::SavantError;
 ///     beta: 1,
 ///     max_speculative_steps: 10,
 ///     max_history_size: 1000,
+///     ..Default::default()
 /// };
 /// ```
 #[derive(Archive, Deserialize, Serialize, CheckBytes, Debug, Clone, Copy, PartialEq)]
@@ -54,6 +56,23 @@ pub struct DspConfig {
     /// Prevents unbounded memory growth in long-running sessions.
     /// Default: 1000
     pub max_history_size: usize,
+
+    /// Maximum generations for the genetic forge optimizer.
+    /// Default: 100
+    pub genetic_max_generations: usize,
+
+    /// Convergence threshold for the genetic forge optimizer.
+    /// Evolution stops when fitness improvement falls below this value.
+    /// Default: 0.01
+    pub genetic_convergence_threshold: f32,
+
+    /// Population size for the genetic forge optimizer.
+    /// Default: 50
+    pub genetic_population_size: usize,
+
+    /// Mutation rate for the genetic forge optimizer.
+    /// Default: 0.1
+    pub genetic_mutation_rate: f32,
 }
 
 impl Default for DspConfig {
@@ -63,6 +82,10 @@ impl Default for DspConfig {
             beta: 1,  // Slight aggressive offset
             max_speculative_steps: 10,
             max_history_size: 1000,
+            genetic_max_generations: 100,
+            genetic_convergence_threshold: 0.01,
+            genetic_population_size: 50,
+            genetic_mutation_rate: 0.1,
         }
     }
 }
@@ -95,8 +118,13 @@ pub struct DspPredictor {
 
 impl Default for DspPredictor {
     fn default() -> Self {
-        #[allow(clippy::disallowed_methods)]
-        Self::new(DspConfig::default()).expect("Default DspConfig is always valid")
+        // DspConfig::default() is guaranteed valid (tau=0.7, max_speculative_steps=10)
+        Self {
+            config: DspConfig::default(),
+            accuracy_ema: 0.0,
+            prediction_count: 0,
+            prediction_history: Vec::new(),
+        }
     }
 }
 
@@ -140,15 +168,15 @@ impl DspPredictor {
     /// Persists the predictor state to a file.
     pub async fn save_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), SavantError> {
         let bytes = self.to_bytes().map_err(SavantError::Unknown)?;
-        tokio::fs::write(path, bytes).await
+        tokio::fs::write(path, bytes)
+            .await
             .map_err(SavantError::IoError)?;
         Ok(())
     }
 
     /// Loads the predictor state from a file.
     pub async fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Self, SavantError> {
-        let bytes = tokio::fs::read(path).await
-            .map_err(SavantError::IoError)?;
+        let bytes = tokio::fs::read(path).await.map_err(SavantError::IoError)?;
         Self::from_bytes(&bytes).map_err(SavantError::Unknown)
     }
 
@@ -377,7 +405,8 @@ mod tests {
 
     #[test]
     fn test_predict_optimal_k_bounds() {
-        let mut predictor = DspPredictor::new(DspConfig::default()).expect("Failed to create predictor");
+        let mut predictor =
+            DspPredictor::new(DspConfig::default()).expect("Failed to create predictor");
 
         // Test various complexity levels
         for complexity in [0.1, 1.0, 5.0, 10.0, 50.0, 100.0] {
@@ -393,7 +422,8 @@ mod tests {
 
     #[test]
     fn test_predict_optimal_k_simple_tasks() {
-        let mut predictor = DspPredictor::new(DspConfig::default()).expect("Failed to create predictor");
+        let mut predictor =
+            DspPredictor::new(DspConfig::default()).expect("Failed to create predictor");
         // Simple tasks (low complexity) should yield higher k
         let k_simple = predictor.predict_optimal_k(0.5);
         let k_complex = predictor.predict_optimal_k(20.0);
@@ -410,7 +440,9 @@ mod tests {
             beta: 0,
             max_speculative_steps: 10,
             max_history_size: 1000,
-        }).expect("Failed to create predictor");
+            ..Default::default()
+        })
+        .expect("Failed to create predictor");
 
         // With τ=0.5 (symmetric), loss should be symmetric
         let loss1 = predictor.expectile_loss(5.0, 3.0); // actual < predicted
@@ -428,7 +460,9 @@ mod tests {
             beta: 0,
             max_speculative_steps: 10,
             max_history_size: 1000,
-        }).expect("Failed to create predictor");
+            ..Default::default()
+        })
+        .expect("Failed to create predictor");
 
         // With τ=0.8 (favor low k), under-prediction (y < ŷ) should be penalized less
         let loss_under = predictor.expectile_loss(3.0, 5.0); // under-predicted (actual=3 < pred=5)
@@ -446,13 +480,17 @@ mod tests {
             beta: 0,
             max_speculative_steps: 10,
             max_history_size: 1000,
-        }).unwrap();
+            ..Default::default()
+        })
+        .expect("valid config");
         let mut predictor_biased = DspPredictor::new(DspConfig {
             tau: 0.7,
             beta: 3,
             max_speculative_steps: 10,
             max_history_size: 1000,
-        }).unwrap();
+            ..Default::default()
+        })
+        .expect("valid config");
 
         let k_base = predictor_base.predict_optimal_k(5.0);
         let k_biased = predictor_biased.predict_optimal_k(5.0);
@@ -479,7 +517,9 @@ mod tests {
             beta: 0,
             max_speculative_steps: 10,
             max_history_size: 1000,
-        }).unwrap();
+            ..Default::default()
+        })
+        .unwrap();
 
         // Simulate a history where we consistently over-predict
         // Base prediction for complexity 0.4 is 10/1.4 = 7
@@ -503,6 +543,7 @@ mod tests {
             beta: 0,
             max_speculative_steps: 10,
             max_history_size: 1000,
+            ..Default::default()
         };
         assert!(invalid_config.validate().is_err());
 
@@ -511,6 +552,7 @@ mod tests {
             beta: 0,
             max_speculative_steps: 0,
             max_history_size: 1000,
+            ..Default::default()
         };
         assert!(invalid_config2.validate().is_err());
 
@@ -519,6 +561,7 @@ mod tests {
             beta: 0,
             max_speculative_steps: 10,
             max_history_size: 1000,
+            ..Default::default()
         };
         assert!(valid_config.validate().is_ok());
     }

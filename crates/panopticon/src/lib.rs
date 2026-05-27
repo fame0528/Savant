@@ -35,17 +35,21 @@ pub fn init_panopticon(service_name: &str, otlp_endpoint: &str) -> anyhow::Resul
 
     let telemetry = OpenTelemetryLayer::new(tracer);
 
-    Registry::default()
+    match Registry::default()
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer())
         .with(telemetry)
         .try_init()
-        .map_err(|e| {
-            // Double-init is not fatal - log and continue
-            tracing::debug!("Tracing subscriber already initialized: {}", e);
-            e
-        })
-        .ok();
+    {
+        Ok(_) => {}
+        Err(e) if e.to_string().contains("already been set") => {
+            // Already initialized by another subsystem, this is fine
+            tracing::debug!("Tracing subscriber already initialized, skipping: {}", e);
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to initialize tracing: {}", e);
+        }
+    }
 
     Ok(())
 }

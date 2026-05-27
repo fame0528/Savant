@@ -1,3 +1,5 @@
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
+#![allow(clippy::disallowed_methods)]
 //! Skill management handlers for the gateway
 //!
 //! Provides WebSocket control frame handlers for:
@@ -6,6 +8,10 @@
 //! - Enabling/disabling skills
 //! - Running security scans
 //! - Uninstalling skills
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
 
 use savant_core::bus::NexusBridge;
 use savant_core::types::ControlFrame;
@@ -109,7 +115,10 @@ async fn handle_skills_list(
     info!("📋 Skills list requested for agent: {:?}", agent_id);
 
     // Get skill directories
-    let workspace_dir = std::env::current_dir().unwrap_or_default();
+    let workspace_dir = std::env::current_dir().unwrap_or_else(|e| {
+        tracing::warn!("Failed to get current directory: {}", e);
+        std::path::PathBuf::from(".")
+    });
     let swarm_skills_dir = workspace_dir.join("skills");
 
     let mut skills = Vec::new();
@@ -158,7 +167,29 @@ async fn handle_skill_install(
         source, agent_id
     );
 
-    let workspace_dir = std::env::current_dir().unwrap_or_default();
+    // GTW-12: Validate agent_id to prevent path traversal
+    if let Some(ref agent_id) = agent_id {
+        if let Err(e) = validate_skill_name(agent_id) {
+            let error_result = serde_json::json!({
+                "success": false,
+                "message": format!("Invalid agent_id: {}", e),
+            });
+            if let Err(send_err) =
+                send_skill_response("SKILL_INSTALL_RESULT", error_result, session_id, nexus).await
+            {
+                warn!(
+                    "[gateway] Failed to send SKILL_INSTALL_RESULT: {}",
+                    send_err
+                );
+            }
+            return;
+        }
+    }
+
+    let workspace_dir = std::env::current_dir().unwrap_or_else(|e| {
+        tracing::warn!("Failed to get current directory: {}", e);
+        std::path::PathBuf::from(".")
+    });
     let target_dir = if let Some(ref agent_id) = agent_id {
         workspace_dir
             .join("workspaces")
@@ -245,7 +276,10 @@ async fn handle_skill_uninstall(
 
     info!("🗑️ Skill uninstall requested: {}", skill_name);
 
-    let workspace_dir = std::env::current_dir().unwrap_or_default();
+    let workspace_dir = std::env::current_dir().unwrap_or_else(|e| {
+        tracing::warn!("Failed to get current directory: {}", e);
+        std::path::PathBuf::from(".")
+    });
     let skills_base = workspace_dir.join("skills");
     let skill_dir = skills_base.join(&skill_name);
 
@@ -308,7 +342,10 @@ async fn handle_skill_enable(
 
     info!("✅ Skill enable requested: {}", skill_name);
 
-    let workspace_dir = std::env::current_dir().unwrap_or_default();
+    let workspace_dir = std::env::current_dir().unwrap_or_else(|e| {
+        tracing::warn!("Failed to get current directory: {}", e);
+        std::path::PathBuf::from(".")
+    });
     let skills_base = workspace_dir.join("skills");
     let enabled_file = skills_base.join(&skill_name).join(".enabled");
 
@@ -364,7 +401,10 @@ async fn handle_skill_disable(
 
     info!("🚫 Skill disable requested: {}", skill_name);
 
-    let workspace_dir = std::env::current_dir().unwrap_or_default();
+    let workspace_dir = std::env::current_dir().unwrap_or_else(|e| {
+        tracing::warn!("Failed to get current directory: {}", e);
+        std::path::PathBuf::from(".")
+    });
     let skills_base = workspace_dir.join("skills");
     let enabled_file = skills_base.join(&skill_name).join(".enabled");
 
@@ -410,11 +450,14 @@ async fn handle_skill_scan(
     let path = std::path::Path::new(&skill_path);
 
     // Validate path is within allowed directories
-    let workspace_dir = std::env::current_dir().unwrap_or_default();
+    let workspace_dir = std::env::current_dir().unwrap_or_else(|e| {
+        tracing::warn!("Failed to get current directory: {}", e);
+        std::path::PathBuf::from(".")
+    });
     let _skills_base = workspace_dir.join("skills");
     let _workspaces_base = workspace_dir.join("workspaces");
 
-    // Must be within skills/ or workspaces/ directory
+    // GTW-06: Validate path is within allowed directories (skills/ or workspaces/)
     let canonical = match path.canonicalize() {
         Ok(p) => p,
         Err(e) => {
@@ -430,6 +473,25 @@ async fn handle_skill_scan(
             return;
         }
     };
+
+    let skills_base = workspace_dir
+        .join("skills")
+        .canonicalize()
+        .unwrap_or_default();
+    let workspaces_base = workspace_dir
+        .join("workspaces")
+        .canonicalize()
+        .unwrap_or_default();
+    if !canonical.starts_with(&skills_base) && !canonical.starts_with(&workspaces_base) {
+        let result = serde_json::json!({
+            "success": false,
+            "message": "Path must be within skills/ or workspaces/ directory",
+        });
+        if let Err(e) = send_skill_response("SKILL_SCAN_RESULT", result, session_id, nexus).await {
+            warn!("[gateway] Failed to send SKILL_SCAN_RESULT: {}", e);
+        }
+        return;
+    }
 
     let scanner = savant_skills::security::SecurityScanner::new();
 

@@ -51,9 +51,9 @@ impl EnvironmentalDelta {
 /// Tracks state between pulses to compute deltas.
 pub struct DeltaTracker {
     last_pulse_time: Instant,
-    #[allow(dead_code)]
+    /// Hash of the last git state (commit or diff).
     last_git_hash: u64,
-    #[allow(dead_code)]
+    /// Snapshot of filesystem state (path -> modification hash).
     last_fs_snapshot: Vec<(String, u64)>,
     new_messages_count: usize,
     tool_errors_count: usize,
@@ -78,6 +78,47 @@ impl DeltaTracker {
     /// Record a tool error since last pulse.
     pub fn record_tool_error(&mut self) {
         self.tool_errors_count += 1;
+    }
+
+    /// Update the git hash and return the number of lines changed.
+    /// Returns 0 if the hash hasn't changed.
+    pub fn update_git_hash(&mut self, new_hash: u64) -> usize {
+        if self.last_git_hash == 0 {
+            // First update, no previous state
+            self.last_git_hash = new_hash;
+            return 0;
+        }
+        if self.last_git_hash == new_hash {
+            return 0;
+        }
+        // Hash changed — return a signal that git has changed
+        // The actual line count would need to be computed by the caller
+        self.last_git_hash = new_hash;
+        1 // Signal that something changed
+    }
+
+    /// Update the filesystem snapshot and return the number of files modified.
+    pub fn update_fs_snapshot(&mut self, new_snapshot: Vec<(String, u64)>) -> usize {
+        if self.last_fs_snapshot.is_empty() {
+            // First update, no previous state
+            self.last_fs_snapshot = new_snapshot;
+            return 0;
+        }
+
+        let mut modified = 0;
+        let old_map: std::collections::HashMap<&String, &u64> =
+            self.last_fs_snapshot.iter().map(|(p, h)| (p, h)).collect();
+
+        for (path, hash) in &new_snapshot {
+            match old_map.get(path) {
+                Some(old_hash) if *old_hash != hash => modified += 1,
+                None => modified += 1,
+                _ => {}
+            }
+        }
+
+        self.last_fs_snapshot = new_snapshot;
+        modified
     }
 
     /// Compute the current environmental delta and reset counters.

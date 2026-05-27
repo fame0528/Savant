@@ -1,10 +1,10 @@
 # OpenClaw to Savant Migration Guide
 
-Welcome to Savant v1.5.0. This guide outlines the steps to migrate your legacy 103-agent swarm from OpenClaw/ZeroClaw to the Rust-native Savant framework.
+Welcome to Savant v0.3.1. This guide outlines the steps to migrate your legacy agent setup from OpenClaw to the Rust-native Savant framework.
 
 ## 1. Direct Framework Comparison
 
-| Feature | OpenClaw (Legacy) | Savant (v1.5.0) |
+| Feature | OpenClaw (Legacy) | Savant (v0.3.1) |
 | :--- | :--- | :--- |
 | **Foundation** | Python / JS | **Rust Native** |
 | **Security** | Ad-hoc / Key-shuffling | **CCT (Crypto-Cap Tokens)** |

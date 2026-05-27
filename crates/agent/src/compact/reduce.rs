@@ -133,7 +133,11 @@ impl ReductionPipeline {
         }
 
         // Head + tail truncation
-        let head = lines.iter().take(strategy.head_lines).copied().collect::<Vec<_>>();
+        let head = lines
+            .iter()
+            .take(strategy.head_lines)
+            .copied()
+            .collect::<Vec<_>>();
         let tail = lines
             .iter()
             .skip(total_lines.saturating_sub(strategy.tail_lines))
@@ -174,7 +178,10 @@ impl ReductionPipeline {
     }
 
     /// Applies named regex counters to extract metrics from output.
-    fn apply_counters(text: &str, counter_regexes: &[(String, regex::Regex)]) -> HashMap<String, usize> {
+    fn apply_counters(
+        text: &str,
+        counter_regexes: &[(String, regex::Regex)],
+    ) -> HashMap<String, usize> {
         let mut counters = HashMap::new();
         for (name, regex) in counter_regexes {
             let count = regex.find_iter(text).count();
@@ -321,6 +328,7 @@ impl ReductionPipeline {
 }
 
 #[cfg(test)]
+#[expect(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

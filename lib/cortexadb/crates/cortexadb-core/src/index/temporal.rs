@@ -72,9 +72,10 @@ impl TemporalIndex {
         Ok(count)
     }
 
-    /// Get earliest timestamp with memories
+    /// Get earliest timestamp with memories.
+    /// O(n) scan — acceptable for typical memory counts (< 100K).
+    /// Could be optimized with a sorted B-tree index on StateMachine if needed.
     pub fn get_earliest_timestamp(state_machine: &StateMachine) -> Option<u64> {
-        // Find first memory in the system (brute force for now)
         let mut earliest = u64::MAX;
         for entry in state_machine.all_memories() {
             if entry.created_at < earliest {
@@ -89,9 +90,10 @@ impl TemporalIndex {
         }
     }
 
-    /// Get latest timestamp with memories
+    /// Get latest timestamp with memories.
+    /// O(n) scan — acceptable for typical memory counts (< 100K).
+    /// Could be optimized with a sorted B-tree index on StateMachine if needed.
     pub fn get_latest_timestamp(state_machine: &StateMachine) -> Option<u64> {
-        // Find last memory in the system
         let mut latest: Option<u64> = None;
         for entry in state_machine.all_memories() {
             latest = Some(match latest {

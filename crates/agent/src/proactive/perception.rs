@@ -121,35 +121,39 @@ impl PerceptionEngine {
 
     /// Deterministic substrate metrics via sysinfo crate.
     /// Returns exact memory and CPU values — the agent cannot hallucinate.
+    /// Uses block_in_place to avoid blocking the tokio runtime.
     pub fn get_substrate_metrics() -> String {
-        let mut sys = System::new_with_specifics(
-            RefreshKind::nothing()
-                .with_memory(MemoryRefreshKind::everything())
-                .with_cpu(CpuRefreshKind::everything()),
-        );
+        tokio::task::block_in_place(|| {
+            let mut sys = System::new_with_specifics(
+                RefreshKind::nothing()
+                    .with_memory(MemoryRefreshKind::everything())
+                    .with_cpu(CpuRefreshKind::everything()),
+            );
 
-        // Refresh CPU to get accurate usage (needs a small interval between refreshes).
-        sys.refresh_cpu_all();
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        sys.refresh_cpu_all();
-        let total_mem = sys.total_memory();
-        let used_mem = sys.used_memory();
-        let mem_pct = if total_mem > 0 {
-            (used_mem as f64 / total_mem as f64) * 100.0
-        } else {
-            0.0
-        };
+            // Refresh CPU to get accurate usage (needs a small interval between refreshes).
+            // Use std::thread::sleep inside block_in_place since we're already in a blocking context.
+            sys.refresh_cpu_all();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            sys.refresh_cpu_all();
+            let total_mem = sys.total_memory();
+            let used_mem = sys.used_memory();
+            let mem_pct = if total_mem > 0 {
+                (used_mem as f64 / total_mem as f64) * 100.0
+            } else {
+                0.0
+            };
 
-        let cpu_usage = sys.global_cpu_usage();
+            let cpu_usage = sys.global_cpu_usage();
 
-        let total_mb = total_mem / (1024 * 1024);
-        let used_mb = used_mem / (1024 * 1024);
+            let total_mb = total_mem / (1024 * 1024);
+            let used_mb = used_mem / (1024 * 1024);
 
-        format!(
-            "Substrate Metrics (deterministic):\n\
-            - Memory: {}MB / {}MB ({:.1}%)\n\
-            - CPU: {:.1}%",
-            used_mb, total_mb, mem_pct, cpu_usage
-        )
+            format!(
+                "Substrate Metrics (deterministic):\n\
+                - Memory: {}MB / {}MB ({:.1}%)\n\
+                - CPU: {:.1}%",
+                used_mb, total_mb, mem_pct, cpu_usage
+            )
+        })
     }
 }

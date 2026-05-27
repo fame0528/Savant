@@ -1,7 +1,8 @@
 [package]
 name = "savant_canvas"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 savant_core = { path = "../core" }
@@ -13,3 +14,6 @@ tokio = { workspace = true }
 similar = { version = "2.6", features = ["unicode"] }
 futures = { workspace = true }
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

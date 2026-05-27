@@ -1,3 +1,4 @@
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 #![allow(clippy::disallowed_methods)]
 use async_trait::async_trait;
 use savant_core::error::SavantError;
@@ -47,11 +48,7 @@ impl ToolForgeTool {
     }
 
     fn existing_tool_names(&self) -> HashSet<String> {
-        self.registry
-            .list_all()
-            .keys()
-            .cloned()
-            .collect()
+        self.registry.list_all().keys().cloned().collect()
     }
 
     fn read_skill(&self, name: &str) -> Result<String, SavantError> {
@@ -76,16 +73,14 @@ impl ToolForgeTool {
         let tmp = path.with_extension("tmp");
         std::fs::write(&tmp, content)
             .map_err(|e| SavantError::OperationFailed(format!("Failed to write temp file: {e}")))?;
-        std::fs::rename(&tmp, &path)
-            .map_err(|e| SavantError::OperationFailed(format!("Failed to rename temp file: {e}")))?;
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            SavantError::OperationFailed(format!("Failed to rename temp file: {e}"))
+        })?;
         Ok(())
     }
 
     fn bump_version(current: &str, bump: Option<&str>) -> String {
-        let parts: Vec<u32> = current
-            .split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
+        let parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
         if parts.len() != 3 {
             return String::from("0.1.1");
         }
@@ -205,7 +200,7 @@ impl ToolForgeTool {
             to_version: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        self.provenance.append(&entry);
+        self.provenance.append(&entry).await;
 
         info!("[toolforge] Tool forged: {name}");
         Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -271,7 +266,7 @@ impl ToolForgeTool {
             to_version: Some(new_version.clone()),
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        self.provenance.append(&entry);
+        self.provenance.append(&entry).await;
 
         info!("[toolforge] Tool patched: {name} → v{new_version}");
         Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -375,7 +370,7 @@ impl ToolForgeTool {
             to_version: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        self.provenance.append(&entry);
+        self.provenance.append(&entry).await;
 
         info!("[toolforge] Tool archived: {name}");
         Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -413,7 +408,7 @@ impl ToolForgeTool {
             to_version: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        self.provenance.append(&entry);
+        self.provenance.append(&entry).await;
 
         info!("[toolforge] Tool pin toggled: {name} = {pinned}");
         Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -473,7 +468,7 @@ impl ToolForgeTool {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     ..Default::default()
                 };
-                self.provenance.append(&rb_entry);
+                self.provenance.append(&rb_entry).await;
 
                 info!("[toolforge] Tool rolled back: {name}");
                 return Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -495,7 +490,9 @@ impl ToolForgeTool {
             SavantError::InvalidInput(String::from("Missing required field: 'name'"))
         })?;
         let rating = payload["rating"].as_str().ok_or_else(|| {
-            SavantError::InvalidInput(String::from("Missing required field: 'rating' (thumbs_up or thumbs_down)"))
+            SavantError::InvalidInput(String::from(
+                "Missing required field: 'rating' (thumbs_up or thumbs_down)",
+            ))
         })?;
 
         if rating != "thumbs_up" && rating != "thumbs_down" {
@@ -515,7 +512,7 @@ impl ToolForgeTool {
             timestamp: chrono::Utc::now().to_rfc3339(),
             ..Default::default()
         };
-        self.provenance.append(&entry);
+        self.provenance.append(&entry).await;
 
         Ok(serde_json::to_string_pretty(&serde_json::json!({
             "status": "RATED",

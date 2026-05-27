@@ -56,3 +56,20 @@ pub async fn ensure_dir(path: &Path) -> Result<(), SavantError> {
     fs::create_dir_all(path).await?;
     Ok(())
 }
+
+/// Recursively copies a directory from `src` to `dst`.
+/// Creates `dst` if it does not exist. Copies all files and subdirectories.
+pub fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}

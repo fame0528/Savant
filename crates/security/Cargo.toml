@@ -1,7 +1,8 @@
 [package]
 name = "savant_security"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 ed25519-dalek = { version = "2.1.0", features = ["rand_core"] }
@@ -19,10 +20,11 @@ pqcrypto-dilithium = "0.5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
+regex-lite = "0.1"
 savant_core = { path = "../core" }
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+[lints]
+workspace = true
 
 # [target.'cfg(kani)'.dependencies]
 # kani = "0.45.0"

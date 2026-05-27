@@ -2,9 +2,9 @@
 
 ## Overview
 
-The Savant memory system is a multi-layered, "forever memory" architecture designed to persist agent knowledge permanently while supporting semantic search, contradiction resolution, and hive-mind knowledge sharing across 101 agents. Data is permanent by default — deletion requires explicit action.
+The Savant memory system is a multi-layered, "forever memory" architecture designed to persist agent knowledge permanently while supporting semantic search, contradiction resolution, and hive-mind knowledge sharing across agents. Data is permanent by default — deletion requires explicit action.
 
-The system has three distinct layers, a dual-enclave architecture (private + collective), and multiple persistence mechanisms that ensure no data is lost even during crashes or shutdowns.
+The system has three distinct storage layers, a dual-enclave architecture (private + collective), a Glass House Obsidian sync layer for visual exploration, reflective relationship graphs, learned procedures, synthesized lessons, and multiple persistence mechanisms that ensure no data is lost even during crashes or shutdowns.
 
 ---
 
@@ -37,7 +37,15 @@ The system has three distinct layers, a dual-enclave architecture (private + col
 │  ├─ 64-way write lock partitioning (FNV-1a hash of session_id)         │
 │  ├─ Atomicity rollback on LSM insert failure                            │
 │  ├─ PromotionEngine (OCEAN personality-driven scoring)                  │
-│  └─ EmbeddingService integration                                        │
+│  ├─ EmbeddingService integration                                        │
+│  ├─ ReflectiveMemory (4-graph: Semantic, Temporal, Causal, Entity)     │
+│  ├─ Bm25Index (keyword search)                                          │
+│  ├─ ProceduralMemory (learned tool-call workflows)                     │
+│  ├─ Lessons (synthesized from repeated experiences)                     │
+│  ├─ Insights (higher-order concept cluster patterns)                    │
+│  ├─ MultimodalStore (CLIP-embedded image references)                    │
+│  ├─ AuditTrail (memory operation log)                                   │
+│  └─ NotificationChannel (hive-mind broadcast)                          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                        STORAGE LAYERS                                   │
 │                                                                         │
@@ -118,7 +126,7 @@ pub struct MemoryEntry {
     pub content: String,
     pub importance: u8,                // 1-10 scale
     pub tags: Vec<String>,
-    pub embedding: Vec<f32>,           // 2560 dimensions (qwen3-embedding:4b)
+    pub embedding: Vec<f32>,           // 2560 dimensions (gemma4:e4b)
     pub created_at: i64,
     pub updated_at: i64,
     pub shannon_entropy: f32,          // Information density
@@ -213,7 +221,7 @@ The semantic search layer. Uses HNSW (Hierarchical Navigable Small World) graphs
 
 ```rust
 VectorConfig {
-    dimensions: 2560,              // qwen3-embedding:4b output
+    dimensions: 2560,              // gemma4:e4b output
     hnsw_m: 16,                    // Bi-directional links per node
     hnsw_ef_construction: 200,     // Candidate list during index build
     hnsw_ef_search: 50,            // Candidate list during search
@@ -250,7 +258,7 @@ On startup, if the persisted vector file has a different dimension than the curr
 2. Clears the stale vector directory
 3. Retries with corrected dimensions from the embedding service
 
-This happened when the project switched from fastembed (384-dim) to qwen3-embedding:4b (2560-dim).
+This happened when the project switched from fastembed (384-dim) to gemma4:e4b (2560-dim).
 
 ---
 
@@ -267,7 +275,7 @@ The `MemoryEngine` maintains two separate memory spaces:
 
 ### Collective Enclave (`{base}/collective/`)
 
-- Shared hive-mind memory across all 101 agents
+- Shared hive-mind memory across all agents
 - Receives distilled triplets from all agent enclaves
 - Maintains SPO facts index for contradiction resolution
 - Factual arbiter runs here to resolve conflicts
@@ -562,6 +570,192 @@ The result: the system accumulates knowledge permanently. Knowledge can be organ
 
 ---
 
+## 14. The Glass House (Obsidian Bidirectional Sync)
+
+The Glass House projects the memory system as an Obsidian-compatible vault, giving users a visual, explorable second brain. It operates bidirectionally: memory projects to vault files, and vault edits feed back into memory.
+
+### Architecture
+
+```
+MEMORY SUBSTRATE                         OBSIDIAN VAULT
+┌──────────────────┐    Outbound      ┌──────────────────┐
+│  MemoryEnclave   │ ─────────────→   │  VaultWriter     │
+│  (LSM + HNSW)    │   (projection)   │  (18 directories)│
+└────────┬─────────┘                  └──────────────────┘
+         │                                     │
+         │    Inbound (watcher)                 │
+         └────────────────────────────←────────┘
+                   + scan_prompt()
+                   (injection defense)
+```
+
+### Vault Structure
+
+| Directory | Source | Bidirectional |
+|-----------|--------|---------------|
+| `Episodic/` | LSM session tails | No — edits rejected |
+| `Semantic/Concepts.md` | `lsm.iter_metadata()` grouped by category | Yes — accepted as ground truth |
+| `Semantic/Relations.md` | Typed edges between concepts | No — auto-generated |
+| `Semantic/Triplets.md` | `lsm.iter_facts()` | No — auto-generated |
+| `Semantic/Entities.md` | Title-case extraction | No — auto-generated |
+| `Identity/SOUL.md` | Copied from workspace | No — blocked, must use Evolution |
+| `Identity/Personality.md` | OCEAN traits from agent.json | Yes — edits forwarded |
+| `Identity/Evolution/` | EVOLUTION.jsonl mutation reports | No — read-only |
+| `Procedural/` | Learned tool-call workflows | Yes — accepted |
+| `Lessons/` | Synthesized lessons | Yes — accepted |
+| `Insights/` | Concept cluster patterns | Yes — accepted |
+| `Graphs/` | MAGMA reflective graphs | No — auto-generated |
+| `Retention/` | Ebbinghaus tier analysis | No — auto-generated |
+| `Dashboard/` | Computed metrics | No — auto-generated |
+| `Themes/` | Dream Engine clusters | No — auto-generated |
+| `Working/` | Transient scratchpad | Ignored — cleared on sync |
+| `Delegation/` | A2A task artifacts | No — generated by orchestrator |
+| `Multimodal/` | CLIP image references | No — auto-generated |
+
+### Sync Process
+
+**Outbound (memory → vault):**
+1. `OutboxWorker` polls every 5 minutes (configurable)
+2. Takes `StateSnapshot` from LSM (sessions, messages, vectors, procedures, lessons, insights)
+3. Compares against persisted `CursorState` — skips if unchanged
+4. Calls `VaultWriter::run_full_sync()` — projects all memory types to .md files
+5. All writes are atomic: temp file → fsync → rename
+6. `ColdStorageManager` runs after sync (archives old episodic files)
+
+**Inbound (vault → memory):**
+1. `VaultWatcher` uses `notify::RecommendedWatcher` with 2-second poll interval
+2. Debounces rapid edits with 2-second coalescing window
+3. Routes by directory:
+   - `Semantic/`, `Procedural/`, `Lessons/`, `Insights/` → writes to LSM with override category
+   - `Episodic/`, `Graphs/`, `Retention/`, `Audit/` → rejected (read-only)
+   - `Identity/SOUL.md` → blocked (must use Evolution system)
+   - `Identity/Personality.md` → published to nexus event bus
+   - Unknown files → quarantined
+
+### Security
+
+Every inbound edit passes through `scan_prompt()` injection defense before affecting agent state. The vault is treated as a potentially hostile data source.
+
+### Configuration
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `enabled` | `true` | Master toggle |
+| `sync_interval_secs` | `300` | Outbox poll interval |
+| `max_files` | `15,000` | File ceiling before forced cold storage |
+| `cold_storage_days` | `90` | Episodic age threshold |
+| `project_procedures` | `true` | Procedural memory projection |
+| `project_lessons` | `true` | Lessons + Insights projection |
+| `project_graphs` | `true` | MAGMA graph projection |
+| `project_audit_trail` | `false` | Audit log (noisy, off by default) |
+
+---
+
+## 15. Reflective Memory (4-Graph System)
+
+The `ReflectiveMemory` subsystem maintains four typed relationship graphs for deep knowledge understanding.
+
+### Graph Types
+
+| Graph | Purpose | Data |
+|-------|---------|------|
+| **Semantic** | Concept relationships | typed edges: is_a, part_of, contradicts, evolved_into, superseded_by |
+| **Temporal** | Time-based ordering | concept creation/modification/supersession chains |
+| **Causal** | Cause-effect links | IF→THEN relationships, dependency chains |
+| **Entity** | Entity relationship tracking | Project, Service, Person, Tool, File, Config entities |
+
+### Entity Extraction
+
+The `EntityExtractor` uses rule-based extraction for structured entities:
+- Identifies: Project, Service, Person, Credential, Tool, File, Config
+- Maintains `petgraph`-backed relationship tracking across sessions
+- Title-case heuristic + URL pattern matching for entity detection
+
+---
+
+## 16. BM25 Keyword Index
+
+The `Bm25Index` provides fast keyword search alongside semantic vector search.
+
+- Complements HNSW vector search with exact keyword matching
+- Useful for technical terms, file names, and exact phrases that semantic search may miss
+- Indexed on `MemoryEntry.content` field
+
+---
+
+## 17. Procedural Memory
+
+Learned tool-call workflows that the agent discovers through repetition.
+
+### Structure
+
+Each `ProceduralMemory` records:
+- Tool name and call sequence
+- Frequency (how often observed)
+- Strength (confidence score)
+- Steps (ordered tool invocations)
+
+### Discovery
+
+The agent observes recurring tool-call patterns across sessions. When a sequence appears frequently enough, it's elevated to a procedural memory, allowing faster execution of known workflows.
+
+---
+
+## 18. Lessons
+
+Synthesized lessons from repeated experiences. The agent distills patterns from:
+- Repeated errors with similar root causes
+- Successful approaches that worked across contexts
+- Contradictions that were resolved
+
+Each lesson has:
+- Content (the lesson text)
+- Confidence (how certain the agent is)
+- Decay (how recently the lesson was reinforced)
+
+---
+
+## 19. Insights
+
+Higher-order patterns derived from concept clusters in the reflective graphs.
+
+The insight engine scans concept relationships for:
+- Emerging themes across multiple concepts
+- Contradictions between established facts
+- Novel connections between previously unrelated domains
+
+Insights are projected to the `Insights/` directory in the Glass House vault.
+
+---
+
+## 20. Multimodal Store
+
+CLIP-embedded image references for cross-modal search.
+
+- Images are embedded using CLIP vision model
+- Stored references point to image locations (not the images themselves)
+- Enables semantic search across text and images
+
+---
+
+## 21. Audit Trail
+
+Application-level log of memory operations:
+- Store, retrieve, consolidate, distill events
+- Timestamps and operation metadata
+- Configurable (disabled by default for performance)
+
+---
+
+## 22. Notification Channel
+
+Hive-mind broadcast channel for high-importance events:
+- `tokio::sync::broadcast` channel with capacity 64
+- Used for cross-agent notifications (e.g., concept contradictions, high-value learnings)
+- Consumed by dashboard for real-time alerts
+
+---
+
 ## 14. Key Source Files
 
 | Component | File | Lines |
@@ -579,7 +773,11 @@ The result: the system accumulates knowledge permanently. Knowledge can be organ
 | MemoryBackend Trait | `crates/core/src/traits/mod.rs` | 116 |
 | Database Layer | `crates/core/src/db.rs` | 278 |
 | LEARNINGS Parser | `crates/agent/src/learning/parser.rs` | ~200 |
+| Glass House Writer | `crates/obsidian/src/writer.rs` | 2073 |
+| Glass House Watcher | `crates/obsidian/src/watcher.rs` | 564 |
+| Glass House Outbox | `crates/obsidian/src/outbox.rs` | 213 |
+| Cold Storage Manager | `crates/obsidian/src/cold_storage.rs` | 278 |
 
 ---
 
-*Documentation generated from source code audit. Last updated: 2026-03-27.*
+*Documentation updated: 2026-05-25. Reflects v0.3.1 codebase with all subsystems.*

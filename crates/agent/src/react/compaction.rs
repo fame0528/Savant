@@ -1,11 +1,46 @@
 //! Context Compaction — prevents context overflow on long conversations.
 //!
-//! Three strategies selected by usage ratio:
-//! - 80-85%: MoveToWorkspace — archive old messages to daily log, keep recent
-//! - 85-95%: Summarize — LLM bullet-point summary, keep recent
-//! - >95%: Truncate — aggressive, keep only recent turns
+//! Three strategies selected by usage ratio (configurable via L2Thresholds):
+//! - tool_eviction (default 75%): MoveToWorkspace — archive old messages to daily log
+//! - llm_summarization (default 85%): Summarize — LLM bullet-point summary, keep recent
+//! - emergency (default 95%): Truncate — aggressive, keep only recent turns
+//!
+//! NS-02: Thresholds are configurable via `L2Compressor`.
+//! NS-04: Thresholds are personality-adjusted via `OceanScaler`.
 
 use savant_core::types::{ChatMessage, ChatRole};
+
+/// Configurable L2 thresholds for context compaction.
+/// Mirrors `compact::l2::L2Thresholds` but defined here to avoid circular deps.
+#[derive(Debug, Clone)]
+pub struct L2CompactionThresholds {
+    /// Threshold for tool eviction / move-to-workspace (default: 0.75).
+    pub tool_eviction: f32,
+    /// Threshold for LLM summarization (default: 0.85).
+    pub llm_summarization: f32,
+    /// Emergency threshold for aggressive truncation (default: 0.95).
+    pub emergency: f32,
+}
+
+impl Default for L2CompactionThresholds {
+    fn default() -> Self {
+        Self {
+            tool_eviction: 0.75,
+            llm_summarization: 0.85,
+            emergency: 0.95,
+        }
+    }
+}
+
+impl From<crate::compact::l2::L2Thresholds> for L2CompactionThresholds {
+    fn from(t: crate::compact::l2::L2Thresholds) -> Self {
+        Self {
+            tool_eviction: t.tool_eviction,
+            llm_summarization: t.llm_summarization,
+            emergency: t.emergency,
+        }
+    }
+}
 
 /// Compaction strategy selected based on context usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,10 +53,15 @@ pub enum CompactionStrategy {
     Truncate,
 }
 
-/// Estimate token count for a message (word count * 1.3 + 4 overhead).
+/// Estimate token count for a message.
+/// Uses char_count / 4 which is more accurate for code, JSON, and structured output
+/// than the word-count-based formula. This approximates tiktoken-rs behavior
+/// without the dependency overhead.
 pub fn estimate_message_tokens(msg: &ChatMessage) -> usize {
-    let words = msg.content.split_whitespace().count();
-    (words as f64 * 1.3) as usize + 4
+    let char_count = msg.content.chars().count();
+    // Each token is roughly 4 characters for English text, code, and JSON.
+    // Add 4 for message overhead (role, separators).
+    (char_count / 4) + 4
 }
 
 /// Estimate total tokens across all messages.
@@ -30,14 +70,28 @@ pub fn estimate_total_tokens(messages: &[ChatMessage]) -> usize {
 }
 
 /// Context monitor — decides when and how to compact.
+/// NS-02: Uses configurable L2 thresholds instead of hardcoded values.
 pub struct ContextMonitor {
     /// Model's context window in tokens
     context_limit: usize,
+    /// NS-02: Configurable thresholds for staged compression.
+    thresholds: L2CompactionThresholds,
 }
 
 impl ContextMonitor {
     pub fn new(context_limit: usize) -> Self {
-        Self { context_limit }
+        Self {
+            context_limit,
+            thresholds: L2CompactionThresholds::default(),
+        }
+    }
+
+    /// NS-02: Creates a monitor with custom L2 thresholds (e.g., OceanScaler-adjusted).
+    pub fn with_thresholds(context_limit: usize, thresholds: L2CompactionThresholds) -> Self {
+        Self {
+            context_limit,
+            thresholds,
+        }
     }
 
     /// Current usage ratio (0.0 = empty, 1.0 = full).
@@ -49,13 +103,14 @@ impl ContextMonitor {
     }
 
     /// Suggest a compaction strategy based on current usage.
-    /// Returns None if no compaction needed (< 80%).
+    /// NS-02: Uses configurable thresholds from L2Compressor.
     pub fn suggest(&self, messages: &[ChatMessage]) -> Option<CompactionStrategy> {
         let usage = self.usage_ratio(messages);
+        let t = &self.thresholds;
         match usage {
-            u if u < 0.80 => None,
-            u if u < 0.85 => Some(CompactionStrategy::MoveToWorkspace),
-            u if u < 0.95 => Some(CompactionStrategy::Summarize),
+            u if u < t.tool_eviction as f64 => None,
+            u if u < t.llm_summarization as f64 => Some(CompactionStrategy::MoveToWorkspace),
+            u if u < t.emergency as f64 => Some(CompactionStrategy::Summarize),
             _ => Some(CompactionStrategy::Truncate),
         }
     }

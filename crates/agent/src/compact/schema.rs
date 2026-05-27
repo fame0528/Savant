@@ -114,7 +114,9 @@ pub struct Transforms {
     pub trim_empty_edges: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 impl Default for Transforms {
     fn default() -> Self {
@@ -142,9 +144,15 @@ pub struct SummarizeStrategy {
     pub max_chars: usize,
 }
 
-fn default_head_lines() -> usize { 50 }
-fn default_tail_lines() -> usize { 20 }
-fn default_max_chars() -> usize { 8_000 }
+fn default_head_lines() -> usize {
+    50
+}
+fn default_tail_lines() -> usize {
+    20
+}
+fn default_max_chars() -> usize {
+    8_000
+}
 
 impl Default for SummarizeStrategy {
     fn default() -> Self {
@@ -236,8 +244,12 @@ pub struct CompactRule {
     pub counters: HashMap<String, String>,
 }
 
-fn default_budget_ms() -> u32 { 5 }
-fn default_min_ratio() -> f32 { 0.05 }
+fn default_budget_ms() -> u32 {
+    5
+}
+fn default_min_ratio() -> f32 {
+    0.05
+}
 
 impl Default for CompactRule {
     fn default() -> Self {
@@ -323,6 +335,7 @@ impl CompactionResult {
 }
 
 #[cfg(test)]
+#[expect(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

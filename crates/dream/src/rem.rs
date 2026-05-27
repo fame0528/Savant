@@ -49,20 +49,27 @@ pub struct RemController {
     pub cluster_sample_count: usize,
     /// Number of associations to generate per cycle.
     pub max_associations: usize,
+    /// Embedding vector dimension for random probes.
+    pub embedding_dimension: usize,
 }
 
 impl RemController {
     /// Creates a new REM controller with the given parameters.
-    pub fn new(cluster_sample_count: usize, max_associations: usize) -> Self {
+    pub fn new(
+        cluster_sample_count: usize,
+        max_associations: usize,
+        embedding_dimension: usize,
+    ) -> Self {
         Self {
             cluster_sample_count,
             max_associations,
+            embedding_dimension,
         }
     }
 
-    /// Creates a default REM controller.
+    /// Creates a default REM controller (embedding dimension 2560).
     pub fn default_controller() -> Self {
-        Self::new(4, 6)
+        Self::new(4, 6, 2560)
     }
 
     /// Runs the REM exploration cycle.
@@ -81,7 +88,9 @@ impl RemController {
         info!("[REM] Starting exploration cycle");
 
         // Phase 1: Discover concept clusters from existing memory
-        let clusters = discover_concept_clusters(memory, self.cluster_sample_count).await;
+        let clusters =
+            discover_concept_clusters(memory, self.cluster_sample_count, self.embedding_dimension)
+                .await;
 
         if clusters.len() < 2 {
             debug!(
@@ -177,13 +186,13 @@ struct ConceptCluster {
 async fn discover_concept_clusters(
     memory: &Arc<MemoryEngine>,
     count: usize,
+    dimension: usize,
 ) -> Vec<ConceptCluster> {
     let mut clusters = Vec::with_capacity(count);
-    let mut _rng = rand::thread_rng();
 
     for i in 0..count {
         // Generate a random probe vector to explore different regions
-        let probe: Vec<f32> = (0..384)
+        let probe: Vec<f32> = (0..dimension)
             .map(|_| rand::random::<f32>() * 2.0 - 1.0)
             .collect();
 
@@ -231,6 +240,7 @@ mod tests {
         let controller = RemController::default_controller();
         assert_eq!(controller.cluster_sample_count, 4);
         assert_eq!(controller.max_associations, 6);
+        assert_eq!(controller.embedding_dimension, 2560);
     }
 
     #[test]

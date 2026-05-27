@@ -76,17 +76,30 @@ impl GraphNamespace {
     pub fn relation_types(&self) -> &'static [&'static str] {
         match self {
             GraphNamespace::Semantic => &[
-                "is_a", "part_of", "subclass_of", "supports", "contradicts", "derived_from",
+                "is_a",
+                "part_of",
+                "subclass_of",
+                "supports",
+                "contradicts",
+                "derived_from",
             ],
             GraphNamespace::Temporal => &[
-                "superseded_by", "evolved_into", "prior_state", "follows", "precedes",
+                "superseded_by",
+                "evolved_into",
+                "prior_state",
+                "follows",
+                "precedes",
             ],
-            GraphNamespace::Causal => &[
-                "requires", "generates", "modifies", "enables", "prevents",
-            ],
+            GraphNamespace::Causal => &["requires", "generates", "modifies", "enables", "prevents"],
             GraphNamespace::Entity => &[
-                "works_for", "knows", "founded", "advises", "invested_in", "attended",
-                "collaborates_with", "reports_to",
+                "works_for",
+                "knows",
+                "founded",
+                "advises",
+                "invested_in",
+                "attended",
+                "collaborates_with",
+                "reports_to",
             ],
         }
     }
@@ -184,6 +197,11 @@ pub fn intent_to_namespace(intent: &QueryIntent) -> Option<GraphNamespace> {
     }
 }
 
+/// Maximum number of concepts per namespace graph.
+const MAX_CONCEPTS_PER_NAMESPACE: usize = 10_000;
+/// Maximum number of relations per namespace graph.
+const MAX_RELATIONS_PER_NAMESPACE: usize = 50_000;
+
 /// Per-namespace graph storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NamespaceGraph {
@@ -203,10 +221,39 @@ impl NamespaceGraph {
 
     pub fn add_concept(&mut self, concept: Concept) {
         self.concepts.retain(|c| c.id != concept.id);
+        // RC-06: Evict concept with fewest source entries if at capacity
+        if self.concepts.len() >= MAX_CONCEPTS_PER_NAMESPACE {
+            if let Some(min_idx) = self
+                .concepts
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, c)| c.source_entries.len())
+                .map(|(i, _)| i)
+            {
+                if concept.source_entries.len() > self.concepts[min_idx].source_entries.len() {
+                    self.concepts.remove(min_idx);
+                } else {
+                    return;
+                }
+            }
+        }
         self.concepts.push(concept);
     }
 
     pub fn add_relation(&mut self, relation: Relation) {
+        // RC-06: Dedup relations by source+target+type
+        let already_exists = self.relations.iter().any(|r| {
+            r.source_concept == relation.source_concept
+                && r.target_concept == relation.target_concept
+                && r.relation_type == relation.relation_type
+        });
+        if already_exists {
+            return;
+        }
+        // RC-06: Evict oldest relation if at capacity
+        if self.relations.len() >= MAX_RELATIONS_PER_NAMESPACE {
+            self.relations.remove(0);
+        }
         self.relations.push(relation);
     }
 
@@ -313,11 +360,7 @@ impl ReflectiveMemory {
     }
 
     /// Adds a concept to the appropriate namespace based on the relation type.
-    pub fn add_concept_to_namespace(
-        &mut self,
-        concept: Concept,
-        namespace: GraphNamespace,
-    ) {
+    pub fn add_concept_to_namespace(&mut self, concept: Concept, namespace: GraphNamespace) {
         match namespace {
             GraphNamespace::Semantic => self.semantic.add_concept(concept),
             GraphNamespace::Temporal => self.temporal.add_concept(concept),
@@ -327,10 +370,7 @@ impl ReflectiveMemory {
     }
 
     /// Adds a relation to the appropriate namespace based on the relation type.
-    pub fn add_relation_to_namespace(
-        &mut self,
-        relation: Relation,
-    ) -> Result<(), String> {
+    pub fn add_relation_to_namespace(&mut self, relation: Relation) -> Result<(), String> {
         // Determine namespace from relation type
         for ns in [
             GraphNamespace::Semantic,
@@ -535,10 +575,7 @@ mod tests {
             resolve_graph_intent("Who founded the company?"),
             QueryIntent::Entity
         );
-        assert_eq!(
-            resolve_graph_intent("Tell me about X"),
-            QueryIntent::Hybrid
-        );
+        assert_eq!(resolve_graph_intent("Tell me about X"), QueryIntent::Hybrid);
     }
 
     #[test]

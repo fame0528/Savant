@@ -1,156 +1,37 @@
+//! SovereignShell — workspace-scoped shell command execution tool.
+//!
+//! Provides agents with the ability to execute shell commands within their
+//! workspace boundary. Commands are sandboxed to the agent's workspace path.
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 use async_trait::async_trait;
 use savant_core::error::SavantError;
-use savant_core::traits::Tool;
-use serde_json::Value;
+use savant_core::traits::{Tool, ToolDomain};
+use savant_skills::security::{RiskLevel, SecurityScanner};
+use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::process::Stdio;
-use tokio::process::Command;
-use tracing::{info, warn};
+use std::sync::Arc;
 
-/// SovereignShell: High-Fidelity Terminal Actuator
-///
-/// Unlike foundation.exec, SovereignShell is designed for complex, multi-stage
-/// operations where stdout/stderr capture and exit status are critical for
-/// autonomous error recovery.
-///
-/// Workspace-bounded: all commands execute within the agent's assigned workspace.
-/// CWD is resolved through `secure_resolve_path` which rejects any path escaping
-/// the workspace boundary. Absolute paths in command arguments are validated against
-/// an allowlist of known-safe system directories.
+/// Shell command execution tool scoped to an agent's workspace.
+/// SecurityScanner is mandatory — every command is scanned before execution.
 pub struct SovereignShell {
-    workspace_root: PathBuf,
+    workspace_path: PathBuf,
+    scanner: Arc<SecurityScanner>,
 }
 
 impl SovereignShell {
-    pub fn new(workspace_root: PathBuf) -> Self {
-        Self { workspace_root }
+    /// Create a SovereignShell with mandatory security scanning.
+    pub fn new(workspace_path: PathBuf, scanner: Arc<SecurityScanner>) -> Self {
+        Self {
+            workspace_path,
+            scanner,
+        }
     }
 }
-
-/// Known-safe system directories where absolute paths are permitted.
-/// Commands referencing paths outside these directories AND outside the workspace are rejected.
-const SAFE_SYSTEM_DIRS: &[&str] = &[
-    "/usr/bin",
-    "/usr/local/bin",
-    "/bin",
-    "/sbin",
-    "/usr/sbin",
-    "/usr/lib",
-    "/usr/local/lib",
-    "/usr/share",
-    "/opt",
-    "/var/lib",
-    "/tmp",
-];
-
-/// Destructive command patterns with proposals for safer alternatives.
-/// Each entry: (pattern, human-readable proposal)
-const DESTRUCTIVE_PATTERNS: &[(&str, &str)] = &[
-    // Directory/file removal variants
-    ("rm -rf", "Use 'mv' to a temporary directory instead."),
-    ("rm -r -f", "Use 'mv' to a temporary directory instead."),
-    ("rm -fr", "Use 'mv' to a temporary directory instead."),
-    ("rm -Rf", "Use 'mv' to a temporary directory instead."),
-    // Disk formatting
-    ("format", "Disk formatting is prohibited."),
-    ("mkfs", "Filesystem creation is prohibited."),
-    ("mkfs.ext4", "Filesystem creation is prohibited."),
-    ("mkfs.ntfs", "Filesystem creation is prohibited."),
-    ("mkfs.fat", "Filesystem creation is prohibited."),
-    // Raw disk I/O
-    (
-        "dd if=",
-        "Raw disk reads are prohibited outside maintenance mode.",
-    ),
-    (
-        "dd of=",
-        "Raw disk writes are prohibited outside maintenance mode.",
-    ),
-    // Git destruction
-    (
-        "git reset --hard",
-        "Use 'git stash' to preserve current changes.",
-    ),
-    (
-        "git clean -fd",
-        "Use 'git clean -n' (dry-run) first to review changes.",
-    ),
-    (
-        "git clean -fx",
-        "Use 'git clean -n' (dry-run) first to review changes.",
-    ),
-    // Secure deletion
-    ("shred", "Secure deletion is prohibited."),
-    ("wipe", "Secure deletion is prohibited."),
-    ("srm", "Secure deletion is prohibited."),
-    // Permission escalation
-    (
-        "chmod 777",
-        "Use least-privilege permissions (e.g., 755 or 644).",
-    ),
-    (
-        "chmod -R 777",
-        "Use least-privilege permissions (e.g., 755 or 644).",
-    ),
-    // Ownership changes
-    ("chown -R", "Recursive ownership changes are restricted."),
-    ("chgrp -R", "Recursive group changes are restricted."),
-    // Remote code execution
-    (
-        "curl | sh",
-        "Download and review the script before executing.",
-    ),
-    (
-        "curl | bash",
-        "Download and review the script before executing.",
-    ),
-    (
-        "wget | sh",
-        "Download and review the script before executing.",
-    ),
-    (
-        "wget | bash",
-        "Download and review the script before executing.",
-    ),
-    // Fork bomb
-    (":(){ :|:& };:", "Fork bombs are prohibited."),
-    // Code execution
-    ("eval(", "Dynamic code evaluation is restricted."),
-    ("exec(", "Dynamic process execution is restricted."),
-    ("system(", "System call invocation is restricted."),
-    // Python destruction
-    ("os.remove", "Python file removal is restricted."),
-    ("os.rmdir", "Python directory removal is restricted."),
-    ("shutil.rmtree", "Python recursive removal is restricted."),
-];
-
-/// Unix-only commands that will fail on Windows with helpful alternatives.
-const UNIX_COMMANDS: &[(&str, &str)] = &[
-    ("tail ", "Use 'Get-Content -Tail N' instead of 'tail -N'"),
-    (
-        "head ",
-        "Use 'Get-Content -TotalCount N' instead of 'head -N'",
-    ),
-    ("grep ", "Use 'Select-String' instead of 'grep'"),
-    ("awk ", "Use PowerShell text processing instead of 'awk'"),
-    ("sed ", "Use '-replace' operator instead of 'sed'"),
-    (
-        "ls -la",
-        "Use 'Get-ChildItem | Format-List' instead of 'ls -la'",
-    ),
-    ("cat ", "Use 'Get-Content' instead of 'cat'"),
-    ("2>/dev/null", "Use '2>$null' instead of '2>/dev/null'"),
-    ("2>&1", "Use '*>&1' instead of '2>&1'"),
-    (
-        "| head",
-        "Use '| Select-Object -First N' instead of '| head -N'",
-    ),
-    (
-        "| tail",
-        "Use '| Select-Object -Last N' instead of '| tail -N'",
-    ),
-    ("&& ", "Use '; ' instead of '&&' in PowerShell"),
-];
 
 #[async_trait]
 impl Tool for SovereignShell {
@@ -159,198 +40,100 @@ impl Tool for SovereignShell {
     }
 
     fn description(&self) -> &str {
-        "Execute shell commands. On Windows, this runs in PowerShell. Use PowerShell syntax and commands (e.g., 'Get-Content' instead of 'cat', 'Select-Object' instead of 'head', ';' instead of '&&'). Use for building, testing, installing packages, git operations, and system tasks."
+        "Execute a shell command within the agent's workspace. Output is captured and returned."
     }
 
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
+    fn parameters_schema(&self) -> Value {
+        json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "Shell command to execute" },
-                "cwd": { "type": "string", "description": "Working directory (optional)" }
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute"
+                }
             },
             "required": ["command"]
         })
     }
 
-    fn requires_approval(&self) -> savant_core::traits::ApprovalRequirement {
-        savant_core::traits::ApprovalRequirement::Conditional
+    fn domain(&self) -> ToolDomain {
+        ToolDomain::Container
     }
 
-    fn domain(&self) -> savant_core::traits::ToolDomain {
-        savant_core::traits::ToolDomain::Container
+    fn when_to_use(&self) -> &str {
+        "Use shell for: running system commands, checking installed tools, \
+         inspecting process state, running build/test commands, or anything \
+         that requires a system-level operation not covered by a specialized tool."
     }
 
-    fn max_output_chars(&self) -> usize {
-        10_000 // Shell output truncated to 10K chars (head+tail)
+    fn when_not_to_use(&self) -> &str {
+        "Do NOT use shell for: reading files (use fs_read), searching code \
+         (use code_search), querying memory (use memory_search), or making HTTP \
+         requests (use http_request). Shell is a last resort for operations \
+         without a dedicated tool."
     }
 
-    fn timeout_secs(&self) -> u64 {
-        120 // Shell commands get 2 minutes
-    }
+    async fn execute(&self, input: Value) -> Result<String, SavantError> {
+        let command = input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SavantError::InvalidInput("Missing 'command' parameter".into()))?;
 
-    async fn execute(&self, payload: Value) -> Result<String, SavantError> {
-        let command = payload["command"].as_str().ok_or_else(|| {
-            SavantError::Unknown("Missing 'command' field in shell payload".to_string())
-        })?;
+        // Security scan: block dangerous commands before execution
+        let findings = self.scanner.scan_command(command);
+        let max_severity = findings
+            .iter()
+            .map(|f| f.severity)
+            .max()
+            .unwrap_or(RiskLevel::Clean);
 
-        // 4.8: Pre-flight workspace verification
-        if !self.workspace_root.exists() {
-            if let Err(e) = tokio::fs::create_dir_all(&self.workspace_root).await {
-                return Err(SavantError::Unknown(format!(
-                    "Workspace root does not exist and cannot be created: {}",
-                    e
-                )));
-            }
-            info!("Created workspace root at {:?}", self.workspace_root);
-        }
-
-        // 4.5: Destructive pattern detection with proposals
-        for (pattern, proposal) in DESTRUCTIVE_PATTERNS {
-            if command.contains(pattern) {
-                warn!(
-                    "[SHELL_AUDIT] decision=REJECTED reason=destructive_pattern pattern={} command_hash={}",
-                    pattern,
-                    Self::command_hash(command)
-                );
-                return Err(SavantError::ConsensusVeto(format!(
-                    "Destructive command '{}' blocked. Proposal: {}",
-                    pattern, proposal
-                )));
-            }
-        }
-
-        // 4.5.1: Unix command detection on Windows with helpful alternatives
-        if cfg!(target_os = "windows") {
-            for (unix_cmd, alternative) in UNIX_COMMANDS {
-                if command.contains(unix_cmd) {
-                    warn!(
-                        "[SHELL_AUDIT] decision=BLOCKED reason=unix_on_windows command={} alternative={} command_hash={}",
-                        unix_cmd, alternative, Self::command_hash(command)
-                    );
-                    return Err(SavantError::ConsensusVeto(format!(
-                        "Command '{}' is a Unix command and will not work in PowerShell. {}",
-                        unix_cmd.trim(),
-                        alternative
-                    )));
-                }
-            }
-        }
-
-        // 4.6: Absolute path injection detection
-        // Scan command tokens for absolute paths outside workspace and safe system dirs
-        let command_lower = command.to_lowercase();
-        let dangerous_absolute_paths: &[&str] = if cfg!(target_os = "windows") {
-            &[
-                "c:\\windows",
-                "c:\\users\\",
-                "d:\\windows",
-                "c:\\program files",
-            ]
-        } else {
-            &[
-                "/etc/",
-                "/root/",
-                "/home/",
-                "/var/log/",
-                "/dev/",
-                "/proc/",
-                "/sys/",
-            ]
-        };
-
-        for dangerous_path in dangerous_absolute_paths {
-            if command_lower.contains(dangerous_path) {
-                // Check if this path reference is within the workspace or a safe system dir
-                let is_safe = SAFE_SYSTEM_DIRS
+            if max_severity >= RiskLevel::High {
+                let details: Vec<String> = findings
                     .iter()
-                    .any(|safe| command_lower.contains(safe));
-
-                if !is_safe {
-                    warn!(
-                        "[SHELL_AUDIT] decision=REJECTED reason=path_injection path={} command_hash={}",
-                        dangerous_path,
-                        Self::command_hash(command)
-                    );
-                    return Err(SavantError::ConsensusVeto(format!(
-                        "Command references path '{}' which is outside the workspace and known-safe system directories.",
-                        dangerous_path
-                    )));
-                }
+                    .map(|f| format!("[{}] {}", f.severity, f.message))
+                    .collect();
+                tracing::warn!(
+                    command = command,
+                    risk_level = %max_severity,
+                    findings = findings.len(),
+                    "Shell command blocked by security scanner"
+                );
+                return Err(SavantError::InvalidInput(format!(
+                    "Command blocked by security scanner (risk: {}):\n{}",
+                    max_severity,
+                    details.join("\n")
+                )));
             }
-        }
 
-        // 4.4: CWD sandboxing via secure_resolve_path
-        let requested_cwd = payload["cwd"].as_str();
-        let resolved_cwd = match requested_cwd {
-            Some(cwd) => match super::foundation::secure_resolve_path(&self.workspace_root, cwd) {
-                Ok(path) => path,
-                Err(e) => {
-                    warn!(
-                        "[SHELL_AUDIT] decision=REJECTED reason=cwd_escape cwd={} command_hash={}",
-                        cwd,
-                        Self::command_hash(command)
-                    );
-                    return Err(SavantError::ConsensusVeto(format!(
-                            "CWD sandbox escape detected: {}. Commands must execute within the workspace.",
-                            e
-                        )));
-                }
-            },
-            None => self.workspace_root.clone(),
-        };
+            if !findings.is_empty() {
+                tracing::info!(
+                    command = command,
+                    findings = findings.len(),
+                    "Shell command has security findings (proceeding — below block threshold)"
+                );
+            }
 
-        // 4.7: Audit logging — log every execution
-        info!(
-            "[SHELL_AUDIT] decision=ALLOWED cwd={} command_hash={}",
-            resolved_cwd.display(),
-            Self::command_hash(command)
-        );
-
-        let mut cmd = if cfg!(target_os = "windows") {
-            let mut c = Command::new("powershell");
-            c.args(["-Command", command]);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.args(["-c", command]);
-            c
-        };
-
-        cmd.current_dir(&resolved_cwd);
-
-        let output = cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+        let output = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .current_dir(&self.workspace_path)
+            // Strip sensitive environment variables before spawning child process
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
+            .env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string()))
+            .env("TERM", "xterm-256color")
             .output()
             .await
-            .map_err(SavantError::IoError)?;
+            .map_err(|e| SavantError::Unknown(format!("Shell execution failed: {}", e)))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let status = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
 
-        Ok(format!(
-            "EXIT_CODE: {}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}",
-            status, stdout, stderr
-        ))
-    }
-
-    fn capabilities(&self) -> savant_core::types::CapabilityGrants {
-        savant_core::types::CapabilityGrants {
-            ..Default::default()
+        if output.status.success() {
+            Ok(stdout.to_string())
+        } else {
+            Ok(format!("{}\n{}", stdout, stderr))
         }
-    }
-}
-
-impl SovereignShell {
-    /// Generates a truncated SHA-256 hash of the command for audit logging.
-    /// Full commands are not logged to prevent credential leakage in logs.
-    fn command_hash(command: &str) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        command.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
     }
 }

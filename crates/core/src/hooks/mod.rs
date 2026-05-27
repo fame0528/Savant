@@ -144,7 +144,8 @@ impl HookRegistry {
         entry.sort_by(|a, b| b.priority.cmp(&a.priority));
     }
 
-    /// Runs void hooks for an event (parallel via tokio::spawn, panic-safe).
+    /// Runs void hooks for an event (parallel via spawn_blocking, panic-safe).
+    /// COR-10: Uses spawn_blocking instead of block_on inside spawned task.
     pub async fn run_void(&self, context: &HookContext) {
         let handlers = self.void_handlers.read().await;
         if let Some(event_handlers) = handlers.get(&context.event) {
@@ -152,7 +153,7 @@ impl HookRegistry {
             for reg in event_handlers {
                 let ctx = context.clone();
                 let handler = reg.handler.clone();
-                tasks.push(tokio::spawn(async move {
+                tasks.push(tokio::task::spawn_blocking(move || {
                     // Catch panics — hooks must never crash the agent
                     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                         let rt = tokio::runtime::Handle::current();
@@ -180,14 +181,35 @@ impl HookRegistry {
     }
 
     /// Runs modifying hooks for an event (sequential by priority, first Cancel stops chain).
-    /// Returns HookResult: Unchanged if all pass, Modified(content) or Cancel(reason) if intercepted.
+    /// COR-09: Wrapped in catch_unwind for panic safety, matching run_void.
     pub async fn run_modifying(&self, context: &mut HookContext) -> HookResult {
         let handlers = self.modifying_handlers.read().await;
         if let Some(event_handlers) = handlers.get(&context.event) {
             for reg in event_handlers {
                 let handler = reg.handler.clone();
-                // Catch panics — hooks must never crash the agent
-                let result = handler.handle(context).await;
+                let ctx = context.clone();
+                // Use spawn_blocking + catch_unwind for panic safety
+                let result = tokio::task::spawn_blocking(move || {
+                    std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        let rt = tokio::runtime::Handle::current();
+                        let mut ctx = ctx;
+                        rt.block_on(handler.handle(&mut ctx))
+                    }))
+                    .unwrap_or_else(|e| {
+                        let msg = e
+                            .downcast_ref::<&str>()
+                            .map(|s| s.to_string())
+                            .or_else(|| e.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown panic".to_string());
+                        tracing::error!("[HOOK] Modifying hook panicked: {}", msg);
+                        HookResult::Unchanged
+                    })
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("[core::hooks] Modifying hook task failed: {}", e);
+                    HookResult::Unchanged
+                });
                 match result {
                     HookResult::Cancel(reason) => {
                         tracing::info!(

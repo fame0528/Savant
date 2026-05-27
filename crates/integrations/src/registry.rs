@@ -18,11 +18,7 @@ pub struct ProviderRegistry {
 
 impl fmt::Debug for ProviderRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let kinds: Vec<String> = self
-            .providers
-            .iter()
-            .map(|e| e.key().to_string())
-            .collect();
+        let kinds: Vec<String> = self.providers.iter().map(|e| e.key().to_string()).collect();
         f.debug_struct("ProviderRegistry")
             .field("providers", &kinds)
             .field("count", &self.providers.len())
@@ -80,7 +76,10 @@ impl ProviderRegistry {
             match provider.test_connection().await {
                 Ok(ok) => results.push((kind, ok)),
                 Err(e) => {
-                    warn!("[integrations] Provider {} connection test failed: {}", kind, e);
+                    warn!(
+                        "[integrations] Provider {} connection test failed: {}",
+                        kind, e
+                    );
                     results.push((kind, false));
                 }
             }

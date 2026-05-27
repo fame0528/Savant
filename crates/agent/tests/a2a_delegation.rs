@@ -15,7 +15,7 @@ use savant_agent::orchestration::branching::HyperCausalEngine;
 use savant_ipc::a2a::agent_card::AgentCard;
 use savant_ipc::a2a::context::ContextPackage;
 use savant_ipc::a2a::protocol::{
-    A2AMessageType, A2AEnvelope, Artifact, ArtifactPart, ArtifactPartType, DelegationTask,
+    A2AEnvelope, A2AMessageType, Artifact, ArtifactPart, ArtifactPartType, DelegationTask,
     TaskState,
 };
 use savant_ipc::a2a::result_router::{DelegationResult, RejectionReason, ResultRouter};
@@ -28,7 +28,10 @@ use uuid::Uuid;
 #[test]
 fn test_agent_card_size_matches_actual_layout() {
     let actual = std::mem::size_of::<AgentCard>();
-    assert_eq!(actual, 176, "AgentCard size mismatch — padding or field changes detected");
+    assert_eq!(
+        actual, 176,
+        "AgentCard size mismatch — padding or field changes detected"
+    );
 }
 
 #[test]
@@ -144,7 +147,10 @@ fn test_agent_card_input_output_modes() {
 #[test]
 fn test_delegation_task_size_matches_actual_layout() {
     let actual = std::mem::size_of::<DelegationTask>();
-    assert_eq!(actual, 224, "DelegationTask size mismatch — padding or field changes detected");
+    assert_eq!(
+        actual, 224,
+        "DelegationTask size mismatch — padding or field changes detected"
+    );
 }
 
 #[test]
@@ -297,9 +303,15 @@ fn test_a2a_envelope_validation() {
 
 #[test]
 fn test_a2a_message_type_display() {
-    assert_eq!(format!("{}", A2AMessageType::TaskDelegation), "TaskDelegation");
+    assert_eq!(
+        format!("{}", A2AMessageType::TaskDelegation),
+        "TaskDelegation"
+    );
     assert_eq!(format!("{}", A2AMessageType::StatusUpdate), "StatusUpdate");
-    assert_eq!(format!("{}", A2AMessageType::ArtifactDelivery), "ArtifactDelivery");
+    assert_eq!(
+        format!("{}", A2AMessageType::ArtifactDelivery),
+        "ArtifactDelivery"
+    );
     assert_eq!(format!("{}", A2AMessageType::Interruption), "Interruption");
 }
 
@@ -439,11 +451,23 @@ fn test_result_router_complete_task() {
 
 #[test]
 fn test_rejection_reason_strings() {
-    assert_eq!(RejectionReason::AgentUnavailable.as_str(), "agent_unavailable");
-    assert_eq!(RejectionReason::InsufficientSkills.as_str(), "insufficient_skills");
+    assert_eq!(
+        RejectionReason::AgentUnavailable.as_str(),
+        "agent_unavailable"
+    );
+    assert_eq!(
+        RejectionReason::InsufficientSkills.as_str(),
+        "insufficient_skills"
+    );
     assert_eq!(RejectionReason::QueueFull.as_str(), "queue_full");
-    assert_eq!(RejectionReason::MemoryEnclaveMismatch.as_str(), "memory_enclave_mismatch");
-    assert_eq!(RejectionReason::DelegationDepthExceeded.as_str(), "delegation_depth_exceeded");
+    assert_eq!(
+        RejectionReason::MemoryEnclaveMismatch.as_str(),
+        "memory_enclave_mismatch"
+    );
+    assert_eq!(
+        RejectionReason::DelegationDepthExceeded.as_str(),
+        "delegation_depth_exceeded"
+    );
 }
 
 // ============================================================================
@@ -489,17 +513,13 @@ fn test_delegation_result_variants() {
         _ => panic!("Expected Rejected"),
     }
 
-    let timed_out = DelegationResult::TimedOut {
-        task_id: [2u8; 16],
-    };
+    let timed_out = DelegationResult::TimedOut { task_id: [2u8; 16] };
     match timed_out {
         DelegationResult::TimedOut { task_id } => assert_eq!(task_id, [2u8; 16]),
         _ => panic!("Expected TimedOut"),
     }
 
-    let canceled = DelegationResult::Canceled {
-        task_id: [3u8; 16],
-    };
+    let canceled = DelegationResult::Canceled { task_id: [3u8; 16] };
     match canceled {
         DelegationResult::Canceled { task_id } => assert_eq!(task_id, [3u8; 16]),
         _ => panic!("Expected Canceled"),
@@ -523,7 +543,9 @@ fn test_is_task_expired_past_deadline() {
 
 #[test]
 fn test_is_task_expired_future_deadline() {
-    assert!(!savant_agent::orchestration::continuation::ContinuationEngine::is_task_expired(u64::MAX));
+    assert!(
+        !savant_agent::orchestration::continuation::ContinuationEngine::is_task_expired(u64::MAX)
+    );
 }
 
 // ============================================================================
@@ -557,7 +579,9 @@ fn test_full_delegation_cycle_state_transitions() {
     assert_eq!(router.active_count(), 1);
 
     // 3. Task requires clarification (InputRequired)
-    router.update_state(&task_id, TaskState::InputRequired).unwrap();
+    router
+        .update_state(&task_id, TaskState::InputRequired)
+        .unwrap();
     assert_eq!(router.get_state(&task_id), Some(TaskState::InputRequired));
 
     // 4. Task resumes (Working again)
@@ -602,15 +626,21 @@ fn test_delegation_cycle_cancellation_path() {
     let task_id_2 = Uuid::new_v4().to_string();
     router.register_task(&task_id_2, 0);
     router.update_state(&task_id_2, TaskState::Working).unwrap();
-    router.update_state(&task_id_2, TaskState::Canceled).unwrap();
+    router
+        .update_state(&task_id_2, TaskState::Canceled)
+        .unwrap();
     assert_eq!(router.get_state(&task_id_2), Some(TaskState::Canceled));
 
     // Cancel from InputRequired
     let task_id_3 = Uuid::new_v4().to_string();
     router.register_task(&task_id_3, 0);
     router.update_state(&task_id_3, TaskState::Working).unwrap();
-    router.update_state(&task_id_3, TaskState::InputRequired).unwrap();
-    router.update_state(&task_id_3, TaskState::Canceled).unwrap();
+    router
+        .update_state(&task_id_3, TaskState::InputRequired)
+        .unwrap();
+    router
+        .update_state(&task_id_3, TaskState::Canceled)
+        .unwrap();
     assert_eq!(router.get_state(&task_id_3), Some(TaskState::Canceled));
 }
 

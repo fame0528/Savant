@@ -3,6 +3,11 @@
 //! This tool manages the dynamic hydration of agent context by retrieving
 //! relevant tools from the substrate's skill library based on current intent.
 //! It implements predictive prefetching to ensure sub-5ms latency.
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
 
 use async_trait::async_trait;
 use savant_core::error::SavantError;

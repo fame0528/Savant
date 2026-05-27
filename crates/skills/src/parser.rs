@@ -247,6 +247,8 @@ pub struct SkillRegistry {
     pub tools: HashMap<String, Arc<dyn Tool>>,
     /// Maximum number of skills allowed
     max_skills: usize,
+    /// Security scanner for mandatory skill scanning
+    scanner: SecurityScanner,
 }
 
 impl SkillRegistry {
@@ -256,6 +258,7 @@ impl SkillRegistry {
             manifests: HashMap::new(),
             tools: HashMap::new(),
             max_skills: MAX_SKILL_COUNT,
+            scanner: SecurityScanner::new(),
         }
     }
 
@@ -265,6 +268,7 @@ impl SkillRegistry {
             manifests: HashMap::new(),
             tools: HashMap::new(),
             max_skills,
+            scanner: SecurityScanner::new(),
         }
     }
 
@@ -315,6 +319,43 @@ impl SkillRegistry {
 
         manifest.instructions = instructions;
 
+        // MANDATORY SECURITY SCAN — every skill must pass before loading.
+        // The scanner reads SKILL.md from the directory and runs all 10 detection layers.
+        if let Some(skill_dir) = path_ref.parent() {
+            match self.scanner.scan_skill_mandatory(skill_dir).await {
+                Ok(scan_result) => match scan_result.risk_level {
+                    RiskLevel::Clean | RiskLevel::Low => {
+                        info!(
+                            "Security scan passed for '{}' (risk: {})",
+                            manifest.name, scan_result.risk_level
+                        );
+                    }
+                    RiskLevel::Medium => {
+                        warn!(
+                            "Security scan: '{}' has MEDIUM risk. Loading with notification.",
+                            manifest.name
+                        );
+                    }
+                    RiskLevel::High | RiskLevel::Critical => {
+                        error!(
+                            "SECURITY BLOCK: '{}' has {} risk. Skill rejected.",
+                            manifest.name, scan_result.risk_level
+                        );
+                        return Err(SavantError::AuthError(format!(
+                            "Skill '{}' rejected: {} risk level detected by security scanner",
+                            manifest.name, scan_result.risk_level
+                        )));
+                    }
+                },
+                Err(e) => {
+                    warn!(
+                        "Security scan failed for '{}': {}. Loading with warning.",
+                        manifest.name, e
+                    );
+                }
+            }
+        }
+
         info!("Loaded skill: {} (v{})", manifest.name, manifest.version);
 
         // Check for skill name collision - reject overwrite to prevent data loss
@@ -350,7 +391,112 @@ impl SkillRegistry {
         Ok(())
     }
 
+    /// NS-06: Parses an AGENTS.md file into a SkillManifest.
+    /// AGENTS.md may have optional YAML frontmatter; the body is treated as instructions.
+    async fn load_agents_md(&mut self, path: impl AsRef<Path>) -> Result<(), SavantError> {
+        let path_ref = path.as_ref();
+        let content = fs::read_to_string(path_ref).await.map_err(|e| {
+            SavantError::IoError(std::io::Error::other(format!(
+                "Failed to read {}: {}",
+                path_ref.display(),
+                e
+            )))
+        })?;
+
+        // Try to extract YAML frontmatter (optional for AGENTS.md)
+        let (frontmatter_str, instructions) = if content.starts_with("---") {
+            let parts: Vec<&str> = content.splitn(3, "---").collect();
+            if parts.len() >= 3 {
+                (Some(parts[1].trim()), parts[2].trim().to_string())
+            } else {
+                (None, content.clone())
+            }
+        } else {
+            (None, content.clone())
+        };
+
+        // Derive skill name from parent directory
+        let dir_name = path_ref
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "agents-config".to_string());
+
+        let mut manifest = if let Some(fm) = frontmatter_str {
+             serde_yaml::from_str::<SkillManifest>(fm).unwrap_or_else(|_| SkillManifest {
+                name: dir_name.clone(),
+                version: "1.0.0".to_string(),
+                description: format!("Agent configuration from {}", path_ref.display()),
+                execution_mode: savant_core::types::ExecutionMode::Reference,
+                capabilities: CapabilityGrants::default(),
+                instructions: String::new(),
+                depends_on: Vec::new(),
+                chain_with: Vec::new(),
+            })
+        } else {
+            SkillManifest {
+                name: dir_name.clone(),
+                version: "1.0.0".to_string(),
+                description: format!("Agent configuration from {}", path_ref.display()),
+                execution_mode: savant_core::types::ExecutionMode::Reference,
+                capabilities: CapabilityGrants::default(),
+                instructions: String::new(),
+                depends_on: Vec::new(),
+                chain_with: Vec::new(),
+            }
+        };
+
+        manifest.instructions = instructions;
+
+        info!(
+            "Loaded AGENTS.md skill: {} from {}",
+            manifest.name,
+            path_ref.display()
+        );
+        self.manifests.insert(manifest.name.clone(), manifest);
+        Ok(())
+    }
+
+    /// NS-06: Parses a .cursorrules file into a SkillManifest.
+    /// .cursorrules files have no frontmatter — the entire content is instructions.
+    async fn load_cursorrules(&mut self, path: impl AsRef<Path>) -> Result<(), SavantError> {
+        let path_ref = path.as_ref();
+        let content = fs::read_to_string(path_ref).await.map_err(|e| {
+            SavantError::IoError(std::io::Error::other(format!(
+                "Failed to read {}: {}",
+                path_ref.display(),
+                e
+            )))
+        })?;
+
+        let dir_name = path_ref
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "cursorrules".to_string());
+
+        let manifest = SkillManifest {
+            name: format!("{}-cursorrules", dir_name),
+            version: "1.0.0".to_string(),
+            description: format!("Cursor rules from {}", path_ref.display()),
+            execution_mode: savant_core::types::ExecutionMode::Reference,
+            capabilities: CapabilityGrants::default(),
+            instructions: content,
+            depends_on: Vec::new(),
+            chain_with: Vec::new(),
+        };
+
+        info!(
+            "Loaded .cursorrules skill: {} from {}",
+            manifest.name,
+            path_ref.display()
+        );
+        self.manifests.insert(manifest.name.clone(), manifest);
+        Ok(())
+    }
+
     /// Recursively discover and load all skills in a directory.
+    /// NS-06: Now discovers SKILL.md, AGENTS.md, and .cursorrules files.
     pub async fn discover_skills(
         &mut self,
         directory: impl AsRef<Path>,
@@ -367,12 +513,21 @@ impl SkillRegistry {
                 }
             };
 
-            if entry.file_type().is_file() && entry.file_name() == "SKILL.md" {
-                if let Err(e) = self.load_skill_from_file(entry.path()).await {
-                    error!("Failed to load skill at {}: {}", entry.path().display(), e);
-                } else {
-                    count += 1;
-                }
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            let file_name = entry.file_name().to_string_lossy();
+            let result = match file_name.as_ref() {
+                "SKILL.md" => self.load_skill_from_file(entry.path()).await,
+                "AGENTS.md" => self.load_agents_md(entry.path()).await,
+                ".cursorrules" => self.load_cursorrules(entry.path()).await,
+                _ => continue,
+            };
+
+            match result {
+                Ok(()) => count += 1,
+                Err(e) => error!("Failed to load skill at {}: {}", entry.path().display(), e),
             }
         }
 

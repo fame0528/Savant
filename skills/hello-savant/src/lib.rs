@@ -1,6 +1,9 @@
 use serde::Deserialize;
 use std::fmt::Write;
 
+/// Maximum input size (1MB) to prevent memory exhaustion attacks.
+const MAX_INPUT_SIZE: usize = 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 struct SkillInput {
     action: String,
@@ -14,6 +17,15 @@ struct SkillInput {
 
 #[no_mangle]
 pub extern "C" fn execute(input_ptr: *const u8, input_len: usize) -> *const u8 {
+    // Validate input pointer and length before dereferencing
+    if input_ptr.is_null() {
+        return error_response("Null input pointer");
+    }
+    if input_len > MAX_INPUT_SIZE {
+        return error_response("Input too large (max 1MB)");
+    }
+    // SAFETY: We've validated that the pointer is non-null and the length is reasonable.
+    // The caller (WASM runtime) guarantees the memory region is valid for input_len bytes.
     let input_slice = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
     let input_str = match std::str::from_utf8(input_slice) {
         Ok(s) => s,

@@ -21,11 +21,13 @@ pub const QUEUE_FULL_BACKOFF_MS: u64 = 100;
 
 /// Handle to an agent's inbound task queue.
 ///
-/// Wraps an iceoryx2 request-response port. Each agent that can receive
+/// Wraps an in-memory bounded queue. Each agent that can receive
 /// delegated tasks creates one of these at startup.
+/// Can be replaced with iceoryx2 request-response port for zero-copy IPC.
 pub struct AgentTaskQueue {
     service_name: String,
     capacity: usize,
+    queue: tokio::sync::Mutex<std::collections::VecDeque<super::protocol::DelegationTask>>,
 }
 
 impl AgentTaskQueue {
@@ -43,6 +45,7 @@ impl AgentTaskQueue {
         Ok(Self {
             service_name: service_name.to_string(),
             capacity,
+            queue: tokio::sync::Mutex::new(std::collections::VecDeque::with_capacity(capacity)),
         })
     }
 
@@ -60,6 +63,36 @@ impl AgentTaskQueue {
     /// Uses exponential backoff: base * 2^attempt
     pub fn backoff_for_retry(attempt: u32) -> u64 {
         QUEUE_FULL_BACKOFF_MS * 2u64.pow(attempt)
+    }
+
+    /// Pushes a task to the queue. Returns QueueFull if at capacity.
+    pub async fn push(&self, task: super::protocol::DelegationTask) -> Result<(), TaskQueueError> {
+        let mut queue = self.queue.lock().await;
+        if queue.len() >= self.capacity {
+            return Err(TaskQueueError::QueueFull {
+                capacity: self.capacity,
+            });
+        }
+        queue.push_back(task);
+        Ok(())
+    }
+
+    /// Pops a task from the queue. Returns None if empty.
+    pub async fn pop(&self) -> Option<super::protocol::DelegationTask> {
+        let mut queue = self.queue.lock().await;
+        queue.pop_front()
+    }
+
+    /// Returns the number of pending tasks.
+    pub async fn len(&self) -> usize {
+        let queue = self.queue.lock().await;
+        queue.len()
+    }
+
+    /// Returns true if the queue is empty.
+    pub async fn is_empty(&self) -> bool {
+        let queue = self.queue.lock().await;
+        queue.is_empty()
     }
 }
 
@@ -85,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_queue_creation() {
-        let queue = AgentTaskQueue::new("test_agent", 64).unwrap();
+        let queue = AgentTaskQueue::new("test_agent", 64).expect("queue creation should succeed");
         assert_eq!(queue.service_name(), "test_agent");
         assert_eq!(queue.capacity(), 64);
     }

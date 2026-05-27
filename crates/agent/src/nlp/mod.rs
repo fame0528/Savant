@@ -206,8 +206,14 @@ fn parse_model_command(lower: &str, original: &str) -> Option<CommandIntent> {
             ("deepseek v3.1", "deepseek/deepseek-chat-v3.1"),
             ("deepseek v3", "deepseek/deepseek-chat-v3-0324"),
             ("deepseek r1 0528", "deepseek/deepseek-r1-0528"),
-            ("deepseek r1 llama 70b", "deepseek/deepseek-r1-distill-llama-70b"),
-            ("deepseek r1 qwen 32b", "deepseek/deepseek-r1-distill-qwen-32b"),
+            (
+                "deepseek r1 llama 70b",
+                "deepseek/deepseek-r1-distill-llama-70b",
+            ),
+            (
+                "deepseek r1 qwen 32b",
+                "deepseek/deepseek-r1-distill-qwen-32b",
+            ),
             ("deepseek r1", "deepseek/deepseek-r1"),
             ("deepseek coder", "deepseek/deepseek-coder"),
             ("deepseek chat", "deepseek/deepseek-chat"),
@@ -346,7 +352,10 @@ fn parse_model_command(lower: &str, original: &str) -> Option<CommandIntent> {
             // ── NVIDIA ──
             ("nemotron 3 super", "nvidia/nemotron-3-super-120b-a12b"),
             ("nemotron 3 nano", "nvidia/nemotron-3-nano-30b-a3b"),
-            ("nemotron 3 nano omni", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
+            (
+                "nemotron 3 nano omni",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            ),
             ("nemotron nano 12b vl", "nvidia/nemotron-nano-12b-v2-vl"),
             ("nemotron nano 9b", "nvidia/nemotron-nano-9b-v2"),
             ("nemotron", "nvidia/nemotron-3-super-120b-a12b"),
@@ -566,7 +575,10 @@ mod tests {
     fn test_parse_switch_model_openrouter() {
         let intent = parse_command("switch to claude sonnet 4.6");
         assert_eq!(intent.category, CommandCategory::ModelSwitch);
-        assert_eq!(intent.target, Some("anthropic/claude-sonnet-4.6".to_string()));
+        assert_eq!(
+            intent.target,
+            Some("anthropic/claude-sonnet-4.6".to_string())
+        );
     }
 
     #[test]

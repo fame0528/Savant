@@ -10,4 +10,6 @@ pub use config::ObsidianConfig;
 pub use error::VaultError;
 pub use outbox::{CursorState, OutboxWorker, StateSnapshot};
 pub use watcher::VaultWatcher;
-pub use writer::{VaultWriter, VaultStats, atomic_write, count_md_files, slugify, truncate_to_line};
+pub use writer::{
+    atomic_write, count_md_files, slugify, truncate_to_line, VaultStats, VaultWriter,
+};

@@ -28,9 +28,14 @@ crates/memory/ruvector.db/
 /logs/
 /data/
 *.log
-*.txt
 *.tmp
 *.py
+# Generated text files (not all .txt files)
+cargo_check*.txt
+cargo_log*.txt
+check_output*.txt
+ollama_list.txt
+extracted_issues.txt
 
 # AI session exports
 session-ses_*.md
@@ -78,6 +83,24 @@ workspaces/*/.env
 Savant.zip
 push-to-github.bat
 
+# AI assistant / IDE tooling directories
+.agents/
+.claude/
+.codebuddy/
+.continue/
+.crush/
+.junie/
+.kiro/
+.openclaude/
+
+# Test-generated DB files
+crates/memory/ruvector_test_count_*.db/
+crates/memory/ruvector_test_remove_*.db/
+
+# Temp files
+2026-05-22-*-context-rules.json
+*.context-rules.json
+
 # Research & Competitors
 /research/
 /docs/research/
@@ -98,5 +121,7 @@ extracted_issues.txt
 audit_extract.py
 generate_full_report.py
 nul
+NUL
+firebase-debug.log
 
 .env.production

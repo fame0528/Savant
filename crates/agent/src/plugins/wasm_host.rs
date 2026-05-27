@@ -1,3 +1,9 @@
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;

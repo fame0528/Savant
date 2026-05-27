@@ -71,7 +71,7 @@ impl AttestationManager {
         let tpm_status = Self::verify_tpm();
 
         // 2. WASM Micro-Kernel Attestation
-        let wasm_status = Self::verify_wasm_memory();
+        let wasm_status = Self::verify_memory_allocation();
 
         // 3. Decentralized Witness Attestation
         let witness_status = Self::verify_witness().await;
@@ -163,7 +163,7 @@ impl AttestationManager {
     ///
     /// For production sandbox integrity, integrate with a proper WASM runtime
     /// attestation mechanism (e.g., wasmtime's component model verification).
-    fn verify_wasm_memory() -> EnclaveStatus {
+    fn verify_memory_allocation() -> EnclaveStatus {
         let result = std::panic::catch_unwind(|| {
             // Allocate a test buffer to verify memory subsystem integrity
             let size = 4096; // One page
@@ -227,7 +227,6 @@ impl AttestationManager {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -263,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_wasm_verification() {
-        let status = AttestationManager::verify_wasm_memory();
+        let status = AttestationManager::verify_memory_allocation();
         // On a working system, wasmtime should instantiate successfully
         assert!(matches!(
             status,

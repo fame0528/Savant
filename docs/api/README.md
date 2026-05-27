@@ -1,17 +1,98 @@
 # API Reference
 
+> **Last Updated:** 2026-05-25 (v0.3.2)
+
+---
+
+## HTTP REST Endpoints
+
+### Health & Status
+
+| Endpoint | Method | Auth | Description |
+|:---------|:-------|:-----|:------------|
+| `/live` | GET | No | Returns "OK" if gateway is running |
+| `/ready` | GET | No | Returns "OK" if gateway is ready |
+| `/health` | GET | No | System health with memory status, uptime |
+| `/api/status` | GET | No | Detailed system status |
+
+### Agents
+
+| Endpoint | Method | Auth | Description |
+|:---------|:-------|:-----|:------------|
+| `/api/agents` | GET | Yes | List all discovered agents |
+| `/api/agents/:name/image` | GET | Yes | Agent avatar image |
+
+### Settings & Config
+
+| Endpoint | Method | Auth | Description |
+|:---------|:-------|:-----|:------------|
+| `/api/settings` | GET | Yes | Current gateway configuration |
+| `/api/settings` | POST | Yes | Update configuration |
+| `/api/settings/reset` | GET/POST | Yes | Reset configuration to defaults |
+| `/api/models` | GET | Yes | Available AI providers and models |
+
+### MCP (Model Context Protocol)
+
+| Endpoint | Method | Auth | Description |
+|:---------|:-------|:-----|:------------|
+| `/api/mcp/servers` | GET | Yes | List MCP servers |
+| `/api/mcp/servers/install` | POST | Yes | Install MCP server |
+| `/api/mcp/servers/add` | POST | Yes | Add MCP server config |
+| `/api/mcp/servers/remove` | POST | Yes | Remove MCP server |
+| `/api/mcp/servers/uninstall` | POST | Yes | Uninstall MCP server |
+| `/api/mcp/servers/info` | GET | Yes | MCP server info |
+
+### Trajectories
+
+| Endpoint | Method | Auth | Description |
+|:---------|:-------|:-----|:------------|
+| `/api/trajectories` | GET | Yes | List trajectory recordings |
+| `/api/trajectories/stats` | GET | Yes | Trajectory statistics |
+
+### Snapshot & Restore
+
+| Endpoint | Method | Auth | Description |
+|:---------|:-------|:-----|:------------|
+| `/api/snapshot` | POST | Yes | Create system snapshot |
+| `/api/restore` | POST | Yes | Restore from snapshot |
+
+### Changelog
+
+| Endpoint | Method | Auth | Description |
+|:---------|:-------|:-----|:------------|
+| `/api/changelog` | GET | Yes | Public changelog |
+
+### Dashboard Feature APIs (v0.3.2)
+
+| Endpoint | Method | Auth | Description |
+|:---------|:-------|:-----|:------------|
+| `/api/memory/search` | GET | Yes | Search memory. Params: `q` (query), `limit` (max results) |
+| `/api/governor/status` | GET | Yes | Resource governor status: pressure level, CPU%, memory%, permits |
+| `/api/consciousness/status` | GET | Yes | Consciousness daemon state: Thinking/Idle/Dormant/Wondering, entropy |
+
+### Config Mutation (v0.3.2 — Immutable Fields)
+
+The `ConfigSet` WebSocket frame and `POST /api/settings` endpoint block changes to security-critical fields at runtime:
+
+**Immutable fields:** `server.dashboard_api_key`, `server.host`, `server.port`, `server.signing_key`, `security.enable_blocklist_sync`
+
+Attempting to modify these returns a 403 Forbidden with a message explaining that the config file must be edited and the service restarted.
+
+---
+
 ## WebSocket Protocol
 
 All communication between the dashboard and gateway occurs over a single WebSocket connection at `ws://localhost:3000/ws`.
 
-### Health Endpoints
+Canvas A2UI visualization at `ws://localhost:3000/ws/canvas` (requires API key authentication).
 
-| Endpoint | Method | Description |
-|:---------|:-------|:------------|
-| `/live` | GET | Returns "OK" if gateway is running |
-| `/ready` | GET | Returns "OK" if gateway is ready |
-| `/ws` | WebSocket | Main communication endpoint |
-| `/api/agents/:name/image` | GET | Agent avatar image |
+### Authentication (v0.3.2)
+
+REST and WebSocket endpoints (except `/live`, `/ready`, `/health`, `/ws`) require authentication when `dashboard_api_key` is configured:
+
+- **Header:** `Authorization: Bearer <key>` or `X-API-Key: <key>`
+- **Constant-time comparison** prevents timing attacks
+- **Empty key** = development mode (no auth required)
 
 ### Frame Format
 
@@ -57,7 +138,7 @@ Send a message to an agent or broadcast to the swarm.
 ```
 
 | Field | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
+|:------|:-----|:---------|:------------|
 | `role` | string | Yes | Always `"user"` for client messages |
 | `content` | string | Yes | Message text |
 | `recipient` | string | No | Target agent ID, omit for swarm broadcast |
@@ -79,14 +160,9 @@ Request AI-powered soul generation from a natural language prompt.
 }
 ```
 
-| Field | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `prompt` | string | Yes | Natural language description of the desired soul |
-| `name` | string | No | Preferred agent name |
+### SoulUpdate (v0.3.2 — 100KB limit)
 
-### SoulUpdate
-
-Update an agent's SOUL.md file on disk.
+Update an agent's SOUL.md file on disk. **Max 100KB per field** (content and reasoning).
 
 ```json
 {
@@ -101,14 +177,9 @@ Update an agent's SOUL.md file on disk.
 }
 ```
 
-| Field | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `agent_id` | string | Yes | Target agent identifier |
-| `content` | string | Yes | Complete SOUL.md markdown content |
+### BulkManifest (v0.3.2 — 10 agent limit)
 
-### BulkManifest
-
-Deploy multiple agents from an expansion plan.
+Deploy multiple agents from an expansion plan. **Max 10 agents per request.**
 
 ```json
 {
@@ -125,96 +196,41 @@ Deploy multiple agents from an expansion plan.
 }
 ```
 
+### NLCommand (v0.3.2 — 10KB limit)
+
+Natural language command. **Max 10,000 characters.**
+
 ### ConfigGet
 
 Retrieve the current gateway configuration from `savant.toml`.
 
-```json
-{
-  "session_id": "dashboard-session",
-  "payload": { "type": "ConfigGet" }
-}
-```
+### ConfigSet (v0.3.2 — Immutable field protection)
 
-### ConfigSet
-
-Update a configuration value (saved to `savant.toml`, auto-reloads).
-
-```json
-{
-  "session_id": "dashboard-session",
-  "payload": {
-    "type": "ConfigSet",
-    "data": {
-      "key": "ai.temperature",
-      "value": 0.7
-    }
-  }
-}
-```
-
-| Field | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `key` | string | Yes | Dotted config path (e.g., `ai.temperature`, `server.port`) |
-| `value` | any | Yes | New value (number, string, or boolean) |
+Update a configuration value. Security-critical fields are blocked (see Immutable Fields above).
 
 ### ModelsList
 
 Get available AI providers and their parameter descriptors.
 
-```json
-{
-  "session_id": "dashboard-session",
-  "payload": { "type": "ModelsList" }
-}
-```
-
 ### HistoryRequest
 
 Retrieve persisted message history for a communication lane.
-
-```json
-{
-  "session_id": "dashboard-session",
-  "payload": {
-    "type": "HistoryRequest",
-    "data": {
-      "lane_id": "global",
-      "limit": 100
-    }
-  }
-}
-```
-
-| Field | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `lane_id` | string | Yes | Lane identifier (agent ID or `"global"`) |
-| `limit` | number | No | Maximum messages to retrieve (default: 100) |
 
 ### SwarmInsightHistoryRequest
 
 Retrieve the swarm's cognitive insight history.
 
-```json
-{
-  "session_id": "dashboard-session",
-  "payload": {
-    "type": "SwarmInsightHistoryRequest",
-    "data": { "limit": 50 }
-  }
-}
-```
-
 ### InitialSync
 
 Sent on WebSocket open to request full state synchronization.
 
-```json
-{
-  "session_id": "dashboard-session",
-  "payload": { "type": "InitialSync" }
-}
-```
+### SoulMutationPropose (v0.3.2 — 100KB limit)
+
+Propose a SOUL.md mutation. Max 100KB per field.
+
+### SoulMutationApprove / SoulMutationReject
+
+Approve or reject a pending mutation proposal.
 
 ---
 
@@ -224,165 +240,108 @@ Sent on WebSocket open to request full state synchronization.
 
 Sent when the agent registry updates.
 
-```json
-{
-  "event_type": "agents.discovered",
-  "payload": {
-    "agents": [
-      { "id": "agent-1", "name": "Prometheus", "status": "active", "role": "strategist" }
-    ]
-  }
-}
-```
-
 ### `history`
 
 Sent in response to `HistoryRequest`.
-
-```json
-{
-  "event_type": "history",
-  "payload": {
-    "lane_id": "global",
-    "history": [
-      { "role": "user", "content": "Hello", "sender": "dashboard" },
-      { "role": "assistant", "content": "Greetings!", "agent_id": "prometheus" }
-    ]
-  }
-}
-```
 
 ### `chat.message`
 
 An agent's complete response message.
 
-```json
-{
-  "event_type": "chat.message",
-  "payload": {
-    "role": "assistant",
-    "content": "Response text...",
-    "agent_id": "prometheus",
-    "recipient": "global",
-    "is_telemetry": false
-  }
-}
-```
-
 ### `chat.chunk`
 
-A streaming chunk of an agent's response (for real-time display).
-
-```json
-{
-  "event_type": "chat.chunk",
-  "payload": {
-    "agent_id": "prometheus",
-    "content": "chunk text",
-    "is_telemetry": false
-  }
-}
-```
+A streaming chunk of an agent's response (true streaming — chunks arrive as they're generated).
 
 ### `manifest_draft`
 
-Soul manifestation generation result. Sent after a `SoulManifest` request completes.
-
-```json
-{
-  "event_type": "manifest_draft",
-  "payload": {
-    "prompt": "A business strategist...",
-    "name": "Prometheus",
-    "content": "# SOUL.md\n\n## 1. Identity Core...",
-    "status": "complete",
-    "metrics": {
-      "lines": 320,
-      "sections": 18,
-      "depth_score": 0.92
-    }
-  }
-}
-```
-
-On error:
-
-```json
-{
-  "event_type": "manifest_draft",
-  "payload": {
-    "status": "error",
-    "error": "OpenRouter API error: 429"
-  }
-}
-```
+Soul manifestation generation result.
 
 ### `update_success`
 
 Sent after a `SoulUpdate` is written to disk.
 
-```json
-{
-  "event_type": "update_success",
-  "payload": {}
-}
-```
-
 ### `bulk_success`
 
 Sent after a `BulkManifest` completes.
-
-```json
-{
-  "event_type": "bulk_success",
-  "payload": { "count": 3 }
-}
-```
 
 ### `swarm_insight_history`
 
 Sent in response to `SwarmInsightHistoryRequest`.
 
-```json
-{
-  "event_type": "swarm_insight_history",
-  "payload": {
-    "history": [
-      { "agent_id": "prometheus", "content": "...", "category": "insight", "timestamp": "..." }
-    ]
-  }
-}
-```
-
 ### `learning.insight`
 
 Proactive cognitive insight pushed in real-time.
 
-```json
-{
-  "event_type": "learning.insight",
-  "payload": {
-    "agent_id": "savant",
-    "content": "Strategic observation...",
-    "category": "synthesis",
-    "timestamp": "2026-03-16T12:00:00Z"
-  }
-}
-```
-
 ### `heartbeat`
 
-Agent heartbeat signal. Processed silently by the dashboard.
+Agent heartbeat signal. Contains `agent_id`, `status`, `delta_score`.
+
+### `system.evolution.*`
+
+Evolution system events:
+- `system.evolution.mutation_proposed` — New mutation proposed
+- `system.evolution.mutation_applied` — Mutation approved and applied
+- `system.evolution.mutation_rejected` — Mutation rejected
+
+### `system.config.updated`
+
+Configuration value changed via ConfigSet.
+
+### `system.config.reset`
+
+Configuration reset to defaults.
+
+### `system.vault.*`
+
+Glass House vault events:
+- `system.vault.sync_complete` — Vault sync finished
+- `system.vault.file_changed` — Vault file modified externally
+
+### `EVOLUTION_SCORE`
+
+Agent evolution score updated.
+
+### `EVOLUTION_HISTORY`
+
+Full evolution history for an agent.
+
+### `agent.ocen.traits`
+
+OCEAN personality traits updated.
+
+### `debug.log`
+
+Debug log entry from the gateway.
+
+---
+
+## Error Responses
+
+### 401 Unauthorized (v0.3.2)
+
+Returned when API key is missing or invalid:
 
 ```json
 {
-  "event_type": "heartbeat",
-  "payload": {
-    "agent_id": "prometheus",
-    "status": "alive"
-  }
+  "error": "Unauthorized",
+  "message": "Valid API key required. Provide via 'Authorization: Bearer <key>' or 'X-API-Key: <key>' header."
 }
 ```
+
+### 403 Forbidden (v0.3.2)
+
+Returned when attempting to modify immutable config fields:
+
+```json
+{
+  "status": "error",
+  "message": "Field 'server.dashboard_api_key' is immutable at runtime. Update the config file and restart."
+}
+```
+
+### 400 Bad Request
+
+Returned for invalid input (malformed agent IDs, invalid config section/key names).
 
 ---
 
@@ -403,11 +362,12 @@ The soul manifestation engine uses a master key exchange flow:
 
 1. **Read** `OR_MASTER_KEY` from environment
 2. **Exchange** via `POST https://openrouter.ai/api/v1/auth/key` with `Authorization: Bearer <master_key>`
-3. **Receive** a regular API key in the response envelope: `{ "key": { "key": "sk-or-v1-..." } }`
+3. **Receive** a regular API key in the response envelope
 4. **Cache** the regular key process-wide via `OnceCell`
-5. **Use** the regular key for `POST https://openrouter.ai/api/v1/chat/completions`
+5. **Use** the regular key for completions
 
-The master key is never used directly for completions. This ensures:
-- Master keys cannot be leaked through API responses
-- Regular keys can be revoked independently
-- Rate limits are properly tracked per-use
+The master key is never used directly for completions.
+
+---
+
+*Documentation updated: 2026-05-25. Reflects v0.3.2 codebase.*

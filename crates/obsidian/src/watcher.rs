@@ -40,7 +40,7 @@ impl VaultWatcher {
         vault_path: PathBuf,
         config: ObsidianConfig,
         nexus: Option<Arc<savant_core::bus::NexusBridge>>,
-    enclave: Option<Arc<MemoryEnclave>>,
+        enclave: Option<Arc<MemoryEnclave>>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         Self {
@@ -91,10 +91,7 @@ impl VaultWatcher {
             .watch(&self.vault_path, RecursiveMode::Recursive)
             .map_err(VaultError::Notify)?;
 
-        info!(
-            "[obsidian] Vault watcher active on {:?}",
-            self.vault_path
-        );
+        info!("[obsidian] Vault watcher active on {:?}", self.vault_path);
 
         // Debounce timer: coalesce rapid edits (e.g. Obsidian autosave)
         let debounce = Duration::from_secs(2);
@@ -136,10 +133,7 @@ impl VaultWatcher {
     #[allow(clippy::disallowed_methods)]
     async fn handle_event(&self, event: &notify::Event) {
         // Only process Modify and Create events on .md files
-        let is_modify = matches!(
-            event.kind,
-            EventKind::Modify(_) | EventKind::Create(_)
-        );
+        let is_modify = matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_));
         if !is_modify {
             return;
         }
@@ -166,7 +160,7 @@ impl VaultWatcher {
             let dir_name = components[0].as_os_str().to_string_lossy().to_string();
 
             // Read the file content
-            let content = match std::fs::read_to_string(path) {
+            let content = match tokio::fs::read_to_string(path).await {
                 Ok(c) => c,
                 Err(e) => {
                     debug!("[obsidian] Cannot read {path:?}: {e}");
@@ -189,9 +183,7 @@ impl VaultWatcher {
                 "Episodic" => {
                     // Episodic edits are rejected. The past is immutable.
                     // Log a correction node for the user's intent.
-                    debug!(
-                        "[obsidian] Episodic edit rejected (immutable): {relative:?}"
-                    );
+                    debug!("[obsidian] Episodic edit rejected (immutable): {relative:?}");
                     if let Some(nexus) = &self.nexus {
                         if let Err(e) = nexus
                             .publish(
@@ -203,16 +195,17 @@ impl VaultWatcher {
                             )
                             .await
                         {
-                            tracing::warn!("[watcher] Failed to publish edit_rejected event: {}", e);
+                            tracing::warn!(
+                                "[watcher] Failed to publish edit_rejected event: {}",
+                                e
+                            );
                         }
                     }
                 }
                 "Semantic" => {
                     // Semantic edits accepted as ground truth overrides.
                     // Write directly to the memory enclave and publish to nexus.
-                    debug!(
-                        "[obsidian] Semantic edit accepted: {relative:?}"
-                    );
+                    debug!("[obsidian] Semantic edit accepted: {relative:?}");
 
                     // Store in memory enclave if available
                     if let Some(enclave) = &self.enclave {
@@ -252,6 +245,11 @@ impl VaultWatcher {
                             last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
                             hit_count: 0u32.into(),
                             related_to: Vec::new(),
+                            access_timestamps: Vec::new(),
+                            version: 1u32.into(),
+                            parent_id: None,
+                            supersedes: Vec::new(),
+                            is_latest: true,
                         };
                         if let Err(e) = enclave.lsm().insert_metadata(entry_id, &memory_entry) {
                             warn!("[obsidian] Failed to store semantic edit in enclave: {}", e);
@@ -266,27 +264,22 @@ impl VaultWatcher {
                             "action": "semantic_override",
                         });
                         if let Err(e) = nexus
-                            .publish(
-                                "system.vault.semantic_edit",
-                                &frame.to_string(),
-                            )
+                            .publish("system.vault.semantic_edit", &frame.to_string())
                             .await
                         {
-                            tracing::warn!("[watcher] Failed to publish semantic_edit event: {}", e);
+                            tracing::warn!(
+                                "[watcher] Failed to publish semantic_edit event: {}",
+                                e
+                            );
                         }
                     }
                 }
                 "Identity" => {
-                    let file_name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("");
+                    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
                     if file_name == "SOUL.md" {
                         // SOUL.md edits must go through the Evolution system.
-                        debug!(
-                            "[obsidian] SOUL.md edit blocked — use Evolution system"
-                        );
+                        debug!("[obsidian] SOUL.md edit blocked — use Evolution system");
                         if let Some(nexus) = &self.nexus {
                             if let Err(e) = nexus
                                 .publish(
@@ -308,20 +301,18 @@ impl VaultWatcher {
                                 "action": "personality_override",
                             });
                             if let Err(e) = nexus
-                                .publish(
-                                    "system.vault.personality_edit",
-                                    &frame.to_string(),
-                                )
+                                .publish("system.vault.personality_edit", &frame.to_string())
                                 .await
                             {
-                                tracing::warn!("[watcher] Failed to publish personality_edit event: {}", e);
+                                tracing::warn!(
+                                    "[watcher] Failed to publish personality_edit event: {}",
+                                    e
+                                );
                             }
                         }
                     } else if file_name.starts_with("Evolution") {
                         // Evolution files are read-only projections.
-                        debug!(
-                            "[obsidian] Evolution file edit rejected (read-only): {relative:?}"
-                        );
+                        debug!("[obsidian] Evolution file edit rejected (read-only): {relative:?}");
                     } else {
                         // Unknown Identity file — quarantine.
                         quarantine_notify(
@@ -349,9 +340,192 @@ impl VaultWatcher {
                             )
                             .await
                         {
-                            tracing::warn!("[watcher] Failed to publish edit_rejected event: {}", e);
+                            tracing::warn!(
+                                "[watcher] Failed to publish edit_rejected event: {}",
+                                e
+                            );
                         }
                     }
+                }
+                // GH-14: Procedural edits accepted — users can refine learned procedures.
+                "Procedural" => {
+                    debug!("[obsidian] Procedural edit accepted: {relative:?}");
+                    if let Some(enclave) = &self.enclave {
+                        let entry_id = chrono::Utc::now().timestamp_millis() as u64;
+                        let memory_entry = savant_memory::models::MemoryEntry {
+                            id: entry_id.into(),
+                            session_id: "vault".to_string(),
+                            category: "procedural_override".to_string(),
+                            content: sanitized.clone(),
+                            importance: 7,
+                            tags: vec!["vault".to_string(), "procedural".to_string()],
+                            embedding: Vec::new(),
+                            created_at: chrono::Utc::now().timestamp_millis().into(),
+                            updated_at: chrono::Utc::now().timestamp_millis().into(),
+                            shannon_entropy: 0.0.into(),
+                            last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
+                            hit_count: 0u32.into(),
+                            related_to: Vec::new(),
+                            access_timestamps: Vec::new(),
+                            version: 1u32.into(),
+                            parent_id: None,
+                            supersedes: Vec::new(),
+                            is_latest: true,
+                        };
+                        if let Err(e) = enclave.lsm().insert_metadata(entry_id, &memory_entry) {
+                            warn!("[obsidian] Failed to store procedural edit: {}", e);
+                        }
+                    }
+                    if let Some(nexus) = &self.nexus {
+                        let frame = serde_json::json!({
+                            "source": "vault",
+                            "file": relative.to_string_lossy(),
+                            "content": sanitized,
+                            "action": "procedural_override",
+                        });
+                        if let Err(e) = nexus
+                            .publish("system.vault.procedural_edit", &frame.to_string())
+                            .await
+                        {
+                            tracing::warn!("[watcher] Failed to publish procedural_edit: {}", e);
+                        }
+                    }
+                }
+                // GH-15: Lessons edits accepted as ground truth.
+                "Lessons" => {
+                    debug!("[obsidian] Lessons edit accepted: {relative:?}");
+                    if let Some(enclave) = &self.enclave {
+                        let entry_id = chrono::Utc::now().timestamp_millis() as u64;
+                        let memory_entry = savant_memory::models::MemoryEntry {
+                            id: entry_id.into(),
+                            session_id: "vault".to_string(),
+                            category: "lesson_override".to_string(),
+                            content: sanitized.clone(),
+                            importance: 8,
+                            tags: vec!["vault".to_string(), "lesson".to_string()],
+                            embedding: Vec::new(),
+                            created_at: chrono::Utc::now().timestamp_millis().into(),
+                            updated_at: chrono::Utc::now().timestamp_millis().into(),
+                            shannon_entropy: 0.0.into(),
+                            last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
+                            hit_count: 0u32.into(),
+                            related_to: Vec::new(),
+                            access_timestamps: Vec::new(),
+                            version: 1u32.into(),
+                            parent_id: None,
+                            supersedes: Vec::new(),
+                            is_latest: true,
+                        };
+                        if let Err(e) = enclave.lsm().insert_metadata(entry_id, &memory_entry) {
+                            warn!("[obsidian] Failed to store lesson edit: {}", e);
+                        }
+                    }
+                    if let Some(nexus) = &self.nexus {
+                        let frame = serde_json::json!({
+                            "source": "vault",
+                            "file": relative.to_string_lossy(),
+                            "content": sanitized,
+                            "action": "lesson_override",
+                        });
+                        if let Err(e) = nexus
+                            .publish("system.vault.lesson_edit", &frame.to_string())
+                            .await
+                        {
+                            tracing::warn!("[watcher] Failed to publish lesson_edit: {}", e);
+                        }
+                    }
+                }
+                // GH-16: Insights edits accepted as ground truth.
+                "Insights" => {
+                    debug!("[obsidian] Insights edit accepted: {relative:?}");
+                    if let Some(enclave) = &self.enclave {
+                        let entry_id = chrono::Utc::now().timestamp_millis() as u64;
+                        let memory_entry = savant_memory::models::MemoryEntry {
+                            id: entry_id.into(),
+                            session_id: "vault".to_string(),
+                            category: "insight_override".to_string(),
+                            content: sanitized.clone(),
+                            importance: 8,
+                            tags: vec!["vault".to_string(), "insight".to_string()],
+                            embedding: Vec::new(),
+                            created_at: chrono::Utc::now().timestamp_millis().into(),
+                            updated_at: chrono::Utc::now().timestamp_millis().into(),
+                            shannon_entropy: 0.0.into(),
+                            last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
+                            hit_count: 0u32.into(),
+                            related_to: Vec::new(),
+                            access_timestamps: Vec::new(),
+                            version: 1u32.into(),
+                            parent_id: None,
+                            supersedes: Vec::new(),
+                            is_latest: true,
+                        };
+                        if let Err(e) = enclave.lsm().insert_metadata(entry_id, &memory_entry) {
+                            warn!("[obsidian] Failed to store insight edit: {}", e);
+                        }
+                    }
+                    if let Some(nexus) = &self.nexus {
+                        let frame = serde_json::json!({
+                            "source": "vault",
+                            "file": relative.to_string_lossy(),
+                            "content": sanitized,
+                            "action": "insight_override",
+                        });
+                        if let Err(e) = nexus
+                            .publish("system.vault.insight_edit", &frame.to_string())
+                            .await
+                        {
+                            tracing::warn!("[watcher] Failed to publish insight_edit: {}", e);
+                        }
+                    }
+                }
+                // GH-17 through GH-21: Auto-generated directories — edits rejected.
+                "Graphs" | "Retention" | "Audit" | "Themes" | "Multimodal" => {
+                    debug!(
+                        "[obsidian] {} edit rejected (auto-generated): {relative:?}",
+                        dir_name
+                    );
+                    if let Some(nexus) = &self.nexus {
+                        if let Err(e) = nexus
+                            .publish(
+                                "system.vault.edit_rejected",
+                                &format!(
+                                    "{}/ is auto-generated. Edit rejected: {relative:?}",
+                                    dir_name
+                                ),
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                "[watcher] Failed to publish edit_rejected event: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+                "Dashboard" => {
+                    debug!("[obsidian] Dashboard edit rejected (computed metrics): {relative:?}");
+                    if let Some(nexus) = &self.nexus {
+                        if let Err(e) = nexus
+                            .publish(
+                                "system.vault.edit_rejected",
+                                &format!(
+                                    "Dashboard/ is auto-generated from computed metrics. \
+                                     Edit rejected: {relative:?}"
+                                ),
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                "[watcher] Failed to publish edit_rejected event: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+                // CP-27: Working/ is a transient scratchpad — silently ignore edits
+                "Working" => {
+                    debug!("[obsidian] Working directory edit ignored (transient scratchpad): {relative:?}");
                 }
                 _ => {
                     // Files in unknown directories or the root are quarantined.

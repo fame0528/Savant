@@ -7,11 +7,173 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.2] - 2026-05-26
+
+**Complete Implementation Sprint. 27 FIDs closed. 186 items addressed. 1,193 tests pass. Zero open issues. Release ready.**
+
+Full security hardening, provider chain resilience, consciousness layer, resource governor, LLM-driven skill synthesis, skill chaining, and comprehensive documentation overhaul.
+
+### Added
+
+#### Security Hardening
+
+- **REST API authentication middleware** — Tower middleware with constant-time comparison, `Authorization: Bearer <key>` and `X-API-Key: <key>` support, public endpoint whitelist (`/health`, `/live`, `/ready`, `/ws`, `/ws/canvas`)
+- **Immutable security fields** — `dashboard_api_key`, `host`, `port`, `signing_key`, `enable_blocklist_sync` cannot be changed at runtime via ConfigSet. Returns 403 Forbidden.
+- **Canvas WebSocket authentication** — `/ws/canvas` requires API key on upgrade
+- **Webhook auth token** — Random token generated on startup (blake3 hash of timestamp + UUID)
+- **SoulUpdate size limit** — 100KB cap on `proposed_content` and `reasoning` fields
+- **BulkManifest agent limit** — Max 10 agents per BulkManifest request
+- **NLCommand input limit** — Max 10,000 characters per NLCommand
+- **Environment variable filtering** — Shell commands use `env_clear()` + only pass `PATH`, `HOME`, `LANG`, `TERM`
+
+#### Consciousness Layer
+
+- **ConsciousnessState** — `Thinking`/`Idle`/`Dormant`/`Wondering` enum with entropy-based tick delay (0ms–300s)
+- **EntropyCalculator** — Shannon entropy of hivemind state via hash-based change tracking
+- **NarrativeSynthesizer** — LLM-driven Markov chain regeneration (bounded context, never accumulates)
+- **WonderEngine** — Autonomous exploration during idle with environment sampling and reward-based pruning
+- **AntiEchoChamber** — Jaccard similarity convergence detection across agent outputs
+- **ConsciousnessBudget** — Token/cost budget with quiet hours (10PM–7AM) and entropy-based scaling
+
+#### Resource Governor
+
+- **ResourceGovernorConfig** — `[resource_governor]` section in `savant.toml` with CPU/memory pressure thresholds and per-level agent limits
+- **PressureLevel** — `Low`/`Medium`/`High`/`Critical` with worst-case-wins (max of CPU and memory)
+- **ResourceMonitor** — Background polling with atomic state, watch channel for pressure change notifications
+- **AdaptiveSemaphore** — Pressure-based permit adjustment with safe bounds checking
+- **SwarmGovernor** — Orchestrator with deferred agent queue, max deferral retries (5 min), shutdown support
+
+#### Provider Chain Resilience
+
+- **True streaming** — Chunks yielded directly from provider (no collect-then-replay). Significantly improved TTFT.
+- **Cross-provider fallback** — Fallback provider actually invoked when primary exhausts retries
+- **Circuit breaker race condition fix** — Single `RwLock<CircuitBreakerInner>` replaces separate locks
+- **Provider call timeout** — 120s default, configurable in `ChainConfig`. Timeouts are retryable errors.
+- **RateLimiter wiring** — `with_rate_limiter()` builder, token estimation from messages, pre-call check
+
+#### Agent Intelligence
+
+- **CostAwareRouter** — Heuristic task complexity classification (Simple/Moderate/Complex) with cheap/expensive model routing
+- **ProactiveContextGatherer** — Parallel memory + git log gathering before user asks
+
+#### LLM Interaction Quality
+
+- **Tool heuristics** — `when_to_use()` and `when_not_to_use()` methods on `Tool` trait
+- **Soul example parser** — Parses `## Example Exchanges` from SOUL.md for few-shot prompting
+- **Skill verifier** — `SkillVerifier` checks required files, file sizes, and runs `cargo check` on generated skills
+
+#### Skill System
+
+- **LLM-driven synthesis** — `SovereignSynthesizer` now uses LLM for code generation with template fallback
+- **Self-healing loop** — Failed `cargo check` output fed back to LLM for error correction (max 3 attempts)
+- **Pinned dependencies** — No more wildcard `"*"` versions. Known versions mapped.
+- **Skill chaining** — `SkillManifest` now has `depends_on` and `chain_with` fields. `SkillChain` and `SkillChainStep` types for composition.
+
+#### Context Quality
+
+- **Multi-head scoring** — Semantic window scoring uses role weight, exponential recency, case-insensitive keyword overlap, and causal pair preservation (Q→A boost)
+- **Memory recall deduplication** — Recalled memories injected into system prompt only (not duplicated in conversation history)
+- **Tool result governance** — 50,000 character cap on tool output with truncation notice
+
+#### Learning System Safety (Phase 1)
+
+- **Content-hash dedup** — Rolling 10K entry window prevents duplicate learnings
+- **Per-entry length cap** — 2000 characters max per learning entry
+- **LEARNINGS.md rotation** — Archives at 100KB to `LEARNINGS-ARCHIVE-{timestamp}.md`
+- **Trigger-path tagging** — Every entry tagged with source (e.g., `memory_store`)
+- **Filtered content logging** — Rejected entries logged to `FILTERED.jsonl` for human review
+
+#### Dashboard APIs
+
+- `GET /api/memory/search` — Memory search with query and limit params
+- `GET /api/governor/status` — Resource governor pressure and metrics
+- `GET /api/consciousness/status` — Consciousness daemon state and entropy
+- `POST /api/chat` — REST API for sending messages (alternative to WebSocket)
+
+#### CI/CD Pipeline
+
+- `.github/workflows/ci.yml` — Core CI: check, clippy, test, fmt on push/PR
+- `.github/workflows/dashboard.yml` — Dashboard CI: tsc, build on dashboard changes
+- `.github/workflows/release.yml` — 3-platform release (Linux, Windows, macOS) on tag push
+
+#### Observability
+
+- **Request ID middleware** — UUID per request, `X-Request-Id` header in all responses
+- **Structured health check** — `/health` returns `{ status: "healthy", version, timestamp }`
+- **OpenTelemetry deps** — `tracing-opentelemetry`, `opentelemetry`, `opentelemetry_sdk` added to CLI
+
+#### Production Hardening
+
+- **WebSocket connection limit** — Max 100 concurrent connections, 429 Too Many Requests on overflow
+- **Consciousness daemon wiring** — Spawned as tokio task in `SwarmController::ignite()`
+- **Resource governor wiring** — `spawn_agent()` checks pressure, defers agents when no permits
+- **ProviderChain runtime** — All providers wrapped in ProviderChain (circuit breaker, timeout, rate limiter active)
+
+#### Skill Chain Execution
+
+- **SkillChainExecutor** — Sequential step execution with conditional execution, output passing, error handling
+- **5 tests** — empty chain, missing tool, condition skip, max steps, condition evaluation
+
+#### Grounding Reform
+
+- **GroundingScore** — `OutputFilter::score()` returns weighted environmental (1.0) + introspective (0.6) scores
+- **Fabrication blocking** — Hard block returns total=0.0
+
+#### Contributing
+
+- **CONTRIBUTING.md** — Setup, code style, checks, PR process, commit messages, security disclosure
+
+#### Tests
+
+- **1,193 tests** across all crates (up from 770+, recovered 39 previously crashing memory tests)
+- **IPC tests** — 10 new tests (GlobalState, AgentEntry, SwarmSharedContext, consensus, blackboard)
+- **CLI tests** — 4 new tests (argument parsing)
+- **Skill chain tests** — 5 new tests
+- **Memory test fix** — `test_lsm_engine_basic_operations` and `test_engine` use 64-dim vectors instead of 2560 (prevents 332MB allocation crash on Windows)
+
+### Changed
+
+- **Mandatory SecurityScanner** — `SovereignShell` scanner field changed from `Option<Arc<SecurityScanner>>` to `Arc<SecurityScanner>`. No more optional bypass.
+- **Provider chain** — `ProviderChain` now uses `Arc<dyn LlmProvider>` instead of `Box<dyn LlmProvider>`. `RetryProvider` dead wrapper removed.
+- **Ollama embedding service** — Graceful degradation: auto-start, model check, test embed. Returns clear error with setup instructions instead of crashing.
+- **Config loading** — Corrupt config falls back to `Config::default()` with warning log instead of crashing.
+- **SovereignSynthesizer** — Replaced template-only selection with LLM-driven synthesis. Kani proofs replaced with `cargo check` verification.
+- **Tool trait** — Added `when_to_use()` and `when_not_to_use()` methods for LLM guidance.
+- **Memory system docs** — `docs/memory.md` updated with Glass House, Reflective Memory, BM25, Procedures, Lessons, Insights, Multimodal, Audit, Notifications sections.
+- **Hivemind docs** — `docs/swarm.md` completely rewritten to reflect actual code architecture (replaced 1476 lines of theoretical content).
+- **Collective intelligence docs** — `docs/collective_intelligence.md` rewritten with enterprise-quality architecture documentation.
+- **Version bumped** — All 23 crate Cargo.toml files bumped from 0.3.1 to 0.3.2
+
+### Fixed
+
+- **Circuit breaker race condition** — `CircuitBreaker` now uses single `RwLock<CircuitBreakerInner>` instead of separate locks for state and failure count
+- **Tool panic isolation** — Side-effect tool execution in `HyperCausalEngine` wrapped in `tokio::spawn` to catch panics
+- **Mid-stream timeout retry** — Stream errors trigger 2s wait + 1 retry before failing
+- **Hardcoded API key** — Removed hardcoded OpenGateway key from `swarm.rs`
+- **Local provider routing** — LMStudio/Perplexity/Local now log warning when routing through OpenRouter
+- **Memory recall duplication** — Recalled memories no longer appear in both system prompt and conversation history
+- **Config immutable fields** — Security-critical config fields blocked from runtime mutation
+- **Clippy fixes** — 2 platform-specific unused import fixes (sandbox/agentd.rs, agent/synthesis.rs)
+- **Cargo warnings** — Removed Tauri profile.release duplicate, fixed reqwest default-features
+- **Memory test allocation** — Fixed 332MB/288MB allocation crash in memory tests by using 64-dim vectors instead of 2560 in test configs (MockEmbeddingProvider, LsmConfig, VectorConfig)
+
+### Documentation (0.3.2)
+
+- **CONVENTIONS.md** — 621 lines covering all 12 undocumented codebase patterns
+- **Evolution system guide** — `docs/evolution/evolution-system.md` user guide for the evolution pipeline
+- **Config reference** — `docs/config/CONFIG.md` updated with all new config sections
+- **API reference** — `docs/api/README.md` updated with new endpoints, auth, immutable fields, size limits
+- **47 outdated docs** archived to `docs/archive/`
+- **All FID tracking** updated and archived (76 total FIDs, 0 active)
+
+---
+
 ## [0.3.1] - 2026-05-17
 
 **Full Workspace Audit Remediation. 11 FIDs closed. 180+ issues fixed across 20 crates. Zero unwrap/expect in production code.**
 
 ### Security Audit Remediation (`savant_security`)
+
 - Removed crate-level `#[allow(clippy::disallowed_methods)]` — replaced with per-test-module allows
 - Fixed 4x `.expect()` on clock errors (token.rs, enclave.rs) — replaced with checked arithmetic returning `Result`
 - Fixed non-ASCII text lowercasing index mismatch panic in `prompt_defense.rs`
@@ -19,6 +181,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 32/32 tests pass, 0 clippy warnings
 
 ### Core Audit Remediation (`savant_core`)
+
 - Fixed infinite recursion in `EmbeddingProvider::dimensions()` and `OllamaEmbeddingService::dimensions()` (trait method called itself instead of inherent impl)
 - Fixed batch cache index out of bounds in `embeddings.rs`
 - Changed `.expect()` to `Result` return in `secure_client()` + added `secure_client_fallible()` for backward compat
@@ -29,6 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 53/53 tests pass, 0 clippy warnings
 
 ### Agent Audit Remediation (`savant_agent`) — 29 Issues Fixed
+
 - Removed blanket `#[allow(clippy::disallowed_methods)]` from lib.rs — replaced with targeted allow for `serde_json::json!` macro
 - Fixed speculative horizon instruction discarded (`react_speculative.rs`)
 - Fixed JSON parse failures silently mangling tool args (`reactor.rs`, `stream.rs`) — now propagates errors to LLM for retry
@@ -40,6 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 168 tests pass (120 unit + 44 a2a + 3 production + 1 doc-test), 0 clippy warnings
 
 ### Stub/Abandoned Implementation Remediation — 38 Issues Across 20 Crates
+
 - `cull_low_entropy_memories()` — implemented entropy-based culling (was returning `Ok(0)`)
 - `promote_to_agents()` — writes sanitized content to AGENTS.md (was no-op)
 - `HeartbeatTool` — returns structured JSON with evaluation (was uppercasing action)
@@ -70,6 +235,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dead code removed (`find_by_key`, unused watchdog)
 
 ### Memory Audit Remediation (`savant_memory`)
+
 - 7/8 issues fixed (1 by-design: reflective in-memory confirmed as Obsidian vault responsibility)
 - Replaced FNV-1a hash with `std::hash::DefaultHasher`
 - Fixed TOCTOU race in session state creation
@@ -80,17 +246,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 82/82 tests pass
 
 ### Gateway Audit Remediation (`savant_gateway`)
+
 - Fixed all `.expect()` panic risks with `fallback_response()`
 - Monolithic handler split is tech debt (all code is functional)
 - 19/19 tests pass
 
 ### Other Crate Remediations
+
 - Cognitive: Removed blanket allow, fixed 5 `.unwrap()` in production code
 - Dream: Removed blanket allow (no production unwraps found)
 - IPC: No issues found
 - Obsidian/Desktop/CLI: No issues found
 
 ### Workspace-Wide Verification
+
 - `cargo check --workspace` — 0 errors, 0 warnings
 - `cargo test --workspace` — 0 failures (all crates)
 - `cargo clippy --all-targets -- -D warnings` — 0 warnings
@@ -189,7 +358,7 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 - `savant_toolforge` — Tool creation with quality gates, provenance tracking, registry
 - `savant_integrations` — External service connectors (Gmail, Notion) with sync scheduler and state tracking
 
-### Dashboard & UI
+### Dashboard & UI (0.3.0)
 
 - **Evolution Pages** — `/evolution` and `/evolution/behind-the-curtain` pages for viewing personality evolution
 - **Enhanced Settings** — Provider configuration with validation, vision/embedding model inputs
@@ -236,6 +405,7 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 **Continuous Awareness Architecture. Bridging the AI Consciousness Gap. 18 new source files.**
 
 ### Oneiros Dream Engine (New Crate: `savant_dream`)
+
 - **NREM phase** — structured replay of recent episodic memories, deduplication, contradiction detection/resolution. Queries last 24h of messages via `iter_recent_messages()`.
 - **REM phase** — adversarial latent space exploration via random probe vectors, cross-domain concept recombination. Vendi Score filtering ensures diversity.
 - **Vendi Score module** — diversity metric using pairwise distance variance. Embedding-based and text-based (Jaccard) variants. Score = variance / (1 + variance).
@@ -244,35 +414,42 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 - **`iter_recent_messages(hours)`** — new method on `LsmStorageEngine` for time-windowed message iteration.
 
 ### Global Workspace / Executive Monitor (New Module: `agent::workspace`)
+
 - **`WorkspaceSlot`** — signals compete for broadcast attention with computed salience scores.
 - **`ExecutiveMonitor`** — continuous selection-broadcast cycle with adaptive tick rate (100ms active, exponential backoff to 5s during stillness). Broadcasts highest-salience signal to all registered listeners.
 - **Salience computation** — recency (30%) + novelty (30%) + task relevance (40%). Word-overlap similarity for novelty detection.
 - **Broadcast channel** — `tokio::sync::broadcast` for subscriber pattern. Named listener registration.
 
 ### Semantic Window Manager (New Module: `agent::semantic_window`)
+
 - **Context scoring** — role weight (System > User > Assistant), recency, keyword overlap. System messages and SOUL.md references are pinned (never evicted).
 - **Sliding window** — configurable max turns (default 50). Evicts lowest-scoring non-pinned entries when exceeding threshold (default 20% eviction).
 - **Window result** — retained + evicted message lists for downstream processing.
 
 ### Continuous Agent Safety Framework (New Module: `security::continuous`)
+
 - **Taint tracing** — `TaintTag` struct with source, trust level, provenance chain. Predefined levels: external_web (0.2), user_file (0.5), dream (0.5), nrem_replay (0.7), system (1.0). Compound operation takes minimum trust of sources. `requires_human_verification()` for trust < 0.3.
 - **Dynamic credential broker** — `CredentialBroker` wraps `.env` loading, issues `EphemeralToken` per-task with configurable TTL. Tokens auto-expire. `revoke_task_tokens()` on completion. `cleanup_expired()` for periodic maintenance.
 - **Deterministic circuit breakers** — `CircuitBreaker` tracks recursion depth, API call count, cumulative cost per task. Standard (depth=10, calls=100, $5) and LongRunning (depth=50, calls=1000, $50) task classes. Instant termination via `SavantError::CircuitBreakerTripped`. Trip log for audit.
 - **Lock-free trip detection** — scoped read locks prevent deadlocks. Trip reason computed inside lock scope, `record_trip` called after lock release.
 
 ### Temporal Decay + Reflective Memory
+
 - **`semantic_search_temporal_decay()`** — new method on `MemoryEnclave` and `MemoryEngine`. Applies `e^(-lambda * age_hours)` to search results. High-importance memories (>= 8) get half decay rate. Filters results with effective_relevance < 0.1.
 - **Reflective memory layer** — `ReflectiveMemory` struct with `Concept` nodes and `Relation` edges. Deduplication by ID. Label substring search. Relation lookup by concept ID.
 
 ### Configuration
+
 - **`[consciousness]` section** in `config/savant.toml` — 22 configurable parameters for dream engine, workspace, streaming, temporal decay, and safety framework.
 - **`SavantError::CircuitBreakerTripped`** — new error variant in `savant_core`.
 
 ### Integration
+
 - **Heartbeat pulse is dream-aware** — checks `IS_DREAMING` atomic flag before pulse activation. Skips pulse if dream cycle is active. Publishes delta score to watch channel for dream scheduler.
 - **Dream crate added to workspace** — `savant_dream` in `Cargo.toml` members + workspace dependencies.
 
 ### Test Coverage
+
 - **24 new tests** in `savant_dream` (vendi, nrem, rem, filter, scheduler)
 - **26 tests** in `savant_security` (12 existing + 14 new: taint, circuit_breaker, credentials)
 - **New modules compile with 0 errors, 0 warnings from new code**
@@ -284,6 +461,7 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 **Grounded emergence architecture. Self-healing infrastructure. 50+ files changed.**
 
 ### Reflection System Overhaul
+
 - **Delta-threshold activation** — replaced 60-second heartbeat clock with environmental change detector. LLM only invoked when environment changes (git, filesystem, messages). Silent pulses skipped entirely. Forced pulse at ~8.5 minutes to prevent permanent dormancy.
 - **XML-delimited grounded prompt** — environment data tagged with `<ENVIRONMENT_REALTIME>`, `<SYSTEM_METRICS>`, `<PENDING_WORK>`, `<GROUNDING_CONSTRAINTS>`. Agent grounded in observable data, not identity reflection.
 - **Immutable file restrictions** — foundation tool blocks agent from reading/writing LEARNINGS.md, CONTEXT.md, SOUL.md, AGENTS.md, agent.json. Prevents self-referential echo chamber loops.
@@ -299,12 +477,14 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 - **Parser wired to heartbeat** — runs every pulse to keep JSONL synchronized with agent's freeform writing.
 
 ### Self-Healing Infrastructure
+
 - **Ollama auto-start** — `auto_start_ollama()` made public. Embedding service self-heals: if Ollama isn't running, starts it automatically and retries. No substring fallback (prevents vector DB corruption).
 - **Gateway port cleanup** — kills stale process on port 8080 before starting gateway. Prevents crash on second launch.
 - **Vision model on-demand** — `describe_image()` sends `keep_alive: 0` to Ollama. Vision model loads on use, unloads immediately after. Embedding model stays always-on.
 - **Stream error graceful completion** — all 5 provider stream functions (OpenRouter, Anthropic, Ollama, Google, Cohere) handle mid-stream connection drops gracefully. Yield partial response as complete instead of crashing.
 
-### Dashboard & UI
+### Dashboard & UI (0.1.1)
+
 - **Frontend chat fix** — role casing corrected (`'User'`/`'Assistant'` → `'user'`/`'assistant'`) to match Rust serde expectations.
 - **Gateway error logging** — WebSocket deserialization failures now logged with error message and payload preview.
 - **Fine tuner settings sync** — LLM parameters (temperature, top_p, frequency_penalty, presence_penalty) now sync to agent.json. Dashboard and backend always aligned.
@@ -312,7 +492,8 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 - **Agent logs window** — fixed TypeScript syntax error in logs.html, added logs window to Tauri capabilities.
 - **LLM tuning** — companion-first parameters: temperature 0.85, top_p 0.92, frequency_penalty 0.6, presence_penalty 0.2.
 
-### Documentation
+### Documentation (0.1.1)
+
 - `docs/memory.md` — comprehensive 3-layer memory system architecture reference (585 lines)
 - `docs/research-brief.md` — research brief for Google Deep Research (284 lines)
 - `dev/fids/FID-20260327-REFLECTION-ARCHITECTURE-OVERHAUL.md` — comprehensive FID, 7 phases, perfection-loop certified (264 lines)
@@ -324,6 +505,7 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 **First release on v0.0.1 foundation. Security hardening, concurrency refactors, error handling overhaul, feature stub wiring. Desktop app bootstrap. 72+ files changed.**
 
 ### Dashboard Shell Architecture (Major Refactor)
+
 - `DashboardContext` — centralized state for agents, connection, insights, manifest, UI
 - `DashboardShell` — 3-panel layout component (sidebar, main, right panel) wraps all pages
 - Root `layout.tsx` — wraps entire app with provider + shell
@@ -340,6 +522,7 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 - WebSocket never tears down on cleanup; reconnect logic preserves messages
 
 ### Desktop App (Post-Release Update)
+
 - Centralized path resolver (`SavantPathResolver`) with Tauri mode detection
 - Auto-updater plugin wired to GitHub releases
 - Gateway dashboard API key removed (localhost-only service)
@@ -352,10 +535,12 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 ### Security
 
 #### TOCTOU Permission Escalation (CRITICAL)
+
 - `crates/core/src/crypto.rs` — Crypto key files now written atomically via `OpenOptions::mode(0o600)` on Unix. File is created with restrictive permissions from the start, eliminating the race window where keys were briefly world-readable.
 - `crates/core/src/config.rs` — Config temp files written with `OpenOptions::mode(0o600)` on Unix before atomic rename. Prevents local privilege escalation via config file race.
 
 #### SSRF Protection (CRITICAL)
+
 - `crates/agent/src/tools/web.rs` — Removed unsafe `unwrap_or_else(|_| reqwest::Client::new())` fallback that created an HTTP client without timeout or redirect limits. Replaced with loud `.expect()` failure. Added `connect_timeout`.
 - Centralized `secure_client()` factory in `crates/core/src/net/mod.rs` — all production HTTP calls go through a single factory with 12s timeout, 5s connect timeout, 4 idle connections per host, 10-redirect limit.
 - Replaced **28 `reqwest::Client::new()` calls** across 22 files with `secure_client()`. Zero unconfigured HTTP clients in production code.
@@ -363,48 +548,61 @@ Full memory-to-vault projection system with bidirectional sync. The agent's enti
 ### Error Handling
 
 #### Gateway Handler Result Discard
+
 - `crates/gateway/src/handlers/mod.rs` — 6 control frame handlers (ConfigGet, ConfigSet, ModelsList, ParameterDescriptors, AgentConfigGet, AgentConfigSet) now log errors via `tracing::error!` instead of silently discarding `Result`.
 
 #### Agent Pulse Telemetry
+
 - `crates/agent/src/pulse/heartbeat.rs` — Replaced **15 `let _ =` bindings** with `if let Err(e)` + `tracing::warn!`. All heartbeat telemetry (nexus publish, emergent learning, context distillation, proactive state commit) now logs failures.
 
 #### Session/Turn State Saves
+
 - `crates/agent/src/react/stream.rs` — Replaced **12 `let _ =` bindings** for session and turn saves with `if let Err(e)` + `tracing::warn!`. Session persistence failures are now visible in logs.
 
 #### Mass `let _ =` Cleanup (H-6)
+
 - Replaced **133+ `let _ =` bindings** across all production code with proper error handling. Zero `let _ =` remain in production code (excluding tests). Covers channels (30), gateway (39), agent (8), core (13), memory (5), MCP (7), canvas (8), skills (4), cli (2), echo (1), desktop (10).
 
 ### Concurrency
 
 #### Memory Engine Partitioned Locking (H-3)
+
 - `crates/memory/src/engine.rs` — Replaced single global `tokio::sync::Mutex<()>` write lock with 64-partition lock pool keyed by session_id hash. Writes to different sessions no longer serialize through a single lock.
 
 #### Swarm DashMap Migration (H-1)
+
 - `crates/agent/src/swarm.rs` — `handles: Mutex<HashMap<...>>` → `DashMap<String, ...>`. Agent handle operations (insert, remove, iterate) no longer block on a single async mutex. `dead_agents` also migrated to `DashMap`.
 
 #### MCP Client DashMap Migration (H-5)
+
 - `crates/mcp/src/client.rs` — `responses: Arc<Mutex<HashMap<...>>>` → `Arc<DashMap<...>>`. Pending response registration/removal is now lock-free.
 
 #### Embedding Cache RwLock (H-4)
+
 - `crates/core/src/utils/embeddings.rs` — Cache `Mutex<LruCache>` → `RwLock<LruCache>`. Concurrent embedding cache reads no longer block each other. Cache reads use `read()`, writes use `write()`.
 
 ### Features
 
 #### Agent Delegate LLM Wiring (S-1)
+
 - `crates/agent/src/react/mod.rs` — All 3 agent delegates (ChatDelegate, HeartbeatDelegate, SpeculativeDelegate) now call `provider.stream_completion()` and collect responses into `ChatResponse`. Previously returned empty responses.
 
 #### Memory Consolidation (S-2)
+
 - `crates/memory/src/engine.rs` — `MemoryEngine::consolidate()` implemented: fetches recent messages, deduplicates consecutive identical messages (by content + role), compacts via atomic_compact. Reports removed count.
 - `crates/core/src/memory/mod.rs` — `FjallMemoryBackend::consolidate()` wired to engine's real implementation.
 
 #### NLP Command Dispatchers (S-4)
+
 - `crates/core/src/nlp/commands.rs` — All 6 command handlers updated to return accurate WebSocket API references instead of fake execution confirmations. Users now see the exact `ControlFrame` to send for each operation.
 
 ### Dependencies Added
+
 - `dashmap = "6.1.0"` — added to `savant_agent` and `savant_mcp` crate dependencies
 - `crates/core/src/net/mod.rs` — new module for centralized HTTP client factory
 
 ### Infrastructure
+
 - `.gitignore` updated to exclude `dev/`, `docs/research/`, `archives/`, `AUDIT-REPORT.MD` from git tracking
 - `AUDIT-REPORT.MD` removed from version control (internal use only)
 

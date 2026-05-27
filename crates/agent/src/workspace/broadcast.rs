@@ -43,7 +43,6 @@ pub struct ExecutiveMonitor {
     /// Broadcast channel for subscribers.
     broadcast_tx: broadcast::Sender<BroadcastEvent>,
     /// Current delta score (from heartbeat).
-    #[allow(dead_code)]
     delta_rx: watch::Receiver<f32>,
 }
 
@@ -79,6 +78,12 @@ impl ExecutiveMonitor {
     /// Returns the current number of competing signals.
     pub async fn signal_count(&self) -> usize {
         self.slots.read().await.len()
+    }
+
+    /// Returns the current delta score from the heartbeat.
+    /// Higher values indicate more active work.
+    pub fn current_delta(&self) -> f32 {
+        *self.delta_rx.borrow()
     }
 
     /// Runs the selection-broadcast loop.
@@ -169,6 +174,7 @@ impl ExecutiveMonitor {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

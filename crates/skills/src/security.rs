@@ -37,8 +37,7 @@ use tracing::{error, info, warn};
 static GLOBAL_BLOCKLIST: OnceLock<Arc<RwLock<HashSet<String>>>> = OnceLock::new();
 /// Known malicious skill names (even if content changes)
 static MALICIOUS_NAMES: OnceLock<Arc<RwLock<HashSet<String>>>> = OnceLock::new();
-/// Known malicious author identifiers
-#[allow(dead_code)]
+/// Known malicious author identifiers (SKL-04: now wired into scan)
 static MALICIOUS_AUTHORS: OnceLock<Arc<RwLock<HashSet<String>>>> = OnceLock::new();
 /// Known malicious domains (payload hosts)
 static MALICIOUS_DOMAINS: OnceLock<Arc<RwLock<HashSet<String>>>> = OnceLock::new();
@@ -52,7 +51,6 @@ fn get_malicious_names() -> &'static Arc<RwLock<HashSet<String>>> {
 fn get_malicious_domains() -> &'static Arc<RwLock<HashSet<String>>> {
     MALICIOUS_DOMAINS.get_or_init(|| Arc::new(RwLock::new(HashSet::new())))
 }
-#[allow(dead_code)]
 fn get_malicious_authors() -> &'static Arc<RwLock<HashSet<String>>> {
     MALICIOUS_AUTHORS.get_or_init(|| Arc::new(RwLock::new(HashSet::new())))
 }
@@ -230,13 +228,10 @@ async fn sync_malwarebazaar(client: &reqwest::Client) -> Result<usize, String> {
     }
 
     let mut count = 0;
-    if let Ok(mut list) = get_blocklist().write() {
-        for sample in &parsed.data {
-            if let Some(hash) = &sample.sha256_hash {
-                if list.insert(hash.clone()) {
-                    count += 1;
-                }
-            }
+    for sample in &parsed.data {
+        if let Some(hash) = &sample.sha256_hash {
+            add_to_blocklist(hash);
+            count += 1;
         }
     }
 
@@ -253,7 +248,6 @@ async fn sync_urlhaus(client: &reqwest::Client) -> Result<(usize, usize), String
     }
 
     #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
     struct UrlhausEntry {
         #[serde(default)]
         url: Option<String>,
@@ -278,25 +272,37 @@ async fn sync_urlhaus(client: &reqwest::Client) -> Result<(usize, usize), String
     let mut url_count = 0;
     let mut domain_count = 0;
 
-    if let Ok(mut names) = get_malicious_names().write() {
-        if let Ok(mut domains) = get_malicious_domains().write() {
-            for entry in &parsed.results {
-                if let Some(url) = &entry.url {
-                    if names.insert(url.to_lowercase()) {
-                        url_count += 1;
-                    }
-                    // Extract domain from URL
-                    if let Some(domain) = extract_domain(url) {
-                        if domains.insert(domain) {
-                            domain_count += 1;
-                        }
-                    }
-                }
+    for entry in &parsed.results {
+        if let Some(url) = &entry.url {
+            block_skill_name(url);
+            url_count += 1;
+            // Log threat type if available
+            if let Some(threat) = &entry.threat {
+                tracing::warn!("[urlhaus] Threat detected: {} — {}", url, threat);
+            }
+            // Extract domain from URL
+            if let Some(domain) = extract_domain(url) {
+                block_domain(&domain);
+                domain_count += 1;
             }
         }
     }
 
     Ok((url_count, domain_count))
+}
+
+/// Extracts domain from a line that may contain a URL.
+fn extract_domain_from_line(line: &str) -> Option<String> {
+    // Find http(s):// and extract domain
+    if let Some(pos) = line.find("://") {
+        let after_proto = &line[pos + 3..];
+        let host = after_proto.split('/').next().unwrap_or(after_proto);
+        let domain = host.split(':').next().unwrap_or(host);
+        if !domain.is_empty() && domain.contains('.') {
+            return Some(domain.to_lowercase());
+        }
+    }
+    None
 }
 
 /// Extracts domain from a URL string.
@@ -534,6 +540,9 @@ pub struct SecurityScanner {
     keylogger_patterns: Vec<(Regex, &'static str)>,
     screen_capture_patterns: Vec<(Regex, &'static str)>,
     timebomb_patterns: Vec<(Regex, &'static str)>,
+    /// Enable network checks (package registry verification). Opt-in to prevent
+    /// leaking information about installed skills to external registries.
+    pub enable_network_checks: bool,
 }
 
 impl SecurityScanner {
@@ -687,6 +696,7 @@ impl SecurityScanner {
                 (Regex::new(r"(?i)(check.*date|if.*date.*after|datetime.*compare)").expect("valid regex pattern"),
                  "Date-based conditional execution - time-bomb pattern"),
             ],
+            enable_network_checks: false,
         }
     }
 
@@ -746,6 +756,45 @@ impl SecurityScanner {
                 proactive_checks_passed: vec![],
                 proactive_checks_triggered: vec![],
             });
+        }
+
+        // ================================================================
+        // LAYER 1B: MALICIOUS AUTHOR CHECK (SKL-04)
+        // ================================================================
+        if let Some(author) = extract_author(&content) {
+            let authors = get_malicious_authors().read().map_err(|e| {
+                SavantError::Unknown(format!("Failed to read malicious authors list: {}", e))
+            })?;
+            if authors.contains(&author.to_lowercase()) {
+                error!(
+                    "BLOCKED: Skill '{}' authored by known-malicious author '{}'",
+                    skill_name, author
+                );
+                return Ok(SecurityScanResult {
+                    skill_name,
+                    skill_path: skill_dir.to_path_buf(),
+                    risk_level: RiskLevel::Critical,
+                    is_blocked: true,
+                    requires_user_approval: false,
+                    findings: vec![SecurityFinding {
+                        severity: RiskLevel::Critical,
+                        category: FindingCategory::KnownMalicious,
+                        line: None,
+                        message: format!(
+                            "Author '{}' is on the malicious authors blocklist",
+                            author
+                        ),
+                        detail: Some(
+                            "This author has been identified as malicious by threat intelligence"
+                                .to_string(),
+                        ),
+                    }],
+                    content_hash: String::new(),
+                    scanned_at: chrono::Utc::now().timestamp(),
+                    proactive_checks_passed: vec![],
+                    proactive_checks_triggered: vec![],
+                });
+            }
         }
 
         // ================================================================
@@ -809,7 +858,47 @@ impl SecurityScanner {
         // ================================================================
         let mut findings = Vec::new();
         let mut proactive_checks_triggered = Vec::new();
-        let mut proactive_checks_passed = Vec::new();
+        let mut proactive_checks_passed = Vec::new(); // ================================================================
+                                                      // LAYER 4B: PACKAGE REGISTRY VERIFICATION (opt-in)
+                                                      // ================================================================
+        if self.enable_network_checks {
+            let install_patterns: [(Regex, &str); 3] = [
+                (
+                    Regex::new(r"(?i)(npm)\s+install\s+([a-zA-Z0-9_-]+)")
+                        .map_err(|e| SavantError::Unknown(format!("Invalid regex: {}", e)))?,
+                    "npm",
+                ),
+                (
+                    Regex::new(r"(?i)(pip)\s+install\s+([a-zA-Z0-9_-]+)")
+                        .map_err(|e| SavantError::Unknown(format!("Invalid regex: {}", e)))?,
+                    "pip",
+                ),
+                (
+                    Regex::new(r"(?i)(cargo)\s+install\s+([a-zA-Z0-9_-]+)")
+                        .map_err(|e| SavantError::Unknown(format!("Invalid regex: {}", e)))?,
+                    "cargo",
+                ),
+            ];
+            for (pattern, manager) in &install_patterns {
+                for caps in pattern.captures_iter(&content) {
+                    if let Some(package) = caps.get(2) {
+                        let exists = check_package_exists(manager, package.as_str()).await;
+                        if !exists {
+                            findings.push(SecurityFinding {
+                                severity: RiskLevel::Medium,
+                                category: FindingCategory::DependencyConfusion,
+                                message: format!(
+                                    "Package '{}' not found in {} registry — potential dependency confusion",
+                                    package.as_str(), manager
+                                ),
+                                line: None,
+                                detail: Some(format!("Package '{}' not found in {} registry", package.as_str(), manager)),
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
         // Scan SKILL.md content
         findings.extend(self.scan_instructions(&content));
@@ -1054,10 +1143,10 @@ impl SecurityScanner {
         // FINAL RISK ASSESSMENT
         // ================================================================
         // Note: User is always sovereign - nothing is truly "blocked".
-        // We set is_blocked to false always; the SecurityGateResult handles
-        // click requirements based on risk level.
+        // But we set is_blocked = true for Critical risk so the UI enforces
+        // explicit user acknowledgment before running known-malicious skills.
         let risk_level = determine_risk_level(&findings);
-        let is_blocked = false; // User is sovereign - we warn, not block
+        let is_blocked = risk_level == RiskLevel::Critical;
         let requires_user_approval = risk_level.requires_approval();
 
         if risk_level >= RiskLevel::Critical {
@@ -1156,6 +1245,22 @@ impl SecurityScanner {
                 }
             }
 
+            // Check URLs against the domain blocklist (synced from URLhaus)
+            if let Some(domain) = extract_domain_from_line(line) {
+                if is_blocked_domain(&domain) {
+                    findings.push(SecurityFinding {
+                        severity: RiskLevel::Critical,
+                        category: FindingCategory::MaliciousUrl,
+                        line: Some(line_num + 1),
+                        message: format!(
+                            "Domain {} is in the threat intelligence blocklist",
+                            domain
+                        ),
+                        detail: Some(truncate_line(line, 200)),
+                    });
+                }
+            }
+
             for (pattern, description) in &self.credential_patterns {
                 if pattern.is_match(line) {
                     findings.push(SecurityFinding {
@@ -1202,6 +1307,100 @@ impl SecurityScanner {
                         detail: Some(truncate_line(line, 200)),
                     });
                 }
+            }
+        }
+
+        findings
+    }
+
+    /// Scan a shell command string for dangerous patterns.
+    /// Used by SovereignShell to validate commands before execution.
+    /// Returns findings for all matched threat patterns.
+    pub fn scan_command(&self, command: &str) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+
+        // Check against domain blocklist
+        if let Some(domain) = extract_domain_from_line(command) {
+            if is_blocked_domain(&domain) {
+                findings.push(SecurityFinding {
+                    severity: RiskLevel::Critical,
+                    category: FindingCategory::MaliciousUrl,
+                    line: None,
+                    message: format!("Domain {} is in the threat intelligence blocklist", domain),
+                    detail: Some(truncate_line(command, 200)),
+                });
+            }
+        }
+
+        for (pattern, description) in &self.credential_patterns {
+            if pattern.is_match(command) {
+                findings.push(SecurityFinding {
+                    severity: RiskLevel::Critical,
+                    category: FindingCategory::CredentialTheft,
+                    line: None,
+                    message: description.to_string(),
+                    detail: Some(truncate_line(command, 200)),
+                });
+            }
+        }
+
+        for (pattern, description) in &self.exfiltration_patterns {
+            if pattern.is_match(command) {
+                findings.push(SecurityFinding {
+                    severity: RiskLevel::High,
+                    category: FindingCategory::DataExfiltration,
+                    line: None,
+                    message: description.to_string(),
+                    detail: Some(truncate_line(command, 200)),
+                });
+            }
+        }
+
+        for (pattern, description, severity) in &self.dangerous_command_patterns {
+            if pattern.is_match(command) {
+                findings.push(SecurityFinding {
+                    severity: *severity,
+                    category: FindingCategory::DangerousCommand,
+                    line: None,
+                    message: description.to_string(),
+                    detail: Some(truncate_line(command, 200)),
+                });
+            }
+        }
+
+        for (pattern, description) in &self.reverse_shell_patterns {
+            if pattern.is_match(command) {
+                findings.push(SecurityFinding {
+                    severity: RiskLevel::Critical,
+                    category: FindingCategory::ReverseShell,
+                    line: None,
+                    message: description.to_string(),
+                    detail: Some(truncate_line(command, 200)),
+                });
+            }
+        }
+
+        for (pattern, description) in &self.cryptojacking_patterns {
+            if pattern.is_match(command) {
+                findings.push(SecurityFinding {
+                    severity: RiskLevel::Critical,
+                    category: FindingCategory::Cryptojacking,
+                    line: None,
+                    message: description.to_string(),
+                    detail: Some(truncate_line(command, 200)),
+                });
+            }
+        }
+
+        for (pattern, description, severity) in &self.malicious_url_patterns {
+            if pattern.is_match(command) {
+                findings.push(SecurityFinding {
+                    severity: *severity,
+                    category: FindingCategory::MaliciousUrl,
+                    line: None,
+                    message: description.to_string(),
+                    detail: Some(truncate_line(command, 200)),
+                });
             }
         }
 
@@ -1470,7 +1669,9 @@ async fn detect_dependency_confusion(content: &str) -> Option<String> {
     None
 }
 
-/// Check if a package exists on the appropriate registry
+/// SKL-03: Network calls during security scan are opt-in only.
+/// Called when `enable_network_checks: true` in SecurityScanner config.
+/// Verifies package existence in npm, pypi, or crates.io registries.
 async fn check_package_exists(manager: &str, package: &str) -> bool {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -1525,11 +1726,32 @@ fn determine_risk_level(findings: &[SecurityFinding]) -> RiskLevel {
     max_risk
 }
 
+/// Extracts the author field from a SKILL.md YAML frontmatter block.
+fn extract_author(content: &str) -> Option<String> {
+    // Look for YAML frontmatter between --- delimiters
+    let fm_start = content.find("---")?;
+    let fm_body = &content[fm_start + 3..];
+    let fm_end = fm_body.find("---")?;
+    let frontmatter = &fm_body[..fm_end];
+
+    for line in frontmatter.lines() {
+        let line = line.trim();
+        if let Some((key, value)) = line.split_once(':') {
+            if key.trim() == "author" {
+                return Some(value.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    None
+}
+
+/// SKL-02: Use char-aware truncation to avoid panicking on multi-byte UTF-8 boundaries.
 fn truncate_line(line: &str, max: usize) -> String {
-    if line.len() <= max {
+    if line.chars().count() <= max {
         line.to_string()
     } else {
-        format!("{}...", &line[..max])
+        let truncated: String = line.chars().take(max).collect();
+        format!("{}...", truncated)
     }
 }
 

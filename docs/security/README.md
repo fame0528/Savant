@@ -1,33 +1,80 @@
 # Savant Security Model
 
+> **Last Updated:** 2026-05-25 (v0.3.2)
+
 ## Overview
 
-Savant implements a **mandatory security gate** for all skills. Every skill must pass through the security scanner before execution. There are no bypasses, no "trusted" shortcuts, and no exceptions.
+Savant implements security across five layers:
+
+1. **API Authentication** — REST middleware with constant-time comparison
+2. **Transport Security** — WebSocket authentication with Ed25519 signatures
+3. **Skill Security** — Mandatory scanning with 10 proactive checks
+4. **Execution Security** — Sandboxed skill execution with resource limits
+5. **API Key Security** — Master key exchange flow prevents direct key exposure
 
 **Core Principle:** The user is sovereign. No hard blocks — just increasing click friction based on risk level.
 
 ---
 
-## Defense in Depth
+## API Authentication (v0.3.2)
 
-Savant implements security across four layers:
+### REST API Middleware
 
-1. **Transport Security** — WebSocket authentication with Ed25519 signatures
-2. **Skill Security** — Mandatory scanning with 10 proactive checks
-3. **Execution Security** — Sandboxed skill execution with resource limits
-4. **API Key Security** — Master key exchange flow prevents direct key exposure
+All non-public REST endpoints require authentication via Tower middleware:
+
+- **Methods:** `Authorization: Bearer <key>` or `X-API-Key: <key>`
+- **Constant-time comparison** prevents timing attacks
+- **Public endpoints** (no auth): `/health`, `/live`, `/ready`, `/ws`, `/ws/canvas`
+- **Development mode:** Empty `dashboard_api_key` = no auth required
+
+### Canvas WebSocket Auth
+
+`/ws/canvas` requires API key validation on WebSocket upgrade. Same constant-time comparison as REST.
+
+### Immutable Security Fields
+
+These fields cannot be changed at runtime via ConfigSet or REST API. Returns 403 Forbidden:
+
+- `server.dashboard_api_key`
+- `server.host`
+- `server.port`
+- `server.signing_key`
+- `security.enable_blocklist_sync`
+
+Requires editing `savant.toml` and restarting.
+
+### Input Size Limits
+
+| Input | Limit | Enforcement |
+|:------|:------|:------------|
+| SoulUpdate content | 100KB | Gateway handler |
+| SoulUpdate reasoning | 100KB | Gateway handler |
+| BulkManifest agents | 10 max | Gateway handler |
+| NLCommand text | 10,000 chars | Gateway handler |
+| WebSocket message | 1MB | Axum layer |
+| Tool output | 50,000 chars | Stream handler |
+
+### Environment Variable Filtering
+
+Shell commands use `env_clear()` + only pass safe variables:
+- `PATH` — required for command resolution
+- `HOME` — required for user context
+- `LANG` — required for locale
+- `TERM` — required for terminal
+
+Prevents credential leakage to child processes.
 
 ---
 
 ## Security Gate Behavior
 
-| Risk Level | Clicks | Icon | Color | Behavior |
-|:-----------|:------:|:----:|:------|:---------|
-| **Clean** | 0 | ✅ | Green | Auto-proceed, no prompts |
-| **Low** | 0 | ℹ️ | Blue | Proceed with notification |
-| **Medium** | 1 | ⚠️ | Yellow | Acknowledge findings |
-| **High** | 2 | 🔶 | Orange | Double-confirm with full disclosure |
-| **Critical** | 3 | 🔴 | Red | Triple-confirm with "I understand risks" |
+| Risk Level | Clicks | Behavior |
+|:-----------|:------:|:---------|
+| **Clean** | 0 | Auto-proceed, no prompts |
+| **Low** | 0 | Proceed with notification |
+| **Medium** | 1 | Acknowledge findings |
+| **High** | 2 | Double-confirm with full disclosure |
+| **Critical** | 3 | Triple-confirm with "I understand risks" |
 
 ---
 
@@ -39,84 +86,56 @@ Savant implements security across four layers:
 
 Content-hash based blocking synced with threat intelligence feed.
 
-```rust
-use savant_skills::security::{is_blocked_hash, is_blocked_name};
-
-// Check if a hash is blocked
-if is_blocked_hash(&content_hash) {
-    return RiskLevel::Critical;
-}
-
-// Check if a skill name is blocked
-if is_blocked_name(&skill_name) {
-    return RiskLevel::Critical;
-}
-```
-
 #### Layer 2: Typosquatting Detection
 
-Uses Levenshtein distance to detect skill names that mimic popular skills:
-
-- Known skills: google, gmail, calendar, drive, notion, slack, github, jira, linear, figma, aws, docker
-- Distance threshold: ≤2 characters
+Uses Levenshtein distance to detect skill names that mimic popular skills. Distance threshold: ≤2 characters.
 
 #### Layer 3: Dependency Confusion
 
-Async verification against package registries:
-
-- **Suspicious names:** core, helper, runtime, sdk, utils, common, lib, toolkit, config, base, foundation, shared, internal, private
-- **Registry checks:** npm (registry.npmjs.org), PyPI (pypi.org), crates.io
-- **Conservative on network error:** Assumes package exists to prevent false positives
+Async verification against package registries (npm, PyPI, crates.io). Conservative on network error.
 
 #### Layer 4: Content Pattern Analysis
 
-Regex-based detection of:
-
-| Category | Patterns |
-|:---------|:---------|
-| Malicious URLs | Shortened URLs, pastebin, executables, direct IP |
-| Credential theft | SSH keys, AWS credentials, GPG, keychain |
-| Data exfiltration | Webhooks (Discord, Slack), base64 of sensitive files |
-| Dangerous commands | sudo, chmod 777, crontab, pipe-to-bash, rm -rf / |
+Regex-based detection of malicious URLs, credential theft, data exfiltration, and dangerous commands.
 
 #### Layer 5: Proactive Behavioral Checks
 
 | Check | Detects | Severity |
 |:------|:--------|:---------|
-| Clipboard hijacking | `pbpaste`, `pbcopy`, `xclip`, electron clipboard | High |
+| Clipboard hijacking | `pbpaste`, `pbcopy`, `xclip` | High |
 | Persistence injection | `crontab`, `launchctl`, `systemctl enable` | High |
 | Lateral movement | Workspace access, soul file manipulation | High |
-| Cryptojacking | Mining pools, wasm mining, hashrate monitoring | Critical |
-| Reverse shell | `/dev/tcp/`, `nc -e`, `socat`, bind shells | Critical |
-| Keylogger | `GetAsyncKeyState`, `pynput`, keyboard hooks | Critical |
-| Screen capture | `screencapture`, `scrot`, selenium screenshots | High |
+| Cryptojacking | Mining pools, wasm mining | Critical |
+| Reverse shell | `/dev/tcp/`, `nc -e`, `socat` | Critical |
+| Keylogger | `GetAsyncKeyState`, `pynput` | Critical |
+| Screen capture | `screencapture`, `scrot` | High |
 | Time-bomb | Long sleeps (>3000s), date-based conditionals | Medium |
 | Typosquatting | Levenshtein distance to known skills | High |
-| Dependency confusion | Package install instructions without verification | High |
+| Dependency confusion | Package install without verification | High |
 
 ---
 
-## Threat Intelligence
+## Secrets Redaction
 
-### Blocklist Sync
+Log output is automatically scanned and redacted for:
+- `sk-...` patterns (API keys)
+- `key=...` patterns (key-value secrets)
+- `token=...` patterns (auth tokens)
+- `bearer ...` patterns (JWT tokens)
 
-```rust
-use savant_skills::security::sync_threat_intelligence;
+---
 
-let result = sync_threat_intelligence().await;
-if result.success {
-    println!("Synced: {} hashes, {} names, {} domains",
-        result.hashes_synced, result.names_synced, result.domains_synced);
-}
-```
+## Path Traversal Prevention
 
-### Monitoring
+All file operations use `secure_resolve_path()`:
+- Validates absolute paths are under workspace root
+- Blocks `..` traversal above workspace root
+- Re-roots absolute paths to workspace
+- Null byte injection blocked
 
-```rust
-use savant_skills::security::get_blocklist_stats;
-
-let (hashes, names, domains) = get_blocklist_stats();
-```
+Config mutations validated via `validate_config_path()`:
+- Blocks `..` in config paths
+- Blocks null bytes
 
 ---
 
@@ -124,74 +143,27 @@ let (hashes, names, domains) = get_blocklist_stats();
 
 ### Ed25519 Session Tokens
 
-All WebSocket connections require a signed session token. Tokens contain:
-
+All WebSocket connections require a signed session token containing:
 - `session_id` — UUIDv4 unique session identifier
 - `agent_id` — Optional agent association
 - `nonce` — Random nonce for replay prevention
 - `expires_at` — ISO 8601 expiration timestamp
 
-**Verification flow:**
-
-1. Client sends token in the `Authorization` header during WebSocket upgrade
-2. Gateway verifies the Ed25519 signature against the configured public key
-3. Nonce is checked against the replay cache (LRU with 10K entries)
-4. Expiration timestamp is validated
-5. Session is established with the decoded claims
-
 ### Nonce Replay Prevention
 
-The gateway maintains an LRU cache of recently seen nonces. Each session token includes a unique nonce that:
-
-- Must not have been seen before in the current or adjacent time window
-- Is stored in an `lru::LruCache` with capacity 10,000
-- Is evicted automatically when the cache is full
+LRU cache of recently seen nonces (10K entries). Each nonce checked against cache before accepting.
 
 ---
 
 ## Execution Sandboxes
 
-### Docker Sandbox
-
-Isolates skill execution in Docker containers with:
-
-- **Network isolation** — `--network none` by default
-- **Resource limits** — CPU and memory caps
-- **Read-only rootfs** — Writable only in designated temp directories
-- **User namespace** — Non-root execution inside the container
-- **Timeout enforcement** — 30-second hard limit with `SIGKILL` on expiry
-
-### Native Sandbox
-
-For trusted local execution, the native sandbox filters dangerous patterns:
-
-**Blocked characters:**
-```
-| & ; > < ` ( ) { } [ ] $ \ ! ' " \n \r
-```
-
-**Execution model:**
-- Direct process execution (no shell wrapper)
-- Arguments passed directly to the process
-- PowerShell execution uses `-ExecutionPolicy Restricted`
-
-### Nix Sandbox
-
-Deterministic skill execution via Nix flakes:
-
-- **Flake reference validation** — Checks for path traversal and dangerous characters
-- **Path existence verification** — Ensures local paths exist before evaluation
-- **Size limits** — Payload capped at 10KB
-- **Allowlisted prefixes** — Only `flake:`, `path:`, `github:`, `gitlab:`, `sourcehut:`, and `.` are accepted
-
-### WASM Sandbox
-
-WebAssembly execution with fuel limits:
-
-- **Fuel consumption** — Instruction counting for execution limiting
-- **Epoch interruption** — Timeout enforcement
-- **Memory limits** — 64MB maximum
-- **Output limits** — 1MB stdout/stderr capture
+| Sandbox | Isolation | Use Case |
+|:--------|:----------|:---------|
+| **Docker** | Full container isolation | Untrusted code |
+| **Nix** | Deterministic build isolation | Reproducible environments |
+| **Native** | Dangerous-character filtering | Trusted local |
+| **WASM** | WebAssembly sandbox | Portable, resource-limited |
+| **MCP** | Protocol-level isolation | External tool servers |
 
 ---
 
@@ -199,17 +171,15 @@ WebAssembly execution with fuel limits:
 
 ### Master Key Exchange
 
-OpenRouter master keys (`OR_MASTER_KEY`) are never used directly for API completions. The exchange flow:
+OpenRouter master keys are never used directly for completions:
+1. Master key authenticates to OpenRouter key exchange endpoint
+2. Scoped regular API key returned
+3. Regular key cached process-wide via `OnceCell`
+4. All completions use the regular key
 
-1. Master key authenticates to `POST https://openrouter.ai/api/v1/auth/key`
-2. A scoped regular API key is returned in the response
-3. The regular key is cached process-wide via `tokio::sync::OnceCell`
-4. All subsequent API calls use the regular key
+### Ephemeral Credentials
 
-**Benefits:**
-- Master key never appears in API request logs
-- Regular keys can be revoked without rotating the master key
-- Rate limits are tracked per-regular-key, not per-master-key
+`CredentialBroker` issues per-task ephemeral tokens with configurable TTL. Tokens auto-expire. No static keys stored.
 
 ---
 
@@ -218,14 +188,17 @@ OpenRouter master keys (`OR_MASTER_KEY`) are never used directly for API complet
 | Threat | Mitigation |
 |:-------|:-----------|
 | Token replay | Nonce-based replay prevention with LRU cache |
+| API key exposure | Constant-time comparison, master key exchange |
 | Code injection | Docker/Nix/native/WASM sandbox isolation |
-| Path traversal | Nix flake reference validation, dangerous char filtering |
-| Master key exposure | Key exchange flow, never used in completions |
+| Path traversal | `secure_resolve_path()`, null byte blocking |
+| Credential leak | Env var filtering, secrets redaction in logs |
 | Resource exhaustion | Docker resource limits, execution timeouts |
-| Container escape | User namespace, read-only rootfs, network isolation |
-| Unbounded output | Response size validation, chunk limits |
-| Malicious skills | Mandatory security scanning with 10 proactive checks |
-| Skill typosquatting | Levenshtein distance detection |
-| Dependency confusion | Async registry verification |
-| Data exfiltration | Webhook detection, base64 pattern analysis |
-| Persistence attacks | Proactive persistence injection detection |
+| Config tampering | Immutable security fields, input validation |
+| Tool output flooding | 50K char cap on tool output |
+| Memory recall dedup | System prompt only, not conversation history |
+| Tool panic | tokio::spawn isolation, panic caught via JoinHandle |
+| Unbounded context | Pre-send token estimation vs context_window |
+
+---
+
+*Documentation updated: 2026-05-25. Reflects v0.3.2 codebase.*

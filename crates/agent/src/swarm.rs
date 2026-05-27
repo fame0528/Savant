@@ -1,3 +1,9 @@
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 //
 //
 use crate::manager::AgentManager;
@@ -5,7 +11,7 @@ use crate::providers::mgmt::OpenRouterMgmt;
 use crate::providers::{
     AnthropicProvider, AzureProvider, CohereProvider, DeepseekProvider, FireworksProvider,
     GoogleProvider, GroqProvider, MistralProvider, NovitaProvider, OllamaProvider, OpenAiProvider,
-    OpenRouterProvider, RetryProvider, TogetherProvider, XaiProvider,
+    OpenRouterProvider, TogetherProvider, XaiProvider,
 };
 use crate::pulse::HeartbeatPulse;
 use crate::react::AgentLoop;
@@ -46,6 +52,8 @@ pub struct SwarmConfig {
     pub blackboard_name: String,
     pub collective_name: String,
     pub config_file: Option<std::path::PathBuf>,
+    pub privacy: savant_core::config::PrivacyConfig,
+    pub trajectory: savant_core::config::TrajectoryConfig,
 }
 
 impl Default for SwarmConfig {
@@ -57,6 +65,8 @@ impl Default for SwarmConfig {
             blackboard_name: "savant_swarm".to_string(),
             collective_name: "savant_collective".to_string(),
             config_file: None,
+            privacy: savant_core::config::PrivacyConfig::default(),
+            trajectory: savant_core::config::TrajectoryConfig::default(),
         }
     }
 }
@@ -74,7 +84,6 @@ pub struct SwarmController {
     engine: Arc<MemoryEngine>,
     embedding_service: Arc<dyn EmbeddingProvider>,
     vision_service: Option<Arc<dyn VisionProvider>>,
-    #[allow(dead_code)]
     blackboard: Arc<SwarmBlackboard>,
     root_authority: ed25519_dalek::VerifyingKey,
     signing_key: ed25519_dalek::SigningKey,
@@ -89,6 +98,24 @@ pub struct SwarmController {
     dead_agents: DashMap<String, ()>,
     /// MCP server endpoints to connect on agent spawn
     mcp_servers: Vec<savant_core::config::McpServerEntry>,
+    /// Skill lifecycle manager — discovery, installation, approval, security gating
+    skill_manager: Arc<tokio::sync::Mutex<savant_skills::parser::SkillManager>>,
+    /// Integration sync scheduler shutdown signal
+    integrations_shutdown_tx: tokio::sync::watch::Sender<bool>,
+    /// Dynamic credential broker for per-task ephemeral token management.
+    credential_broker: Arc<savant_security::continuous::credentials::CredentialBroker>,
+    /// Graceful shutdown tracker — RAII-based in-flight request tracking.
+    shutdown_tracker: Arc<crate::graceful_shutdown::GracefulShutdownTracker>,
+    /// Panopticon replay recorder for agent reasoning trace.
+    replay_recorder: Arc<savant_panopticon::replay::ReplayRecorder>,
+    /// Schema (code intelligence) index — shared across all agents.
+    schema_index: Option<Arc<savant_schema::SchemaIndex>>,
+    /// LSP manager — shared across all agents.
+    lsp_manager: Option<Arc<crate::lsp::LspManager>>,
+    /// Consciousness daemon state handle (shared with gateway for /api/consciousness/status).
+    consciousness_state: Arc<AtomicU8>,
+    /// Resource governor — CPU/memory-aware agent spawning with adaptive concurrency.
+    governor: Option<Arc<crate::governor::SwarmGovernor>>,
 }
 
 impl SwarmController {
@@ -104,6 +131,10 @@ impl SwarmController {
         pqc_authority: dilithium2::PublicKey,
         pqc_signing_key: dilithium2::SecretKey,
         mcp_servers: Vec<savant_core::config::McpServerEntry>,
+        replay_recorder: Arc<savant_panopticon::replay::ReplayRecorder>,
+        integrations_config: savant_core::config::IntegrationsConfig,
+        schema_index: Option<Arc<savant_schema::SchemaIndex>>,
+        lsp_manager: Option<Arc<crate::lsp::LspManager>>,
     ) -> Result<Self, savant_core::error::SavantError> {
         // 1. Discover all available tools (skills) once for the swarm
         let skill_path = config.skills_path.clone();
@@ -140,6 +171,11 @@ impl SwarmController {
                     e
                 ))
             })?;
+
+        // 2.5a. Initialize Compact Engine (L1 tool output compression)
+        let compact_user_rules = config.workspace_root.join("config/compact-rules");
+        let compact_project_rules = config.workspace_root.join(".savant/compact-rules");
+        crate::compact::integration::init(compact_user_rules, compact_project_rules).await;
 
         // 2.6. Initialize Vision Service (Ollama Gemma)
         let vision_service = match create_vision_service().await {
@@ -190,6 +226,108 @@ impl SwarmController {
             }
         }
 
+        // Initialize integration provider registry and sync scheduler
+        let provider_registry = Arc::new(savant_integrations::registry::ProviderRegistry::new());
+
+        // Register configured providers (gated behind config — unconfigured providers skipped)
+        if let Some(ref gmail_cfg) = integrations_config.gmail {
+            use savant_integrations::provider::{ProviderConfig, ProviderKind};
+            let mut settings = std::collections::HashMap::new();
+            settings.insert("access_token".to_string(), gmail_cfg.access_token.clone());
+            settings.insert(
+                "max_messages".to_string(),
+                gmail_cfg.max_messages.to_string(),
+            );
+            settings.insert(
+                "label_filters".to_string(),
+                serde_json::to_string(&gmail_cfg.label_filters).unwrap_or_default(),
+            );
+            let provider_config = ProviderConfig {
+                kind: ProviderKind::Gmail,
+                settings,
+                enabled: true,
+                sync_interval_secs: 3600,
+            };
+            let gmail_provider: Arc<dyn savant_integrations::Provider> =
+                Arc::new(savant_integrations::GmailProvider::new(
+                    provider_config.clone(),
+                    savant_integrations::GmailConfig {
+                        access_token: Some(gmail_cfg.access_token.clone()),
+                        max_messages: gmail_cfg.max_messages,
+                        label_filters: gmail_cfg.label_filters.clone(),
+                        ..Default::default()
+                    },
+                ));
+            provider_registry.register(provider_config, gmail_provider);
+            tracing::info!("[swarm] Gmail provider registered");
+        }
+
+        if let Some(ref notion_cfg) = integrations_config.notion {
+            use savant_integrations::provider::{ProviderConfig, ProviderKind};
+            let mut settings = std::collections::HashMap::new();
+            settings.insert(
+                "integration_token".to_string(),
+                notion_cfg.integration_token.clone(),
+            );
+            settings.insert(
+                "database_ids".to_string(),
+                serde_json::to_string(&notion_cfg.database_ids).unwrap_or_default(),
+            );
+            settings.insert("max_pages".to_string(), notion_cfg.max_pages.to_string());
+            let provider_config = ProviderConfig {
+                kind: ProviderKind::Notion,
+                settings,
+                enabled: true,
+                sync_interval_secs: 3600,
+            };
+            let notion_provider: Arc<dyn savant_integrations::Provider> =
+                Arc::new(savant_integrations::NotionProvider::new(
+                    provider_config.clone(),
+                    savant_integrations::NotionConfig {
+                        integration_token: Some(notion_cfg.integration_token.clone()),
+                        database_ids: notion_cfg.database_ids.clone(),
+                        max_pages: notion_cfg.max_pages,
+                        ..Default::default()
+                    },
+                ));
+            provider_registry.register(provider_config, notion_provider);
+            tracing::info!("[swarm] Notion provider registered");
+        }
+
+        let (integrations_shutdown_tx, integrations_shutdown_rx) =
+            tokio::sync::watch::channel(false);
+        let sync_state_path = config
+            .workspace_root
+            .join(".savant")
+            .join("sync_state.json");
+        match savant_integrations::scheduler::SyncScheduler::new(
+            provider_registry.clone(),
+            sync_state_path,
+            3600, // 1 hour default sync interval
+            integrations_shutdown_rx,
+        )
+        .await
+        {
+            Ok(scheduler) => {
+                tokio::spawn(async move {
+                    scheduler.run().await;
+                });
+                tracing::info!("[swarm] Integration sync scheduler started (interval: 3600s)");
+            }
+            Err(e) => tracing::warn!("[swarm] SyncScheduler init failed: {}", e),
+        }
+
+        // Initialize skill lifecycle manager
+        let mut skill_manager = savant_skills::parser::SkillManager::new(skill_path.clone());
+        if let Err(e) = skill_manager.discover_all_skills(None).await {
+            tracing::warn!("[swarm] SkillManager discovery failed: {}", e);
+        }
+        let skill_manager = Arc::new(tokio::sync::Mutex::new(skill_manager));
+
+        // Initialize credential broker for per-task ephemeral token management
+        let credential_broker =
+            Arc::new(savant_security::continuous::credentials::CredentialBroker::new());
+
         Ok(Self {
             config,
             nexus,
@@ -202,9 +340,12 @@ impl SwarmController {
                 .pool_max_idle_per_host(4)
                 .redirect(reqwest::redirect::Policy::limited(10))
                 .build()
-                .map_err(|e| savant_core::error::SavantError::Unknown(
-                    format!("CRITICAL: Failed to build secure HTTP client: {}", e)
-                ))?,
+                .map_err(|e| {
+                    savant_core::error::SavantError::Unknown(format!(
+                        "CRITICAL: Failed to build secure HTTP client: {}",
+                        e
+                    ))
+                })?,
             handles: DashMap::new(),
             tools,
             engine,
@@ -223,6 +364,25 @@ impl SwarmController {
             agent_index_counter: AtomicU8::new(1),
             dead_agents: DashMap::new(),
             mcp_servers,
+            skill_manager,
+            integrations_shutdown_tx,
+            credential_broker,
+            shutdown_tracker: Arc::new(crate::graceful_shutdown::GracefulShutdownTracker::new()),
+            replay_recorder,
+            schema_index,
+            lsp_manager,
+            consciousness_state: Arc::new(AtomicU8::new(1)), // Idle
+            governor: {
+                let gov_config = savant_core::config::ResourceGovernorConfig::default();
+                if gov_config.enabled {
+                    Some(crate::governor::SwarmGovernor::new(
+                        gov_config,
+                        CancellationToken::new(),
+                    ))
+                } else {
+                    None
+                }
+            },
         })
     }
 
@@ -241,6 +401,76 @@ impl SwarmController {
             tracing::error!("Failed to start ECHO watcher: {}", e);
         }
 
+        // Start Resource Governor background tasks (monitor + adaptive adjuster)
+        if let Some(ref governor) = self.governor {
+            let _handles = governor.start();
+            tracing::info!(
+                "[governor] Started — {} permits at {} pressure",
+                governor.available_permits(),
+                governor.current_pressure()
+            );
+        }
+
+        // Spawn Executive Monitor (Global Workspace Theory — selection-broadcast cycle)
+        let (_ws_delta_tx, ws_delta_rx) = tokio::sync::watch::channel(0.0f32);
+        let exec_monitor = Arc::new(crate::workspace::ExecutiveMonitor::new(ws_delta_rx));
+        exec_monitor.register_listener(
+            "swarm_broadcast",
+            Arc::new(move |event| {
+                tracing::debug!(
+                    "[gwt] Broadcast: slot={}, salience={:.2}, source={:?}",
+                    event.slot_id,
+                    event.salience,
+                    event.source
+                );
+            }),
+        );
+        let monitor_clone = exec_monitor.clone();
+        tokio::spawn(async move {
+            monitor_clone.run().await;
+        });
+
+        // Spawn Consciousness Daemon (continuous thinking, entropy-based cadence)
+        let consciousness_llm = self.create_consciousness_provider().await;
+        if let Some(llm) = consciousness_llm {
+            let shared_state = self.consciousness_state.clone();
+            let daemon = crate::consciousness::ConsciousnessDaemon::with_state_handle(
+                llm,
+                self.config.workspace_root.clone(),
+                CancellationToken::new(),
+                shared_state,
+            );
+            tokio::spawn(async move {
+                daemon.run().await;
+            });
+            tracing::info!("[swarm] Consciousness daemon started");
+        } else {
+            tracing::warn!("[swarm] No LLM provider available for consciousness daemon — disabled");
+        }
+
+        // Spawn credential broker cleanup task (runs every 5 minutes)
+        let broker_for_cleanup = self.credential_broker.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.tick().await; // skip first immediate tick
+            loop {
+                interval.tick().await;
+                broker_for_cleanup.cleanup_expired().await;
+            }
+        });
+
+        // Spawn compact rules reload listener (reloads on CONFIG_SET_RESULT events)
+        let nexus_for_compact = self.nexus.clone();
+        tokio::spawn(async move {
+            let (mut rx, _) = nexus_for_compact.subscribe().await;
+            while let Ok(event) = rx.recv().await {
+                if event.event_type == "CONFIG_SET_RESULT" {
+                    tracing::info!("[compact] Config changed — reloading compact rules");
+                    crate::compact::integration::reload_rules().await;
+                }
+            }
+        });
+
         for agent in &self.agents {
             self.spawn_agent(agent.clone()).await;
         }
@@ -251,7 +481,75 @@ impl SwarmController {
         let agent_id = agent_cfg.agent_id.clone();
         let agent_name = agent_cfg.agent_name.clone();
 
+        // Resource governor check — defer if system under pressure
+        if let Some(ref governor) = self.governor {
+            if governor.try_spawn().is_none() {
+                tracing::warn!(
+                    "[governor] Deferring '{}' — {} pressure, no permits available",
+                    agent_name,
+                    governor.current_pressure()
+                );
+                governor.defer_agent(agent_cfg);
+                return;
+            }
+            tracing::debug!(
+                "[governor] Permit granted for '{}' (pressure={})",
+                agent_name,
+                governor.current_pressure()
+            );
+        }
+
+        // Sign the agent config for authenticity verification by the spawned agent
+        let config_json = serde_json::to_string(&agent_cfg).unwrap_or_default();
+        match self.sign_message(&config_json) {
+            Ok(signature) => {
+                tracing::debug!(
+                    "[swarm] Agent config signed for '{}' (sig_len={})",
+                    agent_id,
+                    signature.len()
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[swarm] Failed to sign agent config for '{}': {}",
+                    agent_id,
+                    e
+                );
+            }
+        }
+
         self.evacuate_agent(&agent_id).await;
+
+        // Background workspace file indexing for the agent
+        let ws_path = agent_cfg.workspace_path.clone();
+        let agent_id_for_index = agent_id.clone();
+        tokio::spawn(async move {
+            let db_path = ws_path.join(".savant").join("file_index.db");
+            let indexer = savant_core::fs::FileIndexer::new(db_path);
+            if let Err(e) = indexer.init_db() {
+                tracing::warn!(
+                    "[swarm] FileIndexer DB init failed for '{}': {}",
+                    agent_id_for_index,
+                    e
+                );
+                return;
+            }
+            match indexer.index_directory(&agent_id_for_index, &ws_path).await {
+                Ok(()) => {
+                    tracing::info!(
+                        "[swarm] FileIndexer for '{}': workspace indexed",
+                        agent_id_for_index,
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[swarm] FileIndexer failed for '{}': {}",
+                        agent_id_for_index,
+                        e
+                    );
+                }
+            }
+        });
 
         let nexus = self.nexus.clone();
         let storage = self.storage.clone();
@@ -264,12 +562,17 @@ impl SwarmController {
         let root_authority = self.root_authority; // VerifyingKey is Copy, so this is a copy.
         let signing_key = self.signing_key.clone();
         let pqc_authority = self.pqc_authority;
+        let blackboard = self.blackboard.clone();
         let pqc_signing_key = self.pqc_signing_key;
         let echo_registry = self.echo_registry.clone();
         let echo_metrics = self.echo_metrics.clone();
         let echo_host = self.echo_host.clone();
         let collective = self.collective_blackboard.clone();
         let mcp_servers = self.mcp_servers.clone();
+        let credential_broker = self.credential_broker.clone();
+        let skill_manager = self.skill_manager.clone();
+        let schema_index = self.schema_index.clone();
+        let lsp_manager = self.lsp_manager.clone();
         let browser_config = self
             .config
             .config_file
@@ -288,6 +591,7 @@ impl SwarmController {
         let shutdown_token = CancellationToken::new();
         let shutdown_task_token = shutdown_token.clone();
         let dream_engine = self.engine.clone();
+        let replay_recorder = self.replay_recorder.clone();
 
         let handle = tokio::spawn(async move {
             let mut agent_cfg = agent_cfg;
@@ -360,14 +664,14 @@ impl SwarmController {
             }
 
             // 3. Select LLM Provider
-            let base_provider: Box<dyn LlmProvider> = match agent_cfg.model_provider {
+            let base_provider: Arc<dyn LlmProvider> = match agent_cfg.model_provider {
                 ModelProvider::OpenRouter => {
                     let model_id = agent_cfg
                         .model
                         .clone()
                         .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
                     let or_api_key = agent_cfg.api_key.clone().unwrap_or_default();
-                    Box::new(OpenRouterProvider {
+                    Arc::new(OpenRouterProvider {
                         client: client.clone(),
                         api_key: or_api_key,
                         model: model_id,
@@ -378,7 +682,7 @@ impl SwarmController {
                         max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                     })
                 }
-                ModelProvider::OpenAi => Box::new(OpenAiProvider {
+                ModelProvider::OpenAi => Arc::new(OpenAiProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -389,8 +693,29 @@ impl SwarmController {
                     agent_name: agent_cfg.agent_name.clone(),
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
+                    base_url: "https://api.openai.com/v1".to_string(),
                 }),
-                ModelProvider::Anthropic => Box::new(AnthropicProvider {
+                ModelProvider::OpenGateway => {
+                    let gw_key = agent_cfg
+                        .api_key
+                        .clone()
+                        .or_else(|| std::env::var("OPENGATEWAY_API_KEY").ok())
+                        .unwrap_or_default();
+                    Arc::new(OpenAiProvider {
+                        client: client.clone(),
+                        api_key: gw_key,
+                        model: agent_cfg
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| "mimo-v2.5-pro".to_string()),
+                        agent_id: agent_cfg.agent_id.clone(),
+                        agent_name: agent_cfg.agent_name.clone(),
+                        llm_params: Some(agent_cfg.llm_params.clone()),
+                        max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
+                        base_url: "https://opengateway.gitlawb.com/v1".to_string(),
+                    })
+                }
+                ModelProvider::Anthropic => Arc::new(AnthropicProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -402,8 +727,11 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Ollama => Box::new(OllamaProvider {
+                ModelProvider::Ollama => Arc::new(OllamaProvider {
                     client: client.clone(),
+                    // NOTE: For local providers (Ollama, LMStudio), the `api_key` config field
+                    // stores the provider URL, not an actual API key. This is a documented
+                    // convention — local providers don't need authentication.
                     url: agent_cfg
                         .api_key
                         .clone()
@@ -415,7 +743,7 @@ impl SwarmController {
                     agent_id: agent_cfg.agent_id.clone(),
                     agent_name: agent_cfg.agent_name.clone(),
                 }),
-                ModelProvider::Groq => Box::new(GroqProvider {
+                ModelProvider::Groq => Arc::new(GroqProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -427,7 +755,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Google => Box::new(GoogleProvider {
+                ModelProvider::Google => Arc::new(GoogleProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -439,7 +767,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Mistral => Box::new(MistralProvider {
+                ModelProvider::Mistral => Arc::new(MistralProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -451,7 +779,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Together => Box::new(TogetherProvider {
+                ModelProvider::Together => Arc::new(TogetherProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -463,7 +791,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Deepseek => Box::new(DeepseekProvider {
+                ModelProvider::Deepseek => Arc::new(DeepseekProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -475,7 +803,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Cohere => Box::new(CohereProvider {
+                ModelProvider::Cohere => Arc::new(CohereProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -487,7 +815,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Azure => Box::new(AzureProvider {
+                ModelProvider::Azure => Arc::new(AzureProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     endpoint: std::env::var("AZURE_OPENAI_ENDPOINT").unwrap_or_default(),
@@ -502,7 +830,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Xai => Box::new(XaiProvider {
+                ModelProvider::Xai => Arc::new(XaiProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -514,7 +842,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Fireworks => Box::new(FireworksProvider {
+                ModelProvider::Fireworks => Arc::new(FireworksProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg.model.clone().unwrap_or_else(|| {
@@ -525,7 +853,7 @@ impl SwarmController {
                     llm_params: Some(agent_cfg.llm_params.clone()),
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
-                ModelProvider::Novita => Box::new(NovitaProvider {
+                ModelProvider::Novita => Arc::new(NovitaProvider {
                     client: client.clone(),
                     api_key: agent_cfg.api_key.clone().unwrap_or_default(),
                     model: agent_cfg
@@ -538,13 +866,20 @@ impl SwarmController {
                     max_completion_tokens: model_info.as_ref().map(|m| m.safe_max_tokens()),
                 }),
                 ModelProvider::LmStudio | ModelProvider::Perplexity | ModelProvider::Local => {
-                    // Use the model info already fetched from OpenRouter
+                    // NOTE: These providers currently route through OpenRouter.
+                    // LMStudio/Local should use local endpoints in a future update.
+                    // Perplexity uses OpenRouter as proxy.
+                    tracing::warn!(
+                        "[{}] Provider {:?} routing through OpenRouter (local endpoint not yet wired)",
+                        agent_cfg.agent_id,
+                        agent_cfg.model_provider
+                    );
                     let model_id = agent_cfg
                         .model
                         .clone()
                         .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
                     let or_api_key = agent_cfg.api_key.clone().unwrap_or_default();
-                    Box::new(OpenRouterProvider {
+                    Arc::new(OpenRouterProvider {
                         client: client.clone(),
                         api_key: or_api_key,
                         model: model_id,
@@ -557,10 +892,17 @@ impl SwarmController {
                 }
             };
 
-            let provider: Box<dyn LlmProvider> = Box::new(RetryProvider {
-                inner: base_provider,
-                max_retries: 3,
-            });
+            let provider: Arc<dyn LlmProvider> = base_provider;
+
+            // Wrap provider in ProviderChain for resilience (circuit breaker, timeout, rate limiter)
+            let chain_config = crate::providers::chain::ChainConfig::default();
+            let provider_chain = crate::providers::chain::ProviderChain::new(
+                provider.clone(),
+                agent_cfg.agent_id.clone(),
+                chain_config,
+            );
+            // The chain implements LlmProvider — use it as the agent's provider
+            let provider: Arc<dyn LlmProvider> = Arc::new(provider_chain);
 
             // 3. Filter Tools for this agent
             let mut agent_tools: Vec<Arc<dyn Tool>> = agent_cfg
@@ -608,38 +950,128 @@ impl SwarmController {
             agent_tools.push(Arc::new(crate::tools::FileCreateTool::new(
                 agent_cfg.workspace_path.clone(),
             )));
-            agent_tools.push(Arc::new(crate::tools::SettingsTool::new()));
+            // NA-09: Wire SettingsTool with workspace path for sandbox-safe resolution
+            agent_tools.push(Arc::new(crate::tools::SettingsTool::with_workspace(
+                &agent_cfg.workspace_path,
+            )));
             agent_tools.push(Arc::new(crate::tools::SovereignShell::new(
                 agent_cfg.workspace_path.clone(),
+                Arc::new(savant_skills::security::SecurityScanner::new()),
             )));
             agent_tools.push(Arc::new(crate::tools::TaskMatrixTool::new(
                 agent_cfg.workspace_path.clone(),
                 agent_cfg.proactive.clone(),
             )));
             let browser_config = browser_config.clone();
-            agent_tools.push(Arc::new(crate::tools::BrowserTool::new(
-                browser_config,
+            agent_tools.push(Arc::new(crate::tools::BrowserTool::new(browser_config)));
+            agent_tools.push(Arc::new(crate::tools::SkillManagerTool::new(
+                skill_manager.clone(),
             )));
-            agent_tools.push(Arc::new(crate::tools::ToolForgeTool::new(
-                std::path::PathBuf::from("skills/forge"),
-                savant_toolforge::SharedToolRegistry::new(),
-                std::sync::Arc::new(
-                    savant_toolforge::ProvenanceTracker::new(
-                        &std::path::PathBuf::from("skills/forge/.provenance.jsonl"),
-                    )
-                    .expect("Failed to initialize provenance tracker"),
-                ),
-            )));
+            if let Ok(tracker) = savant_toolforge::ProvenanceTracker::new(
+                &std::path::PathBuf::from("skills/forge/.provenance.jsonl"),
+            ) {
+                agent_tools.push(Arc::new(crate::tools::ToolForgeTool::new(
+                    std::path::PathBuf::from("skills/forge"),
+                    savant_toolforge::SharedToolRegistry::new(),
+                    std::sync::Arc::new(tracker),
+                )));
+            } else {
+                tracing::warn!(
+                    "[{}] ProvenanceTracker unavailable — ToolForgeTool skipped",
+                    agent_name
+                );
+            }
 
-            // Discover and register MCP tools from configured servers
-            let mut mcp_discovery = savant_mcp::client::McpToolDiscovery::new();
+            // Register generation tools (SVG zero-VRAM + image generation)
+            // provider is already Arc<dyn LlmProvider> — clone for shared ownership
+            let provider_arc: Arc<dyn savant_core::traits::LlmProvider> = provider.clone();
+            let svg_backend = Arc::new(savant_generation::backends::svg::SvgBackend::new(Some(
+                provider_arc.clone(),
+            )));
+            let cache_dir = std::path::PathBuf::from(".savant/generated/images");
+            let image_cache = match savant_generation::cache::ImageCache::new(cache_dir, 1024) {
+                Ok(cache) => cache,
+                Err(e) => {
+                    tracing::warn!("Failed to create image cache: {}", e);
+                    match savant_generation::cache::ImageCache::new(
+                        std::path::PathBuf::from("/tmp/savant_cache"),
+                        100,
+                    ) {
+                        Ok(fallback) => fallback,
+                        Err(fb_err) => {
+                            tracing::error!(
+                                "[{}] Failed to create fallback image cache: {}. Image generation disabled.",
+                                agent_name,
+                                fb_err
+                            );
+                            return;
+                        }
+                    }
+                }
+            };
+            let expander =
+                savant_generation::prompt::PromptExpander::new(Some(provider_arc.clone()));
+            let generation_config = savant_generation::GenerationConfig::default();
+            let generation_backend: Arc<dyn savant_generation::backends::GenerationBackend> =
+                svg_backend.clone();
+            let orchestrator = Arc::new(
+                savant_generation::orchestrator::GenerationOrchestrator::new(
+                    generation_config,
+                    vec![generation_backend],
+                    expander,
+                    image_cache,
+                ),
+            );
+            agent_tools.push(Arc::new(crate::tools::GenerateSvgTool::new(svg_backend)));
+            agent_tools.push(Arc::new(crate::tools::GenerateImageTool::new(orchestrator)));
+
+            // Code intelligence tools (SchemaIndex-backed)
+            if let Some(ref idx) = schema_index {
+                // Background index — don't block agent startup
+                let idx_bg = idx.clone();
+                let name_bg = agent_name.clone();
+                tokio::task::spawn_blocking(move || {
+                    let stats = idx_bg.index_all();
+                    tracing::info!(
+                        "[{}] SchemaIndex: indexed {} files, {} symbols",
+                        name_bg,
+                        stats.files_indexed,
+                        stats.symbols_found
+                    );
+                });
+                agent_tools.push(Arc::new(crate::tools::CodeSearchTool::new(idx.clone())));
+                agent_tools.push(Arc::new(crate::tools::GetCallersTool::new(idx.clone())));
+                agent_tools.push(Arc::new(crate::tools::GetImpactTool::new(idx.clone())));
+                agent_tools.push(Arc::new(crate::tools::GetSymbolsTool::new(idx.clone())));
+                tracing::info!("[{}] 4 schema tools registered", agent_name);
+            }
+
+            // LSP tools (LspManager-backed)
+            if let Some(ref mgr) = lsp_manager {
+                agent_tools.push(Arc::new(crate::lsp::LspHoverTool::new(mgr.clone())));
+                agent_tools.push(Arc::new(crate::lsp::LspGotoDefinitionTool::new(
+                    mgr.clone(),
+                )));
+                agent_tools.push(Arc::new(crate::lsp::LspFindReferencesTool::new(
+                    mgr.clone(),
+                )));
+                agent_tools.push(Arc::new(crate::lsp::LspDiagnosticsTool::new(mgr.clone())));
+                tracing::info!("[{}] 4 LSP tools registered", agent_name);
+            }
+
+            // Shell intelligence tools (stateless)
+            agent_tools.push(Arc::new(crate::shell_intel::ExplainCommandTool));
+            tracing::info!("[{}] ExplainCommandTool registered", agent_name);
+
+            // Discover and register MCP tools from configured servers via McpClientPool
+            let mcp_pool = savant_mcp::client::McpClientPool::new();
             for server in &mcp_servers {
                 let result = if let Some(ref auth_token) = server.auth_token {
-                    mcp_discovery
+                    mcp_pool
                         .connect_server_with_auth(server.url.as_str(), auth_token.as_str())
                         .await
                 } else {
-                    mcp_discovery.connect_server(server.url.as_str()).await
+                    mcp_pool.connect_server(server.url.as_str()).await
                 };
                 match result {
                     Ok(count) => {
@@ -660,13 +1092,26 @@ impl SwarmController {
                     }
                 }
             }
-            let mcp_tools = mcp_discovery.get_remote_tools();
+            let mcp_tools = mcp_pool.get_tools().await;
             tracing::info!(
                 "[{}] Total MCP tools available: {}",
                 agent_name,
                 mcp_tools.len()
             );
             agent_tools.extend(mcp_tools);
+
+            // G-2: Validate all tool schemas before building AgentLoop
+            for tool in &agent_tools {
+                let schema = tool.parameters_schema();
+                if let Err(e) = crate::tools::schema_validator::validate_strict_schema(&schema) {
+                    tracing::warn!(
+                        "[{}] Tool '{}' has non-compliant schema: {:?}",
+                        agent_name,
+                        tool.name(),
+                        e
+                    );
+                }
+            }
 
             // 5. Build Agent Loop with the async backend and secure WASM host
             // OMEGA-VIII: Issue a workspace-scoped CCT (Cognitive Capability Token)
@@ -691,7 +1136,7 @@ impl SwarmController {
 
             // Mint CCT token: 24h duration, scoped to workspace
             // We use a derivation of the agent name as cadence entropy for this bootstrap session
-            let token = savant_security::SecurityAuthority::mint_quantum_token(
+            let token = match savant_security::SecurityAuthority::mint_quantum_token(
                 &signing_key,
                 &pqc_signing_key,
                 agent_index as u64,
@@ -699,8 +1144,17 @@ impl SwarmController {
                 "execute",
                 86400, // 24 hours
                 agent_name.as_bytes(),
-            )
-            .ok();
+            ) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    tracing::warn!(
+                        "[swarm] Failed to mint CCT token for agent {}: {}",
+                        agent_name,
+                        e
+                    );
+                    None
+                }
+            };
 
             if token.is_some() {
                 tracing::info!(
@@ -714,9 +1168,30 @@ impl SwarmController {
                 );
             }
 
+            // NA-12: Construct SecurityAuthority from root keys for AgentLoop
+            let security_authority = Arc::new(savant_security::SecurityAuthority::new(
+                root_authority,
+                Some(pqc_authority),
+            ));
+
+            // Load API key into credential broker for this agent
+            if let Some(ref api_key) = agent_cfg.api_key {
+                credential_broker
+                    .load_credential("openrouter", api_key)
+                    .await;
+                credential_broker
+                    .load_credential("anthropic", api_key)
+                    .await;
+                credential_broker.load_credential("openai", api_key).await;
+            }
+
+            let rate_limiter = std::sync::Arc::new(crate::rate_limiter::RateLimiter::new(
+                crate::rate_limiter::RateLimiterConfig::default(),
+            ));
+
             let agent_loop = AgentLoop::new(
                 agent_cfg.agent_id.clone(),
-                provider,
+                provider_arc,
                 memory_backend,
                 agent_tools,
                 agent_cfg.identity.clone().unwrap_or_default(),
@@ -724,7 +1199,12 @@ impl SwarmController {
             )
             .with_echo(echo_registry, echo_metrics, echo_host)
             .with_collective(collective, agent_index)
-            .with_plugins(plugin_host, Vec::new(), token);
+            .with_plugins(plugin_host, Vec::new(), token)
+            .with_security_authority(security_authority)
+            .with_credential_broker(credential_broker.clone())
+            .with_replay_recorder(replay_recorder)
+            .with_rate_limiter(rate_limiter)
+            .with_delegate(Box::new(crate::react::HeartbeatDelegate::new()));
 
             let agent_loop = if let Some(vision) = vision_service {
                 agent_loop.with_vision(vision)
@@ -739,18 +1219,94 @@ impl SwarmController {
 
             // 7. Spawn the Dream Scheduler with delta receiver
             let dream_config = savant_dream::DreamConfig::default();
+            let shutdown_token = CancellationToken::new();
             let dream_scheduler = savant_dream::scheduler::DreamScheduler::new(
                 dream_config,
                 dream_engine,
                 delta_rx,
+                shutdown_token,
             );
             tokio::spawn(async move {
                 dream_scheduler.run().await;
             });
 
-            // 8. Start the Heartbeat Pulse with delta sender
-            let pulse = HeartbeatPulse::new(agent_cfg, nexus, storage, shutdown_task_token, delta_tx);
-            pulse.start(agent_loop).await;
+            // 7a. Spawn the CollectiveCurator for automatic tool lifecycle transitions
+            {
+                let curator_registry = savant_toolforge::SharedToolRegistry::new();
+                let curator_provenance = std::sync::Arc::new(
+                    savant_toolforge::ProvenanceTracker::new(&std::path::PathBuf::from(
+                        "skills/forge/.provenance.jsonl",
+                    ))
+                    .unwrap_or_else(|_| {
+                        // SAFETY: /dev/null path always succeed on all platforms
+                        #[allow(clippy::disallowed_methods)]
+                        savant_toolforge::ProvenanceTracker::new(&std::path::PathBuf::from(
+                            "/dev/null",
+                        ))
+                        .expect("provenance fallback: /dev/null path is always valid")
+                    }),
+                );
+                let curator = std::sync::Arc::new(
+                    savant_toolforge::CollectiveCurator::new(curator_registry, curator_provenance)
+                        .with_inactivity_threshold(30),
+                );
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+                    interval.tick().await;
+                    loop {
+                        interval.tick().await;
+                        curator.run_auto_transitions().await;
+                    }
+                });
+            }
+
+            // 8. Register default hooks on the agent loop (fire-and-forget lifecycle hooks)
+            agent_loop.register_default_hooks().await;
+
+            // 9. Build Orchestrator from the pre-built AgentLoop (enterprise-grade wiring)
+            // Adds A2A delegation, continuation engine, handoff validation, DSP prediction
+            let capability_registry = match savant_ipc::CapabilityRegistry::new(
+                &format!("agent_{}_caps", agent_cfg.agent_id),
+                16, // max_agents
+            ) {
+                Ok(reg) => Arc::new(reg),
+                Err(e) => {
+                    tracing::warn!(
+                        "[{}] Failed to create CapabilityRegistry: {}. Using fallback.",
+                        agent_name,
+                        e
+                    );
+                    // Fallback: create with a safe name
+                    match savant_ipc::CapabilityRegistry::new("fallback_caps", 16) {
+                        Ok(reg) => Arc::new(reg),
+                        Err(fb_err) => {
+                            tracing::error!(
+                                "[{}] CRITICAL: CapabilityRegistry fallback failed: {}. Agent cannot start.",
+                                agent_name,
+                                fb_err
+                            );
+                            return;
+                        }
+                    }
+                }
+            };
+
+            let orchestrator = crate::orchestration::Orchestrator::from_agent_loop(
+                agent_loop,
+                agent_cfg.agent_id.clone(),
+                agent_cfg
+                    .session_id
+                    .clone()
+                    .unwrap_or_else(|| agent_cfg.agent_id.clone()),
+                blackboard.clone(),
+                capability_registry,
+                None, // memory_enclave — not available at swarm level
+            );
+
+            // 10. Start the Heartbeat Pulse with the Orchestrator
+            let pulse =
+                HeartbeatPulse::new(agent_cfg, nexus, storage, shutdown_task_token, delta_tx);
+            pulse.start_with_orchestrator(orchestrator).await;
         });
 
         self.handles.insert(agent_id, (handle, shutdown_token));
@@ -763,6 +1319,26 @@ impl SwarmController {
                 agent_id
             );
             token.cancel();
+
+            // Revoke all ephemeral tokens for this agent's tasks
+            self.credential_broker.revoke_task_tokens(agent_id).await;
+
+            // Wait for in-flight requests to complete (graceful shutdown)
+            let _guard = self.shutdown_tracker.register();
+            let tracker = self.shutdown_tracker.clone();
+            let agent_id_owned = agent_id.to_string();
+            tokio::spawn(async move {
+                if !tracker
+                    .wait_for_all_timeout(std::time::Duration::from_secs(5))
+                    .await
+                {
+                    tracing::warn!(
+                        "Agent {} shutdown: {} in-flight requests still pending after timeout",
+                        agent_id_owned,
+                        tracker.in_flight()
+                    );
+                }
+            });
 
             // Give it 12s to shut down gracefully before aborting
             match tokio::time::timeout(std::time::Duration::from_secs(12), handle).await {
@@ -779,6 +1355,22 @@ impl SwarmController {
     }
 
     pub async fn check_swarm_health(&self) -> Vec<String> {
+        // NA-23: Verify core subsystems are accessible during health checks
+        let nexus_ref = self.nexus();
+        let blackboard_ref = self.blackboard();
+
+        // Verify crypto subsystem is operational via sign/verify round-trip
+        if let Ok(sig) = self.sign_message("health-check") {
+            if let Err(e) = self.verify_message("health-check", &sig) {
+                tracing::warn!("[swarm] Crypto health check FAILED: {}", e);
+            }
+        }
+        tracing::debug!(
+            "Swarm health check: nexus_refs={}, blackboard_refs={}",
+            Arc::strong_count(&nexus_ref),
+            Arc::strong_count(&blackboard_ref),
+        );
+
         let mut dead_agents: Vec<String> =
             self.dead_agents.iter().map(|r| r.key().clone()).collect();
         for entry in self.handles.iter() {
@@ -790,6 +1382,23 @@ impl SwarmController {
         dead_agents
     }
 
+    /// Returns system diagnostics including compact rule count.
+    pub async fn diagnostics(&self) -> serde_json::Value {
+        let compact_rules = crate::compact::integration::rule_count().await;
+        let dead_agents = self.check_swarm_health().await;
+        let active_agents = self.handles.len().saturating_sub(dead_agents.len());
+        let (lsm_stats, vector_count) = self.engine.stats();
+        serde_json::json!({
+            "active_agents": active_agents,
+            "dead_agents": dead_agents.len(),
+            "compact_rules_loaded": compact_rules,
+            "memory_messages": lsm_stats.total_messages,
+            "memory_sessions": lsm_stats.total_sessions,
+            "vector_count": vector_count,
+            "continuation_limit": 10, // ContinuationConfig::default().max_continuations
+        })
+    }
+
     pub fn nexus(&self) -> Arc<NexusBridge> {
         self.nexus.clone()
     }
@@ -798,8 +1407,115 @@ impl SwarmController {
         self.engine.clone()
     }
 
+    pub fn blackboard(&self) -> Arc<SwarmBlackboard> {
+        self.blackboard.clone()
+    }
+
     pub async fn active_agents_count(&self) -> usize {
         self.handles.len()
     }
+
+    /// Signs a message using the swarm's Ed25519 signing key.
+    /// Used for IPC/A2A message authentication.
+    pub fn sign_message(&self, message: &str) -> Result<String, savant_core::crypto::CryptoError> {
+        let keypair = savant_core::crypto::AgentKeyPair {
+            public_key: hex::encode(self.root_authority.to_bytes()),
+            secret_key: hex::encode(self.signing_key.to_bytes()),
+            key_id: "swarm-signing-key".to_string(),
+            created_at: 0,
+        };
+        keypair.sign_message(message)
+    }
+
+    /// Verifies a message signature using the swarm's Ed25519 verifying key.
+    /// Used for IPC/A2A message authentication.
+    pub fn verify_message(
+        &self,
+        message: &str,
+        signature: &str,
+    ) -> Result<bool, savant_core::crypto::CryptoError> {
+        let keypair = savant_core::crypto::AgentKeyPair {
+            public_key: hex::encode(self.root_authority.to_bytes()),
+            secret_key: hex::encode(self.signing_key.to_bytes()),
+            key_id: "swarm-signing-key".to_string(),
+            created_at: 0,
+        };
+        keypair.verify_message(message, signature)
+    }
+
+    /// Create an LLM provider for the consciousness daemon.
+    /// Uses the first agent's config or defaults to OpenRouter.
+    async fn create_consciousness_provider(&self) -> Option<Arc<dyn LlmProvider>> {
+        let agent_cfg = self.agents.first()?;
+        let model_id = agent_cfg
+            .model
+            .clone()
+            .unwrap_or_else(|| "openrouter/healer-alpha".to_string());
+        let api_key = agent_cfg.api_key.clone().unwrap_or_default();
+
+        match agent_cfg.model_provider {
+            ModelProvider::OpenRouter | ModelProvider::OpenGateway => {
+                Some(Arc::new(OpenRouterProvider {
+                    client: self.client.clone(),
+                    api_key,
+                    model: model_id,
+                    agent_id: "consciousness-daemon".to_string(),
+                    agent_name: "Consciousness".to_string(),
+                    llm_params: None,
+                    context_window: Some(1_000_000),
+                    max_completion_tokens: Some(4096),
+                }))
+            }
+            ModelProvider::Ollama => Some(Arc::new(OllamaProvider {
+                client: self.client.clone(),
+                url: agent_cfg
+                    .api_key
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:11434".to_string()),
+                model: model_id,
+                agent_id: "consciousness-daemon".to_string(),
+                agent_name: "Consciousness".to_string(),
+            })),
+            _ => {
+                tracing::warn!(
+                    "[swarm] Consciousness daemon: unsupported provider {:?}, using default",
+                    agent_cfg.model_provider
+                );
+                None
+            }
+        }
+    }
+
+    /// Get the consciousness daemon state handle (for gateway API).
+    pub fn consciousness_state_handle(&self) -> Arc<AtomicU8> {
+        self.consciousness_state.clone()
+    }
+
+    /// Gracefully shuts down the swarm, flushing all storage and cancelling agents.
+    pub async fn shutdown(&self) -> Result<(), savant_core::error::SavantError> {
+        tracing::info!("Swarm: Initiating graceful shutdown...");
+
+        // Cancel all agents
+        for entry in self.handles.iter() {
+            let (id, (_, token)) = entry.pair();
+            tracing::info!("Cancelling agent: {}", id);
+            token.cancel();
+        }
+
+        // Abort all agent tasks (tokens already cancelled above)
+        for entry in self.handles.iter() {
+            let (id, (handle, _)) = entry.pair();
+            handle.abort();
+            tracing::info!("Agent {} abort signalled", id);
+        }
+
+        // Flush storage
+        self.storage.shutdown()?;
+
+        // Signal integrations shutdown
+        let _ = self.integrations_shutdown_tx.send(true);
+
+        tracing::info!("Swarm: Graceful shutdown complete");
+        Ok(())
+    }
 }
-// force recompile

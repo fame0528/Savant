@@ -101,9 +101,26 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                 // Phase 1: Speculative Gathering
                 while depth < max_depth {
-                    // Assemble context with horizon instruction
-                    let session_context = self.memory.retrieve(&self.agent_id, input, 10).await?;
-                    let mut current_history = session_context;
+                    // Assemble context with horizon instruction.
+                    // Inject observations from previous speculative steps so the LLM
+                    // can build on prior results.
+                    let mut current_history = self.memory.retrieve(&self.agent_id, input, 10).await?;
+                    for (step_name, step_args, step_obs) in &speculative_steps {
+                        current_history.push(ChatMessage {
+                            is_telemetry: false,
+                            role: ChatRole::User,
+                            content: format!(
+                                "Previous step: {} with args {} produced observation: {}",
+                                step_name, step_args, step_obs
+                            ),
+                            sender: None,
+                            recipient: None,
+                            agent_id: None,
+                            session_id: None,
+                            channel: savant_core::types::AgentOutputChannel::Chat,
+                            images: Vec::new(),
+                        });
+                    }
                     current_history.insert(0, ChatMessage {
                         is_telemetry: false,
                         role: ChatRole::System,
@@ -154,11 +171,19 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     if let Some((tool_name, args)) = action_opt {
                         yield Ok(SpeculativeEvent::Action { name: tool_name.clone(), args: args.clone() });
 
-                        // Execute tool immediately for validation (increases confidence)
-                        if let Err(e) = self.execute_tool(&tool_name, &args).await {
-                            tracing::warn!("[agent::speculative] Failed to execute tool {}: {}", tool_name, e);
+                        // Execute tool and capture observation for next step
+                        match self.execute_tool(&tool_name, &args).await {
+                            Ok(observation) => {
+                                yield Ok(SpeculativeEvent::Observation(observation.clone()));
+                                speculative_steps.push((tool_name, args, observation));
+                            }
+                            Err(e) => {
+                                let err_obs = format!("Error: {}", e);
+                                tracing::warn!("[agent::speculative] Failed to execute tool {}: {}", tool_name, e);
+                                yield Ok(SpeculativeEvent::Observation(err_obs.clone()));
+                                speculative_steps.push((tool_name, args, err_obs));
+                            }
                         }
-                        speculative_steps.push((tool_name, args, "Ok".to_string()));
                     } else {
                         // No action found - might be final answer or reflection
                         break;

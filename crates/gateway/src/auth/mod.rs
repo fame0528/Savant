@@ -9,6 +9,7 @@ use savant_core::error::SavantError;
 use savant_core::types::{RequestFrame, SessionId};
 use tracing::{debug, warn};
 
+pub mod http_middleware;
 pub mod oauth;
 
 /// Maximum allowed timestamp drift (5 minutes)
@@ -21,7 +22,7 @@ pub struct AuthenticatedSession {
     pub public_key: [u8; 32],
 }
 
-/// Authenticates a new session request using Ed25519 signatures or API key.
+/// Authenticates a new session request using Ed25519 signatures, API key, or OAuth token.
 ///
 /// All connections must provide either:
 /// 1. Ed25519 signature authentication:
@@ -31,6 +32,9 @@ pub struct AuthenticatedSession {
 /// 2. Dashboard API key authentication:
 ///    - An Auth payload with format "DASHBOARD_API_KEY:<key>"
 ///    - The key must match the configured dashboard_api_key
+/// 3. OAuth token authentication:
+///    - An Auth payload with format "OAUTH_TOKEN:<provider>:<token>"
+///    - The token is validated against the OAuthManager
 ///
 /// # Security
 /// - No authentication bypasses are permitted
@@ -38,14 +42,43 @@ pub struct AuthenticatedSession {
 /// - Replay attacks are prevented via timestamp validation
 /// - Session IDs must be valid 32-byte public keys
 /// - Dashboard API keys are validated against configuration
+/// - OAuth tokens are validated and auto-refreshed
 ///
 /// # Errors
 /// Returns `SavantError::AuthError` if authentication fails for any reason.
 pub async fn authenticate(
     frame: &RequestFrame,
     dashboard_api_key: Option<&str>,
+    oauth_manager: Option<&oauth::OAuthManager>,
 ) -> Result<AuthenticatedSession, SavantError> {
     if let savant_core::types::RequestPayload::Auth(auth_str) = &frame.payload {
+        // Check for OAuth token authentication
+        if let Some(oauth_str) = auth_str.strip_prefix("OAUTH_TOKEN:") {
+            let parts: Vec<&str> = oauth_str.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                let provider = parts[0];
+                let token_id = parts[1];
+                if let Some(manager) = oauth_manager {
+                    if manager.get_token(token_id).await.is_some() {
+                        debug!("OAuth authentication accepted for provider: {}", provider);
+                        return Ok(AuthenticatedSession {
+                            session_id: SessionId(format!("oauth-{}", uuid::Uuid::new_v4())),
+                            public_key: [0u8; 32],
+                        });
+                    }
+                    warn!("OAuth authentication failed: token not found or expired");
+                    return Err(SavantError::AuthError(
+                        "Invalid or expired OAuth token".to_string(),
+                    ));
+                }
+                warn!("OAuth authentication failed: OAuthManager not configured");
+                return Err(SavantError::AuthError(
+                    "OAuth authentication not configured".to_string(),
+                ));
+            }
+        }
+
+        // Check for Dashboard API key authentication
         if let Some(provided_key) = auth_str.strip_prefix("DASHBOARD_API_KEY:") {
             if let Some(expected_key) = dashboard_api_key {
                 if constant_time_eq(provided_key.as_bytes(), expected_key.as_bytes()) {
@@ -56,10 +89,14 @@ pub async fn authenticate(
                     });
                 }
                 warn!("Dashboard authentication failed: API key mismatch");
-                return Err(SavantError::AuthError("Invalid dashboard API key".to_string()));
+                return Err(SavantError::AuthError(
+                    "Invalid dashboard API key".to_string(),
+                ));
             }
             warn!("Dashboard authentication failed: no API key configured");
-            return Err(SavantError::AuthError("Dashboard API key not configured".to_string()));
+            return Err(SavantError::AuthError(
+                "Dashboard API key not configured".to_string(),
+            ));
         }
     }
 
@@ -77,7 +114,7 @@ pub async fn authenticate(
     })?;
 
     // Replay protection: reject timestamps outside the allowed drift window
-    let now = savant_core::utils::time::now_secs() as i64;
+    let now = savant_core::utils::time::now_secs()? as i64;
 
     let drift = (now - timestamp).abs();
     if drift > MAX_TIMESTAMP_DRIFT_SECS {
@@ -171,7 +208,6 @@ pub async fn authenticate(
 
 /// Constant-time byte comparison to prevent timing attacks on API key validation.
 /// Returns true if both slices are equal, with execution time independent of where they differ.
-#[allow(dead_code)]
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -184,6 +220,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
@@ -216,7 +253,7 @@ mod tests {
             timestamp: Some(timestamp),
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(result.is_ok());
     }
 
@@ -230,7 +267,7 @@ mod tests {
             timestamp: Some(123456),
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -248,7 +285,7 @@ mod tests {
             timestamp: Some(1), // Very old timestamp
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -285,7 +322,7 @@ mod tests {
             timestamp: Some(timestamp),
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(result.is_err(), "Should reject mismatched signature");
     }
 
@@ -304,7 +341,7 @@ mod tests {
             ),
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(result.is_err());
     }
 
@@ -335,7 +372,7 @@ mod tests {
             timestamp: Some(future_timestamp),
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(
             result.is_err(),
             "Should reject future timestamps beyond drift"
@@ -368,7 +405,7 @@ mod tests {
             timestamp: Some(timestamp),
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(result.is_ok(), "Should accept current timestamp");
     }
 
@@ -397,7 +434,7 @@ mod tests {
             timestamp: Some(timestamp),
         };
 
-        let session = authenticate(&frame, None).await.unwrap();
+        let session = authenticate(&frame, None, None).await.unwrap();
         assert_eq!(session.session_id.0, session_id);
     }
 
@@ -438,7 +475,7 @@ mod tests {
             timestamp: Some(timestamp),
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(result.is_ok(), "Should accept ChatMessage payload");
     }
 
@@ -457,7 +494,7 @@ mod tests {
             ),
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         // Should still attempt auth (may succeed or fail based on verification)
         if let Err(e) = result {
             tracing::warn!("[gateway::auth] Authentication attempt failed: {}", e);
@@ -474,7 +511,7 @@ mod tests {
             timestamp: None,
         };
 
-        let result = authenticate(&frame, None).await;
+        let result = authenticate(&frame, None, None).await;
         assert!(result.is_err(), "Missing timestamp should fail");
     }
 }

@@ -1,7 +1,8 @@
 [package]
 name = "savant_echo"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 # Async Runtime & Concurrency
@@ -10,8 +11,8 @@ arc-swap = "1.6.0" # Epoch-based lock-free pointer swapping
 futures = "0.3"
 
 # File System Watching
-notify = "6.1.1" # Cross-platform async file watcher
-notify-debouncer-mini = "0.4.1"
+notify = "8.2.0" # Cross-platform async file watcher
+notify-debouncer-mini = "0.6.0"
 
 # WebAssembly & Compilation
 wasmtime = { workspace = true }
@@ -33,3 +34,6 @@ savant_security = { workspace = true }
 # OS Sandboxing for the Compiler (Linux Only)
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.3.0"
+
+[lints]
+workspace = true

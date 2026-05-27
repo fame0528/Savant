@@ -4,22 +4,74 @@ use savant_core::error::SavantError;
 use savant_core::traits::Tool;
 use tokio::time::{timeout, Duration};
 
+use crate::mount_security::{validate_mount_source, validate_mount_within, MountAllowlist};
+
 /// Maximum execution time for Docker container runs (30 seconds)
 const DOCKER_EXEC_TIMEOUT_SECS: u64 = 30;
+
+/// A validated bind mount: host path → container path.
+#[derive(Debug, Clone)]
+pub struct BindMount {
+    pub host_path: std::path::PathBuf,
+    pub container_path: String,
+    pub readonly: bool,
+}
 
 /// Wraps skills wrapped inside of a Dockerized architecture locally.
 pub struct DockerSkillExecutor {
     docker: Docker,
     image_name: String,
+    allowlist: MountAllowlist,
 }
 
 impl DockerSkillExecutor {
     /// Prepares Docker integration via `bollard`.
+    /// Loads the mount allowlist from the config file if it exists, otherwise uses permissive defaults.
     pub fn new(image_name: String) -> Result<Self, SavantError> {
         let docker = Docker::connect_with_local_defaults()
             .map_err(|e| SavantError::Unknown(format!("Docker connection failed: {}", e)))?;
+        let allowlist = MountAllowlist::load().unwrap_or_else(|_| MountAllowlist::permissive());
         tracing::info!("Docker executor initialized for image: {}", image_name);
-        Ok(Self { docker, image_name })
+        Ok(Self {
+            docker,
+            image_name,
+            allowlist,
+        })
+    }
+
+    /// Creates a Docker executor with a custom mount allowlist.
+    pub fn with_allowlist(
+        image_name: String,
+        allowlist: MountAllowlist,
+    ) -> Result<Self, SavantError> {
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| SavantError::Unknown(format!("Docker connection failed: {}", e)))?;
+        Ok(Self {
+            docker,
+            image_name,
+            allowlist,
+        })
+    }
+
+    /// Validates a bind mount against the allowlist and filesystem boundaries.
+    /// Returns Ok(validated_mount) or Err if the mount is unsafe.
+    pub fn validate_mount(&self, mount: &BindMount) -> Result<(), SavantError> {
+        validate_mount_source(&mount.host_path)
+            .map_err(|e| SavantError::Unknown(format!("Mount source invalid: {}", e)))?;
+        // Validate against the parent directory to prevent traversal escape
+        if let Some(parent) = mount.host_path.parent() {
+            if parent.exists() {
+                validate_mount_within(parent, &mount.host_path)
+                    .map_err(|e| SavantError::Unknown(format!("Mount boundary invalid: {}", e)))?;
+            }
+        }
+        if !self.allowlist.is_allowed(&mount.host_path) {
+            return Err(SavantError::Unknown(format!(
+                "Mount path {} is not in the allowlist",
+                mount.host_path.display()
+            )));
+        }
+        Ok(())
     }
 
     /// Verifies Docker daemon is reachable.
@@ -53,6 +105,25 @@ impl DockerToolExecutor {
             executor: DockerSkillExecutor::new(image_name)?,
         })
     }
+
+    /// Creates a Docker tool executor with a custom mount allowlist.
+    pub fn with_allowlist(
+        image_name: String,
+        allowlist: MountAllowlist,
+    ) -> Result<Self, SavantError> {
+        Ok(Self {
+            executor: DockerSkillExecutor::with_allowlist(image_name, allowlist)?,
+        })
+    }
+
+    /// Executes with validated bind mounts.
+    pub async fn execute_with_mounts(
+        &self,
+        args: serde_json::Value,
+        mounts: &[BindMount],
+    ) -> Result<String, SavantError> {
+        self.executor.execute_with_mounts(args, mounts).await
+    }
 }
 
 #[async_trait]
@@ -62,15 +133,24 @@ impl crate::sandbox::ToolExecutor for DockerToolExecutor {
     }
 }
 
-#[async_trait]
-impl savant_core::traits::Tool for DockerSkillExecutor {
-    fn name(&self) -> &str {
-        "docker_skill"
+impl DockerSkillExecutor {
+    /// Executes with optional validated bind mounts.
+    pub async fn execute_with_mounts(
+        &self,
+        payload: serde_json::Value,
+        mounts: &[BindMount],
+    ) -> Result<String, SavantError> {
+        for mount in mounts {
+            self.validate_mount(mount)?;
+        }
+        self.execute_inner(payload, mounts).await
     }
-    fn description(&self) -> &str {
-        "Executes a skill within a Docker container."
-    }
-    async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
+
+    async fn execute_inner(
+        &self,
+        payload: serde_json::Value,
+        mounts: &[BindMount],
+    ) -> Result<String, SavantError> {
         let docker = self.docker.clone();
         let image = self.image_name.clone();
         let input = payload.to_string();
@@ -101,6 +181,24 @@ impl savant_core::traits::Tool for DockerSkillExecutor {
                             readonly_rootfs: Some(true),            // Immutable root filesystem
                             network_mode: Some("none".to_string()), // No network access
                             security_opt: Some(vec!["no-new-privileges:true".to_string()]),
+                            binds: if mounts.is_empty() {
+                                None
+                            } else {
+                                Some(
+                                    mounts
+                                        .iter()
+                                        .map(|m| {
+                                            let ro = if m.readonly { ":ro" } else { "" };
+                                            format!(
+                                                "{}:{}{}",
+                                                m.host_path.display(),
+                                                m.container_path,
+                                                ro
+                                            )
+                                        })
+                                        .collect(),
+                                )
+                            },
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -206,5 +304,18 @@ impl savant_core::traits::Tool for DockerSkillExecutor {
         }
 
         result
+    }
+}
+
+#[async_trait]
+impl Tool for DockerSkillExecutor {
+    fn name(&self) -> &str {
+        "docker_skill"
+    }
+    fn description(&self) -> &str {
+        "Executes a skill within a Docker container."
+    }
+    async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
+        self.execute_inner(payload, &[]).await
     }
 }

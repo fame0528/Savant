@@ -7,12 +7,13 @@ use tracing::{debug, error, info, warn};
 /// The Arbiter task monitors the Collective Hive-Mind for factual contradictions
 /// and resolves them using Information Entropy (Shannon) heuristics.
 pub fn spawn_arbiter_task(collective: Arc<MemoryEnclave>) {
+    let sweep_interval = collective.config.arbiter_sweep_interval_secs;
     tokio::spawn(async move {
         info!("⚖️ OMEGA-VIII: Entropy-Based Conflict Arbiter Online");
 
         loop {
-            // Sweep for contradictions every 10 minutes
-            sleep(Duration::from_secs(600)).await;
+            // Sweep for contradictions at configured interval
+            sleep(Duration::from_secs(sweep_interval)).await;
 
             debug!("Starting Collective contradiction sweep...");
 
@@ -61,8 +62,8 @@ async fn resolve_contradictions(
     let best_memory = &memories[0];
     let entropy: f32 = best_memory.shannon_entropy.to_native();
 
-    // Shannon Cap: If entropy > 1.5 bits, the fact is too uncertain to be "Canonical"
-    if entropy > 1.5 {
+    // Shannon Cap: If entropy > configured threshold, the fact is too uncertain to be "Canonical"
+    if entropy > collective.config.shannon_entropy_cap {
         warn!(
             "Factual collision for '{}' too high-entropy ({} bits). Pending human audit.",
             subject, entropy
@@ -77,15 +78,28 @@ async fn resolve_contradictions(
 
     // Mark inferior memories as contradicted (evolution: contradictions ARE growth signals).
     // Instead of deleting, we attach a `contradicted_by` reference for later analysis.
+    // Also record temporal invalidation for bi-temporal tracking.
+    let best_id = best_memory.id.to_native();
     for inferior in memories.iter().skip(1) {
         let inferior_entropy: f32 = inferior.shannon_entropy.to_native();
+        let inferior_id = inferior.id.to_native();
         info!(
             "Factual arbiter: contradictory fact for '{}' resolved (entropy: {} bits, best: {} bits). Inferior tagged as contradicted_by {}.",
-            subject, inferior_entropy, entropy, best_memory.id.to_native()
+            subject, inferior_entropy, entropy, best_id
         );
 
-        let id_u64 = inferior.id.to_native();
-        if let Err(e) = collective.delete_memory(id_u64).await {
+        // Store temporal metadata marking this inferior fact as superseded
+        let mut temporal =
+            crate::models::TemporalMetadata::new_active(inferior_id, "fact", subject);
+        temporal.invalidate(best_id);
+        if let Err(e) = collective.lsm().store_temporal_metadata(&temporal) {
+            warn!(
+                "Failed to store temporal invalidation for fact {}: {}",
+                inferior_id, e
+            );
+        }
+
+        if let Err(e) = collective.delete_memory(inferior_id).await {
             error!("Failed to prune inferior fact from collective: {}", e);
         }
     }

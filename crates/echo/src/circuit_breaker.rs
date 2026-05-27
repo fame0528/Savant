@@ -112,7 +112,7 @@ impl ComponentMetrics {
 
     /// Gets the current circuit state.
     pub fn state(&self) -> CircuitState {
-        CircuitState::from(self.state.load(Ordering::Relaxed))
+        CircuitState::from(self.state.load(Ordering::Acquire))
     }
 
     /// Gets the current UNIX timestamp.
@@ -127,11 +127,11 @@ impl ComponentMetrics {
     /// Uses compare-and-swap (CAS) on state for atomic Open→HalfOpen transition.
     fn check_time_based_reset(&self) -> bool {
         // Only proceed if currently Open
-        if self.state.load(Ordering::Relaxed) != CircuitState::Open as u8 {
+        if self.state.load(Ordering::Acquire) != CircuitState::Open as u8 {
             return false;
         }
 
-        let opened_at = self.opened_at.load(Ordering::Relaxed);
+        let opened_at = self.opened_at.load(Ordering::Acquire);
         let now = Self::current_time();
 
         if opened_at > 0 && now >= opened_at + self.reset_duration_secs {
@@ -140,10 +140,10 @@ impl ComponentMetrics {
                 CircuitState::Open as u8,
                 CircuitState::HalfOpen as u8,
                 Ordering::AcqRel,
-                Ordering::Relaxed,
+                Ordering::Acquire,
             );
             if cas_result.is_ok() {
-                self.consecutive_successes.store(0, Ordering::Relaxed);
+                self.consecutive_successes.store(0, Ordering::Release);
                 info!(
                     "Circuit breaker transitioning to Half-Open after {} seconds",
                     self.reset_duration_secs
@@ -176,7 +176,7 @@ impl ComponentMetrics {
         // If circuit is half-open, only allow limited requests
         if current_state == CircuitState::HalfOpen {
             if success {
-                let consecutive = self.consecutive_successes.fetch_add(1, Ordering::Relaxed) + 1;
+                let consecutive = self.consecutive_successes.fetch_add(1, Ordering::AcqRel) + 1;
                 debug!(
                     "Half-Open: consecutive success {} of {}",
                     consecutive, self.success_threshold
@@ -201,12 +201,14 @@ impl ComponentMetrics {
         }
 
         // Closed state: normal operation
-        let total = self.total_invocations.fetch_add(1, Ordering::Relaxed) + 1;
+        // Use AcqRel for fetch_add to ensure visibility of prior writes,
+        // and Acquire for loads to get a consistent snapshot of both counters.
+        let total = self.total_invocations.fetch_add(1, Ordering::AcqRel) + 1;
 
         let failed = if !success {
-            self.failed_invocations.fetch_add(1, Ordering::Relaxed) + 1
+            self.failed_invocations.fetch_add(1, Ordering::AcqRel) + 1
         } else {
-            self.failed_invocations.load(Ordering::Relaxed)
+            self.failed_invocations.load(Ordering::Acquire)
         };
 
         // Do not calculate statistics until we have a statistically significant sample
@@ -234,63 +236,92 @@ impl ComponentMetrics {
     /// Trips the circuit breaker (transitions to Open state).
     fn trip(&self) {
         self.state
-            .store(CircuitState::Open as u8, Ordering::Relaxed);
+            .store(CircuitState::Open as u8, Ordering::Release);
         self.opened_at
-            .store(Self::current_time(), Ordering::Relaxed);
-        self.trip_count.fetch_add(1, Ordering::Relaxed);
-        self.consecutive_successes.store(0, Ordering::Relaxed);
+            .store(Self::current_time(), Ordering::Release);
+        self.trip_count.fetch_add(1, Ordering::AcqRel);
+        self.consecutive_successes.store(0, Ordering::Release);
     }
 
     /// Resets the circuit breaker (transitions to Closed state).
     pub fn reset(&self) {
         self.state
-            .store(CircuitState::Closed as u8, Ordering::Relaxed);
-        self.opened_at.store(0, Ordering::Relaxed);
-        self.total_invocations.store(0, Ordering::Relaxed);
-        self.failed_invocations.store(0, Ordering::Relaxed);
-        self.consecutive_successes.store(0, Ordering::Relaxed);
-        self.reset_count.fetch_add(1, Ordering::Relaxed);
+            .store(CircuitState::Closed as u8, Ordering::Release);
+        self.opened_at.store(0, Ordering::Release);
+        self.total_invocations.store(0, Ordering::Release);
+        self.failed_invocations.store(0, Ordering::Release);
+        self.consecutive_successes.store(0, Ordering::Release);
+        self.reset_count.fetch_add(1, Ordering::AcqRel);
         info!("Circuit breaker manually reset");
     }
 
     /// Returns current failure count.
     pub fn failure_count(&self) -> u64 {
-        self.failed_invocations.load(Ordering::Relaxed)
+        self.failed_invocations.load(Ordering::Acquire)
     }
 
     /// Returns current total count.
     pub fn total_count(&self) -> u64 {
-        self.total_invocations.load(Ordering::Relaxed)
+        self.total_invocations.load(Ordering::Acquire)
     }
 
     /// Returns the current error rate.
     pub fn error_rate(&self) -> f64 {
-        let total = self.total_invocations.load(Ordering::Relaxed);
+        let total = self.total_invocations.load(Ordering::Acquire);
         if total == 0 {
             return 0.0;
         }
-        let failed = self.failed_invocations.load(Ordering::Relaxed);
+        let failed = self.failed_invocations.load(Ordering::Acquire);
         (failed as f64) / (total as f64)
     }
 
     /// Returns the number of times the circuit has been reset.
     pub fn reset_count(&self) -> u64 {
-        self.reset_count.load(Ordering::Relaxed)
+        self.reset_count.load(Ordering::Acquire)
     }
 
     /// Returns the number of times the circuit has been tripped.
     pub fn trip_count(&self) -> u64 {
-        self.trip_count.load(Ordering::Relaxed)
+        self.trip_count.load(Ordering::Acquire)
     }
 
     /// Returns the time when the circuit was opened (0 if closed).
     pub fn opened_at(&self) -> u64 {
-        self.opened_at.load(Ordering::Relaxed)
+        self.opened_at.load(Ordering::Acquire)
     }
 
     /// Returns the number of consecutive successes in half-open state.
     pub fn consecutive_successes(&self) -> u64 {
-        self.consecutive_successes.load(Ordering::Relaxed)
+        self.consecutive_successes.load(Ordering::Acquire)
+    }
+
+    /// Records an outcome and triggers a rollback on the registry if the circuit trips.
+    /// Returns true if the circuit was tripped (and rollback attempted).
+    pub fn record_outcome_with_rollback(
+        &self,
+        success: bool,
+        registry: &crate::registry::HotSwappableRegistry,
+    ) -> bool {
+        let tripped = self.record_outcome(success);
+        if tripped {
+            match registry.rollback_epoch() {
+                Ok(()) => {
+                    info!(
+                        "Circuit breaker tripped — rolled back to epoch {}",
+                        registry.current_epoch()
+                    );
+                }
+                Err(e) => {
+                    warn!("Circuit breaker tripped but rollback failed: {}", e);
+                }
+            }
+        }
+        tripped
+    }
+
+    /// Returns the current epoch from the registry for health monitoring.
+    pub fn current_epoch(registry: &crate::registry::HotSwappableRegistry) -> u64 {
+        registry.current_epoch()
     }
 }
 
@@ -560,14 +591,14 @@ mod tests {
         let metrics = ComponentMetrics::new(0.05, 1);
         let before = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("time should be after UNIX_EPOCH")
             .as_secs();
 
         metrics.record_outcome(false);
 
         let after = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("time should be after UNIX_EPOCH")
             .as_secs();
 
         assert!(metrics.opened_at() >= before);

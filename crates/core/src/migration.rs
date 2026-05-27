@@ -37,6 +37,7 @@ impl From<LegacyOpenClawConfig> for AgentConfig {
             llm_params: crate::types::LlmParams::default(),
             personality_traits: None,
             evolution_state: None,
+            orchestrator_enabled: true,
         }
     }
 }

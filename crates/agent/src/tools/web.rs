@@ -1,3 +1,9 @@
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
@@ -6,30 +12,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
 
-/// Elements to skip during DOM→Markdown conversion.
-/// These elements do not contain meaningful content for LLM consumption.
-const SKIP_ELEMENTS: &[&str] = &[
-    "script", "style", "noscript", "nav", "footer", "header", "aside", "iframe", "svg", "form",
-    "input", "button", "select", "textarea", "link", "meta",
-];
-
-/// Dangerous URL schemes that should never be fetched.
-const BLOCKED_SCHEMES: &[&str] = &[
-    "file",
-    "ftp",
-    "sftp",
-    "data",
-    "javascript",
-    "vbscript",
-    "about",
-];
-
-/// Private IP ranges / internal addresses to block (SSRF protection).
-const BLOCKED_HOSTS: &[&str] = &[
-    "169.254.169.254",          // AWS/cloud metadata
-    "100.100.100.200",          // Alibaba Cloud metadata
-    "metadata.google.internal", // GCP metadata
-];
+/// Maximum HTTP response body size (10 MB).
+const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// WebSovereign: HTTP fetch + DOM→Markdown conversion engine.
 ///
@@ -45,12 +29,7 @@ const BLOCKED_HOSTS: &[&str] = &[
 pub struct WebSovereign {
     http: reqwest::Client,
     projection: Arc<super::web_projection::ChromeProjection>,
-}
-
-impl Default for WebSovereign {
-    fn default() -> Self {
-        Self::new().expect("CRITICAL: WebSovereign initialization failed")
-    }
+    taint_tracker: Arc<savant_security::continuous::taint::TaintTracker>,
 }
 
 impl WebSovereign {
@@ -61,12 +40,16 @@ impl WebSovereign {
             .user_agent("Savant/1.6")
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
-            .map_err(|e| SavantError::Unknown(
-                format!("CRITICAL: Failed to build HTTP client with security constraints: {}", e)
-            ))?;
+            .map_err(|e| {
+                SavantError::Unknown(format!(
+                    "CRITICAL: Failed to build HTTP client with security constraints: {}",
+                    e
+                ))
+            })?;
         Ok(Self {
             http,
             projection: Arc::new(super::web_projection::ChromeProjection::new()),
+            taint_tracker: Arc::new(savant_security::continuous::taint::TaintTracker::new()),
         })
     }
 
@@ -74,33 +57,10 @@ impl WebSovereign {
         50_000
     }
 
-    fn timeout_secs(&self) -> u64 {
-        30
-    }
-
-    /// Fetches a URL with SSRF protection.
-    /// Validates the URL scheme and host before making the request.
+    /// Fetches a URL with SSRF protection and body size limit.
     async fn fetch_url(&self, url: &str) -> Result<String, SavantError> {
-        let parsed = reqwest::Url::parse(url)
-            .map_err(|e| SavantError::Unknown(format!("Invalid URL: {}", e)))?;
-
-        // Block dangerous schemes
-        if BLOCKED_SCHEMES.contains(&parsed.scheme()) {
-            return Err(SavantError::Unknown(format!(
-                "Blocked URL scheme: {}",
-                parsed.scheme()
-            )));
-        }
-
-        // Block private/internal hosts (SSRF protection)
-        if let Some(host) = parsed.host_str() {
-            if BLOCKED_HOSTS.contains(&host) {
-                return Err(SavantError::Unknown(format!(
-                    "Blocked internal host: {}",
-                    host
-                )));
-            }
-        }
+        // PB-01: Use shared SSRF validation
+        savant_core::net::validate_url(url)?;
 
         let response = self
             .http
@@ -118,18 +78,31 @@ impl WebSovereign {
             )));
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| SavantError::Unknown(format!("Failed to read response body: {}", e)))?;
+        // PB-03: Chunked body reading with size limit
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut stream = response.bytes_stream();
+        use futures::StreamExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                SavantError::Unknown(format!("Failed to read response chunk: {}", e))
+            })?;
+            if bytes.len() + chunk.len() > MAX_BODY_BYTES {
+                return Err(SavantError::Unknown(format!(
+                    "Response body exceeds {}MB limit",
+                    MAX_BODY_BYTES / (1024 * 1024)
+                )));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
 
-        Ok(body)
+        String::from_utf8(bytes)
+            .map_err(|e| SavantError::Unknown(format!("Response body is not valid UTF-8: {}", e)))
     }
 
     /// Converts raw HTML to structured Markdown using ChromeProjection's
     /// content-root detection and Markdown conversion pipeline.
-    fn html_to_markdown(&self, html: &str, url: &str) -> String {
-        self.projection.project_html(html, url)
+    async fn html_to_markdown(&self, html: &str, url: &str) -> String {
+        self.projection.project_html(html, url).await
     }
 
     /// Extracts text content from a scraped element as Markdown.
@@ -145,28 +118,31 @@ impl WebSovereign {
             .join(" ");
         text
     }
+}
 
-    fn validate_url(&self, url: &str) -> Result<(), SavantError> {
-        let parsed = reqwest::Url::parse(url)
-            .map_err(|e| SavantError::Unknown(format!("Invalid URL: {}", e)))?;
+/// Truncates a string at a safe UTF-8 character boundary.
+fn truncate_safe(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let byte_end = s
+        .char_indices()
+        .nth(max_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    format!(
+        "{}\n\n[... truncated at {} chars]",
+        &s[..byte_end],
+        max_chars
+    )
+}
 
-        if BLOCKED_SCHEMES.contains(&parsed.scheme()) {
-            return Err(SavantError::Unknown(format!(
-                "Blocked URL scheme: {}",
-                parsed.scheme()
-            )));
-        }
-
-        if let Some(host) = parsed.host_str() {
-            if BLOCKED_HOSTS.contains(&host) {
-                return Err(SavantError::Unknown(format!(
-                    "Blocked internal host: {}",
-                    host
-                )));
-            }
-        }
-
-        Ok(())
+/// Ensure a URL has a scheme. LLMs often omit https:// prefix.
+fn ensure_scheme(url: &str) -> String {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        url.to_string()
+    } else {
+        format!("https://{}", url)
     }
 }
 
@@ -221,20 +197,26 @@ impl Tool for WebSovereign {
                     .as_str()
                     .ok_or_else(|| SavantError::Unknown("Missing 'url' for navigate".into()))?;
 
-                let html = self.fetch_url(url).await?;
-                let markdown = self.html_to_markdown(&html, url);
+                // Ensure URL has a scheme — LLMs often omit https://
+                let url = ensure_scheme(url);
+                let html = self.fetch_url(&url).await?;
+                let markdown = self.html_to_markdown(&html, &url).await;
 
-                let truncated = if markdown.len() > self.max_output_chars() {
-                    format!(
-                        "{}\n\n[... truncated at {} chars]",
-                        &markdown[..self.max_output_chars()],
-                        self.max_output_chars()
-                    )
-                } else {
-                    markdown
-                };
+                // Tag fetched data as external web content (low trust)
+                let data_id = format!("web:{}", url);
+                self.taint_tracker.tag(
+                    &data_id,
+                    savant_security::continuous::taint::TaintTag::external_web(),
+                );
 
-                info!("[WEB] Navigate to {} — {} chars", url, truncated.len());
+                // PB-02: Char-boundary-safe truncation
+                let truncated = truncate_safe(&markdown, self.max_output_chars());
+
+                info!(
+                    "[WEB] Navigate to {} — {} chars (taint: external_web, trust: 0.2)",
+                    url,
+                    truncated.len()
+                );
                 Ok(format!("URL: {}\n\n{}", url, truncated))
             }
             "snapshot" => {
@@ -242,23 +224,47 @@ impl Tool for WebSovereign {
                     .as_str()
                     .ok_or_else(|| SavantError::Unknown("Missing 'url' for snapshot".into()))?;
 
-                let html = self.fetch_url(url).await?;
+                let url = ensure_scheme(url);
+                let html = self.fetch_url(&url).await?;
+
+                // Tag fetched data as external web content (low trust)
+                let data_id = format!("web:{}", url);
+                self.taint_tracker.tag(
+                    &data_id,
+                    savant_security::continuous::taint::TaintTag::external_web(),
+                );
 
                 // Use ChromeProjection for snapshot — adds SHA256 boundary markers
                 // for content injection prevention (enterprise security)
-                let projected = self.projection.project_html(&html, url);
+                let projected = self.projection.project_html(&html, &url).await;
 
-                info!("[WEB] Snapshot of {} — {} chars", url, projected.len());
-                Ok(projected)
+                // PB-12: Truncate snapshot output
+                let truncated = truncate_safe(&projected, self.max_output_chars());
+
+                info!(
+                    "[WEB] Snapshot of {} — {} chars (taint: external_web, trust: 0.2)",
+                    url,
+                    truncated.len()
+                );
+                Ok(truncated)
             }
             "scrape" => {
                 let url = payload["url"]
                     .as_str()
                     .ok_or_else(|| SavantError::Unknown("Missing 'url' for scrape".into()))?;
 
+                let url = ensure_scheme(url);
                 let selector_str = payload["selector"].as_str().unwrap_or("body");
 
-                let html = self.fetch_url(url).await?;
+                let html = self.fetch_url(&url).await?;
+
+                // Tag fetched data as external web content (low trust)
+                let data_id = format!("web:{}", url);
+                self.taint_tracker.tag(
+                    &data_id,
+                    savant_security::continuous::taint::TaintTag::external_web(),
+                );
+
                 let document = Html::parse_document(&html);
 
                 let selector = Selector::parse(selector_str).map_err(|e| {
@@ -282,7 +288,9 @@ impl Tool for WebSovereign {
                         selector_str, url
                     ))
                 } else {
-                    Ok(results.join("\n---\n"))
+                    // PB-12: Truncate scrape output
+                    let joined = results.join("\n---\n");
+                    Ok(truncate_safe(&joined, self.max_output_chars()))
                 }
             }
             _ => Err(SavantError::Unknown(format!(

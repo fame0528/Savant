@@ -4,6 +4,7 @@ use pqcrypto_dilithium::dilithium2;
 use pqcrypto_traits::sign::DetachedSignature;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+use tracing::warn;
 
 #[derive(Debug, Error)]
 pub enum SecurityError {
@@ -86,8 +87,10 @@ impl SecurityAuthority {
             entropy_hash,
         };
 
-        let payload_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&payload)
-            .map_err(|_| SecurityError::MemoryCorruption)?;
+        let payload_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&payload).map_err(|e| {
+            warn!("[enclave] rkyv serialization failed (quantum token): {}", e);
+            SecurityError::MemoryCorruption
+        })?;
 
         // OMEGA-VIII: Hybrid Signature (Ed25519 + Dilithium2)
         let ed_sig = signer.sign(&payload_bytes);
@@ -122,8 +125,10 @@ impl SecurityAuthority {
         };
 
         // Serialize the payload to bytes for signing
-        let payload_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&payload)
-            .map_err(|_| SecurityError::MemoryCorruption)?;
+        let payload_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&payload).map_err(|e| {
+            warn!("[enclave] rkyv serialization failed (mint_token): {}", e);
+            SecurityError::MemoryCorruption
+        })?;
 
         // Cryptographically sign the bytes using Ed25519 (Baseline Sovereignty)
         let signature = signer.sign(&payload_bytes);
@@ -159,9 +164,13 @@ impl SecurityAuthority {
         }
 
         // 3. Action / Resource Scope Check (Fixes OpenClaw Issue #11102)
-        if token.payload.permitted_action != requested_action
-            || !requested_resource.starts_with(&token.payload.resource_uri)
-        {
+        // SEC-01: Use segment-boundary matching to prevent /workspace/ matching /workspace-admin/
+        let resource_matches = requested_resource == token.payload.resource_uri
+            || requested_resource.starts_with(&format!(
+                "{}/",
+                token.payload.resource_uri.trim_end_matches('/')
+            ));
+        if token.payload.permitted_action != requested_action || !resource_matches {
             return Err(SecurityError::UnauthorizedAction(
                 requested_action.to_string(),
                 token.payload.resource_uri.clone(),
@@ -169,8 +178,10 @@ impl SecurityAuthority {
         }
 
         // 4. Cryptographic Integrity Check
-        let payload_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&token.payload)
-            .map_err(|_| SecurityError::MemoryCorruption)?;
+        let payload_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&token.payload).map_err(|e| {
+            warn!("[enclave] rkyv serialization failed (verify_token): {}", e);
+            SecurityError::MemoryCorruption
+        })?;
 
         match token.algorithm {
             SignatureAlgorithm::Ed25519 => {
@@ -218,9 +229,46 @@ impl SecurityAuthority {
                 }
                 Ok(())
             }
-            SignatureAlgorithm::Dilithium2 | SignatureAlgorithm::Hybrid => {
-                // Reserved for future PQC implementation — not yet supported for verification
-                Err(SecurityError::UnsupportedAlgorithm(token.algorithm))
+            SignatureAlgorithm::Dilithium2 => {
+                // SEC-08: Implement Dilithium2 signature verification
+                let pqc_key = self
+                    .pqc_authority
+                    .as_ref()
+                    .ok_or(SecurityError::UnsupportedAlgorithm(token.algorithm))?;
+
+                let pqc_sig = dilithium2::DetachedSignature::from_bytes(&token.signature)
+                    .map_err(|_| SecurityError::InvalidSignature(token.algorithm))?;
+
+                dilithium2::verify_detached_signature(&pqc_sig, &payload_bytes, pqc_key)
+                    .map_err(|_| SecurityError::InvalidSignature(token.algorithm))
+            }
+            SignatureAlgorithm::Hybrid => {
+                // SEC-08: Hybrid verification — both Ed25519 AND Dilithium2 must pass
+                let pqc_key = self
+                    .pqc_authority
+                    .as_ref()
+                    .ok_or(SecurityError::UnsupportedAlgorithm(token.algorithm))?;
+
+                if token.signature.len() < 64 {
+                    return Err(SecurityError::InvalidSignature(token.algorithm));
+                }
+
+                // 1. Verify Ed25519 component (first 64 bytes)
+                let ed_sig_bytes: [u8; 64] = token.signature[0..64]
+                    .try_into()
+                    .map_err(|_| SecurityError::InvalidSignature(token.algorithm))?;
+                let ed_sig = Signature::from_bytes(&ed_sig_bytes);
+                self.root_authority
+                    .verify(&payload_bytes, &ed_sig)
+                    .map_err(|_| SecurityError::InvalidSignature(token.algorithm))?;
+
+                // 2. Verify Dilithium2 component (remaining bytes)
+                let pqc_sig_bytes = &token.signature[64..];
+                let pqc_sig = dilithium2::DetachedSignature::from_bytes(pqc_sig_bytes)
+                    .map_err(|_| SecurityError::InvalidSignature(token.algorithm))?;
+
+                dilithium2::verify_detached_signature(&pqc_sig, &payload_bytes, pqc_key)
+                    .map_err(|_| SecurityError::InvalidSignature(token.algorithm))
             }
         }
     }
@@ -282,10 +330,12 @@ mod tests {
             "read",
             100, // Not yet expired
         )
-        .unwrap();
+        .expect("mint_token should succeed");
 
         // Force expiration by setting time to the past
-        token.payload.expires_at = SecurityAuthority::current_time().unwrap().saturating_sub(1);
+        token.payload.expires_at = SecurityAuthority::current_time()
+            .expect("current_time should succeed")
+            .saturating_sub(1);
 
         assert!(matches!(
             enclave.verify_token_and_action(&token, 12345, "/file", "read"),
@@ -299,7 +349,8 @@ mod tests {
         let signing_key = SigningKey::generate(&mut rng);
         let enclave = SecurityAuthority::new(signing_key.verifying_key(), None);
 
-        let token = SecurityAuthority::mint_token(&signing_key, 111, "/", "read", 100).unwrap();
+        let token = SecurityAuthority::mint_token(&signing_key, 111, "/", "read", 100)
+            .expect("mint_token should succeed");
 
         assert!(enclave
             .verify_token_and_action(&token, 222, "/file", "read")
@@ -312,7 +363,8 @@ mod tests {
         let signing_key = SigningKey::generate(&mut rng);
         let enclave = SecurityAuthority::new(signing_key.verifying_key(), None);
 
-        let mut token = SecurityAuthority::mint_token(&signing_key, 123, "/", "read", 100).unwrap();
+        let mut token = SecurityAuthority::mint_token(&signing_key, 123, "/", "read", 100)
+            .expect("mint_token should succeed");
 
         // Tamper with payload action
         token.payload.permitted_action = "write".to_string();

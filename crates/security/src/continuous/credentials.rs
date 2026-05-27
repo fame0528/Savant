@@ -133,10 +133,19 @@ impl CredentialBroker {
         if let Some(tokens) = active.remove(task_id) {
             let count = tokens.len();
             for mut token in tokens {
-                token.revoked = true;
-                // Zero credential bytes in memory before dropping
+                // Wire EphemeralToken::revoke() — replaces direct field assignment
+                token.revoke();
+                // SEC-05: Zero credential bytes using write_volatile to prevent compiler elision
                 let mut credential_bytes = std::mem::take(&mut token.token).into_bytes();
-                credential_bytes.fill(0);
+                for byte in credential_bytes.iter_mut() {
+                    // SAFETY: write_volatile to a valid, aligned, non-null byte pointer.
+                    // The pointer comes from iter_mut() on a Vec<u8>, so it is always valid.
+                    // Volatile write prevents the compiler from eliding the zeroing operation,
+                    // ensuring credential bytes are actually cleared from memory.
+                    unsafe {
+                        std::ptr::write_volatile(byte, 0);
+                    }
+                }
                 drop(credential_bytes);
             }
             if count > 0 {
@@ -187,7 +196,7 @@ mod tests {
             .await;
 
         assert!(token.is_ok());
-        let token = token.unwrap();
+        let token = token.expect("token should be ok");
         assert_eq!(token.service, "openrouter");
         assert_eq!(token.task_id, "task1");
         assert!(!token.is_expired());

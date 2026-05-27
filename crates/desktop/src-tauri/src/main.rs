@@ -41,16 +41,16 @@ impl LogBridge {
             .create(true)
             .append(true)
             .open(&log_path)
-                    .unwrap_or_else(|_e| {
-                        // No eprintln! in release — it spawns a console window on Windows
-                        OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open("savant-desktop.log")
-                            .unwrap_or_else(|_| {
-                                std::process::exit(1);
-                            })
-                    });
+            .unwrap_or_else(|_e| {
+                // No eprintln! in release — it spawns a console window on Windows
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("savant-desktop.log")
+                    .unwrap_or_else(|_| {
+                        std::process::exit(1);
+                    })
+            });
 
         Self {
             app_handle,
@@ -153,13 +153,17 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
         Some(config_path.to_string_lossy().into_owned())
     } else {
         warn!("  config not found at {:?} — using defaults", config_path);
-        if let Err(e) = app_handle.emit("system-log-event", "  config: NOT FOUND (using defaults)") {
+        if let Err(e) = app_handle.emit("system-log-event", "  config: NOT FOUND (using defaults)")
+        {
             eprintln!("[desktop] Failed to emit system-log-event: {}", e);
         }
         None
     };
 
-    // Set SAVANT_PROJECT_ROOT for Config::load_from to anchor project root
+    // Set SAVANT_PROJECT_ROOT for Config::load_from to anchor project root.
+    // SAFETY: Called during Tauri app setup before any async tasks or agent spawning.
+    // No concurrent readers exist at this point. Config::load_from now also accepts
+    // an explicit project_root parameter for callers that can pass it directly.
     std::env::set_var("SAVANT_PROJECT_ROOT", &resolver.base_data_path);
     info!(
         "  SAVANT_PROJECT_ROOT set to: {:?}",
@@ -220,7 +224,8 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
 
             // Step 5: Start event forwarder
             info!("[5/5] Starting event forwarder...");
-            if let Err(e) = app_handle.emit("system-log-event", "[5/5] Starting event forwarder...") {
+            if let Err(e) = app_handle.emit("system-log-event", "[5/5] Starting event forwarder...")
+            {
                 eprintln!("[desktop] Failed to emit system-log-event: {}", e);
             }
             start_event_forwarder(Arc::clone(&ignition_arc), app_handle.clone()).await;
@@ -281,8 +286,12 @@ async fn get_version(app_handle: AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn show_browser(app_handle: AppHandle) -> Result<String, String> {
     if let Some(window) = app_handle.get_webview_window("browser") {
-        window.show().map_err(|e| format!("Failed to show browser: {e}"))?;
-        window.set_focus().map_err(|e| format!("Failed to focus browser: {e}"))?;
+        window
+            .show()
+            .map_err(|e| format!("Failed to show browser: {e}"))?;
+        window
+            .set_focus()
+            .map_err(|e| format!("Failed to focus browser: {e}"))?;
         Ok("Browser window shown".to_string())
     } else {
         Err("Browser window not found".to_string())
@@ -292,7 +301,9 @@ async fn show_browser(app_handle: AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn hide_browser(app_handle: AppHandle) -> Result<String, String> {
     if let Some(window) = app_handle.get_webview_window("browser") {
-        window.hide().map_err(|e| format!("Failed to hide browser: {e}"))?;
+        window
+            .hide()
+            .map_err(|e| format!("Failed to hide browser: {e}"))?;
         Ok("Browser window hidden".to_string())
     } else {
         Err("Browser window not found".to_string())
@@ -302,7 +313,9 @@ async fn hide_browser(app_handle: AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn browser_go_back(app_handle: AppHandle) -> Result<String, String> {
     if let Some(window) = app_handle.get_webview_window("browser") {
-        window.eval("window.history.back()").map_err(|e| format!("Failed: {e}"))?;
+        window
+            .eval("window.history.back()")
+            .map_err(|e| format!("Failed: {e}"))?;
         Ok("Going back".to_string())
     } else {
         Err("Browser window not found".to_string())
@@ -312,7 +325,9 @@ async fn browser_go_back(app_handle: AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn browser_go_forward(app_handle: AppHandle) -> Result<String, String> {
     if let Some(window) = app_handle.get_webview_window("browser") {
-        window.eval("window.history.forward()").map_err(|e| format!("Failed: {e}"))?;
+        window
+            .eval("window.history.forward()")
+            .map_err(|e| format!("Failed: {e}"))?;
         Ok("Going forward".to_string())
     } else {
         Err("Browser window not found".to_string())
@@ -322,7 +337,9 @@ async fn browser_go_forward(app_handle: AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn browser_reload(app_handle: AppHandle) -> Result<String, String> {
     if let Some(window) = app_handle.get_webview_window("browser") {
-        window.eval("window.location.reload()").map_err(|e| format!("Failed: {e}"))?;
+        window
+            .eval("window.location.reload()")
+            .map_err(|e| format!("Failed: {e}"))?;
         Ok("Reloading".to_string())
     } else {
         Err("Browser window not found".to_string())
@@ -407,7 +424,6 @@ fn main() {
     // .env loaded in setup hook via SavantPathResolver (not from CWD)
     bootstrap_log("Starting Tauri builder...");
     // .env loaded in setup hook via SavantPathResolver (not from CWD)
-    bootstrap_log("Starting Tauri builder...");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -455,6 +471,24 @@ fn main() {
                     info!("  config_file: {:?}", resolver.config_file());
                     info!("  env_file: {:?}", resolver.env_file());
                     bootstrap_log(&format!("Path resolver: {:?}", resolver.base_data_path));
+
+                    // Create skills, data, and memory directories
+                    if let Err(e) = std::fs::create_dir_all(resolver.skills_dir()) {
+                        warn!("[desktop] Failed to create skills dir: {}", e);
+                    }
+                    if let Err(e) = std::fs::create_dir_all(resolver.data_dir()) {
+                        warn!("[desktop] Failed to create data dir: {}", e);
+                    }
+                    if let Err(e) = std::fs::create_dir_all(resolver.memory_dir()) {
+                        warn!("[desktop] Failed to create memory dir: {}", e);
+                    }
+                    info!(
+                        "[desktop] Directories initialized: skills={:?}, data={:?}, memory={:?}",
+                        resolver.skills_dir(),
+                        resolver.data_dir(),
+                        resolver.memory_dir()
+                    );
+
                     app.manage(resolver);
                 }
                 Err(e) => {
@@ -537,7 +571,8 @@ fn main() {
 
             // System tray
             let show_item = MenuItemBuilder::with_id("show", "Show Dashboard").build(app)?;
-            let show_browser_item = MenuItemBuilder::with_id("show_browser", "Show Browser").build(app)?;
+            let show_browser_item =
+                MenuItemBuilder::with_id("show_browser", "Show Browser").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Savant").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&show_item)

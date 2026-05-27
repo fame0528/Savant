@@ -85,10 +85,8 @@ impl ResultRouter {
 
     /// Registers a new delegated task for tracking.
     pub fn register_task(&mut self, task_id: &str, parent_depth: u8) {
-        self.task_states.insert(
-            task_id.to_string(),
-            super::protocol::TaskState::Submitted,
-        );
+        self.task_states
+            .insert(task_id.to_string(), super::protocol::TaskState::Submitted);
         self.delegation_depth
             .insert(task_id.to_string(), parent_depth);
     }
@@ -145,10 +143,7 @@ impl ResultRouter {
 
     /// Returns the number of actively tracked tasks.
     pub fn active_count(&self) -> usize {
-        self.task_states
-            .values()
-            .filter(|s| s.is_active())
-            .count()
+        self.task_states.values().filter(|s| s.is_active()).count()
     }
 }
 
@@ -172,8 +167,8 @@ pub enum ResultRouterError {
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod tests {
-    use super::*;
     use super::super::protocol::TaskState;
+    use super::*;
 
     #[test]
     fn test_result_router_register_and_track() {
@@ -189,11 +184,11 @@ mod tests {
         router.register_task("task-1", 0);
         router
             .update_state("task-1", TaskState::Working)
-            .unwrap();
+            .expect("update_state should succeed");
         assert_eq!(router.get_state("task-1"), Some(TaskState::Working));
         router
             .update_state("task-1", TaskState::Completed)
-            .unwrap();
+            .expect("update_state should succeed");
         assert_eq!(router.get_state("task-1"), Some(TaskState::Completed));
     }
 
@@ -221,8 +216,12 @@ mod tests {
         router.register_task("task-2", 0);
         router.register_task("task-3", 0);
         assert_eq!(router.active_count(), 0);
-        router.update_state("task-1", TaskState::Working).unwrap();
-        router.update_state("task-2", TaskState::Working).unwrap();
+        router
+            .update_state("task-1", TaskState::Working)
+            .expect("update_state should succeed");
+        router
+            .update_state("task-2", TaskState::Working)
+            .expect("update_state should succeed");
         assert_eq!(router.active_count(), 2);
     }
 

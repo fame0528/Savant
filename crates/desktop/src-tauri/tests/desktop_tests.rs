@@ -28,17 +28,50 @@ fn test_main_rs_has_all_tauri_commands() {
     let content = std::fs::read_to_string(&src_path).unwrap();
 
     // Verify all expected Tauri commands are defined
-    assert!(content.contains("#[tauri::command]"), "Missing tauri::command attribute");
-    assert!(content.contains("async fn ignite_swarm"), "Missing ignite_swarm command");
-    assert!(content.contains("async fn get_swarm_status"), "Missing get_swarm_status command");
-    assert!(content.contains("async fn get_version"), "Missing get_version command");
-    assert!(content.contains("async fn show_browser"), "Missing show_browser command");
-    assert!(content.contains("async fn hide_browser"), "Missing hide_browser command");
-    assert!(content.contains("async fn browser_go_back"), "Missing browser_go_back command");
-    assert!(content.contains("async fn browser_go_forward"), "Missing browser_go_forward command");
-    assert!(content.contains("async fn browser_reload"), "Missing browser_reload command");
-    assert!(content.contains("async fn browser_navigate"), "Missing browser_navigate command");
-    assert!(content.contains("async fn browser_get_tabs"), "Missing browser_get_tabs command");
+    assert!(
+        content.contains("#[tauri::command]"),
+        "Missing tauri::command attribute"
+    );
+    assert!(
+        content.contains("async fn ignite_swarm"),
+        "Missing ignite_swarm command"
+    );
+    assert!(
+        content.contains("async fn get_swarm_status"),
+        "Missing get_swarm_status command"
+    );
+    assert!(
+        content.contains("async fn get_version"),
+        "Missing get_version command"
+    );
+    assert!(
+        content.contains("async fn show_browser"),
+        "Missing show_browser command"
+    );
+    assert!(
+        content.contains("async fn hide_browser"),
+        "Missing hide_browser command"
+    );
+    assert!(
+        content.contains("async fn browser_go_back"),
+        "Missing browser_go_back command"
+    );
+    assert!(
+        content.contains("async fn browser_go_forward"),
+        "Missing browser_go_forward command"
+    );
+    assert!(
+        content.contains("async fn browser_reload"),
+        "Missing browser_reload command"
+    );
+    assert!(
+        content.contains("async fn browser_navigate"),
+        "Missing browser_navigate command"
+    );
+    assert!(
+        content.contains("async fn browser_get_tabs"),
+        "Missing browser_get_tabs command"
+    );
 }
 
 #[test]
@@ -47,7 +80,10 @@ fn test_main_rs_has_invoke_handler() {
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
     assert!(content.contains("invoke_handler"), "Missing invoke_handler");
-    assert!(content.contains("tauri::generate_handler"), "Missing generate_handler");
+    assert!(
+        content.contains("tauri::generate_handler"),
+        "Missing generate_handler"
+    );
 }
 
 #[test]
@@ -56,7 +92,10 @@ fn test_main_rs_has_tracing_setup() {
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
     assert!(content.contains("LogBridge"), "Missing LogBridge");
-    assert!(content.contains("tracing_subscriber"), "Missing tracing_subscriber");
+    assert!(
+        content.contains("tracing_subscriber"),
+        "Missing tracing_subscriber"
+    );
     assert!(content.contains("try_init"), "Missing try_init for tracing");
 }
 
@@ -65,8 +104,14 @@ fn test_main_rs_has_path_resolver_setup() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
-    assert!(content.contains("SavantPathResolver"), "Missing SavantPathResolver");
-    assert!(content.contains("app.manage(resolver)"), "Missing path resolver management");
+    assert!(
+        content.contains("SavantPathResolver"),
+        "Missing SavantPathResolver"
+    );
+    assert!(
+        content.contains("app.manage(resolver)"),
+        "Missing path resolver management"
+    );
 }
 
 #[test]
@@ -74,9 +119,15 @@ fn test_main_rs_has_system_tray() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
-    assert!(content.contains("TrayIconBuilder"), "Missing TrayIconBuilder");
+    assert!(
+        content.contains("TrayIconBuilder"),
+        "Missing TrayIconBuilder"
+    );
     assert!(content.contains("MenuBuilder"), "Missing MenuBuilder");
-    assert!(content.contains("MenuItemBuilder"), "Missing MenuItemBuilder");
+    assert!(
+        content.contains("MenuItemBuilder"),
+        "Missing MenuItemBuilder"
+    );
 }
 
 #[test]
@@ -84,7 +135,10 @@ fn test_main_rs_has_updater() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
-    assert!(content.contains("tauri_plugin_updater"), "Missing updater plugin");
+    assert!(
+        content.contains("tauri_plugin_updater"),
+        "Missing updater plugin"
+    );
     assert!(content.contains("updater.check"), "Missing update check");
 }
 
@@ -93,8 +147,14 @@ fn test_main_rs_has_event_forwarder() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
-    assert!(content.contains("start_event_forwarder"), "Missing event forwarder");
-    assert!(content.contains("gateway-event"), "Missing gateway-event emit");
+    assert!(
+        content.contains("start_event_forwarder"),
+        "Missing event forwarder"
+    );
+    assert!(
+        content.contains("gateway-event"),
+        "Missing gateway-event emit"
+    );
 }
 
 #[test]
@@ -103,7 +163,10 @@ fn test_main_rs_has_app_state() {
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
     assert!(content.contains("struct AppState"), "Missing AppState");
-    assert!(content.contains("ignition: Mutex"), "Missing ignition state");
+    assert!(
+        content.contains("ignition: Mutex"),
+        "Missing ignition state"
+    );
     assert!(content.contains("nexus: Mutex"), "Missing nexus state");
 }
 
@@ -112,9 +175,18 @@ fn test_main_rs_has_log_bridge() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
-    assert!(content.contains("struct LogBridge"), "Missing LogBridge struct");
-    assert!(content.contains("impl<S: Subscriber> Layer<S> for LogBridge"), "Missing Layer impl");
-    assert!(content.contains("system-log-event"), "Missing system-log-event emit");
+    assert!(
+        content.contains("struct LogBridge"),
+        "Missing LogBridge struct"
+    );
+    assert!(
+        content.contains("impl<S: Subscriber> Layer<S> for LogBridge"),
+        "Missing Layer impl"
+    );
+    assert!(
+        content.contains("system-log-event"),
+        "Missing system-log-event emit"
+    );
 }
 
 #[test]
@@ -122,8 +194,14 @@ fn test_main_rs_has_log_visitor() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
-    assert!(content.contains("struct LogVisitor"), "Missing LogVisitor struct");
-    assert!(content.contains("impl Visit for LogVisitor"), "Missing Visit impl");
+    assert!(
+        content.contains("struct LogVisitor"),
+        "Missing LogVisitor struct"
+    );
+    assert!(
+        content.contains("impl Visit for LogVisitor"),
+        "Missing Visit impl"
+    );
     assert!(content.contains("record_debug"), "Missing record_debug");
     assert!(content.contains("record_str"), "Missing record_str");
 }
@@ -133,7 +211,10 @@ fn test_main_rs_has_bootstrap_log() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
     let content = std::fs::read_to_string(&src_path).unwrap();
-    assert!(content.contains("fn bootstrap_log"), "Missing bootstrap_log function");
+    assert!(
+        content.contains("fn bootstrap_log"),
+        "Missing bootstrap_log function"
+    );
 }
 
 #[test]
@@ -148,11 +229,20 @@ fn test_paths_rs_has_resolver_struct() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let paths_path = PathBuf::from(manifest_dir).join("src/paths.rs");
     let content = std::fs::read_to_string(&paths_path).unwrap();
-    assert!(content.contains("pub struct SavantPathResolver"), "Missing SavantPathResolver struct");
+    assert!(
+        content.contains("pub struct SavantPathResolver"),
+        "Missing SavantPathResolver struct"
+    );
     assert!(content.contains("pub fn new"), "Missing new() constructor");
-    assert!(content.contains("pub fn config_file"), "Missing config_file()");
+    assert!(
+        content.contains("pub fn config_file"),
+        "Missing config_file()"
+    );
     assert!(content.contains("pub fn env_file"), "Missing env_file()");
-    assert!(content.contains("pub fn workspaces_dir"), "Missing workspaces_dir()");
+    assert!(
+        content.contains("pub fn workspaces_dir"),
+        "Missing workspaces_dir()"
+    );
 }
 
 #[test]

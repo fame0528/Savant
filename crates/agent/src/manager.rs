@@ -4,7 +4,7 @@ use savant_core::fs::registry::AgentRegistry;
 use savant_core::types::AgentConfig;
 
 pub struct AgentManager {
-    pub _config: Config,
+    pub config: Config,
     pub registry: AgentRegistry,
 }
 
@@ -16,7 +16,7 @@ impl AgentManager {
             agents_path
         );
         Self {
-            _config: config.clone(),
+            config: config.clone(),
             registry: AgentRegistry::new(
                 agents_path,
                 config.ai.clone(),
@@ -32,11 +32,10 @@ impl AgentManager {
         // Automatically scaffold uniform workspace subdirectories
         let skills_dir = agent.workspace_path.join("skills");
         if let Err(e) = tokio::fs::create_dir_all(&skills_dir).await {
-            tracing::warn!(
+            return Err(SavantError::Unknown(format!(
                 "Failed to scaffold skills directory for agent {}: {}",
-                agent.agent_name,
-                e
-            );
+                agent.agent_name, e
+            )));
         }
 
         Ok(agent)

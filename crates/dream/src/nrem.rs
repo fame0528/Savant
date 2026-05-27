@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use savant_memory::MemoryEngine;
 use tracing::{debug, info, warn};
+use xxhash_rust::xxh3::xxh3_64;
 
 /// Result of an NREM consolidation cycle.
 #[derive(Debug, Clone)]
@@ -88,6 +89,8 @@ pub struct NremController {
     pub replay_window_hours: u64,
     /// Decay threshold below which memories are cold-storage eligible.
     pub decay_threshold: f32,
+    /// Maximum number of messages to fetch per cycle.
+    pub max_messages: usize,
 }
 
 impl NremController {
@@ -96,6 +99,7 @@ impl NremController {
         Self {
             replay_window_hours,
             decay_threshold: DEFAULT_DECAY_THRESHOLD,
+            max_messages: 5000,
         }
     }
 
@@ -104,6 +108,7 @@ impl NremController {
         Self {
             replay_window_hours,
             decay_threshold,
+            max_messages: 5000,
         }
     }
 
@@ -122,7 +127,10 @@ impl NremController {
     /// 5. Mark below-threshold memories as cold-storage eligible
     /// 6. Write consolidated results back to memory
     /// 7. Emit ConsolidationEvent to outbox for vault projection
-    pub async fn run(&self, memory: &Arc<MemoryEngine>) -> Result<(NremResult, Option<ConsolidationEvent>), super::DreamError> {
+    pub async fn run(
+        &self,
+        memory: &Arc<MemoryEngine>,
+    ) -> Result<(NremResult, Option<ConsolidationEvent>), super::DreamError> {
         let start = Instant::now();
         info!(
             "[NREM] Starting consolidation cycle (window={}h, decay_threshold={:.2})",
@@ -132,18 +140,21 @@ impl NremController {
         // Fetch all messages across sessions
         let enclave = memory.enclave();
         let lsm = enclave.lsm();
-        let all_messages = lsm.iter_all_messages(5000);
+        let all_messages = lsm.iter_all_messages(self.max_messages);
         let messages: Vec<_> = all_messages.collect();
 
         if messages.is_empty() {
             debug!("[NREM] No messages to consolidate");
-            return Ok((NremResult {
-                scanned: 0,
-                consolidated: 0,
-                contradictions_resolved: 0,
-                cold_storage_eligible: Vec::new(),
-                duration_ms: start.elapsed().as_millis() as u64,
-            }, None));
+            return Ok((
+                NremResult {
+                    scanned: 0,
+                    consolidated: 0,
+                    contradictions_resolved: 0,
+                    cold_storage_eligible: Vec::new(),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                },
+                None,
+            ));
         }
 
         let scanned = messages.len();
@@ -185,23 +196,17 @@ impl NremController {
             let access_count = msg.tool_calls.len() as u32;
             let referenced = !msg.tool_calls.is_empty() || !msg.tool_results.is_empty();
 
-            let weight = compute_decay_weight(
-                content_importance,
-                age_hours,
-                access_count,
-                referenced,
-            );
+            let weight =
+                compute_decay_weight(content_importance, age_hours, access_count, referenced);
 
             if is_cold_storage_eligible(weight, self.decay_threshold) {
-                if let Ok(id_val) = msg.id.parse::<u64>() {
-                    cold_storage_ids.push(id_val);
-                }
+                let id_val = xxh3_64(msg.id.as_bytes());
+                cold_storage_ids.push(id_val);
             }
 
             if !msg.tool_calls.is_empty() {
-                if let Ok(id_val) = msg.id.parse::<u64>() {
-                    consolidated_ids.push(id_val);
-                }
+                let id_val = xxh3_64(msg.id.as_bytes());
+                consolidated_ids.push(id_val);
             }
         }
 
@@ -267,53 +272,97 @@ impl NremController {
             None
         };
 
-        Ok((NremResult {
-            scanned,
-            consolidated: dedup_count,
-            contradictions_resolved,
-            cold_storage_eligible: cold_storage_ids,
-            duration_ms,
-        }, consolidation_event))
+        Ok((
+            NremResult {
+                scanned,
+                consolidated: dedup_count,
+                contradictions_resolved,
+                cold_storage_eligible: cold_storage_ids,
+                duration_ms,
+            },
+            consolidation_event,
+        ))
     }
 }
 
+/// Words to ignore when computing content word overlap (stopwords).
+const CONTENT_STOPWORDS: &[&str] = &[
+    "the", "a", "an", "is", "was", "are", "were", "be", "been", "being", "have", "has", "had",
+    "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can", "to",
+    "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "about", "it", "its",
+    "this", "that", "and", "or", "but", "not", "no", "nor",
+];
+
+/// Negation patterns that indicate a statement is being denied/reversed.
+const NEGATION_WORDS: &[&str] = &[
+    "not",
+    "never",
+    "no longer",
+    "isn't",
+    "doesn't",
+    "wasn't",
+    "won't",
+    "can't",
+    "couldn't",
+    "shouldn't",
+    "wouldn't",
+    "haven't",
+    "hasn't",
+    "hadn't",
+    "don't",
+    "didn't",
+    "cannot",
+];
+
+/// Maximum number of recent messages to check for contradictions (sliding window).
+const CONTRADICTION_WINDOW: usize = 500;
+
 /// Detects contradictions in a list of messages.
 /// Returns indices of contradictory message pairs.
+///
+/// Uses a sliding window (last 500 messages) to avoid O(n^2) on large histories.
+/// A contradiction requires BOTH:
+/// 1. Explicit negation pattern in one of the messages
+/// 2. >50% shared content words between the two messages (topic overlap)
 fn detect_contradictions(messages: &[savant_memory::AgentMessage]) -> Vec<(usize, usize)> {
     let mut contradictions = Vec::new();
 
-    let negation_patterns = [
-        ("is", "is not"),
-        ("was", "was not"),
-        ("can", "cannot"),
-        ("will", "will not"),
-        ("should", "should not"),
-        ("true", "false"),
-        ("yes", "no"),
-        ("enabled", "disabled"),
-        ("active", "inactive"),
-        ("passing", "failing"),
-        ("success", "failure"),
-    ];
+    // Sliding window: only compare recent messages to avoid O(n^2) on large histories
+    let window_start = messages.len().saturating_sub(CONTRADICTION_WINDOW);
 
-    for i in 0..messages.len() {
+    for i in window_start..messages.len() {
         for j in (i + 1)..messages.len() {
             let a = messages[i].content.to_lowercase();
             let b = messages[j].content.to_lowercase();
 
-            // Check if messages are about similar topics but with negation
-            for (pos, neg) in &negation_patterns {
-                if (a.contains(pos) && b.contains(neg)) || (a.contains(neg) && b.contains(pos)) {
-                    // Verify they share enough context to be about the same topic
-                    let words_a: std::collections::HashSet<&str> = a.split_whitespace().collect();
-                    let words_b: std::collections::HashSet<&str> = b.split_whitespace().collect();
-                    let shared = words_a.intersection(&words_b).count();
+            // Step 1: Check if either message contains negation words
+            let a_has_negation = NEGATION_WORDS.iter().any(|nw| a.contains(nw));
+            let b_has_negation = NEGATION_WORDS.iter().any(|nw| b.contains(nw));
 
-                    if shared >= 3 {
-                        contradictions.push((i, j));
-                        break;
-                    }
-                }
+            if !a_has_negation && !b_has_negation {
+                continue; // No negation — skip pair
+            }
+
+            // Step 2: Compute semantic overlap via content words (>50% shared)
+            let content_words = |text: &str| -> std::collections::HashSet<String> {
+                text.split_whitespace()
+                    .filter(|w| !CONTENT_STOPWORDS.contains(w) && w.len() > 2)
+                    .map(|w| w.to_string())
+                    .collect()
+            };
+            let words_a = content_words(&a);
+            let words_b = content_words(&b);
+
+            if words_a.is_empty() || words_b.is_empty() {
+                continue;
+            }
+
+            let shared = words_a.intersection(&words_b).count();
+            let min_count = words_a.len().min(words_b.len());
+            let overlap_ratio = shared as f32 / min_count as f32;
+
+            if overlap_ratio > 0.5 {
+                contradictions.push((i, j));
             }
         }
     }
@@ -356,14 +405,31 @@ mod tests {
         use savant_memory::AgentMessage;
 
         let messages = vec![
+            AgentMessage::user("s1", "The build is not passing anymore"),
+            AgentMessage::user("s1", "The build is passing now"),
+        ];
+
+        let contradictions = detect_contradictions(&messages);
+        assert!(
+            !contradictions.is_empty(),
+            "Should detect contradiction via negation + shared content words"
+        );
+    }
+
+    #[test]
+    fn test_detect_contradictions_no_negation() {
+        use savant_memory::AgentMessage;
+
+        // Without negation words, no contradiction should be detected
+        let messages = vec![
             AgentMessage::user("s1", "The build is passing"),
             AgentMessage::user("s1", "The build is failing"),
         ];
 
         let contradictions = detect_contradictions(&messages);
         assert!(
-            !contradictions.is_empty(),
-            "Should detect build pass/fail contradiction"
+            contradictions.is_empty(),
+            "Antonym pairs without negation should not trigger contradiction detection"
         );
     }
 
@@ -372,8 +438,8 @@ mod tests {
         use savant_memory::AgentMessage;
 
         let messages = vec![
-            AgentMessage::user("s1", "The service is enabled"),
-            AgentMessage::user("s1", "The service is disabled"),
+            AgentMessage::user("s1", "The service isn't working correctly"),
+            AgentMessage::user("s1", "The service is working correctly now"),
         ];
 
         let contradictions = vec![(0, 1)];
@@ -381,7 +447,7 @@ mod tests {
 
         assert_eq!(resolved.len(), 1);
         assert!(
-            resolved[0].content.contains("disabled"),
+            resolved[0].content.contains("now"),
             "Should keep the newer message"
         );
     }
@@ -396,14 +462,22 @@ mod tests {
     fn test_decay_weight_no_decay() {
         // New memory (age=0), no accesses → should have high weight
         let weight = compute_decay_weight(1.0, 0.0, 0, false);
-        assert!(weight > 0.5, "Fresh memory should have high weight, got {}", weight);
+        assert!(
+            weight > 0.5,
+            "Fresh memory should have high weight, got {}",
+            weight
+        );
     }
 
     #[test]
     fn test_decay_weight_old_memory() {
         // Very old memory (1 year), no accesses → should have low weight
         let weight = compute_decay_weight(1.0, 8760.0, 0, false);
-        assert!(weight < 0.3, "Old memory should have low weight, got {}", weight);
+        assert!(
+            weight < 0.3,
+            "Old memory should have low weight, got {}",
+            weight
+        );
     }
 
     #[test]

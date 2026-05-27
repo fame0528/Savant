@@ -15,22 +15,23 @@ pub struct QualityResult {
     pub failures: Vec<QualityFailure>,
 }
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // .expect() on hardcoded regex in LazyLock — one-time init, cannot fail
 static STUB_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(todo!\(\)|unimplemented!\(\)|//\s*todo|FIXME|placeholder|\[STUB\]|__STUB__|TBD)")
-        .expect("Hardcoded stub detection regex is valid")
+    Regex::new(
+        r"(?i)(todo!\(\)|unimplemented!\(\)|//\s*todo|FIXME|placeholder|\[STUB\]|__STUB__|TBD)",
+    )
+    .expect("Hardcoded stub detection regex is valid")
 });
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // .expect() on hardcoded regex in LazyLock — one-time init, cannot fail
 static NAMING_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$").expect("Valid naming regex"));
 
-#[allow(clippy::disallowed_methods)]
-static ACTIONABLE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^\s*(\d+\.\s|[-*]\s|```)").expect("Valid actionable regex")
-});
+#[allow(clippy::disallowed_methods)] // .expect() on hardcoded regex in LazyLock — one-time init, cannot fail
+static ACTIONABLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\s*(\d+\.\s|[-*]\s|```)").expect("Valid actionable regex"));
 
-#[allow(clippy::disallowed_methods)]
+#[allow(clippy::disallowed_methods)] // .expect() on hardcoded regex in LazyLock — one-time init, cannot fail
 static VERSION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Valid semver regex"));
 
@@ -54,9 +55,7 @@ impl QualityGate {
         } else if name.len() > 64 || !NAMING_RE.is_match(name) {
             failures.push(QualityFailure {
                 code: String::from("E_NAME_FORMAT"),
-                detail: format!(
-                    "'{name}' must be kebab-case, start with a letter, max 64 chars"
-                ),
+                detail: format!("'{name}' must be kebab-case, start with a letter, max 64 chars"),
             });
         }
 
@@ -120,9 +119,7 @@ impl QualityGate {
         if !ACTIONABLE_RE.is_match(&clean_body) {
             failures.push(QualityFailure {
                 code: String::from("E_NO_ACTIONABLE"),
-                detail: String::from(
-                    "No numbered list, bullet list, or code block found in body",
-                ),
+                detail: String::from("No numbered list, bullet list, or code block found in body"),
             });
         }
 
@@ -177,10 +174,7 @@ mod tests {
     fn test_empty_name_rejected() {
         let result = QualityGate::validate("", "a good description", "0.1.0", "# Usage\n\n1. First step\n2. Second step\n\nSome more text to reach the minimum character count. Let me add some more words here to ensure we pass the 200 character minimum threshold for the quality gate validation check.", &std::collections::HashSet::new());
         assert!(!result.passed);
-        assert!(result
-            .failures
-            .iter()
-            .any(|f| f.code == "E_NAME_REQUIRED"));
+        assert!(result.failures.iter().any(|f| f.code == "E_NAME_REQUIRED"));
     }
 
     #[test]
@@ -207,10 +201,7 @@ mod tests {
             &std::collections::HashSet::new(),
         );
         assert!(!result.passed);
-        assert!(result
-            .failures
-            .iter()
-            .any(|f| f.code == "E_BODY_TOO_SHORT"));
+        assert!(result.failures.iter().any(|f| f.code == "E_BODY_TOO_SHORT"));
     }
 
     #[test]
@@ -235,17 +226,9 @@ mod tests {
         let mut existing = std::collections::HashSet::new();
         existing.insert(String::from("my-tool"));
         let body = "# Test\n\n1. First step\n2. Second step\n\nExtra text to reach the minimum character count for quality gate validation. Adding more words to ensure we pass the body length threshold of two hundred characters with room to spare for the test case.";
-        let result = QualityGate::validate(
-            "my-tool",
-            "a good description",
-            "0.1.0",
-            body,
-            &existing,
-        );
+        let result =
+            QualityGate::validate("my-tool", "a good description", "0.1.0", body, &existing);
         assert!(!result.passed);
-        assert!(result
-            .failures
-            .iter()
-            .any(|f| f.code == "E_DUPLICATE_NAME"));
+        assert!(result.failures.iter().any(|f| f.code == "E_DUPLICATE_NAME"));
     }
 }

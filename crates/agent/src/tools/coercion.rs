@@ -39,7 +39,11 @@ fn resolve_refs(schema: &Value, root: &Value, depth: u32) -> Value {
                 }
                 Value::Object(result)
             } else if let Some(arr) = schema.as_array() {
-                Value::Array(arr.iter().map(|v| resolve_refs(v, root, depth + 1)).collect())
+                Value::Array(
+                    arr.iter()
+                        .map(|v| resolve_refs(v, root, depth + 1))
+                        .collect(),
+                )
             } else {
                 schema.clone()
             }
@@ -117,13 +121,13 @@ fn coerce_value(value: &Value, schema: &Value) -> Value {
 
         // oneOf/anyOf discriminator matching
         (_, _) if schema.get("oneOf").is_some() || schema.get("anyOf").is_some() => {
-            let variants = schema
-                .get("oneOf")
-                .or_else(|| schema.get("anyOf"))
-                .expect("oneOf or anyOf checked above");
-            find_discriminated_variant(value, variants)
-                .map(|v_schema| coerce_value(value, v_schema))
-                .unwrap_or_else(|| value.clone())
+            if let Some(variants) = schema.get("oneOf").or_else(|| schema.get("anyOf")) {
+                find_discriminated_variant(value, variants)
+                    .map(|v_schema| coerce_value(value, v_schema))
+                    .unwrap_or_else(|| value.clone())
+            } else {
+                value.clone()
+            }
         }
 
         // No coercion needed
@@ -166,6 +170,7 @@ fn find_discriminated_variant<'a>(value: &'a Value, variants: &'a Value) -> Opti
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

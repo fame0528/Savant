@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -42,7 +43,7 @@ enum WhatsAppMessage {
 pub struct WhatsAppAdapter {
     config: WhatsAppConfig,
     sidecar_stdin: Arc<Mutex<Option<ChildStdin>>>,
-    events_tx: mpsc::UnboundedSender<EventFrame>,
+    events_tx: mpsc::Sender<EventFrame>,
     /// Handle to the child process for cleanup
     child_process: Arc<Mutex<Option<tokio::process::Child>>>,
     /// Handle to the reader task for cleanup
@@ -50,7 +51,7 @@ pub struct WhatsAppAdapter {
 }
 
 impl WhatsAppAdapter {
-    pub fn new(config: WhatsAppConfig, events_tx: mpsc::UnboundedSender<EventFrame>) -> Self {
+    pub fn new(config: WhatsAppConfig, events_tx: mpsc::Sender<EventFrame>) -> Self {
         Self {
             config,
             sidecar_stdin: Arc::new(Mutex::new(None)),
@@ -119,7 +120,7 @@ impl WhatsAppAdapter {
                                 })
                                 .to_string(),
                             };
-                            if let Err(e) = tx.send(frame) {
+                            if let Err(e) = tx.send(frame).await {
                                 tracing::warn!("[channels] Channel send failed: {}", e);
                             }
                         }

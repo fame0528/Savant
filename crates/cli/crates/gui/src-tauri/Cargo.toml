@@ -1,0 +1,59 @@
+[package]
+name = "savant-gui"
+version = "0.1.0"
+description = "Savant CLI GUI — Tauri 2 desktop application"
+edition = "2021"
+license.workspace = true
+
+[lib]
+name = "savant_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { workspace = true }
+tauri-plugin-opener = { workspace = true }
+tauri-plugin-store = { workspace = true }
+tauri-plugin-updater = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+portable-pty = { workspace = true }
+dirs = { workspace = true }
+ignore = { workspace = true }
+grep-regex = { workspace = true }
+grep-searcher = { workspace = true }
+grep-matcher = { workspace = true }
+globset = { workspace = true }
+shared_child = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true }
+rand = { workspace = true }
+keyring = { workspace = true }
+savant_core = { workspace = true }
+savant_cli_gateway = { workspace = true }
+savant_cli_session = { workspace = true }
+savant_cli_core = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[package.metadata]
+name = "Savant CLI Companion"
+
+[lints]
+workspace = true

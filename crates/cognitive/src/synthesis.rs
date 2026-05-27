@@ -369,6 +369,24 @@ fn build_step(sub_task: &SubTask, step_index: usize, session_id: &str) -> Reques
     }
 }
 
+/// Checks whether a response payload indicates an error.
+///
+/// Parses JSON to check for `is_error` and `success` fields, falling back
+/// to prefix matching for plain-text error messages.
+fn is_error_response(response: &str) -> bool {
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(response) {
+        if let Some(is_error) = parsed.get("is_error").and_then(|v| v.as_bool()) {
+            return is_error;
+        }
+        if let Some(success) = parsed.get("success").and_then(|v| v.as_bool()) {
+            return !success;
+        }
+    }
+    // Fallback: check for error patterns at start of response
+    let trimmed = response.trim();
+    trimmed.starts_with("error:") || trimmed.starts_with("Error:") || trimmed.starts_with("ERROR:")
+}
+
 /// The Recursive Synthesis Engine.
 ///
 /// Decomposes high-level goals into executable trajectories using
@@ -505,19 +523,7 @@ impl SynthesisEngine {
         let mut successes = 0usize;
 
         for res in results {
-            // Check for structured error indicators in the payload
-            let is_error = res.payload.contains("\"is_error\":true")
-                || res.payload.contains("\"is_error\": true");
-            let lower = res.payload.to_lowercase();
-            if is_error
-                || lower.contains("\"error\"")
-                || lower.contains("\"failed\"")
-                || lower.contains("exception")
-                || lower.starts_with("error:")
-                || lower.starts_with("error ")
-                || lower.contains(" failed")
-                || lower.contains("failure")
-            {
+            if is_error_response(&res.payload) {
                 failures += 1;
             } else {
                 successes += 1;
@@ -560,7 +566,7 @@ mod tests {
 
     fn make_test_engine() -> SynthesisEngine {
         let config = DspConfig::default();
-        let predictor = DspPredictor::new(config).unwrap();
+        let predictor = DspPredictor::new(config).expect("test predictor");
         SynthesisEngine::new(Arc::new(Mutex::new(predictor)))
     }
 

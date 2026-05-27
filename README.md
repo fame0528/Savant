@@ -3,17 +3,23 @@
 
 <img src="img/savant.png" alt="Savant Logo" width="180" />
 
-# SAVANT v0.3.0
+# SAVANT v0.3.2
 
 **One Mind. A Thousand Faces.**
 
-A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with OMEGA-VIII certification, mandatory security scanning, and real-time substrate observability.
+A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with mandatory security scanning and real-time substrate observability.
 
-**OMEGA-VIII Certified:** 111/111 CRITICAL production violations eliminated. Zero `.unwrap()` in production code. Zero `panic!`. Zero stubs.
+**Zero Warning Build:** `cargo clippy --workspace --no-deps` produces zero warnings. Zero `unwrap()`/`expect()` in non-test code. 1,193 tests pass. Enterprise-grade error handling throughout.
 
-**Production Pass:** Full project audit complete (250 issues identified, 87+ fixes across 14 batches). All critical/high issues resolved. 0 errors, 0 warnings. Agent Hook System v1 with 15 lifecycle events, panic-safe execution. Discovery-based context windows. Enterprise-grade time utilities. Production-ready.
+**Security Hardening (2026-05-25):** REST API authentication middleware with constant-time comparison. Immutable security fields (5 fields blocked at runtime). Canvas WebSocket auth. SoulUpdate/BulkManifest/NLCommand size limits. Environment variable filtering for spawned processes. Mandatory SecurityScanner (no optional bypass).
 
-**Deep Audit (2026-03-24):** Python static analysis (1,492 violations) filtered to 333 actionable findings. Enterprise-grade FID with 24 fix items across 3 phases. 5 CRITICAL security vulnerabilities (TOCTOU, SSRF) eliminated. 14 stub implementations discovered and wired. 133+ silent failures fixed. 72 files changed. Phase 1 + Phase 2 complete.
+**Consciousness Layer (2026-05-25):** Continuously thinking daemon that observes the hivemind via zero-copy shared memory. Entropy-based cadence (0ms–300s). Reconstructive narrative synthesis (Markov chain). Wonder engine for autonomous exploration. Anti-echo-chamber for diversity enforcement. Consciousness budget with quiet hours.
+
+**Resource Governor (2026-05-25):** CPU/memory-aware agent spawning with adaptive concurrency. Four pressure levels (Low/Medium/High/Critical). Deferred agent queue with max retry. Lock-free pressure reads via atomics.
+
+**Provider Chain Resilience (2026-05-25):** True streaming (chunks yielded directly, no collect-then-replay). Cross-provider fallback actually wired. Circuit breaker race condition fixed. 120s configurable call timeout. RateLimiter integration.
+
+**LLM-Driven Skill Synthesis (2026-05-25):** SovereignSynthesizer now uses LLM for code generation with template fallback. Self-healing error feedback loop (max 3 attempts). Pinned dependency versions. Skill chaining with `depends_on` and `chain_with` fields.
 
 **Desktop App:** Tauri 2.x with auto-updater, splash screen, dependency checker. Users always have the latest version.
 
@@ -35,7 +41,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 - **Swarm Orchestration** — Spawn, coordinate, and manage hundreds of concurrent AI agents from a unified control plane
 - **15 AI Providers** — OpenRouter, OpenAI, Anthropic, Google, Mistral, Groq, Deepseek, Cohere, Together, Azure, xAI, Fireworks, Novita, Ollama, LmStudio
-- **Provider Chain** — Error classification, exponential cooldown, circuit breaker, and response cache for resilient LLM access
+- **Provider Chain** — Error classification, exponential cooldown, circuit breaker, response cache, cross-provider fallback, 120s configurable timeout, RateLimiter integration
 - **Session Management** — Thread/turn tracking with CortexaDB persistence, session restore on restart
 - **Context Compaction** — 3-strategy compaction (archive/summarize/truncate) prevents context overflow on long conversations
 - **Approval Gating** — Destructive tools require human consent before execution
@@ -44,21 +50,34 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 - **MCP Integration** — Model Context Protocol tools discovered at startup, schemas sent to LLM API, tools available as native. Configurable via `[mcp]` in savant.toml
 - **Smithery CLI** — Install MCP servers from Smithery marketplace via dashboard, auto-config in savant.toml
 - **OpenClaw Skill Compatibility** — Install skills from ClawHub with automatic OpenClaw `SKILL.md` format parsing
+- **Skill Chaining** — Skills can declare `depends_on` and `chain_with` for dependency resolution and composition
+- **LLM-Driven Skill Synthesis** — SovereignSynthesizer generates skill code via LLM with template fallback, self-healing error feedback, and pinned dependencies
 - **Mandatory Security Scanning** — Every skill is scanned before execution; user sovereignty with click-based approval (0-3 clicks based on risk)
+- **REST API Authentication** — Tower middleware with constant-time comparison, `Authorization: Bearer` and `X-API-Key` support, immutable security fields
 - **Real-Time Dashboard** — A Next.js observability dashboard with live WebSocket streaming, message history, cognitive insights, and soul manifestation
 - **Multi-Channel Gateway** — Axum-based WebSocket gateway with authentication, message routing, and event-driven architecture
 - **Persistent Memory** — Hybrid storage combining SQLite (WAL), Fjall LSM-tree, and rkyv-serialized vector embeddings
 - **Cognitive Architecture** — Goal decomposition, strategic synthesis, memory consolidation, and proactive heartbeat loops
+- **Consciousness Layer** — Continuously thinking daemon with entropy-based cadence, reconstructive narrative synthesis, wonder engine, anti-echo-chamber, and consciousness budget
+- **Resource Governor** — CPU/memory-aware agent spawning with 4 pressure levels, adaptive semaphore, and deferred agent queue
+- **Cost-Aware Routing** — Heuristic task complexity classification routes simple tasks to cheap models and complex tasks to expensive models
+- **Proactive Context Gathering** — Parallel memory + git log gathering before user asks
 - **Threat Intelligence** — Global blocklist sync with configurable threat intelligence feed
 - **Smart Build System** — Incremental compilation with automatic source change detection
 - **Config Auto-Reload** — Live configuration updates via file watcher
 - **Gemma 4 Model System** — Default local model for vision + embeddings. Auto-fallback when primary chat model lacks vision/embedding support. 4 variants (E2B/E4B/26B/31B). On-demand loading with auto-unload. Ollama auto-start + model auto-pull. Setup wizard with hardware detection. Cloud fallback via OpenRouter free tier.
-- **Personality Evolution** — Per-agent lifetime SOUL.md evolution with ALD pipeline, identity signal processing, mutation proposals with cooldown, and immutable section locking
+- **Personality Evolution** — Per-agent lifetime SOUL.md evolution with ALD pipeline, identity signal processing, mutation proposals with cooldown, immutable section locking, and quality gates
 - **Continuous Consciousness** — Self-referential heartbeat feedback loop with deterministic stillness detection and forced reflection
 - **Dream System** — NREM/REM sleep cycles for memory consolidation, with Vendi cognitive architecture integration
-- **Tool Forge** — Tool creation with quality gates, provenance tracking, and registry
+- **Glass House** — Obsidian bidirectional sync. Memory projected to vault. Edits feed back. Injection defense on all inbound changes.
+- **Tool Forge** — Tool creation with quality gates, provenance tracking, registry, and skill verification
 - **External Integrations** — Gmail and Notion connectors with sync scheduler and state tracking
 - **Dashboard Evolution UI** — Behind-the-curtain evolution viewer, health monitoring, setup wizard, and enhanced settings
+- **CI/CD Pipeline** — GitHub Actions for automated check, clippy, test, fmt on every PR. 3-platform release workflow.
+- **REST Chat API** — `POST /api/chat` for sending messages without WebSocket. Full REST API for dashboard integration.
+- **Request ID Tracing** — Every request gets a UUID in `X-Request-Id` header for cross-service correlation.
+- **Structured Health Check** — `/health` returns version, uptime, and subsystem status as JSON.
+- **Grounding Score** — Learning system uses weighted environmental (1.0) and introspective (0.6) grounding scores with fabrication blocking.
 
 ---
 
@@ -66,7 +85,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 ## Architecture
 
-<img src="img/architecture.png" alt="Savant Architecture v1.5.0" width="850" />
+<img src="img/architecture.png" alt="Savant Architecture v0.3.2" width="850" />
 
 </div>
 
@@ -206,7 +225,7 @@ SAVANT_DEV_MODE=1
 ```toml
 [ai]
 provider = "openrouter"
-model = "openrouter/healer-alpha"
+model = "openrouter/free"
 temperature = 0.4
 max_tokens = 262144
 
@@ -301,7 +320,10 @@ Instructions and implementation details...
 | `savant_obsidian` | Obsidian vault projection and bidirectional sync |
 | `savant_toolforge` | Tool forge with quality gates and provenance tracking |
 | `savant_integrations` | External service integrations (Gmail, Notion, etc.) |
-| `savant_test_suite` | Global integration and heuristic testing |
+| `savant_browser` | Browser automation and web scraping |
+| `savant_sandbox` | MicroVM sandbox for guest agent isolation |
+| `savant_generation` | Local image/SVG generation with diffusion backends |
+| `savant_dream` | NREM/REM sleep cycles for memory consolidation |
 
 ---
 
@@ -315,16 +337,18 @@ Savant/
 ├── config/
 │   └── savant.toml         # Settings (auto-reloads on change)
 ├── CHANGELOG.md            # Release changelog
+├── AGENTS.md               # Agent behavior engineering rules
 ├── dev/                    # Development process & tracking
-│   ├── development-process.md
-│   ├── PENDING.md
-│   ├── perfection.md
-│   ├── LEARNINGS.md
-│   ├── ERRORS.md
-│   ├── roadmap/
-│   │   └── roadmap-fix.md
-│   ├── archive/
-│   └── reviews/
+│   ├── DEVELOPMENT-WORKFLOW.md
+│   ├── ECHO.md             # Sovereign coding system
+│   ├── SAVANT-CODING-SYSTEM.md
+│   ├── AUTONOMOUS-WORKFLOW.md
+│   ├── IMPLEMENTATION-TRACKER.md
+│   ├── CHANGELOG-INTERNAL.md
+│   ├── SESSION-SUMMARY.md
+│   ├── SESSION-HANDOFF.md
+│   ├── fids/               # Fix Implementation Documents
+│   └── coding-standards/   # Language-specific rules
 ├── crates/
 │   ├── core/               # Shared types, config, DB, errors
 │   ├── gateway/            # Axum WebSocket server + auth + routing
@@ -339,7 +363,10 @@ Savant/
 │   ├── channels/           # Discord, Telegram, WhatsApp, Matrix
 │   ├── cli/                # CLI entry point
 │   ├── security/           # CCT verification, PQC signatures
-│   └── panopticon/         # Telemetry and monitoring
+│   ├── panopticon/         # Telemetry and monitoring
+│   ├── obsidian/           # Glass House bidirectional Obsidian sync
+│   ├── dream/              # NREM/REM sleep cycles
+│   └── int/                # Integrations (Gmail, Notion, etc.)
 ├── dashboard/              # Next.js 16 observability dashboard
 ├── workspaces/
 │   ├── substrate/          # Savant's own files
@@ -352,10 +379,19 @@ Savant/
     ├── architecture/       # System design documentation
     ├── api/                # WebSocket protocol reference
     ├── security/           # Security model documentation
-    ├── reviews/            # Current audit reports
-    ├── roadmap/            # Fix tracking
+    ├── ops/                # Deployment & troubleshooting
+    ├── config/             # Configuration reference
+    ├── perf/               # Performance benchmarks
+    ├── traits/             # Trait specifications
+    ├── migration/          # Migration guides
+    ├── deep-research/      # Research inputs
+    ├── evolution/          # Evolution system usage
     ├── llm-parameters.md   # LLM parameter guide
-    └── archive/            # Archived audit/roadmap reports
+    ├── memory.md           # Memory architecture
+    ├── swarm.md            # Hivemind architecture
+    ├── collective_intelligence.md
+    ├── CONVENTIONS.md      # Codebase conventions
+    └── archive/            # Archived reports & research
 ```
 
 ---
@@ -363,12 +399,14 @@ Savant/
 ## Documentation
 
 - [Autonomous Workflow](docs/AUTONOMOUS-WORKFLOW.md) — The overnight automation protocol
-- [Gap Analysis](docs/GAP-ANALYSIS.md) — 10 high-impact features users will love
 - [Architecture Overview](docs/architecture/) — System design and data flow
+- [Hivemind Architecture](docs/swarm.md) — Collective intelligence system
+- [Memory System](docs/memory.md) — Forever memory with Glass House Obsidian sync
+- [Collective Intelligence](docs/collective_intelligence.md) — Multi-agent consensus & state sharing
 - [API Reference](docs/api/) — Control frame schemas and WebSocket protocol
 - [Security Model](docs/security/) — Authentication, sandboxing, and threat detection
 - [Changelog](CHANGELOG.md) — Release history and changes
-- [Audit Report](AUDIT.md) — Production readiness audit
+- [ECHO Protocol](dev/ECHO.md) — Sovereign coding system reference
 
 ---
 

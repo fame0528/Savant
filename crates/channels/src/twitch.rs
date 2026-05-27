@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -16,16 +17,25 @@ pub struct TwitchConfig {
     pub channel: String,
 }
 
+/// Type alias for the TLS write half used by Twitch IRC.
+type TwitchWriter = tokio::io::WriteHalf<tokio_native_tls::TlsStream<TcpStream>>;
+
 /// Twitch channel adapter.
 /// Uses Twitch IRC (irc.chat.twitch.tv:6697) for chat integration.
 pub struct TwitchAdapter {
     config: TwitchConfig,
     nexus: Arc<savant_core::bus::NexusBridge>,
+    /// Shared writer for sending PRIVMSG from send_event
+    writer: Arc<tokio::sync::Mutex<Option<TwitchWriter>>>,
 }
 
 impl TwitchAdapter {
     pub fn new(config: TwitchConfig, nexus: Arc<savant_core::bus::NexusBridge>) -> Self {
-        Self { config, nexus }
+        Self {
+            config,
+            nexus,
+            writer: Arc::new(tokio::sync::Mutex::new(None)),
+        }
     }
 
     /// Connects to Twitch IRC with TLS.
@@ -114,9 +124,15 @@ impl TwitchAdapter {
 
                 info!("[TWITCH] Connected to #{}", self.config.channel);
 
+                // Store the writer in the shared field for send_event
+                {
+                    let mut shared_writer = self.writer.lock().await;
+                    *shared_writer = Some(writer);
+                }
+
                 let (mut event_rx, _) = self.nexus.subscribe().await;
                 let channel = self.config.channel.clone();
-                let writer = Arc::new(tokio::sync::Mutex::new(writer));
+                let writer = self.writer.clone();
 
                 // Outbound listener
                 let out_writer = writer.clone();
@@ -136,10 +152,11 @@ impl TwitchAdapter {
                                     let truncated: String = text.chars().take(500).collect();
                                     let msg =
                                         format!("PRIVMSG #{} :{}\r\n", out_channel, truncated);
-                                    if let Err(e) =
-                                        out_writer.lock().await.write_all(msg.as_bytes()).await
-                                    {
-                                        warn!("[TWITCH] Send error: {}", e);
+                                    let mut guard = out_writer.lock().await;
+                                    if let Some(ref mut w) = *guard {
+                                        if let Err(e) = w.write_all(msg.as_bytes()).await {
+                                            warn!("[TWITCH] Send error: {}", e);
+                                        }
                                     }
                                 }
                             }
@@ -153,16 +170,14 @@ impl TwitchAdapter {
                     // Handle PING/PONG
                     if line.starts_with("PING") {
                         let pong = line.replace("PING", "PONG");
-                        if let Err(e) = writer
-                            .lock()
-                            .await
-                            .write_all(format!("{}\r\n", pong).as_bytes())
-                            .await
-                        {
-                            tracing::warn!(
-                                "[channels::twitch] Failed to send PONG response: {}",
-                                e
-                            );
+                        let mut guard = writer.lock().await;
+                        if let Some(ref mut w) = *guard {
+                            if let Err(e) = w.write_all(format!("{}\r\n", pong).as_bytes()).await {
+                                tracing::warn!(
+                                    "[channels::twitch] Failed to send PONG response: {}",
+                                    e
+                                );
+                            }
                         }
                         continue;
                     }
@@ -219,8 +234,8 @@ impl ChannelAdapter for TwitchAdapter {
         if event.event_type != "chat.message" {
             return Ok(());
         }
-        let payload: serde_json::Value =
-            serde_json::from_str(&event.payload).map_err(|e| SavantError::Unknown(e.to_string()))?;
+        let payload: serde_json::Value = serde_json::from_str(&event.payload)
+            .map_err(|e| SavantError::Unknown(e.to_string()))?;
         let content = payload["content"].as_str().unwrap_or("");
         let session_id = payload["session_id"].as_str().unwrap_or("");
 
@@ -228,9 +243,28 @@ impl ChannelAdapter for TwitchAdapter {
             .strip_prefix("twitch:")
             .unwrap_or(&self.config.channel);
 
-        // Twitch max 500 chars — actual send handled by spawn() IRC writer
-        let _truncated: String = content.chars().take(500).collect();
-        tracing::debug!("[TWITCH] send_event queued: channel={}", channel);
+        // Twitch max 500 chars
+        let truncated: String = content.chars().take(500).collect();
+
+        let mut writer_guard = self.writer.lock().await;
+        if let Some(ref mut writer) = *writer_guard {
+            let message = format!("PRIVMSG #{} :{}", channel, truncated);
+            writer
+                .write_all(message.as_bytes())
+                .await
+                .map_err(|e| SavantError::Unknown(format!("Twitch IRC write failed: {e}")))?;
+            writer
+                .write_all(b"\r\n")
+                .await
+                .map_err(|e| SavantError::Unknown(format!("Twitch IRC write failed: {e}")))?;
+            writer
+                .flush()
+                .await
+                .map_err(|e| SavantError::Unknown(format!("Twitch IRC flush failed: {e}")))?;
+            tracing::debug!("[TWITCH] PRIVMSG sent to #{}", channel);
+        } else {
+            tracing::warn!("[TWITCH] Cannot send — not connected");
+        }
         Ok(())
     }
 
@@ -241,6 +275,7 @@ impl ChannelAdapter for TwitchAdapter {
         self.nexus
             .event_bus
             .send(event)
-            .map(|_| ()).map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
+            .map(|_| ())
+            .map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
     }
 }

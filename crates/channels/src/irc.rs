@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 //! IRC Channel Adapter
 //!
 //! Provides integration with IRC servers via raw TCP + TLS.
@@ -65,8 +66,27 @@ pub struct IrcConfig {
     pub sasl_password: Option<String>,
     /// NickServ IDENTIFY password
     pub nickserv_password: Option<String>,
-    /// Whether to verify TLS certificates
+    /// Whether to verify TLS certificates.
+    ///
+    /// **Security**: Defaults to `true`. Setting this to `false` disables certificate
+    /// verification, making the connection vulnerable to man-in-the-middle attacks.
+    /// Only disable for development/testing with self-signed certificates.
     pub verify_tls: bool,
+}
+
+impl Default for IrcConfig {
+    fn default() -> Self {
+        Self {
+            server: String::new(),
+            port: 6697,
+            nickname: String::new(),
+            channels: Vec::new(),
+            server_password: None,
+            sasl_password: None,
+            nickserv_password: None,
+            verify_tls: true,
+        }
+    }
 }
 
 /// TLS-wrapped write half type used throughout the adapter.

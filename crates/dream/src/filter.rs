@@ -61,9 +61,34 @@ impl DreamTaintTag {
 }
 
 /// Filters dream outputs for quality and diversity.
-pub struct DreamFilter;
+pub struct DreamFilter {
+    /// Minimum content length to store (characters).
+    pub min_content_length: usize,
+    /// Minimum alphanumeric ratio to avoid storing noise.
+    pub min_alpha_ratio: f32,
+    /// Trust level threshold for human verification.
+    pub trust_verification_threshold: f32,
+    /// Minimum trust level for REM content to enter learnings.
+    pub rem_learnings_trust_threshold: f32,
+}
+
+impl Default for DreamFilter {
+    fn default() -> Self {
+        Self {
+            min_content_length: 10,
+            min_alpha_ratio: 0.3,
+            trust_verification_threshold: 0.3,
+            rem_learnings_trust_threshold: 0.5,
+        }
+    }
+}
 
 impl DreamFilter {
+    /// Creates a new DreamFilter with default thresholds.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Evaluates whether a dream output should be stored.
     ///
     /// Dream outputs are NOT grounded (they explore latent space),
@@ -73,9 +98,9 @@ impl DreamFilter {
     /// 1. Minimum content length (discard trivially short outputs)
     /// 2. No duplicate content (hash-based dedup)
     /// 3. Vendi Score threshold is applied at the REM controller level
-    pub fn should_store(content: &str) -> bool {
+    pub fn should_store(&self, content: &str) -> bool {
         // Minimum length check
-        if content.trim().len() < 10 {
+        if content.trim().len() < self.min_content_length {
             return false;
         }
 
@@ -83,7 +108,7 @@ impl DreamFilter {
         let alpha_ratio = content.chars().filter(|c| c.is_alphanumeric()).count() as f32
             / content.len().max(1) as f32;
 
-        if alpha_ratio < 0.3 {
+        if alpha_ratio < self.min_alpha_ratio {
             return false;
         }
 
@@ -96,14 +121,14 @@ impl DreamFilter {
     /// NOTE: This requires the grounding filter from `crates/agent/src/learning/filter.rs`.
     /// Since `crates/dream` depends on `crates/memory` but NOT `crates/agent`,
     /// this check is performed at integration time (in the heartbeat pulse).
-    pub fn can_enter_learnings(taint: &DreamTaintTag) -> bool {
+    pub fn can_enter_learnings(&self, taint: &DreamTaintTag) -> bool {
         // Heavily tainted content cannot enter learnings
-        if taint.requires_human_verification() {
+        if taint.trust_level < self.trust_verification_threshold {
             return false;
         }
 
         // REM content is speculative — require higher trust for learnings
-        if taint.source == "dream_rem" && taint.trust_level < 0.5 {
+        if taint.source == "dream_rem" && taint.trust_level < self.rem_learnings_trust_threshold {
             return false;
         }
 
@@ -117,19 +142,21 @@ mod tests {
 
     #[test]
     fn test_should_store_valid_content() {
-        assert!(DreamFilter::should_store(
-            "This is a meaningful dream association about memory consolidation"
-        ));
+        let filter = DreamFilter::new();
+        assert!(filter
+            .should_store("This is a meaningful dream association about memory consolidation"));
     }
 
     #[test]
     fn test_should_store_rejects_short() {
-        assert!(!DreamFilter::should_store("short"));
+        let filter = DreamFilter::new();
+        assert!(!filter.should_store("short"));
     }
 
     #[test]
     fn test_should_store_rejects_noise() {
-        assert!(!DreamFilter::should_store("@#$%^&*()!@#$%^&*()!@#$%^&*()"));
+        let filter = DreamFilter::new();
+        assert!(!filter.should_store("@#$%^&*()!@#$%^&*()!@#$%^&*()"));
     }
 
     #[test]
@@ -141,18 +168,31 @@ mod tests {
 
     #[test]
     fn test_can_enter_learnings_low_trust() {
+        let filter = DreamFilter::new();
         let tag = DreamTaintTag {
             source: "dream_rem".to_string(),
             timestamp: 0,
             trust_level: 0.2,
             provenance_chain: vec![],
         };
-        assert!(!DreamFilter::can_enter_learnings(&tag));
+        assert!(!filter.can_enter_learnings(&tag));
     }
 
     #[test]
     fn test_can_enter_learnings_nrem() {
+        let filter = DreamFilter::new();
         let tag = DreamTaintTag::nrem();
-        assert!(DreamFilter::can_enter_learnings(&tag));
+        assert!(filter.can_enter_learnings(&tag));
+    }
+
+    #[test]
+    fn test_custom_filter_thresholds() {
+        let filter = DreamFilter {
+            min_content_length: 5,
+            min_alpha_ratio: 0.1,
+            trust_verification_threshold: 0.1,
+            rem_learnings_trust_threshold: 0.3,
+        };
+        assert!(filter.should_store("short"));
     }
 }

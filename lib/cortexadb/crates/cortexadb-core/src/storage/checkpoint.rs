@@ -70,9 +70,9 @@ pub fn save_checkpoint<P: AsRef<Path>>(
 
     if let Some(parent) = path.parent() {
         if let Ok(dir) = OpenOptions::new().read(true).open(parent) {
-        if let Err(e) = dir.sync_all() {
-            log::debug!("[cortexadb] Checkpoint directory sync failed (non-critical): {}", e);
-        }
+            if let Err(e) = dir.sync_all() {
+                log::debug!("[cortexadb] Checkpoint directory sync failed (non-critical): {}", e);
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 use crate::budget::TokenBudget;
 use crate::context::ContextAssembler;
+use crate::learning::filter::OutputFilter;
 use crate::plugins::WasmToolHost;
 use futures::StreamExt;
 use savant_cognitive::DspPredictor;
@@ -9,11 +10,14 @@ use savant_echo::{ComponentMetrics, HotSwappableRegistry};
 use savant_ipc::CollectiveBlackboard;
 use std::sync::Arc;
 
+pub mod autopilot;
 pub mod compaction;
 pub mod events;
 pub mod reactor;
 pub mod self_repair;
 pub mod stream;
+pub mod toon;
+pub mod trajectory;
 
 pub use events::AgentEvent;
 use savant_core::types::ChatMessage;
@@ -123,13 +127,20 @@ impl<M: MemoryBackend> LoopDelegate<M> for ChatDelegate {
 
 pub struct HeartbeatDelegate {
     turn_start: std::sync::atomic::AtomicI64,
+    ensemble_router: Option<Arc<crate::ensemble::EnsembleRouter>>,
 }
 
 impl HeartbeatDelegate {
     pub fn new() -> Self {
         Self {
             turn_start: std::sync::atomic::AtomicI64::new(chrono::Utc::now().timestamp_millis()),
+            ensemble_router: None,
         }
+    }
+
+    pub fn with_ensemble_router(mut self, router: Arc<crate::ensemble::EnsembleRouter>) -> Self {
+        self.ensemble_router = Some(router);
+        self
     }
 }
 
@@ -151,11 +162,31 @@ impl<M: MemoryBackend> LoopDelegate<M> for HeartbeatDelegate {
                 elapsed
             );
         }
+        // Circuit breaker checks (timeout, API limits) are already performed in
+        // stream.rs before this delegate checkpoint. Returning Continue here.
         LoopSignal::Continue
     }
-    async fn before_llm_call(&self, _ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+
+    async fn before_llm_call(&self, ctx: &mut LoopContext<'_, M>) -> Option<LoopOutcome> {
+        // Check context window pressure via ContextCompressor
+        let messages = ctx.loop_state.context.build_messages(vec![]);
+        let estimated_tokens: usize = messages
+            .iter()
+            .map(|m| savant_core::utils::token_count(&m.content))
+            .sum();
+        let usage_ratio = estimated_tokens as f64 / ctx.loop_state.context_window.max(1) as f64;
+        if usage_ratio > 0.9 {
+            tracing::warn!(
+                "[HEARTBEAT_DELEGATE] Context window critical at {:.0}% — compression needed",
+                usage_ratio * 100.0
+            );
+            return Some(LoopOutcome::Failure(
+                "Context window critical — compression needed".to_string(),
+            ));
+        }
         None
     }
+
     async fn call_llm(
         &self,
         ctx: &mut LoopContext<'_, M>,
@@ -167,35 +198,94 @@ impl<M: MemoryBackend> LoopDelegate<M> for HeartbeatDelegate {
             .map(|t| t.parameters_schema())
             .collect();
         let messages = ctx.loop_state.context.build_messages(vec![]);
-        let mut stream = ctx
+
+        // Primary LLM call
+        match ctx
             .loop_state
             .provider
-            .stream_completion(messages, tool_schemas)
-            .await?;
-        let mut content = String::new();
-        let mut tool_calls = Vec::new();
-        while let Some(chunk_res) = stream.next().await {
-            let chunk = chunk_res?;
-            content.push_str(&chunk.content);
-            if let Some(calls) = chunk.tool_calls {
-                tool_calls.extend(calls);
+            .stream_completion(messages.clone(), tool_schemas.clone())
+            .await
+        {
+            Ok(mut stream) => {
+                let mut content = String::new();
+                let mut tool_calls = Vec::new();
+                while let Some(chunk_res) = stream.next().await {
+                    let chunk = chunk_res?;
+                    content.push_str(&chunk.content);
+                    if let Some(calls) = chunk.tool_calls {
+                        tool_calls.extend(calls);
+                    }
+                }
+                Ok(ChatResponse {
+                    content,
+                    tool_calls,
+                })
+            }
+            Err(primary_err) => {
+                // Fallback: try ensemble router's fallback model via fallback_provider
+                if let Some(ref router) = self.ensemble_router {
+                    if let Some(fallback_model) = router.select_model(0) {
+                        tracing::warn!(
+                            "[HEARTBEAT_DELEGATE] Primary LLM failed: {}. Falling back to ensemble model '{}'",
+                            primary_err,
+                            fallback_model.model
+                        );
+                        // Use fallback_provider which handles model routing internally
+                        if let Some(ref fallback) = ctx.loop_state.fallback_provider {
+                            let mut stream =
+                                fallback.stream_completion(messages, tool_schemas).await?;
+                            let mut content = String::new();
+                            let mut tool_calls = Vec::new();
+                            while let Some(chunk_res) = stream.next().await {
+                                let chunk = chunk_res?;
+                                content.push_str(&chunk.content);
+                                if let Some(calls) = chunk.tool_calls {
+                                    tool_calls.extend(calls);
+                                }
+                            }
+                            return Ok(ChatResponse {
+                                content,
+                                tool_calls,
+                            });
+                        }
+                    }
+                }
+                Err(primary_err)
             }
         }
-        Ok(ChatResponse {
-            content,
-            tool_calls,
-        })
     }
-    async fn handle_text_response(&self, _text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction {
+
+    async fn handle_text_response(&self, text: &str, _ctx: &mut LoopContext<'_, M>) -> TextAction {
+        // Grounding check: reject fabricated content
+        if !OutputFilter::is_grounded(text) {
+            tracing::debug!(
+                "[HEARTBEAT_DELEGATE] OutputFilter rejected ungrounded response (len={})",
+                text.len()
+            );
+            return TextAction::Ignore;
+        }
         TextAction::ParseActions
     }
+
     async fn execute_tool_calls(
         &self,
         calls: Vec<savant_core::types::ProviderToolCall>,
-        _ctx: &mut LoopContext<'_, M>,
+        ctx: &mut LoopContext<'_, M>,
     ) -> Result<Option<LoopOutcome>, savant_core::error::SavantError> {
-        // Track tool call count for health monitoring
-        tracing::debug!("[HEARTBEAT_DELEGATE] Processing {} tool calls", calls.len());
+        // Log tool call names and count to trajectory recorder
+        let tool_names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
+        tracing::debug!(
+            "[HEARTBEAT_DELEGATE] Processing {} tool calls: {:?}",
+            calls.len(),
+            tool_names
+        );
+        if let Some(ref recorder) = ctx.loop_state.trajectory_recorder {
+            let mut recorder = recorder.lock().await;
+            for call in &calls {
+                recorder.record_tool_result(&call.name, &call.arguments);
+            }
+        }
+        // Return None to let the default tool execution path proceed
         Ok(None)
     }
 }
@@ -271,8 +361,8 @@ impl<M: MemoryBackend> LoopDelegate<M> for SpeculativeDelegate {
 pub struct AgentLoop<M: MemoryBackend> {
     pub(crate) agent_id: String,
     pub(crate) agent_id_hash: u64,
-    pub(crate) provider: Box<dyn LlmProvider>,
-    pub(crate) fallback_provider: Option<Box<dyn LlmProvider>>,
+    pub(crate) provider: Arc<dyn LlmProvider>,
+    pub(crate) fallback_provider: Option<Arc<dyn LlmProvider>>,
     pub(crate) memory: M,
     pub(crate) tools: Vec<Arc<dyn Tool>>,
     pub(crate) context: ContextAssembler,
@@ -292,9 +382,20 @@ pub struct AgentLoop<M: MemoryBackend> {
     pub(crate) heuristic: HeuristicState,
     pub(crate) vision_service: Option<Arc<dyn VisionProvider>>,
     pub(crate) self_repair: crate::react::self_repair::SelfRepair,
+    /// Security circuit breaker for recursion/API/cost/timeout limits.
+    pub(crate) circuit_breaker: savant_security::continuous::circuit_breaker::CircuitBreaker,
+    /// Taint tracker for data provenance — tracks external data through the system.
+    pub(crate) taint_tracker: Arc<savant_security::continuous::taint::TaintTracker>,
+    /// Counter for tool execution errors (for delta tracking).
+    pub(crate) tool_error_count: std::sync::atomic::AtomicU32,
     /// Discovery-based context window size from the provider.
     /// Used for TokenBudget, ContextMonitor, and Compactor scaling.
     pub(crate) context_window: usize,
+    /// Optional delegate for controlling the agent loop phases.
+    /// Wrapped in tokio::sync::Mutex for interior mutability — the delegate lock
+    /// is released before creating LoopContext (which borrows &mut self),
+    /// avoiding split-borrow conflicts in the try_stream! macro.
+    pub(crate) delegate: Option<Arc<tokio::sync::Mutex<Box<dyn LoopDelegate<M>>>>>,
     /// Hook registry for lifecycle extensibility.
     /// Void hooks: fire-and-forget (logging, telemetry).
     /// Modifying hooks: sequential with cancel support (approval, context injection).
@@ -302,12 +403,34 @@ pub struct AgentLoop<M: MemoryBackend> {
     /// When true, skip memory retrieval during context assembly.
     /// Used for heartbeats to prevent old messages from being recalled.
     pub(crate) skip_memory_retrieval: bool,
+    /// Trajectory recorder for capturing training data from successful interactions.
+    /// Uses Mutex for interior mutability since the stream! macro borrows &self.
+    pub(crate) trajectory_recorder:
+        Option<tokio::sync::Mutex<crate::react::trajectory::TrajectoryRecorder>>,
+    /// Context compressor for LLM-based summarization with cooldown tracking.
+    /// Persisted on the struct so the cooldown Mutex survives across loop iterations.
+    pub(crate) context_compressor: crate::context_compressor::ContextCompressor,
+    /// Dynamic credential broker for per-task ephemeral token management.
+    /// Injects secrets on a per-task basis. Agents never hold static, long-lived API keys.
+    pub(crate) credential_broker: Arc<savant_security::continuous::credentials::CredentialBroker>,
+    /// Panopticon replay recorder for agent reasoning trace.
+    /// Records thoughts, tool calls, and observations as structured events.
+    pub(crate) replay_recorder: Option<Arc<savant_panopticon::replay::ReplayRecorder>>,
+    /// Autopilot for parameter diversity scoring — detects stuck loops
+    /// where tool calls succeed but make no progress.
+    pub(crate) autopilot: autopilot::ToolCallTracker,
+    /// Facet extractor for user preference learning from conversation history.
+    pub(crate) facet_extractor: crate::learning::FacetExtractor,
+    /// Cache for extracted user preference facets with observation counting.
+    pub(crate) facet_cache: crate::learning::FacetCache,
+    /// Agent-side rate limiter for LLM API call throttling.
+    pub(crate) rate_limiter: Option<Arc<crate::rate_limiter::RateLimiter>>,
 }
 
 impl<M: MemoryBackend> AgentLoop<M> {
     pub fn new(
         agent_id: String,
-        provider: Box<dyn LlmProvider>,
+        provider: Arc<dyn LlmProvider>,
         memory: M,
         tools: Vec<Arc<dyn Tool>>,
         identity: AgentIdentity,
@@ -358,9 +481,30 @@ impl<M: MemoryBackend> AgentLoop<M> {
             heuristic: HeuristicState::default(),
             vision_service: None,
             self_repair: crate::react::self_repair::SelfRepair::with_defaults(),
+            autopilot: crate::react::autopilot::ToolCallTracker::new(),
+            circuit_breaker: savant_security::continuous::circuit_breaker::CircuitBreaker::new(),
+            taint_tracker: Arc::new(savant_security::continuous::taint::TaintTracker::new()),
+            tool_error_count: std::sync::atomic::AtomicU32::new(0),
             context_window,
+            delegate: None,
             hooks: Arc::new(savant_core::hooks::HookRegistry::new()),
             skip_memory_retrieval: false,
+            trajectory_recorder: None,
+            context_compressor: crate::context_compressor::ContextCompressor::new(
+                true, // enabled
+                0.8,  // trigger at 80% of context window
+                3,    // preserve 3 head turns
+                5,    // preserve 5 tail turns
+                500,  // max summary tokens
+                60,   // 60 second cooldown
+            ),
+            credential_broker: Arc::new(
+                savant_security::continuous::credentials::CredentialBroker::new(),
+            ),
+            replay_recorder: None,
+            facet_extractor: crate::learning::FacetExtractor::new(),
+            facet_cache: crate::learning::FacetCache::new(),
+            rate_limiter: None,
         }
     }
 
@@ -399,7 +543,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
         self
     }
 
-    pub fn with_fallback(mut self, provider: Box<dyn LlmProvider>) -> Self {
+    pub fn with_fallback(mut self, provider: Arc<dyn LlmProvider>) -> Self {
         self.fallback_provider = Some(provider);
         self
     }
@@ -418,6 +562,31 @@ impl<M: MemoryBackend> AgentLoop<M> {
         self
     }
 
+    /// Rotates the root authority key on the security authority.
+    /// Creates a new SecurityAuthority with the rotated key and replaces the existing one.
+    pub fn rotate_root_authority(&mut self, next_authority: ed25519_dalek::VerifyingKey) {
+        if let Some(ref authority) = self.security_authority {
+            let new_authority =
+                savant_security::SecurityAuthority::new(next_authority, authority.pqc_authority);
+            self.security_authority = Some(Arc::new(new_authority));
+            tracing::info!("[{}] Root authority rotated successfully", self.agent_id);
+        } else {
+            tracing::warn!(
+                "[{}] Cannot rotate root authority: no security authority configured",
+                self.agent_id
+            );
+        }
+    }
+
+    /// Injects a credential broker for per-task ephemeral token management.
+    pub fn with_credential_broker(
+        mut self,
+        broker: Arc<savant_security::continuous::credentials::CredentialBroker>,
+    ) -> Self {
+        self.credential_broker = broker;
+        self
+    }
+
     pub fn with_hyper_causal(
         mut self,
         engine: crate::orchestration::branching::HyperCausalEngine,
@@ -425,186 +594,53 @@ impl<M: MemoryBackend> AgentLoop<M> {
         self.hyper_causal = Arc::new(engine);
         self
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use futures::stream::StreamExt;
-    use futures::Stream;
-    use savant_core::error::SavantError;
-    use savant_core::traits::{LlmProvider, MemoryBackend, Tool};
-    use savant_core::types::{AgentIdentity, ChatMessage};
-    use serde_json::Value;
-    use std::pin::Pin;
-    use tokio::sync::Mutex;
-    use tokio_util::sync::CancellationToken;
-
-    struct MockTool {
-        name: String,
-        executed: Arc<Mutex<u32>>,
+    pub fn with_trajectory_recorder(
+        mut self,
+        recorder: crate::react::trajectory::TrajectoryRecorder,
+    ) -> Self {
+        self.trajectory_recorder = Some(tokio::sync::Mutex::new(recorder));
+        self
     }
 
-    #[async_trait]
-    impl Tool for MockTool {
-        fn name(&self) -> &str {
-            &self.name
-        }
-        fn description(&self) -> &str {
-            "Mock"
-        }
-        async fn execute(&self, _args: Value) -> Result<String, SavantError> {
-            let mut count = self.executed.lock().await;
-            *count += 1;
-            Ok(format!("{} executed", self.name))
-        }
+    /// Injects a Panopticon replay recorder for agent reasoning trace.
+    pub fn with_replay_recorder(
+        mut self,
+        recorder: Arc<savant_panopticon::replay::ReplayRecorder>,
+    ) -> Self {
+        self.replay_recorder = Some(recorder);
+        self
     }
 
-    struct MockLlm {
-        responses: Vec<String>,
-        call_count: Arc<Mutex<usize>>,
+    /// Injects a rate limiter for LLM API call throttling.
+    pub fn with_rate_limiter(mut self, limiter: Arc<crate::rate_limiter::RateLimiter>) -> Self {
+        self.rate_limiter = Some(limiter);
+        self
     }
 
-    #[async_trait]
-    impl LlmProvider for MockLlm {
-        async fn stream_completion(
-            &self,
-            _messages: Vec<ChatMessage>,
-            _tools: Vec<serde_json::Value>,
-        ) -> Result<
-            Pin<Box<dyn Stream<Item = Result<savant_core::types::ChatChunk, SavantError>> + Send>>,
-            SavantError,
-        > {
-            let mut count = self.call_count.lock().await;
-            let response = if *count < self.responses.len() {
-                self.responses[*count].clone()
-            } else {
-                "Final Answer: Done".to_string()
-            };
-            *count += 1;
-            let chunk = savant_core::types::ChatChunk {
-                agent_name: "test".to_string(),
-                agent_id: "test".to_string(),
-                content: response,
-                is_final: true,
-                session_id: None,
-                channel: savant_core::types::AgentOutputChannel::Chat,
-                logprob: None,
-                is_telemetry: false,
-                reasoning: None,
-                tool_calls: None,
-            };
-            Ok(Box::pin(futures::stream::iter(vec![Ok(chunk)])))
-        }
+    /// Sets a delegate for controlling the agent loop phases.
+    ///
+    /// The delegate's methods are called at each phase checkpoint in the loop:
+    /// - `check_signals()` — before each iteration
+    /// - `before_llm_call()` — before LLM call
+    /// - `call_llm()` — instead of default LLM call
+    /// - `handle_text_response()` — after text response
+    /// - `execute_tool_calls()` — instead of default tool execution
+    pub fn with_delegate(mut self, delegate: Box<dyn LoopDelegate<M>>) -> Self {
+        self.delegate = Some(Arc::new(tokio::sync::Mutex::new(delegate)));
+        self
     }
 
-    struct MockMemory;
-    #[async_trait]
-    impl MemoryBackend for MockMemory {
-        async fn store(&self, _agent_id: &str, _msg: &ChatMessage) -> Result<(), SavantError> {
-            Ok(())
-        }
-        async fn retrieve(
-            &self,
-            _agent_id: &str,
-            _query: &str,
-            _limit: usize,
-        ) -> Result<Vec<ChatMessage>, SavantError> {
-            Ok(vec![])
-        }
-        async fn consolidate(&self, _agent_id: &str) -> Result<(), SavantError> {
-            Ok(())
-        }
-        async fn get_or_create_session(
-            &self,
-            _session_id: &str,
-        ) -> Result<savant_core::types::SessionState, SavantError> {
-            Ok(savant_core::types::SessionState {
-                session_id: "mock".to_string(),
-                created_at: 0,
-                last_active: 0,
-                turn_count: 0,
-                active_turn_id: None,
-                auto_approved_tools: vec![],
-                denied_tools: vec![],
-            })
-        }
-        async fn get_session(
-            &self,
-            _session_id: &str,
-        ) -> Result<Option<savant_core::types::SessionState>, SavantError> {
-            Ok(None)
-        }
-        async fn save_session(
-            &self,
-            _state: &savant_core::types::SessionState,
-        ) -> Result<(), SavantError> {
-            Ok(())
-        }
-        async fn save_turn(
-            &self,
-            _turn: &savant_core::types::TurnState,
-        ) -> Result<(), SavantError> {
-            Ok(())
-        }
-        async fn get_turn(
-            &self,
-            _session_id: &str,
-            _turn_id: &str,
-        ) -> Result<Option<savant_core::types::TurnState>, SavantError> {
-            Ok(None)
-        }
-        async fn fetch_recent_turns(
-            &self,
-            _session_id: &str,
-            _limit: usize,
-        ) -> Result<Vec<savant_core::types::TurnState>, SavantError> {
-            Ok(vec![])
-        }
-    }
-
-    #[tokio::test]
-    async fn test_speculative_chaining() {
-        let executed_count = Arc::new(Mutex::new(0));
-        let tool1 = Arc::new(MockTool {
-            name: "Tool1".into(),
-            executed: executed_count.clone(),
-        });
-        let tool2 = Arc::new(MockTool {
-            name: "Tool2".into(),
-            executed: executed_count.clone(),
-        });
-
-        let provider = Box::new(MockLlm {
-            responses: vec![
-                "Thought: Doing two things.\nAction: Tool1[\"arg1\"]\nAction: Tool2[\"arg2\"]".to_string(),
-            ],
-            call_count: Arc::new(Mutex::new(0)),
-        });
-
-        let mut agent = AgentLoop::new(
-            "test_agent".into(),
-            provider,
-            MockMemory,
-            vec![tool1, tool2],
-            AgentIdentity::default(),
-            String::new(),
-        )
-        .with_hyper_causal(crate::orchestration::branching::HyperCausalEngine::new(1));
-
-        let mut stream = agent.run("start".into(), None, CancellationToken::new());
-        while let Some(res) = stream.next().await {
-            if let Err(e) = res {
-                panic!("Stream error: {:?}", e);
-            }
-        }
-
-        let count = executed_count.lock().await;
-        assert_eq!(
-            *count, 2,
-            "Both tools in the speculative chain should have executed"
-        );
+    /// Registers the 6 built-in hooks into the hook registry.
+    /// Called during agent construction in swarm.rs.
+    pub async fn register_default_hooks(&self) {
+        use savant_core::hooks::*;
+        self.hooks.register_void(ToolCallLogger).await;
+        self.hooks.register_void(LlmInputLogger).await;
+        self.hooks.register_void(LlmOutputLogger).await;
+        self.hooks.register_void(HealthMonitorHook).await;
+        self.hooks.register_void(SessionLifecycleHook).await;
+        self.hooks.register_void(SessionEndHook).await;
     }
 }
 

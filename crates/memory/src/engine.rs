@@ -6,9 +6,13 @@ use crate::error::MemoryError;
 use crate::lsm_engine::{LsmConfig, LsmStorageEngine};
 use crate::models::{AgentMessage, MemoryEntry};
 use crate::notifications::NotificationChannel;
+use crate::reflective::ReflectiveMemory;
 use crate::vector_engine::{SemanticVectorEngine, VectorConfig};
 use savant_core::traits::{EmbeddingProvider, LlmProvider};
 use savant_core::types::LlmParams;
+
+// Maximum procedures, lessons, and insights are now configurable via MemoryConfig.
+// See models::MemoryConfig for defaults (max_procedures, max_lessons, max_insights).
 
 /// 🧬 OMEGA-VIII: Memory Layer Definition
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -45,6 +49,8 @@ pub struct EngineConfig {
     pub embedding_service: Arc<dyn EmbeddingProvider>,
     /// Per-agent personality traits for promotion scoring
     pub personality: Option<crate::promotion::PersonalityTraits>,
+    /// Centralized tunables for all memory subsystems (MEM-17 through MEM-27).
+    pub memory_config: crate::models::MemoryConfig,
 }
 
 /// The atomic Pure-Rust adapter (CortexaShim) that guarantees write atomicity
@@ -53,12 +59,106 @@ pub struct MemoryEnclave {
     lsm: Arc<LsmStorageEngine>,
     vector: Arc<SemanticVectorEngine>,
     embedding_service: Arc<dyn EmbeddingProvider>,
-    promotion: std::sync::Mutex<crate::promotion::PromotionEngine>,
+    /// Centralized configuration for all memory subsystem tunables.
+    pub(crate) config: crate::models::MemoryConfig,
+    promotion: tokio::sync::Mutex<crate::promotion::PromotionEngine>,
+    /// MAGMA 4-graph reflective memory (Semantic, Temporal, Causal, Entity).
+    reflective: tokio::sync::RwLock<ReflectiveMemory>,
+    /// CP-06: Notification channel for high-importance events.
+    notifications: NotificationChannel,
+    /// CP-07: BM25 keyword search index.
+    bm25: tokio::sync::RwLock<crate::bm25_index::Bm25Index>,
+    /// CP-11: Application-level audit trail.
+    audit: tokio::sync::Mutex<crate::audit::AuditTrail>,
+    /// CP-12/13: Learned procedures extracted from recurring patterns.
+    procedures: tokio::sync::Mutex<Vec<crate::procedural::ProceduralMemory>>,
+    /// CP-13: Lessons synthesized from repeated experiences.
+    lessons: tokio::sync::Mutex<Vec<crate::lessons::Lesson>>,
+    /// CP-14: Insights synthesized from concept clusters.
+    insights: tokio::sync::Mutex<Vec<crate::lessons::Insight>>,
+    /// CP-15: Multimodal image store.
+    multimodal: tokio::sync::Mutex<crate::multimodal::MultimodalStore>,
+    /// CP-16: P2P mesh sync manager (None when disabled).
+    mesh_sync: tokio::sync::Mutex<Option<crate::mesh_sync::MeshSyncManager>>,
     // Per-session write lock pool: 64 partitions keyed by session_id hash
     write_locks: [tokio::sync::Mutex<()>; 64],
 }
 
 impl MemoryEnclave {
+    /// Returns a reference to the MAGMA 4-graph reflective memory.
+    /// Use this to access Semantic, Temporal, Causal, and Entity graphs.
+    pub async fn reflective(&self) -> tokio::sync::RwLockReadGuard<'_, ReflectiveMemory> {
+        self.reflective.read().await
+    }
+
+    /// Returns a clone of synthesized lessons (CP-13).
+    pub async fn get_lessons_vec(&self) -> Vec<crate::lessons::Lesson> {
+        self.lessons.lock().await.clone()
+    }
+
+    /// Returns a clone of synthesized insights (CP-14).
+    pub async fn get_insights_vec(&self) -> Vec<crate::lessons::Insight> {
+        self.insights.lock().await.clone()
+    }
+
+    /// Returns a mutable reference to the MAGMA 4-graph reflective memory.
+    pub async fn reflective_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, ReflectiveMemory> {
+        self.reflective.write().await
+    }
+
+    /// Returns a reference to the BM25 keyword search index (CP-07).
+    pub async fn bm25(&self) -> tokio::sync::RwLockReadGuard<'_, crate::bm25_index::Bm25Index> {
+        self.bm25.read().await
+    }
+
+    /// Returns a mutable reference to the BM25 index (CP-07).
+    pub async fn bm25_mut(
+        &self,
+    ) -> tokio::sync::RwLockWriteGuard<'_, crate::bm25_index::Bm25Index> {
+        self.bm25.write().await
+    }
+
+    /// Returns a reference to the audit trail (CP-11).
+    pub async fn audit(&self) -> tokio::sync::MutexGuard<'_, crate::audit::AuditTrail> {
+        self.audit.lock().await
+    }
+
+    /// Sends a notification through the enclave's notification channel (CP-06).
+    pub fn notify(&self, notification: crate::notifications::MemoryNotification) {
+        self.notifications.notify(notification);
+    }
+
+    /// Returns a reference to learned procedures (CP-12).
+    pub async fn procedures(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, Vec<crate::procedural::ProceduralMemory>> {
+        self.procedures.lock().await
+    }
+
+    /// Returns a reference to synthesized lessons (CP-13).
+    pub async fn lessons(&self) -> tokio::sync::MutexGuard<'_, Vec<crate::lessons::Lesson>> {
+        self.lessons.lock().await
+    }
+
+    /// Returns a reference to synthesized insights (CP-14).
+    pub async fn insights(&self) -> tokio::sync::MutexGuard<'_, Vec<crate::lessons::Insight>> {
+        self.insights.lock().await
+    }
+
+    /// Returns a reference to the multimodal store (CP-15).
+    pub async fn multimodal(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, crate::multimodal::MultimodalStore> {
+        self.multimodal.lock().await
+    }
+
+    /// Returns a reference to the mesh sync manager (CP-16).
+    pub async fn mesh_sync(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, Option<crate::mesh_sync::MeshSyncManager>> {
+        self.mesh_sync.lock().await
+    }
+
     /// Acquires the partitioned write lock for the given session.
     async fn lock_session(&self, session_id: &str) -> tokio::sync::MutexGuard<'_, ()> {
         use std::hash::{Hash, Hasher};
@@ -76,8 +176,16 @@ impl MemoryEnclave {
     ) -> Result<Arc<Self>, MemoryError> {
         let lsm = LsmStorageEngine::new(storage_path.as_ref(), config.lsm_config)?;
 
-        // Dynamic vector dimension: use embedding service dimension
+        // Apply MemoryConfig overrides to vector config
         let mut vector_config = config.vector_config;
+        // Use MemoryConfig default_vector_dim if the VectorConfig has the default value
+        if vector_config.dimensions == 2560 && config.memory_config.default_vector_dim != 2560 {
+            vector_config.dimensions = config.memory_config.default_vector_dim;
+        }
+        // Apply MemoryConfig vector_max_elements
+        vector_config.max_elements = config.memory_config.vector_max_elements;
+
+        // Dynamic vector dimension: use embedding service dimension
         let emb_dims = config.embedding_service.dimensions();
         if emb_dims > 0 && emb_dims != vector_config.dimensions {
             info!(
@@ -95,11 +203,27 @@ impl MemoryEnclave {
                 // Potential dimension mismatch from old persistence; clear and retry once
                 let vector_dir = storage_path.as_ref().join("vector");
                 if vector_dir.exists() {
+                    // RC-27: Back up vector index before clearing
+                    let backup_dir = storage_path.as_ref().join("vector.bak");
+                    if backup_dir.exists() {
+                        if let Err(e) = std::fs::remove_dir_all(&backup_dir) {
+                            debug!("Failed to remove old vector backup: {}", e);
+                        }
+                    }
+                    if let Err(copy_err) =
+                        savant_core::utils::io::copy_dir_recursive(&vector_dir, &backup_dir)
+                    {
+                        warn!("Failed to back up vector index: {}", copy_err);
+                    } else {
+                        info!("Vector index backed up to {:?}", backup_dir);
+                    }
                     warn!(
                         "Clearing stale vector index at {:?} due to init error: {}",
                         vector_dir, e
                     );
-                    let _ = std::fs::remove_dir_all(&vector_dir);
+                    if let Err(e) = std::fs::remove_dir_all(&vector_dir) {
+                        debug!("Failed to remove stale vector index: {}", e);
+                    }
                     // Retry with original `vector_config` (which may have corrected dimensions)
                     SemanticVectorEngine::new(storage_path.as_ref(), vector_config)?
                 } else {
@@ -109,13 +233,33 @@ impl MemoryEnclave {
             Err(other) => return Err(other),
         };
 
+        let bm25_k1 = config.memory_config.bm25_k1;
+        let bm25_b = config.memory_config.bm25_b;
+        let max_bm25_documents = config.memory_config.max_bm25_documents;
+
         Ok(Arc::new(Self {
             lsm,
             vector,
             embedding_service: config.embedding_service,
-            promotion: std::sync::Mutex::new(crate::promotion::PromotionEngine::new(
+            config: config.memory_config,
+            promotion: tokio::sync::Mutex::new(crate::promotion::PromotionEngine::new(
                 config.personality.unwrap_or_default(),
             )),
+            reflective: tokio::sync::RwLock::new(ReflectiveMemory::new()),
+            notifications: NotificationChannel::default(),
+            bm25: tokio::sync::RwLock::new(crate::bm25_index::Bm25Index::with_config(
+                bm25_k1,
+                bm25_b,
+                max_bm25_documents,
+            )),
+            audit: tokio::sync::Mutex::new(crate::audit::AuditTrail::default()),
+            procedures: tokio::sync::Mutex::new(Vec::new()),
+            lessons: tokio::sync::Mutex::new(Vec::new()),
+            insights: tokio::sync::Mutex::new(Vec::new()),
+            multimodal: tokio::sync::Mutex::new(crate::multimodal::MultimodalStore::new_with_path(
+                storage_path.as_ref().to_path_buf(),
+            )),
+            mesh_sync: tokio::sync::Mutex::new(None),
             write_locks: std::array::from_fn(|_| tokio::sync::Mutex::new(())),
         }))
     }
@@ -134,19 +278,17 @@ impl MemoryEnclave {
     }
 
     /// Updates the personality traits used by the promotion engine.
-    pub fn update_personality(&self, traits: crate::promotion::PersonalityTraits) {
+    pub async fn update_personality(&self, traits: crate::promotion::PersonalityTraits) {
         info!(
             "MemoryEnclave: personality updated — O:{:.2} C:{:.2} E:{:.2} A:{:.2} N:{:.2}",
-            traits.openness, traits.conscientiousness, traits.extraversion,
-            traits.agreeableness, traits.neuroticism
+            traits.openness,
+            traits.conscientiousness,
+            traits.extraversion,
+            traits.agreeableness,
+            traits.neuroticism
         );
-        // The promotion engine is initialized with a personality snapshot at construction.
-        // Runtime personality updates are applied by re-creating the promotion engine
-        // with the new traits. This is safe because the promotion engine is only used
-        // during run_promotion_cycle() which acquires no long-lived locks.
-        if let Ok(mut engine) = self.promotion.lock() {
-            engine.update_traits(traits);
-        }
+        let mut engine = self.promotion.lock().await;
+        engine.update_traits(traits);
     }
 
     /// Runs a promotion cycle: scores all memory entries, archives low-value entries,
@@ -158,7 +300,7 @@ impl MemoryEnclave {
     /// 3. **Reinforce**: High-scoring entries (score > 0.7) have their hit_count incremented
     /// 4. **Identity**: Candidates for SOUL.md mutation are drift-checked and queued
     /// 5. **Persist**: Evolution score is updated based on cycle results
-    pub fn run_promotion_cycle(&self) {
+    pub async fn run_promotion_cycle(&self) {
         let entries = match self.lsm.iter_metadata() {
             Ok(e) => e,
             Err(_) => return,
@@ -169,6 +311,15 @@ impl MemoryEnclave {
         let mut reinforced_count = 0;
         let mut identity_candidates = Vec::new();
         let mut archive_errors = 0;
+
+        // CP-04: Ebbinghaus retention scorer for alternative scoring
+        let ebbinghaus = crate::promotion::EbbinghausScorer::default();
+        let now = chrono::Utc::now().timestamp();
+
+        // Hold the promotion lock for the entire promotion cycle to avoid
+        // lock/unlock per entry contention and prevent race conditions
+        // between scoring and evolution score updates (RC-17, MEM-14).
+        let mut promotion = self.promotion.lock().await;
 
         for entry in &entries {
             let age_hours = (chrono::Utc::now().timestamp_millis() - i64::from(entry.created_at))
@@ -181,11 +332,25 @@ impl MemoryEnclave {
                 importance: entry.importance,
                 category: entry.category.clone(),
             };
-            let promotion = match self.promotion.lock() {
-                Ok(guard) => guard,
-                Err(_) => continue,
+            let ocean_score = promotion.calculate_score(&metrics);
+
+            // CP-04: Compute Ebbinghaus retention score alongside OCEAN
+            let last_accessed: i64 = entry.last_accessed_at.into();
+            let days_since_access = if last_accessed > 0 {
+                ((now - last_accessed / 1000).max(0) as f32) / 86400.0
+            } else {
+                age_hours / 24.0
             };
-            let score = promotion.calculate_score(&metrics);
+            let access_ts: Vec<i64> = entry
+                .access_timestamps
+                .iter()
+                .map(|t| i64::from(*t))
+                .collect();
+            let ebbinghaus_score =
+                ebbinghaus.score(&entry.category, days_since_access, &access_ts, now);
+
+            // Use the average of OCEAN and Ebbinghaus scores
+            let score = (ocean_score + ebbinghaus_score) / 2.0;
 
             // Archive low-scoring old entries
             if score < 0.35 && age_hours > 720.0 {
@@ -218,10 +383,7 @@ impl MemoryEnclave {
 
                 let id: u64 = entry.id.into();
                 if let Err(e) = self.lsm.insert_metadata(id, &reinforced) {
-                    warn!(
-                        "[memory::enclave] Failed to reinforce entry {}: {}",
-                        id, e
-                    );
+                    warn!("[memory::enclave] Failed to reinforce entry {}: {}", id, e);
                 } else {
                     reinforced_count += 1;
                 }
@@ -252,25 +414,48 @@ impl MemoryEnclave {
         let new_score = (high_count as f32 / entries.len().max(1) as f32).min(1.0);
 
         // Track layer distribution for observability
-        let mut layer_counts: std::collections::HashMap<MemoryLayer, usize> = std::collections::HashMap::new();
+        let mut layer_counts: std::collections::HashMap<MemoryLayer, usize> =
+            std::collections::HashMap::new();
         for entry in &entries {
             let layer = MemoryLayer::from_category(&entry.category);
             *layer_counts.entry(layer).or_insert(0) += 1;
         }
 
-        // Persist evolution score to promotion engine
-        if let Ok(mut engine) = self.promotion.lock() {
-            engine.update_evolution_score(new_score);
-        }
+        // Persist evolution score to promotion engine (same lock, no re-acquire needed)
+        promotion.update_evolution_score(new_score);
+        drop(promotion);
 
         if !identity_candidates.is_empty() {
             tracing::info!(
                 "[PROMOTION] Identity promotion candidates: {} (drift-checked)",
                 identity_candidates.len()
             );
+            // CP-06: Notify about identity promotion candidates
+            for (candidate, _, score) in &identity_candidates {
+                let candidate_id: u64 = candidate.id.into();
+                let notification = crate::notifications::MemoryNotification {
+                    notification_id: uuid::Uuid::new_v4().to_string(),
+                    source_session: candidate.session_id.clone(),
+                    memory_id: candidate_id,
+                    domain_tags: candidate.tags.clone(),
+                    content_preview: format!(
+                        "Identity promotion candidate (score: {:.2}): {}",
+                        score,
+                        candidate.content.chars().take(100).collect::<String>()
+                    ),
+                    importance: candidate.importance,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                };
+                self.notifications.notify(notification);
+            }
         }
 
-        if low_count > 0 || high_count > 0 || archived_count > 0 || reinforced_count > 0 || !identity_candidates.is_empty() {
+        if low_count > 0
+            || high_count > 0
+            || archived_count > 0
+            || reinforced_count > 0
+            || !identity_candidates.is_empty()
+        {
             tracing::info!(
                 "[PROMOTION] Cycle: {} entries scored, {} archived ({} errors), {} reinforced, {} identity-candidates (evolution: {:.2})",
                 entries.len(), archived_count, archive_errors, reinforced_count, identity_candidates.len(), new_score
@@ -356,6 +541,8 @@ impl MemoryEnclave {
             debug!("Generating automatic embedding for entry: {}", entry.id);
             if let Ok(vec) = self.embedding_service.embed(&entry.content).await {
                 entry.embedding = vec;
+            } else {
+                tracing::warn!("[memory::engine] Embedding generation failed for entry {}, vector index will be skipped", entry.id);
             }
         }
 
@@ -376,6 +563,29 @@ impl MemoryEnclave {
                 }
             }
             return Err(e);
+        }
+
+        // CP-07: Index in BM25 keyword search
+        {
+            let mut bm25 = self.bm25.write().await;
+            let entry_id: u64 = entry.id.into();
+            bm25.add_document(entry_id, &entry.content);
+        }
+
+        // CP-11: Record in audit trail
+        {
+            let mut audit = self.audit.lock().await;
+            let entry_id: u64 = entry.id.into();
+            audit.record(
+                crate::audit::AuditOperation::Store,
+                vec![entry_id],
+                &entry.session_id,
+                Some(entry.importance as f32 / 10.0),
+                &format!(
+                    "Indexed memory: {}",
+                    &entry.content[..entry.content.len().min(80)]
+                ),
+            );
         }
 
         Ok(())
@@ -451,7 +661,8 @@ impl MemoryEnclave {
         if failed > 0 {
             Err(MemoryError::TransactionFailed(format!(
                 "Cull completed with {} failures out of {} attempted",
-                failed, culled + failed
+                failed,
+                culled + failed
             )))
         } else {
             Ok(culled)
@@ -464,6 +675,330 @@ impl MemoryEnclave {
         top_k: usize,
     ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
         self.vector.recall(query_embedding, top_k, None)
+    }
+
+    /// Returns all vectors within `max_distance` of the query embedding.
+    /// Useful for similarity threshold searches and neighborhood exploration.
+    pub fn recall_within_distance(
+        &self,
+        query_embedding: &[f32],
+        max_distance: f32,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
+        self.vector
+            .recall_within_distance(query_embedding, max_distance)
+    }
+
+    /// Counts the number of messages in a session.
+    pub fn count_session_messages(&self, session_id: &str) -> Result<u64, MemoryError> {
+        self.lsm.count_session_messages(session_id)
+    }
+
+    /// Fetches all message IDs for a session.
+    pub fn fetch_all_message_ids_for_session(&self, session_id: &str) -> Vec<String> {
+        self.lsm.fetch_all_message_ids_for_session(session_id)
+    }
+
+    /// Fetches a message by its ID across all sessions.
+    pub fn fetch_message_by_id(&self, msg_id: &str) -> Result<Option<AgentMessage>, MemoryError> {
+        self.lsm.fetch_message_by_id(msg_id)
+    }
+
+    /// CP-08/09/10: Hybrid search combining BM25 + vector + RRF fusion + reranking.
+    ///
+    /// Pipeline:
+    /// 1. Expand query via `query_expansion` (temporal concretization, synonyms)
+    /// 2. Search BM25 with expanded terms
+    /// 3. Search vector index with original embedding
+    /// 4. Fuse results via RRF (Reciprocal Rank Fusion)
+    /// 5. Rerank top-N via cosine similarity
+    pub async fn hybrid_search(
+        &self,
+        query: &str,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
+        // CP-08: Query expansion
+        let expanded = crate::query_expansion::expand_query(query);
+        let search_terms = if expanded.expanded_terms.is_empty() {
+            query.to_string()
+        } else {
+            format!("{} {}", query, expanded.expanded_terms.join(" "))
+        };
+
+        // BM25 search with expanded terms
+        let bm25_results: Vec<crate::rrf_fusion::StreamResult> = {
+            let bm25 = self.bm25.read().await;
+            bm25.search(&search_terms, top_k * 2)
+                .into_iter()
+                .map(|(doc_id, score)| crate::rrf_fusion::StreamResult {
+                    doc_id,
+                    score,
+                    session_id: String::new(),
+                })
+                .collect()
+        };
+
+        // Vector search with original embedding
+        let vector_raw = self.vector.recall(query_embedding, top_k * 2, None)?;
+        let vector_results: Vec<crate::rrf_fusion::StreamResult> = vector_raw
+            .iter()
+            .filter_map(|sr| {
+                sr.document_id
+                    .parse::<u64>()
+                    .ok()
+                    .map(|doc_id| crate::rrf_fusion::StreamResult {
+                        doc_id,
+                        score: sr.score,
+                        session_id: String::new(),
+                    })
+            })
+            .collect();
+
+        // NS-01 + NS-09: Query reflective memory graph stream
+        let graph_results: Vec<crate::rrf_fusion::StreamResult> = {
+            let reflective = self.reflective.read().await;
+            let concepts = reflective.resolve(query);
+            concepts
+                .into_iter()
+                .enumerate()
+                .map(|(i, c)| crate::rrf_fusion::StreamResult {
+                    doc_id: c.source_entries.first().copied().unwrap_or(i as u64),
+                    score: 1.0 / (1.0 + i as f32),
+                    session_id: String::new(),
+                })
+                .collect()
+        };
+
+        // CP-09: RRF fusion (BM25 + vector + graph)
+        let fused = crate::rrf_fusion::fuse_results(
+            &bm25_results,
+            &vector_results,
+            &graph_results,
+            &crate::rrf_fusion::RrfConfig::default(),
+            top_k * 2,
+        );
+
+        // Convert fused results back to SearchResult format
+        let mut results: Vec<crate::vector_engine::SearchResult> = fused
+            .into_iter()
+            .map(|(doc_id, score)| crate::vector_engine::SearchResult {
+                document_id: doc_id.to_string(),
+                score,
+                distance: 1.0 - score,
+            })
+            .collect();
+
+        // NS-07: LLM-judged retrieval sufficiency — detect low-quality results
+        // and expand with complementary queries if insufficient.
+        if results.len() < top_k || Self::is_result_set_insufficient(&results) {
+            let complementary_results = self
+                .complementary_search(&search_terms, query_embedding, top_k)
+                .await;
+            if !complementary_results.is_empty() {
+                let existing_ids: std::collections::HashSet<u64> = results
+                    .iter()
+                    .map(|r| r.document_id.parse::<u64>().unwrap_or(0))
+                    .collect();
+                for result in complementary_results {
+                    if let Ok(id) = result.document_id.parse::<u64>() {
+                        if !existing_ids.contains(&id) {
+                            results.push(result);
+                        }
+                    }
+                }
+                // Re-sort by score descending after merging
+                results.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+        }
+
+        // FC-01: Rerank top candidates using embedding similarity
+        if results.len() > 1 {
+            let rerank_n = results.len().min(top_k * 2);
+            let candidates: Vec<crate::reranker::RerankCandidate> = results
+                .iter()
+                .take(rerank_n)
+                .filter_map(|r| {
+                    r.document_id.parse::<u64>().ok().map(|doc_id| {
+                        crate::reranker::RerankCandidate {
+                            doc_id,
+                            original_score: r.score,
+                            content: doc_id.to_string(),
+                            session_id: String::new(),
+                        }
+                    })
+                })
+                .collect();
+            if !candidates.is_empty() {
+                let embedding_service = self.embedding_service.clone();
+                let embed_fn = move |text: &str| -> Result<Vec<f32>, String> {
+                    let svc = embedding_service.clone();
+                    let text = text.to_string();
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(svc.embed(&text))
+                            .map_err(|e| e.to_string())
+                    })
+                };
+                let reranked = crate::reranker::rerank(query, candidates, &embed_fn, top_k);
+                let reranked_results: Vec<crate::vector_engine::SearchResult> = reranked
+                    .into_iter()
+                    .map(|r| crate::vector_engine::SearchResult {
+                        document_id: r.doc_id.to_string(),
+                        score: r.reranked_score,
+                        distance: 1.0 - r.reranked_score,
+                    })
+                    .collect();
+                if !reranked_results.is_empty() {
+                    results = reranked_results;
+                }
+            }
+        }
+
+        // CP-10: Truncate to top_k
+        results.truncate(top_k);
+
+        // CP-11: Record search in audit trail
+        {
+            let mut audit = self.audit.lock().await;
+            audit.record(
+                crate::audit::AuditOperation::Retrieve,
+                vec![],
+                "",
+                None,
+                &format!("hybrid_search: '{}' -> {} results", query, results.len()),
+            );
+        }
+
+        Ok(results)
+    }
+
+    /// NS-07: Heuristic sufficiency detection — returns true if the result set
+    /// appears low-quality (highly uniform scores, too few results, or all
+    /// scores below the relevance floor).
+    fn is_result_set_insufficient(results: &[crate::vector_engine::SearchResult]) -> bool {
+        if results.is_empty() {
+            return true;
+        }
+        let count = results.len();
+        // All scores below relevance floor
+        let all_low = results.iter().all(|r| r.score < 0.05);
+        if all_low {
+            return true;
+        }
+        // Highly uniform scores (variance < 0.001) suggests no discrimination
+        if count >= 3 {
+            let mean: f32 = results.iter().map(|r| r.score).sum::<f32>() / count as f32;
+            let variance: f32 = results
+                .iter()
+                .map(|r| (r.score - mean).powi(2))
+                .sum::<f32>()
+                / count as f32;
+            if variance < 0.001 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// NS-07: Generate complementary queries from the original search terms
+    /// and run additional searches to fill retrieval gaps.
+    async fn complementary_search(
+        &self,
+        original_terms: &str,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Vec<crate::vector_engine::SearchResult> {
+        let mut all_results: Vec<crate::vector_engine::SearchResult> = Vec::new();
+
+        // Extract key terms from the original query for complementary queries
+        let terms: Vec<&str> = original_terms
+            .split_whitespace()
+            .filter(|t| t.len() > 3)
+            .collect();
+
+        // Generate complementary queries by combining key terms differently
+        let mut complementary_queries: Vec<String> = Vec::new();
+        if terms.len() >= 2 {
+            // Reverse term order
+            complementary_queries.push(terms.iter().rev().cloned().collect::<Vec<_>>().join(" "));
+            // First + last term (skip middle)
+            if terms.len() >= 3 {
+                complementary_queries.push(format!("{} {}", terms[0], terms[terms.len() - 1]));
+            }
+        }
+        // Add action-oriented query variant
+        complementary_queries.push(format!("how to {}", original_terms));
+        // Add result-oriented query variant
+        complementary_queries.push(format!("result of {}", original_terms));
+
+        for cq in &complementary_queries {
+            let expanded = crate::query_expansion::expand_query(cq);
+            let search_terms = if expanded.expanded_terms.is_empty() {
+                cq.clone()
+            } else {
+                format!("{} {}", cq, expanded.expanded_terms.join(" "))
+            };
+
+            // BM25 complementary search
+            let bm25_results: Vec<crate::rrf_fusion::StreamResult> = {
+                let bm25 = self.bm25.read().await;
+                bm25.search(&search_terms, top_k)
+                    .into_iter()
+                    .map(|(doc_id, score)| crate::rrf_fusion::StreamResult {
+                        doc_id,
+                        score,
+                        session_id: String::new(),
+                    })
+                    .collect()
+            };
+
+            // Vector complementary search
+            let vector_raw = match self.vector.recall(query_embedding, top_k, None) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let vector_results: Vec<crate::rrf_fusion::StreamResult> = vector_raw
+                .iter()
+                .filter_map(|sr| {
+                    sr.document_id.parse::<u64>().ok().map(|doc_id| {
+                        crate::rrf_fusion::StreamResult {
+                            doc_id,
+                            score: sr.score,
+                            session_id: String::new(),
+                        }
+                    })
+                })
+                .collect();
+
+            let fused = crate::rrf_fusion::fuse_results(
+                &bm25_results,
+                &vector_results,
+                &[],
+                &crate::rrf_fusion::RrfConfig::default(),
+                top_k,
+            );
+
+            for (doc_id, score) in fused {
+                all_results.push(crate::vector_engine::SearchResult {
+                    document_id: doc_id.to_string(),
+                    score,
+                    distance: 1.0 - score,
+                });
+            }
+        }
+
+        // Sort by score and limit
+        all_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_results.truncate(top_k);
+        all_results
     }
 
     pub fn semantic_search_temporal(
@@ -635,6 +1170,8 @@ pub struct MemoryEngine {
     enclave: Arc<MemoryEnclave>,
     collective: Arc<MemoryEnclave>,
     notifications: NotificationChannel,
+    /// Base storage path for snapshot/restore operations
+    storage_path: std::path::PathBuf,
 }
 
 impl MemoryEngine {
@@ -652,6 +1189,7 @@ impl MemoryEngine {
             enclave: enclave.clone(),
             collective: collective.clone(),
             notifications: NotificationChannel::default(),
+            storage_path: base.to_path_buf(),
         });
 
         // OMEGA-VIII: Spawn the autonomous background pipelines
@@ -713,6 +1251,7 @@ impl MemoryEngine {
                 distill_params: None,
                 embedding_service,
                 personality: None,
+                memory_config: crate::models::MemoryConfig::default(),
             },
         )
     }
@@ -758,7 +1297,29 @@ impl MemoryEngine {
     }
 
     pub async fn index_memory(&self, entry: MemoryEntry) -> Result<(), MemoryError> {
-        self.enclave.index_memory(entry).await
+        let importance = entry.importance;
+        let content_preview = entry.content.chars().take(200).collect::<String>();
+        let session_id = entry.session_id.clone();
+        let entry_id: u64 = entry.id.into();
+        let tags = entry.tags.clone();
+
+        self.enclave.index_memory(entry).await?;
+
+        // CP-06: Notify on high-importance memories
+        if importance >= 8 {
+            let notification = crate::notifications::MemoryNotification {
+                notification_id: uuid::Uuid::new_v4().to_string(),
+                source_session: session_id.clone(),
+                memory_id: entry_id,
+                domain_tags: tags,
+                content_preview,
+                importance,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            };
+            self.notifications.notify(notification);
+        }
+
+        Ok(())
     }
 
     /// Culls low-entropy memories below the specified Shannon entropy threshold.
@@ -800,14 +1361,14 @@ impl MemoryEngine {
         let mut deduped: Vec<AgentMessage> = Vec::with_capacity(messages.len());
         let mut removed = 0usize;
 
-        for msg in messages {
+        for msg in &messages {
             if let Some(last) = deduped.last() {
                 if last.content == msg.content && last.role == msg.role {
                     removed += 1;
                     continue;
                 }
             }
-            deduped.push(msg);
+            deduped.push(msg.clone());
         }
 
         if removed > 0 {
@@ -819,7 +1380,216 @@ impl MemoryEngine {
             self.enclave.atomic_compact(session_id, deduped).await?;
         }
 
+        // CP-12: Extract recurring tool-call patterns as procedures
+        let tool_calls: Vec<(String, String)> = messages
+            .iter()
+            .filter(|m| !m.tool_calls.is_empty())
+            .flat_map(|m| {
+                m.tool_calls
+                    .iter()
+                    .map(move |tc| (tc.tool_name.clone(), m.session_id.clone()))
+            })
+            .collect();
+
+        if tool_calls.len() >= 3 {
+            let extractor = crate::procedural::PatternExtractor::default();
+            let patterns = extractor.extract_patterns(&tool_calls);
+            for (pattern, frequency) in patterns {
+                let proc = extractor.create_procedure(
+                    &pattern,
+                    frequency,
+                    "auto-extracted from consolidation",
+                    &[session_id.to_string()],
+                );
+                {
+                    let mut procedures = self.enclave.procedures().await;
+                    // Only add if not already present (by ID)
+                    if !procedures.iter().any(|p| p.id == proc.id) {
+                        // RC-08: Evict lowest-strength procedure if at capacity
+                        if procedures.len() >= self.enclave.config.max_procedures {
+                            if let Some(min_idx) = procedures
+                                .iter()
+                                .enumerate()
+                                .min_by(|a, b| {
+                                    a.1.strength
+                                        .partial_cmp(&b.1.strength)
+                                        .unwrap_or(std::cmp::Ordering::Equal)
+                                })
+                                .map(|(i, _)| i)
+                            {
+                                if proc.strength > procedures[min_idx].strength {
+                                    procedures.remove(min_idx);
+                                } else {
+                                    continue; // New procedure has lower strength — drop it
+                                }
+                            }
+                        }
+                        procedures.push(proc);
+                    }
+                }
+            }
+        }
+
+        // CP-14: Extract entities and populate reflective memory graphs
+        let entity_extractor = crate::entities::EntityExtractor::new();
+        let relation_extractor = crate::entities::RelationExtractor::new();
+        let mut extracted_entities = Vec::new();
+
+        for msg in &messages {
+            let entities = entity_extractor.extract(&msg.content, session_id);
+            extracted_entities.extend(entities);
+        }
+
+        if !extracted_entities.is_empty() {
+            let mut reflective = self.enclave.reflective_mut().await;
+            let now = chrono::Utc::now().timestamp();
+            for entity in &extracted_entities {
+                let concept = crate::reflective::Concept {
+                    id: format!("entity:{:?}:{}", entity.entity_type, entity.canonical_name),
+                    label: entity.canonical_name.clone(),
+                    source_entries: vec![],
+                    concept_type: crate::reflective::ConceptType::Semantic,
+                    created_at: now,
+                    last_accessed: now,
+                };
+                reflective.entity.add_concept(concept);
+            }
+
+            // Extract relations between known entities
+            let known_names: Vec<String> = extracted_entities
+                .iter()
+                .map(|e| e.canonical_name.clone())
+                .collect();
+            for msg in &messages {
+                let relations = relation_extractor.extract_relations(&msg.content, &known_names);
+                for rel in relations {
+                    let relation = crate::reflective::Relation {
+                        relation_type: rel.relation_type.clone(),
+                        weight: 1.0,
+                        source_concept: format!("entity:person:{}", rel.source),
+                        target_concept: format!("entity:person:{}", rel.target),
+                    };
+                    reflective.entity.add_relation(relation);
+                }
+            }
+
+            tracing::info!(
+                "[memory] Extracted {} entities and populated entity graph for session {}",
+                extracted_entities.len(),
+                session_id
+            );
+        }
+
         Ok(removed)
+    }
+
+    /// CP-13: Synthesize lessons from related memory clusters.
+    pub async fn synthesize_lessons(&self, _session_id: &str) {
+        let entries = match self.enclave.lsm().iter_metadata() {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        let mut by_category: std::collections::HashMap<String, Vec<(u64, String, f32)>> =
+            std::collections::HashMap::new();
+        for entry in &entries {
+            by_category
+                .entry(entry.category.clone())
+                .or_default()
+                .push((
+                    u64::from(entry.id),
+                    entry.content.clone(),
+                    entry.importance as f32,
+                ));
+        }
+
+        let synthesizer = crate::lessons::LessonSynthesizer::default();
+        for (category, memories) in &by_category {
+            if memories.len() >= 3 {
+                if let Some(lesson) = synthesizer.synthesize(memories, category) {
+                    let mut lessons = self.enclave.lessons().await;
+                    if !lessons.iter().any(|l| l.id == lesson.id) {
+                        // RC-08: Evict lowest-confidence lesson if at capacity
+                        if lessons.len() >= self.enclave.config.max_lessons {
+                            if let Some(min_idx) = lessons
+                                .iter()
+                                .enumerate()
+                                .min_by(|a, b| {
+                                    a.1.confidence
+                                        .partial_cmp(&b.1.confidence)
+                                        .unwrap_or(std::cmp::Ordering::Equal)
+                                })
+                                .map(|(i, _)| i)
+                            {
+                                if lesson.confidence > lessons[min_idx].confidence {
+                                    lessons.remove(min_idx);
+                                } else {
+                                    continue;
+                                }
+                            }
+                        }
+                        info!(
+                            "[memory] Synthesized lesson from {} memories in category '{}'",
+                            memories.len(),
+                            category
+                        );
+                        lessons.push(lesson);
+                    }
+                }
+            }
+        }
+    }
+
+    /// CP-14: Synthesize insights from concept clusters in the MAGMA graph.
+    pub async fn synthesize_insights(&self) {
+        let reflective = self.enclave.reflective().await;
+        let synthesizer = crate::lessons::InsightSynthesizer::default();
+
+        for (namespace, graph) in [
+            ("semantic", &reflective.semantic),
+            ("temporal", &reflective.temporal),
+            ("causal", &reflective.causal),
+            ("entity", &reflective.entity),
+        ] {
+            if graph.concepts.len() >= 3 {
+                let cluster: Vec<(u64, String)> = graph
+                    .concepts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| (i as u64, c.label.clone()))
+                    .collect();
+                if let Some(insight) = synthesizer.synthesize(&cluster, namespace) {
+                    let mut insights = self.enclave.insights().await;
+                    if !insights.iter().any(|i| i.id == insight.id) {
+                        // RC-08: Evict lowest-confidence insight if at capacity
+                        if insights.len() >= self.enclave.config.max_insights {
+                            if let Some(min_idx) = insights
+                                .iter()
+                                .enumerate()
+                                .min_by(|a, b| {
+                                    a.1.confidence
+                                        .partial_cmp(&b.1.confidence)
+                                        .unwrap_or(std::cmp::Ordering::Equal)
+                                })
+                                .map(|(i, _)| i)
+                            {
+                                if insight.confidence > insights[min_idx].confidence {
+                                    insights.remove(min_idx);
+                                } else {
+                                    continue;
+                                }
+                            }
+                        }
+                        info!(
+                            "[memory] Synthesized insight from {} concepts in {} namespace",
+                            cluster.len(),
+                            namespace
+                        );
+                        insights.push(insight);
+                    }
+                }
+            }
+        }
     }
 
     pub fn hydrate_session(
@@ -842,6 +1612,31 @@ impl MemoryEngine {
         top_k: usize,
     ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
         self.enclave.semantic_search(query_embedding, top_k)
+    }
+
+    /// Returns all vectors within `max_distance` of the query embedding.
+    pub fn recall_within_distance(
+        &self,
+        query_embedding: &[f32],
+        max_distance: f32,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, MemoryError> {
+        self.enclave
+            .recall_within_distance(query_embedding, max_distance)
+    }
+
+    /// Counts the number of messages in a session.
+    pub fn count_session_messages(&self, session_id: &str) -> Result<u64, MemoryError> {
+        self.enclave.count_session_messages(session_id)
+    }
+
+    /// Fetches all message IDs for a session.
+    pub fn fetch_all_message_ids_for_session(&self, session_id: &str) -> Vec<String> {
+        self.enclave.fetch_all_message_ids_for_session(session_id)
+    }
+
+    /// Fetches a message by its ID across all sessions.
+    pub fn fetch_message_by_id(&self, msg_id: &str) -> Result<Option<AgentMessage>, MemoryError> {
+        self.enclave.fetch_message_by_id(msg_id)
     }
 
     pub fn semantic_search_temporal(
@@ -917,5 +1712,206 @@ impl MemoryEngine {
         let lsm_stats = self.enclave.lsm.stats().unwrap_or_default();
         let vector_count = self.enclave.vector_count();
         (lsm_stats, vector_count)
+    }
+
+    /// Snapshot the entire memory state to the given directory.
+    /// Creates a manifest with timestamp, entry counts, and version.
+    /// Note: Engines hold file handles; snapshot copies live data files.
+    pub fn snapshot_state(&self, snapshot_path: &std::path::Path) -> Result<(), MemoryError> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Copy the entire storage directory to snapshot
+        savant_core::utils::io::copy_dir_recursive(&self.storage_path, snapshot_path).map_err(
+            |e| MemoryError::InitFailed(format!("Failed to copy storage to snapshot: {}", e)),
+        )?;
+
+        // Write manifest
+        let (lsm_stats, vector_count) = self.stats();
+        let manifest = {
+            let mut map = serde_json::Map::new();
+            map.insert("version".to_string(), serde_json::Value::Number(1.into()));
+            map.insert(
+                "timestamp".to_string(),
+                serde_json::Value::Number(timestamp.into()),
+            );
+            map.insert(
+                "lsm_entries".to_string(),
+                serde_json::Value::Number(lsm_stats.total_messages.into()),
+            );
+            map.insert(
+                "vector_count".to_string(),
+                serde_json::Value::Number((vector_count as u64).into()),
+            );
+            map.insert(
+                "source_path".to_string(),
+                serde_json::Value::String(self.storage_path.to_string_lossy().to_string()),
+            );
+            serde_json::Value::Object(map)
+        };
+
+        let manifest_path = snapshot_path.join("snapshot_manifest.json");
+        let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| {
+            MemoryError::SerializationFailed(format!("Failed to serialize manifest: {}", e))
+        })?;
+        std::fs::write(&manifest_path, manifest_json)
+            .map_err(|e| MemoryError::InitFailed(format!("Failed to write manifest: {}", e)))?;
+
+        info!(
+            "State snapshot created at {:?} ({} LSM entries, {} vectors)",
+            snapshot_path, lsm_stats.total_messages, vector_count
+        );
+        Ok(())
+    }
+
+    /// Restore memory state from a snapshot directory.
+    /// Validates the manifest, replaces active storage, and returns.
+    /// **The process must be restarted after restore** since engines hold file handles.
+    pub fn restore_state(&self, snapshot_path: &std::path::Path) -> Result<(), MemoryError> {
+        // Validate manifest exists
+        let manifest_path = snapshot_path.join("snapshot_manifest.json");
+        if !manifest_path.exists() {
+            return Err(MemoryError::InitFailed(
+                "Snapshot manifest not found".to_string(),
+            ));
+        }
+
+        let manifest_bytes = std::fs::read(&manifest_path)
+            .map_err(|e| MemoryError::InitFailed(format!("Failed to read manifest: {}", e)))?;
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+            .map_err(|e| MemoryError::InitFailed(format!("Invalid manifest JSON: {}", e)))?;
+
+        let version = manifest["version"].as_u64().unwrap_or(0);
+        if version == 0 {
+            return Err(MemoryError::InitFailed(
+                "Invalid snapshot version".to_string(),
+            ));
+        }
+
+        // Replace active storage with snapshot
+        if self.storage_path.exists() {
+            let backup = self.storage_path.with_extension("pre-restore");
+            if backup.exists() {
+                std::fs::remove_dir_all(&backup).map_err(|e| {
+                    MemoryError::InitFailed(format!("Failed to remove old backup: {}", e))
+                })?;
+            }
+            std::fs::rename(&self.storage_path, &backup).map_err(|e| {
+                MemoryError::InitFailed(format!("Failed to backup current storage: {}", e))
+            })?;
+            info!("Current storage backed up to {:?}", backup);
+        }
+
+        savant_core::utils::io::copy_dir_recursive(snapshot_path, &self.storage_path).map_err(
+            |e| MemoryError::InitFailed(format!("Failed to restore from snapshot: {}", e)),
+        )?;
+
+        info!(
+            "State restored from {:?} — restart required to load restored data",
+            snapshot_path
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)]
+mod tests {
+    use super::*;
+    use crate::models::AgentMessage;
+    use crate::MockEmbeddingProvider;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn test_engine() -> (Arc<MemoryEngine>, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let engine = MemoryEngine::new(
+            tmp.path(),
+            EngineConfig {
+                lsm_config: LsmConfig {
+                    vector_dimension: 64,
+                    ..LsmConfig::default()
+                },
+                vector_config: VectorConfig {
+                    dimensions: 64,
+                    ..VectorConfig::default()
+                },
+                distill_llm_provider: None,
+                distill_params: None,
+                embedding_service: Arc::new(MockEmbeddingProvider),
+                memory_config: crate::models::MemoryConfig::default(),
+                personality: None,
+            },
+        )
+        .unwrap();
+        (engine, tmp)
+    }
+
+    #[tokio::test]
+    async fn test_store_and_retrieve() {
+        let (engine, _tmp) = test_engine();
+        let msg = AgentMessage::user("s1", "the sky is blue");
+        engine.append_message("s1", &msg).await.unwrap();
+
+        let messages = engine.fetch_session_tail("s1", 10);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "the sky is blue");
+    }
+
+    #[tokio::test]
+    async fn test_delete_removes_entry() {
+        let (engine, _tmp) = test_engine();
+        let msg = AgentMessage::user("s1", "to be deleted");
+        engine.append_message("s1", &msg).await.unwrap();
+
+        let before = engine.fetch_session_tail("s1", 10);
+        assert_eq!(before.len(), 1);
+
+        engine.delete_session("s1").unwrap();
+
+        let after = engine.fetch_session_tail("s1", 10);
+        assert!(after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_entries_returns_all() {
+        let (engine, _tmp) = test_engine();
+        for i in 1..=3u32 {
+            let msg = AgentMessage::user("s1", &format!("entry {}", i));
+            engine.append_message("s1", &msg).await.unwrap();
+        }
+
+        let messages = engine.fetch_session_tail("s1", 10);
+        assert_eq!(messages.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_store_duplicate_updates() {
+        let (engine, _tmp) = test_engine();
+        let msg1 = AgentMessage::user("s1", "first message");
+        let msg2 = AgentMessage::assistant("s1", "second message");
+        engine.append_message("s1", &msg1).await.unwrap();
+        engine.append_message("s1", &msg2).await.unwrap();
+
+        let messages = engine.fetch_session_tail("s1", 10);
+        assert_eq!(messages.len(), 2);
+        // fetch_session_tail returns newest first
+        assert_eq!(messages[0].content, "second message");
+        assert_eq!(messages[1].content, "first message");
+    }
+
+    #[tokio::test]
+    async fn test_query_returns_results() {
+        let (engine, _tmp) = test_engine();
+        let msg = AgentMessage::user("s1", "rust programming language");
+        engine.append_message("s1", &msg).await.unwrap();
+
+        let messages = engine.fetch_session_tail("s1", 5);
+        assert!(!messages.is_empty());
+        assert!(messages[0].content.contains("rust"));
     }
 }

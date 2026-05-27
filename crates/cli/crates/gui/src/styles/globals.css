@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --void: #000e1a;
+  --primary: #0088ff;
+  --alert: #ff0000;
+  --warning: #eeff00;
+  --success: #1aff00;
+  --accent: #ff00e6;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--void);
+  color: var(--success);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--void);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 136, 255, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 136, 255, 0.5);
+}
+
+/* xterm.js overrides */
+.xterm {
+  padding: 4px;
+}
+
+.xterm-viewport {
+  background-color: var(--void) !important;
+}
+
+/* CodeMirror overrides */
+.cm-editor {
+  height: 100%;
+  background-color: var(--void) !important;
+}
+
+.cm-editor .cm-gutters {
+  background-color: var(--void) !important;
+  border-right: 1px solid rgba(0, 136, 255, 0.15);
+}
+
+.cm-editor .cm-activeLineGutter {
+  background-color: rgba(0, 136, 255, 0.1);
+}
+
+.cm-editor .cm-activeLine {
+  background-color: rgba(0, 136, 255, 0.05) !important;
+}
+
+/* Selection highlight */
+::selection {
+  background-color: rgba(238, 255, 0, 0.15);
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.2s ease-out;
+}

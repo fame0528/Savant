@@ -97,8 +97,71 @@ impl TaintTag {
     }
 }
 
+/// Tracks taint tags for data flowing through the system.
+///
+/// Use this to tag external data on ingestion and check trust levels
+/// before allowing data to reach sensitive tools.
+pub struct TaintTracker {
+    /// Active taint tags indexed by data identifier.
+    tags: std::sync::RwLock<std::collections::HashMap<String, TaintTag>>,
+}
+
+impl TaintTracker {
+    /// Creates a new taint tracker.
+    pub fn new() -> Self {
+        Self {
+            tags: std::sync::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Tags data with a taint tag.
+    pub fn tag(&self, data_id: &str, tag: TaintTag) {
+        let mut tags = self.tags.write().unwrap_or_else(|e| e.into_inner());
+        tags.insert(data_id.to_string(), tag);
+    }
+
+    /// Gets the taint tag for data, if any.
+    pub fn get_tag(&self, data_id: &str) -> Option<TaintTag> {
+        let tags = self.tags.read().unwrap_or_else(|e| e.into_inner());
+        tags.get(data_id).cloned()
+    }
+
+    /// Checks if data is trusted (trust_level >= threshold).
+    pub fn is_trusted(&self, data_id: &str, threshold: f32) -> bool {
+        let tags = self.tags.read().unwrap_or_else(|e| e.into_inner());
+        tags.get(data_id)
+            .map(|tag| tag.trust_level >= threshold)
+            .unwrap_or(true) // Untagged data is considered trusted
+    }
+
+    /// Checks if data requires human verification.
+    pub fn requires_verification(&self, data_id: &str) -> bool {
+        let tags = self.tags.read().unwrap_or_else(|e| e.into_inner());
+        tags.get(data_id)
+            .map(|tag| tag.requires_human_verification())
+            .unwrap_or(false)
+    }
+
+    /// Returns the number of tracked data items.
+    pub fn count(&self) -> usize {
+        let tags = self.tags.read().unwrap_or_else(|e| e.into_inner());
+        tags.len()
+    }
+
+    /// Removes taint tag for data (e.g., after verification).
+    pub fn clear(&self, data_id: &str) {
+        let mut tags = self.tags.write().unwrap_or_else(|e| e.into_inner());
+        tags.remove(data_id);
+    }
+}
+
+impl Default for TaintTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
-#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

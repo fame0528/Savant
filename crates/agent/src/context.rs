@@ -11,6 +11,8 @@ pub struct ContextAssembler {
     substrate_prompt: String,
     auto_recall_block: Option<String>,
     substrate_metrics: String,
+    /// Rendered user preferences from FacetCache (injected between instructions and auto-recall).
+    user_preferences_block: Option<String>,
 }
 
 impl ContextAssembler {
@@ -29,6 +31,7 @@ impl ContextAssembler {
             substrate_prompt,
             auto_recall_block: None,
             substrate_metrics,
+            user_preferences_block: None,
         }
     }
 
@@ -36,6 +39,26 @@ impl ContextAssembler {
     pub fn with_auto_recall(mut self, block: String) -> Self {
         self.auto_recall_block = Some(block);
         self
+    }
+
+    /// Updates the auto-recall block dynamically (e.g. from memory retrieval each iteration).
+    pub fn set_auto_recall(&mut self, block: String) {
+        self.auto_recall_block = Some(block);
+    }
+
+    /// Sets the user preferences block for injection into the system prompt.
+    /// Rendered from FacetCache::stable_facets() via FacetExtractor::render_preferences().
+    pub fn set_user_preferences(&mut self, block: String) {
+        if block.is_empty() {
+            self.user_preferences_block = None;
+        } else {
+            self.user_preferences_block = Some(block);
+        }
+    }
+
+    /// NS-04: Returns a reference to the agent's OCEAN personality traits, if configured.
+    pub fn personality_traits(&self) -> Option<&savant_core::types::PersonalityTraits> {
+        self.identity.personality_traits.as_ref()
     }
 
     /// Assembles the full system prompt from identity components (OpenClaw style).
@@ -81,7 +104,13 @@ impl ContextAssembler {
             prompt.push_str(&format!("OPERATING INSTRUCTIONS:\n{}\n\n", instructions));
         }
 
-        // 3.5 Auto-Recall Context (injected memories from semantic search)
+        // 3.5 User Preferences (learned from conversation history via FacetExtractor)
+        if let Some(prefs) = &self.user_preferences_block {
+            prompt.push_str(prefs);
+            prompt.push_str("\n\n");
+        }
+
+        // 3.6 Auto-Recall Context (injected memories from semantic search)
         if let Some(recall) = &self.auto_recall_block {
             prompt.push_str(recall);
         }
@@ -149,14 +178,18 @@ impl ContextAssembler {
         }
 
         // 5. Global Constraints
-        prompt.push_str(
-            "CRITICAL: YOUR RESPONSE MUST BE IN ENGLISH ONLY. DO NOT USE ANY OTHER LANGUAGE.\n\n",
-        );
+        prompt.push_str("Respond in the same language as the user's message.\n\n");
 
         prompt
     }
 
+    /// Maximum number of messages in the context window.
+    const MAX_MESSAGES: usize = 200;
+    /// Maximum total characters across all messages.
+    const MAX_TOTAL_CHARS: usize = 500_000;
+
     /// Converts the conversation history and memory into ChatMessages.
+    /// RC-11: Enforces maximum message count and total character limits.
     pub fn build_messages(&self, history: Vec<ChatMessage>) -> Vec<ChatMessage> {
         let mut messages = Vec::new();
 
@@ -178,10 +211,12 @@ impl ContextAssembler {
             {
                 let scan = prompt_defense::scan_prompt(&msg.content);
                 if !scan.passed {
-                    warn!(
-                        "[context] Prompt injection blocked in {} message: {}",
-                        msg.role, scan.blocked[0].pattern
-                    );
+                    if let Some(first) = scan.blocked.first() {
+                        warn!(
+                            "[context] Prompt injection blocked in {} message: {}",
+                            msg.role, first.pattern
+                        );
+                    }
                 }
                 let mut sanitized = msg;
                 if !scan.sanitized_text.is_empty() {
@@ -189,6 +224,43 @@ impl ContextAssembler {
                 }
                 messages.push(sanitized);
             }
+        }
+
+        // RC-11: Enforce message count limit (keep system prompt + most recent messages)
+        if messages.len() > Self::MAX_MESSAGES {
+            let system_msg = messages.remove(0);
+            let excess = messages.len() - (Self::MAX_MESSAGES - 1);
+            messages.drain(..excess);
+            messages.insert(0, system_msg);
+            tracing::warn!(
+                "[context] Truncated {} excess messages to stay within MAX_MESSAGES={}",
+                excess,
+                Self::MAX_MESSAGES
+            );
+        }
+
+        // RC-11: Enforce total character limit
+        let total_chars: usize = messages.iter().map(|m| m.content.chars().count()).sum();
+        if total_chars > Self::MAX_TOTAL_CHARS {
+            let mut accumulated = 0;
+            // Keep system prompt and scan from the end, dropping oldest messages
+            let system_msg = messages.remove(0);
+            let mut kept = Vec::new();
+            for msg in messages.into_iter().rev() {
+                let msg_chars = msg.content.chars().count();
+                if accumulated + msg_chars > Self::MAX_TOTAL_CHARS {
+                    break;
+                }
+                accumulated += msg_chars;
+                kept.push(msg);
+            }
+            kept.reverse();
+            kept.insert(0, system_msg);
+            messages = kept;
+            tracing::warn!(
+                "[context] Truncated messages to fit within MAX_TOTAL_CHARS={}",
+                Self::MAX_TOTAL_CHARS
+            );
         }
 
         messages
@@ -217,7 +289,13 @@ mod tests {
             baseline_soul_hash: None,
         };
         let budget = TokenBudget::new(100);
-        let assembler = ContextAssembler::new(identity, budget, None, "House Rules.".to_string(), String::new());
+        let assembler = ContextAssembler::new(
+            identity,
+            budget,
+            None,
+            "House Rules.".to_string(),
+            String::new(),
+        );
         let prompt = assembler.assemble_system_prompt();
 
         assert!(prompt.contains("Vibe check."));

@@ -10,25 +10,49 @@
 //! and indexed for semantic search. Retrieval uses hybrid search: semantic
 //! similarity when embeddings are available, falling back to substring matching.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
-// use tokio::task::spawn_blocking;
 use tracing::{debug, info, warn};
 
 use crate::engine::MemoryEngine;
 use crate::models::{AgentMessage, AutoRecallConfig, ContextCacheBlock, MessageRole};
+use crate::privacy;
 
 use savant_core::error::SavantError;
 use savant_core::traits::{EmbeddingProvider, MemoryBackend};
 use savant_core::types::ChatMessage;
+
+/// Dedup cache capacity — always non-zero.
+const DEDUP_CACHE_CAP: NonZeroUsize = match NonZeroUsize::new(10_000) {
+    Some(n) => n,
+    None => unreachable!(),
+};
+
+/// Dedup entry: content hash + timestamp + entry ID for version chaining.
+struct DedupEntry {
+    _hash: u64,
+    stored_at: std::time::Instant,
+    /// The MemoryEntry ID that was stored — used for version chain linking.
+    entry_id: u64,
+}
 
 /// Async wrapper around MemoryEngine that implements the MemoryBackend trait.
 ///
 /// This type is cheap to clone (Arc) and can be shared across tasks.
 /// When an `EmbeddingService` is provided, semantic search capabilities
 /// are enabled for both storage and retrieval.
+///
+/// Features:
+/// - **Privacy filter**: secrets are redacted before storage (MEM-02)
+/// - **Dedup window**: duplicate content within 5 minutes is skipped (MEM-01)
 pub struct AsyncMemoryBackend {
     engine: Arc<MemoryEngine>,
     embedding_service: Option<Arc<dyn EmbeddingProvider>>,
+    /// SHA-256 dedup window: content hash -> DedupEntry.
+    /// Prevents storing duplicate content within a 5-minute window.
+    dedup_cache: tokio::sync::Mutex<lru::LruCache<u64, DedupEntry>>,
 }
 
 impl AsyncMemoryBackend {
@@ -37,6 +61,7 @@ impl AsyncMemoryBackend {
         Self {
             engine,
             embedding_service: None,
+            dedup_cache: tokio::sync::Mutex::new(lru::LruCache::new(DEDUP_CACHE_CAP)),
         }
     }
 
@@ -52,6 +77,7 @@ impl AsyncMemoryBackend {
         Self {
             engine,
             embedding_service: Some(embedding_service),
+            dedup_cache: tokio::sync::Mutex::new(lru::LruCache::new(DEDUP_CACHE_CAP)),
         }
     }
 
@@ -64,24 +90,6 @@ impl AsyncMemoryBackend {
     pub fn has_embeddings(&self) -> bool {
         self.embedding_service.is_some()
     }
-
-    /// Fetches session tail and deduplicates by content, up to `limit` results.
-    fn fetch_deduped_tail(&self, sid: &str, fetch_multiple: usize, limit: usize) -> Vec<ChatMessage> {
-        let tail = self.engine.fetch_session_tail(sid, fetch_multiple);
-        let mut seen_content = std::collections::HashSet::new();
-        let mut results = Vec::new();
-        for msg in tail {
-            let chat_msg = msg.to_chat();
-            let content_key = chat_msg.content.clone();
-            if seen_content.insert(content_key) {
-                results.push(chat_msg);
-                if results.len() >= limit {
-                    break;
-                }
-            }
-        }
-        results
-    }
 }
 
 #[async_trait::async_trait]
@@ -90,10 +98,112 @@ impl MemoryBackend for AsyncMemoryBackend {
         let agent_id_owned = agent_id.to_string();
 
         // Convert ChatMessage -> AgentMessage
-        let agent_msg = AgentMessage::from_chat(message, &agent_id_owned);
+        let agent_msg = AgentMessage::from_chat(message, &agent_id_owned)
+            .map_err(|e| SavantError::Unknown(e.to_string()))?;
         let sid = agent_msg.session_id.clone();
         let content = agent_msg.content.clone();
         let msg_id = agent_msg.id.clone();
+
+        // MEM-02: Privacy filter — redact secrets before storage
+        let scan_result = privacy::scan_and_redact(&content);
+        let content = if scan_result.redaction_count > 0 {
+            warn!(
+                session = %sid,
+                redactions = scan_result.redaction_count,
+                types = ?scan_result.redaction_types,
+                "Privacy filter redacted secrets from message"
+            );
+            scan_result.content
+        } else {
+            content
+        };
+
+        // Compute deterministic entry ID early for dedup + version chaining
+        let entry_id: u64 = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(sid.as_bytes());
+            hasher.update(b"|");
+            hasher.update(msg_id.as_bytes());
+            let hash = hasher.finalize();
+            let bytes = hash.as_bytes();
+            u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]))
+        };
+
+        // MEM-01: Dedup window — skip duplicate content within 5 minutes
+        // MEM-08: On dedup hit, update version chain on the previous entry
+        // RC-04: Drop the cache lock before performing I/O operations.
+        {
+            let content_hash = {
+                let mut hasher = DefaultHasher::new();
+                sid.hash(&mut hasher);
+                content.hash(&mut hasher);
+                hasher.finish()
+            };
+
+            // Extract dedup hit info while holding the lock, then drop before I/O
+            let dedup_hit: Option<(u64, std::time::Instant)> = {
+                let mut cache = self.dedup_cache.lock().await;
+                if let Some(prev) = cache.get(&content_hash) {
+                    if prev.stored_at.elapsed() < std::time::Duration::from_secs(300) {
+                        Some((prev.entry_id, prev.stored_at))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+                // Lock dropped here at end of block
+            };
+
+            if let Some((prev_entry_id, _stored_at)) = dedup_hit {
+                debug!(
+                    session = %sid,
+                    "Dedup: skipping duplicate content within 5-min window"
+                );
+                // CP-03: Update version chain on the previous entry
+                // This I/O happens WITHOUT the cache lock held
+                if let Ok(Some(mut prev_entry)) =
+                    self.engine.enclave().lsm().get_metadata(prev_entry_id)
+                {
+                    let current_version: u32 = prev_entry.version.into();
+                    prev_entry.is_latest = false;
+                    prev_entry.updated_at = chrono::Utc::now().timestamp_millis().into();
+                    if let Err(e) = self
+                        .engine
+                        .enclave()
+                        .lsm()
+                        .insert_metadata(prev_entry_id, &prev_entry)
+                    {
+                        warn!(
+                            session = %sid,
+                            prev_id = prev_entry_id,
+                            error = %e,
+                            "Dedup: failed to update version chain on previous entry"
+                        );
+                    }
+                    debug!(
+                        session = %sid,
+                        prev_id = prev_entry_id,
+                        version = current_version,
+                        "Dedup: updated version chain on previous entry"
+                    );
+                }
+                return Ok(());
+            }
+
+            // Store placeholder in cache; entry_id filled after indexing
+            {
+                let mut cache = self.dedup_cache.lock().await;
+                cache.put(
+                    content_hash,
+                    DedupEntry {
+                        _hash: content_hash,
+                        stored_at: std::time::Instant::now(),
+                        entry_id,
+                    },
+                );
+            }
+        }
 
         // Append to transcript
         self.engine
@@ -107,31 +217,59 @@ impl MemoryBackend for AsyncMemoryBackend {
             if content.len() >= 3 {
                 match emb_service.embed(&content).await {
                     Ok(embedding) => {
+                        // Compute importance from message content
+                        let mut importance: u8 = 5;
+                        if content.len() > 500 {
+                            importance = importance.saturating_add(1);
+                        }
+                        if content.contains('?') {
+                            importance = importance.saturating_add(2);
+                        }
+                        // Commands: starts with / or contains imperative verbs
+                        if content.starts_with('/')
+                            || content.starts_with("please ")
+                            || content.starts_with("Please ")
+                            || content.starts_with("run ")
+                            || content.starts_with("Run ")
+                            || content.starts_with("do ")
+                            || content.starts_with("Do ")
+                            || content.starts_with("make ")
+                            || content.starts_with("Make ")
+                            || content.starts_with("create ")
+                            || content.starts_with("Create ")
+                            || content.starts_with("fix ")
+                            || content.starts_with("Fix ")
+                        {
+                            importance = importance.saturating_add(2);
+                        }
+                        if content.len() < 50 {
+                            importance = importance.saturating_sub(1);
+                        }
+                        // Clamp to valid range
+                        let importance = importance.clamp(1, 10);
+
                         // Create a MemoryEntry for indexing
                         let entry = crate::models::MemoryEntry {
-                            id: {
-                                // Deterministic content-hash ID using blake3 for collision resistance
-                                // Hash input: session_id + "|" + msg_id ensures global uniqueness
-                                let mut hasher = blake3::Hasher::new();
-                                hasher.update(sid.as_bytes());
-                                hasher.update(b"|");
-                                hasher.update(msg_id.as_bytes());
-                                let hash = hasher.finalize();
-                                let bytes = hash.as_bytes();
-                                u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8])).into()
-                            },
+                            id: entry_id.into(),
                             session_id: sid.clone(),
                             created_at: chrono::Utc::now().timestamp_millis().into(),
                             updated_at: chrono::Utc::now().timestamp_millis().into(),
                             content: content.clone(),
                             category: "transcript".to_string(),
-                            importance: 5,
+                            importance,
                             tags: vec![],
                             embedding,
                             shannon_entropy: 0.0.into(),
                             last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
                             hit_count: 0.into(),
                             related_to: vec![],
+                            // MEM-03: Access tracking
+                            access_timestamps: vec![],
+                            // MEM-08: Versioning
+                            version: 1.into(),
+                            parent_id: None,
+                            supersedes: vec![],
+                            is_latest: true,
                         };
 
                         if let Err(e) = self.engine.index_memory(entry).await {
@@ -167,74 +305,104 @@ impl MemoryBackend for AsyncMemoryBackend {
         let query_owned = query.to_string();
         let mut results: Vec<ChatMessage> = Vec::new();
 
-        // 1. Semantic search if embeddings available and query is non-empty
+        // CP-05: Semantic search is the PRIMARY retrieval path.
+        // Look up matched MemoryEntry objects from LSM and convert to ChatMessage.
+        // CP-01/CP-02: Update access tracking on every retrieved entry.
         if let Some(ref emb_service) = self.embedding_service {
             if !query_owned.is_empty() {
-                match emb_service.embed(&query_owned).await {
-                    Ok(query_embedding) => {
-                        match self.engine.semantic_search(&query_embedding, limit) {
-                            Ok(search_results) => {
-                                info!(
-                                    session = %sid,
-                                    results = search_results.len(),
-                                    "Semantic search returned results"
-                                );
-
-                                // Fetch recent messages and match by content relevance
-                                results = self.fetch_deduped_tail(&sid, limit * 3, limit);
-                            }
-                            Err(e) => {
-                                warn!(
-                                    session = %sid,
-                                    error = %e,
-                                    "Semantic search failed, falling back to substring match"
-                                );
-                            }
-                        }
-                    }
+                // Try embedding with Ollama auto-start retry
+                let embedding_result = match emb_service.embed(&query_owned).await {
+                    Ok(emb) => Ok(emb),
                     Err(e) => {
                         warn!(
                             session = %sid,
                             error = %e,
                             "Embedding failed — attempting Ollama auto-start and retry"
                         );
-                        // Self-heal: try to start Ollama and retry once
-                        if let Err(start_err) =
+                        if let Err(e) =
                             savant_core::utils::ollama_embeddings::auto_start_ollama().await
                         {
                             warn!(
                                 session = %sid,
-                                "Failed to auto-start Ollama for retry: {}",
-                                start_err
+                                error = %e,
+                                "Ollama auto-start failed during embedding retry"
                             );
                         }
-                        // Retry the embed after potential Ollama restart
-                        match emb_service.embed(&query_owned).await {
-                            Ok(query_embedding) => {
-                                match self.engine.semantic_search(&query_embedding, limit) {
-                                    Ok(search_results) => {
-                                        info!(
-                                            session = %sid,
-                                            results = search_results.len(),
-                                            "Semantic search returned results after Ollama restart"
-                                        );
-                                        results = self.fetch_deduped_tail(&sid, limit * 3, limit);
+                        emb_service.embed(&query_owned).await
+                    }
+                };
+
+                if let Ok(query_embedding) = embedding_result {
+                    // CP-08/09/10: Use hybrid search (BM25 + vector + RRF fusion)
+                    if let Ok(search_results) = self
+                        .engine
+                        .enclave()
+                        .hybrid_search(&query_owned, &query_embedding, limit)
+                        .await
+                    {
+                        info!(
+                            session = %sid,
+                            results = search_results.len(),
+                            "Hybrid search returned results"
+                        );
+
+                        // CP-05: Convert search results to ChatMessages via LSM lookup
+                        for sr in &search_results {
+                            if let Ok(memory_id) = sr.document_id.parse::<u64>() {
+                                if let Ok(Some(mut entry)) =
+                                    self.engine.enclave().lsm().get_metadata(memory_id)
+                                {
+                                    // CP-01/CP-02: Update access tracking
+                                    let now_ts = chrono::Utc::now().timestamp();
+                                    entry.last_accessed_at = (now_ts * 1000).into(); // millis to match field type
+                                    let current_hits: u32 = entry.hit_count.into();
+                                    entry.hit_count = (current_hits + 1).into();
+                                    // Ring buffer, max 20 entries.
+                                    // Use rotate_left(1) + replace last instead of remove(0)
+                                    // to avoid O(n) shift on every access.
+                                    if entry.access_timestamps.len() >= 20 {
+                                        entry.access_timestamps.rotate_left(1);
+                                        let last = entry.access_timestamps.len() - 1;
+                                        entry.access_timestamps[last] = now_ts.into();
+                                    } else {
+                                        entry.access_timestamps.push(now_ts.into());
                                     }
-                                    Err(e2) => {
+                                    // Persist updated metadata (best effort)
+                                    if let Err(e) = self
+                                        .engine
+                                        .enclave()
+                                        .lsm()
+                                        .insert_metadata(memory_id, &entry)
+                                    {
                                         warn!(
-                                            session = %sid,
-                                            error = %e2,
-                                            "Semantic search failed after retry"
+                                            memory_id = memory_id,
+                                            error = %e,
+                                            "Failed to persist access tracking metadata"
                                         );
                                     }
+
+                                    // Convert MemoryEntry to ChatMessage
+                                    use savant_core::types::ChatRole;
+                                    let role = match entry.category.as_str() {
+                                        "user" => ChatRole::User,
+                                        "assistant" => ChatRole::Assistant,
+                                        "transcript" => ChatRole::Assistant,
+                                        _ => ChatRole::System,
+                                    };
+                                    results.push(ChatMessage {
+                                        role,
+                                        content: entry.content.clone(),
+                                        sender: None,
+                                        recipient: None,
+                                        agent_id: None,
+                                        session_id: Some(savant_core::types::SessionId(
+                                            entry.session_id.clone(),
+                                        )),
+                                        channel: savant_core::types::AgentOutputChannel::Chat,
+                                        is_telemetry: false,
+                                        images: vec![],
+                                    });
                                 }
-                            }
-                            Err(e2) => {
-                                warn!(
-                                    session = %sid,
-                                    error = %e2,
-                                    "Embedding still failing after Ollama restart"
-                                );
                             }
                         }
                     }
@@ -242,16 +410,15 @@ impl MemoryBackend for AsyncMemoryBackend {
             }
         }
 
-        // 2. If no semantic results or no embeddings, use transcript tail
+        // Fallback: if semantic search returned nothing, use transcript tail
         if results.is_empty() {
-            let tail = self.engine.fetch_session_tail(&sid, limit * 2); // fetch extra for decay filtering
+            let tail = self.engine.fetch_session_tail(&sid, limit * 2);
             let now = chrono::Utc::now().timestamp_millis();
-            let lambda = 0.03_f64;
+            let lambda = self.engine.enclave().config.temporal_decay_lambda as f64;
             let min_relevance = 0.1_f64;
             results = tail
                 .into_iter()
                 .filter(|msg| {
-                    // Temporal decay: filter messages older than ~30 days
                     if msg.timestamp <= 0 {
                         return true;
                     }
@@ -264,7 +431,7 @@ impl MemoryBackend for AsyncMemoryBackend {
                 .collect();
         }
 
-        // 3. Apply substring filter if query is non-empty
+        // Substring filter when no embeddings available
         if !query_owned.is_empty() && self.embedding_service.is_none() {
             let query_lower = query_owned.to_lowercase();
             results.retain(|msg| msg.content.to_lowercase().contains(&query_lower));
@@ -290,7 +457,7 @@ impl MemoryBackend for AsyncMemoryBackend {
         }
 
         // Split into older (to consolidate) and recent (to keep as-is)
-        let recent_count = 20;
+        let recent_count = self.engine.enclave().config.recent_message_count;
         let (to_consolidate, recent) = if messages.len() > recent_count {
             let split_idx = messages.len() - recent_count;
             let older = messages[..split_idx].to_vec();
@@ -560,6 +727,90 @@ impl MemoryBackend for AsyncMemoryBackend {
             })
             .collect())
     }
+
+    async fn run_promotion_cycle(&self, _agent_id: &str) -> Result<(), SavantError> {
+        self.engine.enclave().run_promotion_cycle().await;
+        Ok(())
+    }
+
+    async fn synthesize_lessons(&self, agent_id: &str) -> Result<(), SavantError> {
+        self.engine.synthesize_lessons(agent_id).await;
+        Ok(())
+    }
+
+    async fn synthesize_insights(&self, _agent_id: &str) -> Result<(), SavantError> {
+        self.engine.synthesize_insights().await;
+        Ok(())
+    }
+
+    async fn get_lessons_context(&self) -> String {
+        let guard = self.engine.enclave().get_lessons_vec().await;
+        if guard.is_empty() {
+            return String::new();
+        }
+        let lines: Vec<String> = guard
+            .iter()
+            .map(|l| {
+                format!(
+                    "- [conf:{:.2}, reinforced:{}] {}",
+                    l.confidence, l.reinforcements, l.content
+                )
+            })
+            .collect();
+        format!(
+            "<SYNTHESIZED_LESSONS>\n{}\n</SYNTHESIZED_LESSONS>",
+            lines.join("\n")
+        )
+    }
+
+    async fn get_insights_context(&self) -> String {
+        let guard = self.engine.enclave().get_insights_vec().await;
+        if guard.is_empty() {
+            return String::new();
+        }
+        let lines: Vec<String> = guard
+            .iter()
+            .map(|i| {
+                format!(
+                    "- [conf:{:.2}, cat:{}] {}",
+                    i.confidence, i.category, i.content
+                )
+            })
+            .collect();
+        format!(
+            "<SYNTHESIZED_INSIGHTS>\n{}\n</SYNTHESIZED_INSIGHTS>",
+            lines.join("\n")
+        )
+    }
+
+    async fn restore_state(&self, _agent_id: &str) -> Result<(), SavantError> {
+        let snapshot_dir = std::path::PathBuf::from("data/snapshots");
+        if snapshot_dir.exists() {
+            if let Err(e) = self.engine.restore_state(&snapshot_dir) {
+                tracing::warn!("[memory] Failed to restore state: {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    async fn auto_recall(
+        &self,
+        agent_id: &str,
+        query: &str,
+    ) -> Result<Vec<savant_core::types::ChatMessage>, SavantError> {
+        let config = AutoRecallConfig::default();
+        let block = self.auto_recall(agent_id, query, config).await?;
+        Ok(block
+            .retrieved_memories
+            .into_iter()
+            .map(|m| {
+                savant_core::types::ChatMessage::new(
+                    savant_core::types::ChatRole::System,
+                    m.content,
+                )
+            })
+            .collect())
+    }
 }
 
 impl AsyncMemoryBackend {
@@ -576,6 +827,167 @@ impl AsyncMemoryBackend {
 
         self.engine
             .delete_session(&sid)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Counts the number of messages in a session.
+    pub fn count_session_messages(&self, session_id: &str) -> Result<u64, SavantError> {
+        self.engine
+            .count_session_messages(session_id)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Fetches all message IDs for a session.
+    pub fn fetch_all_message_ids_for_session(&self, session_id: &str) -> Vec<String> {
+        self.engine.fetch_all_message_ids_for_session(session_id)
+    }
+
+    /// Fetches a message by its ID across all sessions.
+    pub fn fetch_message_by_id(&self, msg_id: &str) -> Result<Option<AgentMessage>, SavantError> {
+        self.engine
+            .fetch_message_by_id(msg_id)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Subscribes to memory notifications for high-importance discoveries.
+    pub fn subscribe_notifications(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<crate::notifications::MemoryNotification> {
+        self.engine.subscribe_notifications()
+    }
+
+    /// Returns the current notification subscriber count.
+    pub fn notification_subscriber_count(&self) -> usize {
+        self.engine.notification_subscriber_count()
+    }
+
+    /// Cull low-entropy memories below the given threshold.
+    pub fn cull_low_entropy_memories(&self, threshold: f32) -> Result<usize, SavantError> {
+        self.engine
+            .cull_low_entropy_memories(threshold)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Hydrates a session from persistent storage.
+    pub fn hydrate_session(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<AgentMessage>, SavantError> {
+        self.engine
+            .hydrate_session(session_id, limit)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Temporal semantic search.
+    pub fn semantic_search_temporal(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, SavantError> {
+        self.engine
+            .semantic_search_temporal(query_embedding, top_k)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Temporal semantic search with decay.
+    pub fn semantic_search_temporal_decay(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+        lambda: f32,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, SavantError> {
+        self.engine
+            .semantic_search_temporal_decay(query_embedding, top_k, lambda)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Returns all vectors within `max_distance` of the query embedding.
+    pub fn recall_within_distance(
+        &self,
+        query_embedding: &[f32],
+        max_distance: f32,
+    ) -> Result<Vec<crate::vector_engine::SearchResult>, SavantError> {
+        self.engine
+            .recall_within_distance(query_embedding, max_distance)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Journals a task state transition to the persistent WAL.
+    pub fn journal_task_state(
+        &self,
+        task_id: &str,
+        new_state: savant_ipc::a2a::protocol::TaskState,
+    ) -> Result<(), SavantError> {
+        self.engine
+            .enclave()
+            .lsm()
+            .journal_task_state(task_id, new_state)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Recovers interrupted delegations from the task state journal.
+    pub fn recover_interrupted_delegations(
+        &self,
+    ) -> Result<Vec<(String, savant_ipc::a2a::protocol::TaskState)>, SavantError> {
+        self.engine
+            .enclave()
+            .lsm()
+            .recover_interrupted_delegations()
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Stores temporal metadata for bi-temporal tracking.
+    pub fn store_temporal_metadata(
+        &self,
+        temporal: &crate::models::TemporalMetadata,
+    ) -> Result<(), SavantError> {
+        self.engine
+            .enclave()
+            .lsm()
+            .store_temporal_metadata(temporal)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Finds active temporal metadata by entity.
+    pub fn find_active_temporal_by_entity(
+        &self,
+        entity: &str,
+    ) -> Result<Vec<crate::models::TemporalMetadata>, SavantError> {
+        self.engine
+            .enclave()
+            .lsm()
+            .find_active_temporal_by_entity(entity)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Stores a DAG node for reversible session compaction.
+    pub fn store_dag_node(&self, node: &crate::models::DagNode) -> Result<(), SavantError> {
+        self.engine
+            .enclave()
+            .lsm()
+            .store_dag_node(node)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Loads a DAG node by ID.
+    pub fn load_dag_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<crate::models::DagNode>, SavantError> {
+        self.engine
+            .enclave()
+            .lsm()
+            .load_dag_node(node_id)
+            .map_err(|e| SavantError::Unknown(e.to_string()))
+    }
+
+    /// Flushes pending writes to disk.
+    pub fn flush(&self) -> Result<(), SavantError> {
+        self.engine
+            .enclave()
+            .lsm()
+            .flush()
             .map_err(|e| SavantError::Unknown(e.to_string()))
     }
 
@@ -604,7 +1016,10 @@ impl AsyncMemoryBackend {
         let mut block = ContextCacheBlock {
             query_intent: query_owned.clone(),
             retrieved_memories: Vec::new(),
-            injected_at: savant_core::utils::time::now_millis() as i64,
+            injected_at: savant_core::utils::time::now_millis().unwrap_or_else(|e| {
+                tracing::warn!("Failed to get current time: {}, using 0", e);
+                0
+            }) as i64,
             estimated_tokens: 0,
         };
 
@@ -686,6 +1101,11 @@ impl AsyncMemoryBackend {
                 last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
                 hit_count: 0.into(),
                 related_to: vec![],
+                access_timestamps: vec![],
+                version: 1.into(),
+                parent_id: None,
+                supersedes: vec![],
+                is_latest: true,
             };
 
             block.retrieved_memories.push(entry);
@@ -718,25 +1138,45 @@ mod tests {
     use savant_core::traits::EmbeddingProvider;
     use savant_core::types::{AgentOutputChannel, ChatRole, SessionId};
 
-    /// Mock embedding provider for tests — returns fixed 384-dim zero vectors.
+    /// Mock embedding provider for tests — returns fixed 2560-dim zero vectors.
     struct MockEmbeddingProvider;
 
     #[async_trait::async_trait]
     impl EmbeddingProvider for MockEmbeddingProvider {
         async fn embed(&self, _text: &str) -> Result<Vec<f32>, SavantError> {
-            Ok(vec![0.0; 384])
+            Ok(vec![0.0; 2560])
         }
         async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SavantError> {
-            Ok(texts.iter().map(|_| vec![0.0; 384]).collect())
+            Ok(texts.iter().map(|_| vec![0.0; 64]).collect())
         }
         fn dimensions(&self) -> usize {
-            384
+            64
         }
     }
 
     fn mock_engine(dir: &std::path::Path) -> Arc<MemoryEngine> {
-        MemoryEngine::with_defaults(dir, Arc::new(MockEmbeddingProvider))
-            .expect("Failed to init engine")
+        use crate::engine::EngineConfig;
+        use crate::lsm_engine::LsmConfig;
+        use crate::vector_engine::VectorConfig;
+        MemoryEngine::new(
+            dir,
+            EngineConfig {
+                lsm_config: LsmConfig {
+                    vector_dimension: 64,
+                    ..LsmConfig::default()
+                },
+                vector_config: VectorConfig {
+                    dimensions: 64,
+                    ..VectorConfig::default()
+                },
+                distill_llm_provider: None,
+                distill_params: None,
+                embedding_service: Arc::new(MockEmbeddingProvider),
+                memory_config: crate::models::MemoryConfig::default(),
+                personality: None,
+            },
+        )
+        .expect("Failed to init engine")
     }
 
     #[tokio::test]

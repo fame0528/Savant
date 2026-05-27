@@ -82,8 +82,12 @@ pub struct ProviderConfig {
     pub sync_interval_secs: u64,
 }
 
-fn default_true() -> bool { true }
-fn default_sync_interval() -> u64 { 1200 }
+fn default_true() -> bool {
+    true
+}
+fn default_sync_interval() -> u64 {
+    1200
+}
 
 /// Trait for external data source providers.
 #[async_trait]

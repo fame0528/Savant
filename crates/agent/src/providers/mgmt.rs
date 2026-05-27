@@ -16,7 +16,9 @@ impl OpenRouterMgmt {
     }
 
     pub async fn create_key(&self, agent_name: &str) -> Result<String, SavantError> {
-        let client = savant_core::net::secure_client();
+        // Use extended timeout for key creation (API can be slow)
+        let client = savant_core::net::secure_client_with_timeout(30, 10)
+            .map_err(|e| SavantError::Unknown(format!("HTTP client error: {}", e)))?;
         let name = format!("Savant Agent: {}", agent_name);
 
         let response = client
@@ -36,8 +38,13 @@ impl OpenRouterMgmt {
         }
 
         // Try to get raw response text for debugging
+        let status = response.status();
         let raw_body = response.text().await.unwrap_or_default();
-        tracing::debug!("OpenRouter key creation raw response: {}", raw_body);
+        tracing::debug!(
+            "OpenRouter key creation: status={}, body_len={}",
+            status,
+            raw_body.len()
+        );
 
         // Parse JSON flexibly: try top-level "key" first, then nested "data.key"
         let json: serde_json::Value = serde_json::from_str(&raw_body).map_err(|e| {

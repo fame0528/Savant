@@ -19,8 +19,7 @@ fn cleanup(path: &PathBuf) {
 #[test]
 fn test_cli_binary_exists() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let binary_path = PathBuf::from(manifest_dir)
-        .join("../../target/debug/savant_cli");
+    let binary_path = PathBuf::from(manifest_dir).join("../../target/debug/savant_cli");
     // Binary may not exist if not yet built — skip in CI
     if binary_path.exists() {
         let output = std::process::Command::new(&binary_path)
@@ -35,8 +34,7 @@ fn test_cli_binary_exists() {
 #[test]
 fn test_cli_version_flag() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let binary_path = PathBuf::from(manifest_dir)
-        .join("../../target/debug/savant_cli");
+    let binary_path = PathBuf::from(manifest_dir).join("../../target/debug/savant_cli");
     if binary_path.exists() {
         let output = std::process::Command::new(&binary_path)
             .arg("--version")
@@ -106,8 +104,14 @@ fn test_copy_dir_recursive_nested() {
     assert!(copy_dir_recursive(&src, &dst).is_ok());
     assert!(dst.join("root.txt").exists());
     assert!(dst.join("a").join("b").join("deep.txt").exists());
-    assert_eq!(std::fs::read_to_string(dst.join("root.txt")).unwrap(), "root");
-    assert_eq!(std::fs::read_to_string(dst.join("a").join("b").join("deep.txt")).unwrap(), "deep");
+    assert_eq!(
+        std::fs::read_to_string(dst.join("root.txt")).unwrap(),
+        "root"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dst.join("a").join("b").join("deep.txt")).unwrap(),
+        "deep"
+    );
     cleanup(&src);
     cleanup(&dst);
 }
@@ -118,13 +122,20 @@ fn test_copy_dir_recursive_multiple_files() {
     let dst = make_temp_dir();
     std::fs::create_dir_all(&src).unwrap();
     for i in 0..10 {
-        std::fs::write(src.join(format!("file_{}.txt", i)), format!("content {}", i)).unwrap();
+        std::fs::write(
+            src.join(format!("file_{}.txt", i)),
+            format!("content {}", i),
+        )
+        .unwrap();
     }
     assert!(copy_dir_recursive(&src, &dst).is_ok());
     for i in 0..10 {
         let copied = dst.join(format!("file_{}.txt", i));
         assert!(copied.exists());
-        assert_eq!(std::fs::read_to_string(&copied).unwrap(), format!("content {}", i));
+        assert_eq!(
+            std::fs::read_to_string(&copied).unwrap(),
+            format!("content {}", i)
+        );
     }
     cleanup(&src);
     cleanup(&dst);
@@ -139,7 +150,10 @@ fn test_copy_dir_recursive_overwrites_existing() {
     std::fs::write(src.join("file.txt"), "new content").unwrap();
     std::fs::write(dst.join("file.txt"), "old content").unwrap();
     assert!(copy_dir_recursive(&src, &dst).is_ok());
-    assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "new content");
+    assert_eq!(
+        std::fs::read_to_string(dst.join("file.txt")).unwrap(),
+        "new content"
+    );
     cleanup(&src);
     cleanup(&dst);
 }
@@ -161,12 +175,11 @@ fn test_copy_dir_recursive_nonexistent_src() {
 
 #[test]
 fn test_log_visitor_default() {
-    // Verify the module compiles and types are accessible
-    // The actual LogVisitor is private to main.rs, so we test through the binary
+    // LogVisitor was moved to commands/debug_log.rs (pub struct supporting DebugLogLayer)
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
+    let src_path = PathBuf::from(manifest_dir).join("src/commands/debug_log.rs");
     assert!(src_path.exists());
-    let content = std::fs::read_to_string(&src_path).unwrap();
+    let content = std::fs::read_to_string(&src_path).expect("should read source file");
     assert!(content.contains("struct LogVisitor"));
     assert!(content.contains("impl tracing::field::Visit for LogVisitor"));
 }
@@ -177,7 +190,7 @@ fn test_log_visitor_default() {
 fn test_cli_source_has_expected_commands() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
-    let content = std::fs::read_to_string(&src_path).unwrap();
+    let content = std::fs::read_to_string(&src_path).expect("should read source file");
     // Verify all expected subcommands exist in source
     assert!(content.contains("TestSkill"));
     assert!(content.contains("Backup"));
@@ -193,7 +206,7 @@ fn test_cli_source_has_expected_commands() {
 fn test_cli_source_has_keygen_flag() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
-    let content = std::fs::read_to_string(&src_path).unwrap();
+    let content = std::fs::read_to_string(&src_path).expect("should read source file");
     assert!(content.contains("keygen: bool"));
 }
 
@@ -201,6 +214,6 @@ fn test_cli_source_has_keygen_flag() {
 fn test_cli_source_has_config_flag() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = PathBuf::from(manifest_dir).join("src/main.rs");
-    let content = std::fs::read_to_string(&src_path).unwrap();
+    let content = std::fs::read_to_string(&src_path).expect("should read source file");
     assert!(content.contains("config: Option<String>"));
 }

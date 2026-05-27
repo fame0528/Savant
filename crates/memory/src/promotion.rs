@@ -182,7 +182,11 @@ impl PromotionEngine {
 
     /// Checks if a learning should be promoted to agent identity (SOUL.md mutation).
     /// Requires 5+ recurrences AND high significance (≥7) AND personality alignment.
-    pub fn should_promote_to_identity(&self, metrics: &PromotionMetrics, recurrence_count: usize) -> bool {
+    pub fn should_promote_to_identity(
+        &self,
+        metrics: &PromotionMetrics,
+        recurrence_count: usize,
+    ) -> bool {
         recurrence_count >= 5
             && metrics.importance >= 7
             && self.calculate_score(metrics) >= self.promotion_threshold
@@ -218,6 +222,194 @@ impl PromotionEngine {
 impl Default for PromotionEngine {
     fn default() -> Self {
         Self::new(PersonalityTraits::default())
+    }
+}
+
+/// Retention scoring mode.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RetentionMode {
+    /// OCEAN personality-weighted scoring (existing).
+    Ocean,
+    /// Ebbinghaus forgetting curve scoring (MEM-09).
+    Ebbinghaus,
+}
+
+/// Ebbinghaus retention scoring configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EbbinghausConfig {
+    /// Decay rate (lambda). Higher = faster forgetting.
+    pub lambda: f32,
+    /// Access reinforcement weight (sigma).
+    pub sigma: f32,
+    /// Tier thresholds.
+    pub hot_threshold: f32,
+    pub warm_threshold: f32,
+    pub cold_threshold: f32,
+}
+
+impl Default for EbbinghausConfig {
+    fn default() -> Self {
+        Self {
+            lambda: 0.1,
+            sigma: 0.5,
+            hot_threshold: 0.7,
+            warm_threshold: 0.4,
+            cold_threshold: 0.15,
+        }
+    }
+}
+
+/// Retention tier based on Ebbinghaus score.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RetentionTier {
+    /// High retention — full detail in vault.
+    Hot,
+    /// Medium retention — summary in vault.
+    Warm,
+    /// Low retention — archive reference only.
+    Cold,
+    /// Below threshold — eligible for eviction.
+    Dead,
+}
+
+/// Ebbinghaus retention scoring engine (MEM-09).
+///
+/// Formula: `score = salience * exp(-λ * Δt) + σ * Σ(1/days_since_access)`
+///
+/// Where:
+/// - `salience` is type-based (architecture=0.9, bug=0.7, pattern=0.8, etc.)
+/// - `Δt` is time since last access in days
+/// - `Σ(1/days_since_access)` is the sum of recency-weighted access scores
+/// - `λ` is the decay rate
+/// - `σ` is the access reinforcement weight
+pub struct EbbinghausScorer {
+    config: EbbinghausConfig,
+}
+
+impl EbbinghausScorer {
+    pub fn new(config: EbbinghausConfig) -> Self {
+        Self { config }
+    }
+
+    /// Computes the Ebbinghaus retention score for a memory.
+    ///
+    /// # Arguments
+    /// - `category`: memory category (used for salience lookup)
+    /// - `days_since_access`: days since last access
+    /// - `access_timestamps`: ring buffer of access timestamps (epoch seconds)
+    /// - `now`: current timestamp (epoch seconds)
+    pub fn score(
+        &self,
+        category: &str,
+        days_since_access: f32,
+        access_timestamps: &[i64],
+        now: i64,
+    ) -> f32 {
+        let salience = self.type_salience(category);
+
+        // Exponential decay: salience * exp(-λ * Δt)
+        let decay = salience * (-self.config.lambda * days_since_access).exp();
+
+        // Access reinforcement: σ * Σ(1/days_since_access_i)
+        let reinforcement: f32 = access_timestamps
+            .iter()
+            .map(|&ts| {
+                let days = (now - ts).max(1) as f32 / 86400.0;
+                1.0 / days
+            })
+            .sum();
+
+        (decay + self.config.sigma * reinforcement).clamp(0.0, 1.0)
+    }
+
+    /// Returns the retention tier for a score.
+    pub fn tier(&self, score: f32) -> RetentionTier {
+        if score >= self.config.hot_threshold {
+            RetentionTier::Hot
+        } else if score >= self.config.warm_threshold {
+            RetentionTier::Warm
+        } else if score >= self.config.cold_threshold {
+            RetentionTier::Cold
+        } else {
+            RetentionTier::Dead
+        }
+    }
+
+    /// Returns the salience weight for a memory category.
+    fn type_salience(&self, category: &str) -> f32 {
+        match category {
+            "architecture" | "design" => 0.9,
+            "bug" | "error" | "regression" => 0.7,
+            "pattern" | "convention" => 0.8,
+            "preference" | "setting" => 0.85,
+            "workflow" | "procedure" => 0.6,
+            "fact" | "knowledge" => 0.5,
+            "observation" | "exploration" => 0.4,
+            "transcript" | "message" => 0.3,
+            _ => 0.5, // default salience
+        }
+    }
+}
+
+impl Default for EbbinghausScorer {
+    fn default() -> Self {
+        Self::new(EbbinghausConfig::default())
+    }
+}
+
+#[cfg(test)]
+mod ebbinghaus_tests {
+    use super::*;
+
+    #[test]
+    fn test_ebbinghaus_fresh_memory() {
+        let scorer = EbbinghausScorer::default();
+        let now = 1700000000;
+        let score = scorer.score("architecture", 0.0, &[], now);
+        assert!(score > 0.8); // fresh + high salience
+    }
+
+    #[test]
+    fn test_ebbinghaus_old_memory_no_access() {
+        let scorer = EbbinghausScorer::default();
+        let now = 1700000000;
+        let score = scorer.score("transcript", 30.0, &[], now);
+        assert!(score < 0.2); // old + low salience + no access
+    }
+
+    #[test]
+    fn test_ebbinghaus_access_reinforcement() {
+        let scorer = EbbinghausScorer::default();
+        let now = 1700000000;
+        let recent_access = vec![now - 3600, now - 7200, now - 86400]; // 1h, 2h, 1d ago
+        let score_with_access = scorer.score("fact", 7.0, &recent_access, now);
+        let score_without = scorer.score("fact", 7.0, &[], now);
+        assert!(score_with_access > score_without);
+    }
+
+    #[test]
+    fn test_ebbinghaus_tier_assignment() {
+        let scorer = EbbinghausScorer::default();
+        assert_eq!(scorer.tier(0.9), RetentionTier::Hot);
+        assert_eq!(scorer.tier(0.5), RetentionTier::Warm);
+        assert_eq!(scorer.tier(0.2), RetentionTier::Cold);
+        assert_eq!(scorer.tier(0.05), RetentionTier::Dead);
+    }
+
+    #[test]
+    fn test_ebbinghaus_type_salience() {
+        let scorer = EbbinghausScorer::default();
+        assert!(scorer.type_salience("architecture") > scorer.type_salience("transcript"));
+        assert!(scorer.type_salience("preference") > scorer.type_salience("observation"));
+    }
+
+    #[test]
+    fn test_ebbinghaus_score_clamped() {
+        let scorer = EbbinghausScorer::default();
+        let now = 1700000000;
+        let many_access: Vec<i64> = (0..100).map(|i| now - i * 60).collect();
+        let score = scorer.score("architecture", 0.0, &many_access, now);
+        assert!(score <= 1.0); // clamped
     }
 }
 

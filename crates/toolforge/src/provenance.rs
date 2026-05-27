@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvenanceEntry {
@@ -65,7 +64,6 @@ impl ToolStats {
 
 pub struct ProvenanceTracker {
     path: PathBuf,
-    writer: Mutex<File>,
 }
 
 impl ProvenanceTracker {
@@ -73,22 +71,30 @@ impl ProvenanceTracker {
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new()
+        // Touch the file to ensure it exists
+        OpenOptions::new()
             .create(true)
             .append(true)
             .open(log_path)?;
         Ok(ProvenanceTracker {
             path: log_path.to_path_buf(),
-            writer: Mutex::new(file),
         })
     }
 
-    pub fn append(&self, entry: &ProvenanceEntry) {
+    /// RC-18: Async append using spawn_blocking to avoid blocking the tokio worker.
+    pub async fn append(&self, entry: &ProvenanceEntry) {
         let line = serde_json::to_string(entry).unwrap_or_default();
-        if let Ok(mut file) = self.writer.lock() {
-            if let Err(e) = writeln!(file, "{line}") {
-                tracing::warn!("[provenance] Failed to write provenance entry: {}", e);
+        let path = self.path.clone();
+        if let Err(e) = tokio::task::spawn_blocking(move || {
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+                if let Err(write_err) = writeln!(file, "{line}") {
+                    tracing::warn!("[provenance] failed to write entry: {}", write_err);
+                }
             }
+        })
+        .await
+        {
+            tracing::warn!("[provenance] spawn_blocking failed: {}", e);
         }
     }
 

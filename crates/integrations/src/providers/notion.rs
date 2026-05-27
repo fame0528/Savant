@@ -1,4 +1,10 @@
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
+#![allow(clippy::disallowed_methods)]
 //! Notion provider implementation.
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
 
 use crate::error::{IntegrationError, IntegrationResult};
 use crate::provider::{FetchItem, FetchResult, Provider, ProviderConfig, ProviderKind};
@@ -65,7 +71,10 @@ impl NotionProvider {
         Self {
             config,
             notion_config,
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -115,10 +124,7 @@ impl NotionProvider {
             .as_ref()
             .ok_or_else(|| IntegrationError::AuthError("No integration token".to_string()))?;
 
-        let url = format!(
-            "{}/blocks/{}/children",
-            self.notion_config.api_url, page_id
-        );
+        let url = format!("{}/blocks/{}/children", self.notion_config.api_url, page_id);
         let response = self
             .http_client
             .get(&url)
@@ -166,12 +172,14 @@ impl NotionProvider {
                     }
                 }
                 "bulleted_list_item" => {
-                    if let Some(text) = Self::extract_rich_text(&block.bulleted_list_item.rich_text) {
+                    if let Some(text) = Self::extract_rich_text(&block.bulleted_list_item.rich_text)
+                    {
                         content.push_str(&format!("- {}\n", text));
                     }
                 }
                 "numbered_list_item" => {
-                    if let Some(text) = Self::extract_rich_text(&block.numbered_list_item.rich_text) {
+                    if let Some(text) = Self::extract_rich_text(&block.numbered_list_item.rich_text)
+                    {
                         content.push_str(&format!("1. {}\n", text));
                     }
                 }
@@ -246,7 +254,7 @@ impl Provider for NotionProvider {
                     String::new()
                 }
             };
-            let content_hash = format!("{:x}", blake3::hash(content.as_bytes()));
+            let content_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
 
             items.push(FetchItem {
                 external_id: page.id.clone(),
@@ -281,7 +289,16 @@ impl Provider for NotionProvider {
         let response = self
             .http_client
             .get(&url)
-            .bearer_auth(self.notion_config.integration_token.as_ref().unwrap())
+            .bearer_auth(
+                self.notion_config
+                    .integration_token
+                    .as_ref()
+                    .ok_or_else(|| {
+                        IntegrationError::ConfigError(
+                            "Notion integration token not configured".to_string(),
+                        )
+                    })?,
+            )
             .header("Notion-Version", &self.notion_config.api_version)
             .send()
             .await?;
@@ -318,6 +335,7 @@ struct NotionPage {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct NotionProperty {
     #[serde(default)]
     title: Option<Vec<NotionRichText>>,
@@ -328,6 +346,7 @@ struct NotionProperty {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct NotionBlocksResponse {
     results: Vec<NotionBlock>,
     #[serde(default)]
@@ -336,7 +355,8 @@ struct NotionBlocksResponse {
     next_cursor: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
+#[allow(dead_code)]
 struct NotionBlock {
     id: String,
     #[serde(rename = "type")]
@@ -396,11 +416,15 @@ mod tests {
     #[test]
     fn test_extract_rich_text() {
         let rich_text = vec![
-            NotionRichText { plain_text: "Hello ".to_string() },
-            NotionRichText { plain_text: "World".to_string() },
+            NotionRichText {
+                plain_text: "Hello ".to_string(),
+            },
+            NotionRichText {
+                plain_text: "World".to_string(),
+            },
         ];
         let result = NotionProvider::extract_rich_text(&rich_text);
-        assert_eq!(result.unwrap(), "Hello World");
+        assert_eq!(result, Some("Hello World".to_string()));
     }
 
     #[test]
@@ -417,7 +441,9 @@ mod tests {
                 id: "1".to_string(),
                 block_type: "heading_1".to_string(),
                 heading_1: NotionHeadingBlock {
-                    rich_text: vec![NotionRichText { plain_text: "Title".to_string() }],
+                    rich_text: vec![NotionRichText {
+                        plain_text: "Title".to_string(),
+                    }],
                 },
                 ..Default::default()
             },
@@ -425,7 +451,9 @@ mod tests {
                 id: "2".to_string(),
                 block_type: "paragraph".to_string(),
                 paragraph: NotionParagraphBlock {
-                    rich_text: vec![NotionRichText { plain_text: "Content".to_string() }],
+                    rich_text: vec![NotionRichText {
+                        plain_text: "Content".to_string(),
+                    }],
                 },
                 ..Default::default()
             },

@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -39,7 +40,10 @@ impl MattermostAdapter {
             .await
             .map_err(|e| SavantError::Unknown(e.to_string()))?;
         if !resp.status().is_success() {
-            warn!("[MATTERMOST] Send failed: {}", resp.status());
+            return Err(SavantError::Unknown(format!(
+                "Mattermost send failed: HTTP {}",
+                resp.status()
+            )));
         }
         Ok(())
     }
@@ -47,7 +51,7 @@ impl MattermostAdapter {
     async fn poll_posts(&self, channel_id: &str) -> Result<Vec<serde_json::Value>, SavantError> {
         let resp: serde_json::Value = self
             .http
-              .get(format!(
+            .get(format!(
                 "{}/api/v4/channels/{}/posts",
                 self.config.server_url, channel_id
             ))
@@ -153,8 +157,8 @@ impl ChannelAdapter for MattermostAdapter {
         if event.event_type != "chat.message" {
             return Ok(());
         }
-        let payload: serde_json::Value =
-            serde_json::from_str(&event.payload).map_err(|e| SavantError::Unknown(e.to_string()))?;
+        let payload: serde_json::Value = serde_json::from_str(&event.payload)
+            .map_err(|e| SavantError::Unknown(e.to_string()))?;
         let content = payload["content"].as_str().unwrap_or("");
         let session_id = payload["session_id"].as_str().unwrap_or("");
 
@@ -176,6 +180,7 @@ impl ChannelAdapter for MattermostAdapter {
         self.nexus
             .event_bus
             .send(event)
-            .map(|_| ()).map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
+            .map(|_| ())
+            .map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
     }
 }

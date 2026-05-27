@@ -23,34 +23,24 @@ async fn test_docker_availability_check() {
 }
 
 #[tokio::test]
+#[ignore] // Requires Docker runtime
 async fn test_docker_executor_name() {
-    if !docker_available() {
-        println!("SKIP: Docker not available");
-        return;
-    }
     let executor = DockerSkillExecutor::new("alpine:latest".to_string())
         .expect("Failed to create Docker executor");
     assert_eq!(executor.name(), "docker_skill");
 }
 
 #[tokio::test]
+#[ignore] // Requires Docker runtime
 async fn test_docker_executor_description() {
-    if !docker_available() {
-        println!("SKIP: Docker not available");
-        return;
-    }
     let executor = DockerSkillExecutor::new("alpine:latest".to_string())
         .expect("Failed to create Docker executor");
     assert!(!executor.description().is_empty());
 }
 
 #[tokio::test]
+#[ignore] // Requires Docker runtime + alpine image
 async fn test_docker_execute_echo() {
-    if !docker_available() {
-        println!("SKIP: Docker not available");
-        return;
-    }
-
     let executor = DockerSkillExecutor::new("alpine:latest".to_string())
         .expect("Failed to create Docker executor");
     let result = executor
@@ -69,7 +59,6 @@ async fn test_docker_execute_echo() {
         }
         Err(e) => {
             let err_str = e.to_string().to_lowercase();
-            // Docker might not have alpine image pulled - acceptable failure
             if err_str.contains("image") || err_str.contains("404") || err_str.contains("not found")
             {
                 println!("SKIP: alpine:latest image not available locally: {}", e);
@@ -81,12 +70,8 @@ async fn test_docker_execute_echo() {
 }
 
 #[tokio::test]
+#[ignore] // Requires Docker runtime
 async fn test_docker_execute_shell_command() {
-    if !docker_available() {
-        println!("SKIP: Docker not available");
-        return;
-    }
-
     let executor = DockerSkillExecutor::new("alpine:latest".to_string())
         .expect("Failed to create Docker executor");
     let result = executor
@@ -110,11 +95,8 @@ async fn test_docker_execute_shell_command() {
 }
 
 #[tokio::test]
+#[ignore] // Requires Docker runtime
 async fn test_docker_invalid_input() {
-    if !docker_available() {
-        println!("SKIP: Docker not available");
-        return;
-    }
     let executor = DockerSkillExecutor::new("alpine:latest".to_string())
         .expect("Failed to create Docker executor");
     let result = executor.execute(json!("not an object")).await;
@@ -122,12 +104,8 @@ async fn test_docker_invalid_input() {
 }
 
 #[tokio::test]
+#[ignore] // Requires Docker runtime
 async fn test_docker_container_cleanup() {
-    if !docker_available() {
-        println!("SKIP: Docker not available");
-        return;
-    }
-
     let executor = DockerSkillExecutor::new("alpine:latest".to_string())
         .expect("Failed to create Docker executor");
     let _ = executor
@@ -153,12 +131,8 @@ async fn test_docker_container_cleanup() {
 }
 
 #[tokio::test]
+#[ignore] // Requires Docker runtime
 async fn test_docker_timeout_handling() {
-    if !docker_available() {
-        println!("SKIP: Docker not available");
-        return;
-    }
-
     let executor = DockerSkillExecutor::new("alpine:latest".to_string())
         .expect("Failed to create Docker executor");
     let result = executor.execute(json!({"command": "sleep 300"})).await;
@@ -170,7 +144,6 @@ async fn test_docker_timeout_handling() {
             if err_str.contains("image") || err_str.contains("404") {
                 println!("SKIP: alpine:latest image not available locally");
             } else if err_str.contains("timeout") || err_str.contains("killed") {
-                // Expected: container was killed due to timeout
                 println!("PASS: Container killed after timeout as expected");
             } else {
                 println!("Unexpected error (may be OK): {}", e);
@@ -180,23 +153,17 @@ async fn test_docker_timeout_handling() {
 }
 
 #[tokio::test]
+#[ignore] // Requires Docker runtime
 async fn test_docker_high_error_rate() {
-    if !docker_available() {
-        println!("SKIP: Docker not available");
-        return;
-    }
-
     let executor = DockerSkillExecutor::new("alpine:latest".to_string())
         .expect("Failed to create Docker executor");
 
-    // Run multiple quick commands to stress test container lifecycle
     for i in 0..5 {
         let _ = executor
             .execute(json!({"command": format!("echo test-{}", i)}))
             .await;
     }
 
-    // Verify cleanup after multiple runs
     let output = std::process::Command::new("docker")
         .args(["ps", "-a", "--filter", "name=savant-skill", "-q"])
         .output()

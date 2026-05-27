@@ -4,7 +4,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn};
 
 use crate::engine::MemoryEnclave;
-use crate::models::{AgentMessage, MemoryEntry};
+use crate::models::MemoryEntry;
 use futures::StreamExt;
 use savant_core::traits::{EmbeddingProvider, LlmProvider};
 use savant_core::types::{ChatMessage, ChatRole};
@@ -38,18 +38,21 @@ pub fn spawn_distillation_pipeline(
     embeddings: Arc<dyn EmbeddingProvider>,
     _jwt_secret: String,
 ) {
+    let sweep_interval = enclave.config.distillation_sweep_interval_secs;
     tokio::spawn(async move {
         info!("Enclave -> Collective Distillation Pipeline Online");
 
         loop {
-            // Wake every 5 minutes to scan for high-entropy local facts
-            sleep(Duration::from_secs(300)).await;
+            // Wake at configured interval to scan for high-entropy local facts
+            sleep(Duration::from_secs(sweep_interval)).await;
 
             debug!("Starting distillation sweep pass across Enclave...");
 
-            let messages: Vec<AgentMessage> = enclave.lsm().iter_all_messages(5000).collect();
+            // RC-16: Stream messages one at a time instead of collecting all 5000 into memory.
+            let lsm = enclave.lsm();
+            let mut msg_iter = lsm.iter_all_messages(5000);
 
-            for msg in messages {
+            for msg in msg_iter.by_ref() {
                 if enclave.lsm().is_distilled(&msg.id) {
                     continue;
                 }
@@ -68,16 +71,10 @@ pub fn spawn_distillation_pipeline(
                 // - confidence > 0.85 → accept deterministic result directly
                 // - confidence 0.15-0.85 → delegate to LLM for verification
                 // - confidence < 0.15 → discard (noise)
-                let triplets = if deterministic_triplets
-                    .iter()
-                    .all(|t| t.confidence > 0.85)
-                {
+                let triplets = if deterministic_triplets.iter().all(|t| t.confidence > 0.85) {
                     // High-confidence deterministic results — skip LLM
                     deterministic_triplets
-                } else if deterministic_triplets
-                    .iter()
-                    .any(|t| t.confidence >= 0.15)
-                {
+                } else if deterministic_triplets.iter().any(|t| t.confidence >= 0.15) {
                     // Ambiguous range — delegate to LLM for verification
                     match extract_triplets(Arc::clone(&llm), &msg.content).await {
                         Ok(llm_triplets) => {
@@ -130,14 +127,11 @@ pub fn spawn_distillation_pipeline(
 
                     let hash = blake3::hash(msg.id.as_bytes());
                     let bytes = hash.as_bytes();
-                    let entry_id =
-                        u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]));
+                    let entry_id = u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]));
 
                     let content = format!(
                         "{} {} {}",
-                        claims.triplet.subject,
-                        claims.triplet.predicate,
-                        claims.triplet.object
+                        claims.triplet.subject, claims.triplet.predicate, claims.triplet.object
                     );
 
                     let triplet_embedding = match embeddings.embed(&content).await {
@@ -162,6 +156,11 @@ pub fn spawn_distillation_pipeline(
                         last_accessed_at: now_ms.into(),
                         hit_count: 0.into(),
                         related_to: vec![],
+                        access_timestamps: vec![],
+                        version: 1.into(),
+                        parent_id: None,
+                        supersedes: vec![],
+                        is_latest: true,
                     };
 
                     if let Err(e) = collective.index_memory(entry).await {
@@ -333,7 +332,14 @@ pub fn extract_triplets_deterministic(text: &str) -> Vec<RawTriplet> {
     }
 
     // Pattern: "X created Y" / "X built Y" / "X developed Y"
-    for verb in &["created", "built", "developed", "designed", "implemented", "wrote"] {
+    for verb in &[
+        "created",
+        "built",
+        "developed",
+        "designed",
+        "implemented",
+        "wrote",
+    ] {
         if let Some(pos) = lower.find(&format!(" {} ", verb)) {
             let before = text[..pos].trim();
             let after = text[pos + verb.len() + 2..].trim();

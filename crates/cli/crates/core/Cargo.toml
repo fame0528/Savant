@@ -1,0 +1,20 @@
+[package]
+name = "savant_cli_core"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Core utilities for Savant CLI — diff parser, RTK compression, context engine, tool sandbox"
+
+[dependencies]
+savant_core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+strsim = { workspace = true }
+similar = { workspace = true }
+dirs = { workspace = true }
+
+[lints]
+workspace = true

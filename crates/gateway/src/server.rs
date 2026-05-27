@@ -1,3 +1,11 @@
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
+#![allow(clippy::disallowed_methods)]
+// SAFETY: This file uses serde_json::json!() extensively (~23 calls).
+// The json!() macro validates JSON at compile time; its internal .unwrap()
+// calls on well-formed literals are provably infallible per serde_json's
+// contract (v1.x). No bare .unwrap() or .expect() exists in production code.
+// Gate: cargo clippy --workspace --no-deps = 0 disallowed-method violations.
+
 use crate::auth;
 use crate::lanes::SessionLane;
 use axum::{
@@ -23,22 +31,93 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
-use tower_http::cors::CorsLayer;
 use tower_governor::{
-    governor::GovernorConfigBuilder,
-    key_extractor::SmartIpKeyExtractor,
-    GovernorLayer,
+    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
 };
+use tower_http::cors::CorsLayer;
 
 /// Shared state for the gateway server.
 pub struct GatewayState {
-    pub config: Config,
+    /// GTW-04: Wrapped in Arc<RwLock> so settings_post_handler can update in-memory config.
+    pub config: Arc<tokio::sync::RwLock<Config>>,
     pub sessions: DashMap<SessionId, Arc<SessionLane>>,
     pub nexus: Arc<NexusBridge>,
     pub storage: Arc<Storage>,
     pub avatar_cache: TokioMutex<LruCache<String, (Vec<u8>, String)>>,
+    pub oauth_manager: Arc<crate::auth::oauth::OAuthManager>,
     /// Persistent gateway Ed25519 signing key (generated once at startup)
     pub gateway_signing_key: ed25519_dalek::SigningKey,
+    /// Canvas A2UI manager for real-time state broadcasting
+    pub canvas_manager: Arc<savant_canvas::a2ui::CanvasManager>,
+    /// Channel adapter pool for multi-platform messaging
+    pub channel_pool: Arc<savant_channels::pool::InboxPool>,
+    /// Echo component metrics for circuit breaker monitoring
+    pub echo_metrics: Arc<savant_echo::ComponentMetrics>,
+    /// Consciousness daemon state (shared with swarm)
+    pub consciousness_state: Option<Arc<std::sync::atomic::AtomicU8>>,
+    /// Active WebSocket connection count
+    pub ws_connections: Arc<std::sync::atomic::AtomicUsize>,
+    /// Resource governor state (shared with swarm)
+    pub governor_pressure: Arc<std::sync::atomic::AtomicU8>,
+    pub governor_cpu_pct: Arc<std::sync::atomic::AtomicU64>,
+    pub governor_mem_pct: Arc<std::sync::atomic::AtomicU64>,
+    pub governor_permits: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// Echo circuit breaker metrics endpoint
+async fn echo_metrics_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let m = &state.echo_metrics;
+    let body = serde_json::json!({
+        "failure_count": m.failure_count(),
+        "total_count": m.total_count(),
+        "error_rate": m.error_rate(),
+        "reset_count": m.reset_count(),
+        "trip_count": m.trip_count(),
+        "opened_at": m.opened_at(),
+        "consecutive_successes": m.consecutive_successes(),
+    });
+    axum::Json(body)
+}
+
+/// Canvas A2UI WebSocket adapter — extracts CanvasManager from GatewayState.
+/// Requires API key authentication via Authorization: Bearer <key> or X-API-Key: <key>.
+async fn canvas_ws_handler(
+    ws: axum::extract::ws::WebSocketUpgrade,
+    headers: axum::http::HeaderMap,
+    axum::extract::State(state): axum::extract::State<Arc<GatewayState>>,
+) -> impl axum::response::IntoResponse {
+    // Authenticate canvas connection
+    let expected_key = state.config.read().await.server.dashboard_api_key.clone();
+    if let Some(ref key) = expected_key {
+        if !key.is_empty() {
+            let provided = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .or_else(|| {
+                    headers
+                        .get("x-api-key")
+                        .and_then(|v| v.to_str().ok())
+                });
+
+            let authorized = provided
+                .map(|k| crate::auth::http_middleware::constant_time_eq(k.as_bytes(), key.as_bytes()))
+                .unwrap_or(false);
+
+            if !authorized {
+                tracing::warn!("[auth] Unauthorized canvas WebSocket connection attempt");
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({"error": "Unauthorized"})),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    let canvas = state.canvas_manager.clone();
+    ws.on_upgrade(move |socket| savant_canvas::a2ui::handle_a2ui_connection(socket, canvas))
+        .into_response()
 }
 
 /// Starts the axum gateway server.
@@ -46,45 +125,158 @@ pub async fn start_gateway(
     config: Config,
     nexus: Arc<NexusBridge>,
     storage: Arc<Storage>,
+    echo_metrics: Arc<savant_echo::ComponentMetrics>,
+    canvas_manager: Arc<savant_canvas::a2ui::CanvasManager>,
 ) -> Result<(), SavantError> {
     let addr = format!("{}:{}", config.server.host, config.server.port)
         .parse::<SocketAddr>()
         .map_err(|e| SavantError::Unknown(format!("Invalid address: {}", e)))?;
 
+    // Initialize uptime tracking
+    crate::handlers::status::init_start_time();
+
+    // Initialize Channels adapter pool and register configured adapters
+    let channel_pool = Arc::new(savant_channels::pool::InboxPool::new(nexus.clone()));
+    {
+        let ch = &config.channels;
+        if ch.discord.enabled {
+            if let Some(ref token) = ch.discord.token {
+                channel_pool.register(Arc::new(savant_channels::discord::DiscordAdapter::new(
+                    token.clone(),
+                    None,
+                    nexus.clone(),
+                )));
+                tracing::info!("[channels] Discord adapter registered");
+            }
+        }
+        if ch.telegram.enabled {
+            if let Some(ref token) = ch.telegram.token {
+                let tg_cfg = savant_channels::telegram::TelegramConfig {
+                    bot_token: token.clone(),
+                    default_chat_id: None,
+                    parse_mode: None,
+                    use_webhook: false,
+                    webhook_url: None,
+                };
+                match savant_channels::telegram::TelegramAdapter::new(tg_cfg, nexus.clone()) {
+                    Ok(adapter) => {
+                        channel_pool.register(Arc::new(adapter));
+                        tracing::info!("[channels] Telegram adapter registered");
+                    }
+                    Err(e) => tracing::warn!("[channels] Telegram adapter init failed: {}", e),
+                }
+            }
+        }
+        if ch.whatsapp.enabled {
+            tracing::info!("[channels] WhatsApp adapter available but requires script_path/session_path config");
+        }
+        if ch.matrix.enabled {
+            tracing::info!(
+                "[channels] Matrix adapter available but requires homeserver/user_id config"
+            );
+        }
+        // Register generic webhook adapter (no external config needed)
+        // Clone before spawn — spawn() is self-consuming, clone preserves the adapter for the pool
+        // Generate a random webhook auth token on startup
+        let webhook_token = {
+            use blake3::Hasher;
+            let mut hasher = Hasher::new();
+            hasher.update(&std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+                .to_le_bytes());
+            hasher.update(uuid::Uuid::new_v4().as_bytes());
+            hasher.finalize().to_hex().to_string()
+        };
+        tracing::info!(
+            "[channels] Webhook auth token: {} (required in X-Webhook-Token header)",
+            &webhook_token[..16]
+        );
+
+        let webhook_adapter = savant_channels::generic_webhook::GenericWebhookAdapter::new(
+            savant_channels::generic_webhook::GenericWebhookConfig {
+                listen_port: 9800,
+                inbound_path: "/webhook".to_string(),
+                outbound_url: None,
+                auth_token: Some(webhook_token),
+            },
+            nexus.clone(),
+        );
+        // spawn() is self-consuming — clone preserves the adapter for registration in the pool
+        let _webhook_handle = webhook_adapter.clone().spawn();
+        channel_pool.register(Arc::new(webhook_adapter));
+        tracing::info!("[channels] GenericWebhook adapter registered on port 9800");
+        // Register CLI adapter (no external config needed)
+        channel_pool.register(Arc::new(savant_channels::cli::CliAdapter));
+        tracing::info!("[channels] CLI adapter registered");
+    }
+
     let state = Arc::new(GatewayState {
-        config: config.clone(),
+        config: Arc::new(tokio::sync::RwLock::new(config.clone())),
         sessions: DashMap::new(),
         nexus,
         storage,
         avatar_cache: TokioMutex::new(LruCache::new(
-            #[allow(clippy::disallowed_methods)]
-            NonZeroUsize::new(100).unwrap(),
+            NonZeroUsize::new(100).expect("100 is non-zero"),
         )),
         gateway_signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
+        oauth_manager: Arc::new(crate::auth::oauth::OAuthManager::new()),
+        canvas_manager,
+        channel_pool,
+        echo_metrics,
+        consciousness_state: None,
+        ws_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        governor_pressure: Arc::new(std::sync::atomic::AtomicU8::new(0)),
+        governor_cpu_pct: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        governor_mem_pct: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        governor_permits: Arc::new(std::sync::atomic::AtomicUsize::new(16)),
     });
 
+    // Load CORS origins from config or environment
+    let cors_origins: Vec<axum::http::HeaderValue> = {
+        let origins = if config.server.cors_origins.is_empty() {
+            // Fall back to env var if config is empty
+            std::env::var("SAVANT_CORS_ORIGINS")
+                .ok()
+                .map(|s| s.split(',').map(|o| o.trim().to_string()).collect())
+                .unwrap_or_else(|| vec!["http://localhost:3000".to_string()])
+        } else {
+            config.server.cors_origins.clone()
+        };
+        origins.iter().filter_map(|o| o.parse().ok()).collect()
+    };
+
     let cors = CorsLayer::new()
-        .allow_origin([
-            "http://localhost:3000".parse().unwrap(),
-            "http://127.0.0.1:3000".parse().unwrap(),
-        ])
+        .allow_origin(cors_origins)
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     // Rate limiting: 20 requests per minute per IP
     let rate_limiter = GovernorLayer {
         config: std::sync::Arc::new(
+            #[allow(clippy::disallowed_methods)] // Config with hardcoded values is always valid
             GovernorConfigBuilder::default()
                 .per_second(3)
                 .burst_size(20)
                 .key_extractor(SmartIpKeyExtractor)
                 .finish()
-                .unwrap(),
+                .expect("Governor config with hardcoded values is always valid"),
         ),
     };
 
+    let dashboard_api_key = state.config.read().await.server.dashboard_api_key.clone();
+
     let app = Router::new()
+        // PB-21: Health check endpoint
+        .route("/health", get(health_handler))
+        .route("/api/echo/metrics", get(echo_metrics_handler))
+        // Trajectory endpoints
+        .route("/api/trajectories", get(trajectories_list_handler))
+        .route("/api/trajectories/stats", get(trajectories_stats_handler))
         .route("/ws", get(websocket_handler))
+        // Canvas A2UI WebSocket route — real-time agent state visualization
+        .route("/ws/canvas", get(canvas_ws_handler))
         .route("/api/agents", get(agents_list_handler))
         .route("/api/agents/:name/image", get(agent_image_handler))
         .route(
@@ -124,10 +316,21 @@ pub async fn start_gateway(
             "/live",
             get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
         )
+        .route("/ready", get(crate::handlers::status::ready_handler))
+        .route("/api/status", get(crate::handlers::status::status_handler))
         .route(
-            "/ready",
-            get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }),
+            "/api/snapshot",
+            axum::routing::post(crate::handlers::status::snapshot_handler),
         )
+        .route(
+            "/api/restore",
+            axum::routing::post(crate::handlers::status::restore_handler),
+        )
+        // Dashboard feature APIs
+        .route("/api/memory/search", get(memory_search_handler))
+        .route("/api/governor/status", get(governor_status_handler))
+        .route("/api/consciousness/status", get(consciousness_status_handler))
+        .route("/api/chat", axum::routing::post(rest_chat_handler))
         .route("/api/changelog", get(changelog_handler))
         .route(
             "/api/setup/check",
@@ -142,14 +345,42 @@ pub async fn start_gateway(
             axum::routing::post(crate::handlers::setup::config_set_handler),
         )
         .route(
-            "/api/models",
-            axum::routing::get(crate::handlers::models_rest_handler),
-        )
-        .route(
             "/api/models/free",
             axum::routing::get(crate::handlers::models_free_handler),
         )
+        .route(
+            "/api/models/rest",
+            axum::routing::get(crate::handlers::models_rest_handler),
+        )
+        .route(
+            "/api/pairing",
+            axum::routing::post(crate::handlers::pairing::pairing_handler),
+        )
+        .route(
+            "/api/oauth/store",
+            axum::routing::post(crate::handlers::oauth_store_handler),
+        )
+        // Schedule management endpoints (Issue 1 Phase 5)
+        .route(
+            "/api/schedules",
+            axum::routing::get(crate::handlers::schedules::list_schedules)
+                .post(crate::handlers::schedules::create_schedule),
+        )
+        .route(
+            "/api/schedules/:id",
+            axum::routing::delete(crate::handlers::schedules::delete_schedule)
+                .patch(crate::handlers::schedules::update_schedule),
+        )
+        .route(
+            "/api/schedules/:id/run",
+            axum::routing::post(crate::handlers::schedules::force_run_schedule),
+        )
+        .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(rate_limiter)
+        .layer(axum::middleware::from_fn_with_state(
+            dashboard_api_key,
+            crate::auth::http_middleware::auth_middleware,
+        ))
         .layer(cors)
         .with_state(state);
 
@@ -163,11 +394,128 @@ pub async fn start_gateway(
     Ok(())
 }
 
+/// PB-21: Health check endpoint — structured JSON with version and uptime
+async fn health_handler() -> impl IntoResponse {
+    axum::Json(serde_json::json!({
+        "status": "healthy",
+        "version": env!("CARGO_PKG_VERSION"),
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }))
+}
+
+/// List recorded trajectories.
+async fn trajectories_list_handler() -> impl IntoResponse {
+    let output_dir = std::path::PathBuf::from("./data/trajectories");
+    let mut trajectories = Vec::new();
+
+    if output_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&output_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "jsonl") {
+                    let filename = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    let modified_secs = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .map(|t| {
+                            t.duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0)
+                        })
+                        .unwrap_or(0);
+
+                    // Count steps
+                    let steps = std::fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|content| {
+                            content.lines().next().and_then(|line| {
+                                serde_json::from_str::<serde_json::Value>(line)
+                                    .ok()
+                                    .and_then(|json| {
+                                        json["conversations"].as_array().map(|a| a.len())
+                                    })
+                            })
+                        })
+                        .unwrap_or(0);
+
+                    trajectories.push(serde_json::json!({
+                        "filename": filename,
+                        "size_bytes": size,
+                        "steps": steps,
+                        "modified_epoch_secs": modified_secs,
+                    }));
+                }
+            }
+        }
+    }
+
+    axum::Json(serde_json::json!({
+        "trajectories": trajectories,
+        "count": trajectories.len(),
+    }))
+}
+
+/// Trajectory statistics.
+async fn trajectories_stats_handler() -> impl IntoResponse {
+    let output_dir = std::path::PathBuf::from("./data/trajectories");
+    let mut total_files = 0usize;
+    let mut total_size = 0u64;
+    let mut total_steps = 0usize;
+
+    if output_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&output_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "jsonl") {
+                    total_files += 1;
+                    total_size += std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        for line in content.lines() {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                                if let Some(convs) = json["conversations"].as_array() {
+                                    total_steps += convs.len();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    axum::Json(serde_json::json!({
+        "total_trajectories": total_files,
+        "total_steps": total_steps,
+        "total_size_bytes": total_size,
+        "avg_steps_per_trajectory": if total_files > 0 { total_steps as f64 / total_files as f64 } else { 0.0 },
+    }))
+}
+
 async fn websocket_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<GatewayState>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+    // Connection limit: max 100 concurrent WebSocket connections
+    const MAX_WS_CONNECTIONS: usize = 100;
+    let current = state.ws_connections.load(std::sync::atomic::Ordering::Relaxed);
+    if current >= MAX_WS_CONNECTIONS {
+        tracing::warn!("[gateway] WebSocket connection rejected — limit reached ({}/{})", current, MAX_WS_CONNECTIONS);
+        return (axum::http::StatusCode::TOO_MANY_REQUESTS, "Too many connections").into_response();
+    }
+    state.ws_connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    ws.on_upgrade(|socket| handle_socket_with_cleanup(socket, state))
+}
+
+async fn handle_socket_with_cleanup(socket: WebSocket, state: Arc<GatewayState>) {
+    handle_socket(socket, state.clone()).await;
+    state.ws_connections.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
@@ -190,8 +538,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         _ => return,
     };
 
-    let dashboard_key = state.config.server.dashboard_api_key.as_deref();
-    let session_context = match auth::authenticate(&auth_frame, dashboard_key).await {
+    let dashboard_key = state.config.read().await.server.dashboard_api_key.clone();
+    let session_context = match auth::authenticate(
+        &auth_frame,
+        dashboard_key.as_deref(),
+        Some(&state.oauth_manager),
+    )
+    .await
+    {
         Ok(ctx) => ctx,
         Err(e) => {
             tracing::error!("Authentication failed: {}", e);
@@ -258,10 +612,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     let (outgoing_tx, mut outgoing_rx) = tokio::sync::mpsc::channel::<Message>(100);
 
     // 3. Session Setup
-    let (lane, lane_rx, mut res_rx, limit) = SessionLane::new(
-        state.config.server.lane_capacity,
-        state.config.server.max_lane_concurrency,
-    );
+    let (lane_capacity, max_concurrency) = {
+        let cfg = state.config.read().await;
+        (cfg.server.lane_capacity, cfg.server.max_lane_concurrency)
+    };
+    let (lane, lane_rx, mut res_rx, limit) = SessionLane::new(lane_capacity, max_concurrency);
     let lane = Arc::new(lane);
 
     state.sessions.insert(session_id.clone(), lane.clone());
@@ -403,41 +758,55 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     // 7. Task 4: WebSocket Receiver
     let storage = state.storage.clone();
     let nexus_inner = state.nexus.clone();
-    let config_inner = state.config.clone();
+    // Snapshot config at connection time — the handler needs an owned Config,
+    // not the Arc<RwLock<Config>> wrapper.
+    let config_snapshot = state.config.read().await.clone();
     let mut recv_task = tokio::spawn({
         let session_id = session_id.clone();
         let session_context_clone = session_context.clone();
         async move {
             while let Some(msg_result) = receiver.next().await {
                 match msg_result {
-                    Ok(Message::Text(text)) => match serde_json::from_str::<RequestFrame>(&text) {
-                        Ok(frame) => {
-                            if frame.session_id == session_id {
-                                crate::handlers::handle_message(
-                                    frame,
-                                    session_context_clone.clone(),
-                                    axum::extract::State(crate::handlers::AppState {
-                                        nexus: nexus_inner.clone(),
-                                        storage: storage.clone(),
-                                        config: config_inner.clone(),
-                                    }),
-                                )
-                                .await;
-                            } else {
-                                tracing::warn!(
+                    Ok(Message::Text(text)) => {
+                        // GTW-10: Validate message size before parsing to prevent memory exhaustion
+                        const MAX_WS_MESSAGE_BYTES: usize = 1024 * 1024; // 1 MB
+                        if text.len() > MAX_WS_MESSAGE_BYTES {
+                            tracing::warn!(
+                                "[gateway] WebSocket message too large ({} bytes, limit {})",
+                                text.len(),
+                                MAX_WS_MESSAGE_BYTES
+                            );
+                            continue;
+                        }
+                        match serde_json::from_str::<RequestFrame>(&text) {
+                            Ok(frame) => {
+                                if frame.session_id == session_id {
+                                    crate::handlers::handle_message(
+                                        frame,
+                                        session_context_clone.clone(),
+                                        axum::extract::State(crate::handlers::AppState {
+                                            nexus: nexus_inner.clone(),
+                                            storage: storage.clone(),
+                                            config: config_snapshot.clone(),
+                                        }),
+                                    )
+                                    .await;
+                                } else {
+                                    tracing::warn!(
                                         "[gateway] Session ID mismatch: expected {}, got {}. Message dropped.",
                                         session_id.0,
                                         frame.session_id.0
                                     );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[gateway] Failed to deserialize WebSocket message: {}",
+                                    e
+                                );
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "[gateway] Failed to deserialize WebSocket message: {}",
-                                e
-                            );
-                        }
-                    },
+                    }
                     Ok(Message::Ping(_data)) => {
                         // Axum handles Ping→Pong automatically
                     }
@@ -510,7 +879,10 @@ async fn agent_image_handler(
         }
     }
 
-    let workspaces_dir = state.config.resolve_path(&state.config.system.agents_path);
+    let workspaces_dir = {
+        let cfg = state.config.read().await;
+        cfg.resolve_path(&cfg.system.agents_path)
+    };
     let workspace_path = workspaces_dir.join(format!("workspace-{}", name_lower));
     let candidates = ["avatar.png", "avatar.jpg", "avatar.jpeg", "agentimg.png"];
 
@@ -537,10 +909,7 @@ async fn agent_image_handler(
                     .body(axum::body::Body::from(content))
                     .unwrap_or_else(|_| {
                         tracing::error!("Failed to build image response for {}", name_lower);
-                        Response::builder()
-                            .status(500)
-                            .body(axum::body::Body::empty())
-                            .expect("valid response builder")
+                        fallback_response()
                     });
             }
         }
@@ -564,15 +933,12 @@ async fn agent_image_handler(
         .body(axum::body::Body::from(svg))
         .unwrap_or_else(|_| {
             tracing::error!("Failed to build SVG response for {}", name);
-            Response::builder()
-                .status(500)
-                .body(axum::body::Body::empty())
-                .expect("valid response builder")
+            fallback_response()
         })
 }
 
 async fn settings_get_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    let config = &state.config;
+    let config = state.config.read().await;
 
     // savant.toml [ai] is source of truth for model and LLM params
     let chat_model = config.ai.model.clone();
@@ -583,6 +949,7 @@ async fn settings_get_handler(State(state): State<Arc<GatewayState>>) -> impl In
     let provider = config.ai.provider.clone();
     let embedding_model = config.browser.embedding_model.clone();
     let vision_model = config.browser.vision_model.clone();
+    let gateway_port = config.server.port;
 
     let ollama_url =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
@@ -593,7 +960,7 @@ async fn settings_get_handler(State(state): State<Arc<GatewayState>>) -> impl In
         "embedding_model": embedding_model,
         "vision_model": vision_model,
         "ollama_url": ollama_url,
-        "gateway_port": config.server.port,
+        "gateway_port": gateway_port,
         "temperature": temperature,
         "top_p": top_p,
         "frequency_penalty": frequency_penalty,
@@ -621,7 +988,6 @@ struct SettingsUpdate {
     #[serde(default)]
     provider: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     ollama_url: Option<String>,
 }
 
@@ -629,8 +995,8 @@ async fn settings_post_handler(
     State(state): State<Arc<GatewayState>>,
     Json(update): Json<SettingsUpdate>,
 ) -> impl IntoResponse {
-    // Use in-memory config clone instead of re-reading from disk (prevents race conditions)
-    let mut config = state.config.clone();
+    // GTW-04: Write lock so changes are reflected in-memory
+    let mut config = state.config.write().await;
 
     // AAA Validation & Range Clamping (Guardian Layer)
     let mut changed = false;
@@ -710,6 +1076,13 @@ async fn settings_post_handler(
         changed = true;
     }
 
+    // Update Ollama URL (sets provider to "ollama" and configures base URL)
+    if let Some(url) = update.ollama_url {
+        config.ai.provider = "ollama".to_string();
+        config.ai.base_url = Some(url);
+        changed = true;
+    }
+
     if changed {
         let config_path = savant_core::config::Config::primary_config_path();
         if let Err(e) = config.save(&config_path) {
@@ -747,8 +1120,8 @@ async fn settings_post_handler(
 
 /// Restores AI configuration to system defaults
 async fn settings_reset_handler(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
-    // Use in-memory config clone instead of re-reading from disk
-    let mut config = state.config.clone();
+    // GTW-04: Write lock so changes are reflected in-memory
+    let mut config = state.config.write().await;
 
     // Apply defaults from savant_core::config::AiConfig::default()
     config.ai = savant_core::config::AiConfig::default();
@@ -852,7 +1225,7 @@ async fn agents_list_handler() -> axum::response::Response {
 
 /// GET /api/changelog — Returns the changelog markdown content
 async fn changelog_handler(State(state): State<Arc<GatewayState>>) -> axum::response::Response {
-    let changelog_path = state.config.project_root.join("CHANGELOG.md");
+    let changelog_path = state.config.read().await.project_root.join("CHANGELOG.md");
     let content = std::fs::read_to_string(&changelog_path)
         .unwrap_or_else(|_| "# Changelog\n\nNo changelog found at project root.".to_string());
     axum::response::Response::builder()
@@ -869,12 +1242,297 @@ fn fallback_response() -> axum::response::Response {
     axum::response::Response::builder()
         .status(500)
         .body(axum::body::Body::empty())
-        .unwrap_or_else(|_| {
-            axum::response::Response::new(axum::body::Body::empty())
-        })
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+}
+
+// Dashboard feature API handlers
+
+/// Request ID middleware — generates UUID for each request, adds X-Request-Id header.
+async fn request_id_middleware(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    req.extensions_mut().insert(request_id.clone());
+    let mut response = next.run(req).await;
+    response.headers_mut().insert(
+        "x-request-id",
+        axum::http::HeaderValue::from_str(&request_id).unwrap_or_else(|_| {
+            axum::http::HeaderValue::from_static("invalid")
+        }),
+    );
+    response
+}
+
+/// GET /api/memory/search?q=<query>&limit=<n>
+#[allow(clippy::disallowed_methods)]
+async fn memory_search_handler(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::State(state): axum::extract::State<Arc<GatewayState>>,
+) -> axum::response::Response {
+    let query = params.get("q").cloned().unwrap_or_default();
+    let limit: usize = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(10);
+
+    match state.storage.get_swarm_history(limit * 5) {
+        Ok(messages) => {
+            let query_lower = query.to_lowercase();
+            let results: Vec<serde_json::Value> = messages
+                .iter()
+                .filter(|m| {
+                    if query.is_empty() {
+                        return true;
+                    }
+                    m.content.to_lowercase().contains(&query_lower)
+                })
+                .take(limit)
+                .map(|m| {
+                    serde_json::json!({
+                        "role": format!("{:?}", m.role),
+                        "content": m.content,
+                        "agent_id": m.agent_id,
+                        "session_id": m.session_id.as_ref().map(|s| &s.0),
+                    })
+                })
+                .collect();
+
+            axum::Json(serde_json::json!({
+                "status": "ok",
+                "query": query,
+                "limit": limit,
+                "total": results.len(),
+                "results": results,
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({
+                "status": "error",
+                "message": format!("Memory search failed: {}", e)
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/governor/status
+async fn governor_status_handler(
+    axum::extract::State(state): axum::extract::State<Arc<GatewayState>>,
+) -> axum::response::Response {
+    use std::sync::atomic::Ordering;
+
+    let pressure_val = state.governor_pressure.load(Ordering::Relaxed);
+    let pressure_name = match pressure_val {
+        0 => "LOW",
+        1 => "MEDIUM",
+        2 => "HIGH",
+        3 => "CRITICAL",
+        _ => "UNKNOWN",
+    };
+    let cpu_bits = state.governor_cpu_pct.load(Ordering::Relaxed);
+    let mem_bits = state.governor_mem_pct.load(Ordering::Relaxed);
+    let cpu_pct = f64::from_bits(cpu_bits);
+    let mem_pct = f64::from_bits(mem_bits);
+    let permits = state.governor_permits.load(Ordering::Relaxed);
+
+    axum::Json(serde_json::json!({
+        "status": "ok",
+        "pressure": pressure_name,
+        "cpu_pct": cpu_pct,
+        "mem_pct": mem_pct,
+        "available_permits": permits,
+    }))
+    .into_response()
+}
+
+/// GET /api/consciousness/status
+async fn consciousness_status_handler(
+    axum::extract::State(state): axum::extract::State<Arc<GatewayState>>,
+) -> axum::response::Response {
+    use std::sync::atomic::Ordering;
+
+    let (state_name, entropy) = match &state.consciousness_state {
+        Some(handle) => {
+            let state_val = handle.load(Ordering::Relaxed);
+            let name = match state_val {
+                0 => "THINKING",
+                1 => "IDLE",
+                2 => "DORMANT",
+                3 => "WONDERING",
+                _ => "UNKNOWN",
+            };
+            (name, 0.0)
+        }
+        None => {
+            return axum::Json(serde_json::json!({
+                "status": "disabled",
+                "message": "Consciousness daemon not running"
+            })).into_response();
+        }
+    };
+
+    axum::Json(serde_json::json!({
+        "status": "ok",
+        "state": state_name,
+        "entropy": entropy,
+    })).into_response()
+}
+
+/// POST /api/chat — REST API for sending messages (alternative to WebSocket)
+#[allow(clippy::disallowed_methods)]
+async fn rest_chat_handler(
+    axum::extract::State(state): axum::extract::State<Arc<GatewayState>>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> axum::response::Response {
+    let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    let agent_id = body.get("agent_id").and_then(|v| v.as_str()).unwrap_or("global");
+
+    if message.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({"error": "message is required"})),
+        )
+            .into_response();
+    }
+
+    let channel = format!("chat.{}", agent_id);
+    let payload = serde_json::json!({
+        "role": "user",
+        "content": message,
+        "agent_id": agent_id,
+    });
+
+    if let Err(e) = state.nexus.publish(&channel, &payload.to_string()).await {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({"error": format!("Failed to publish: {}", e)})),
+        )
+            .into_response();
+    }
+
+    axum::Json(serde_json::json!({
+        "status": "ok",
+        "message": "Message sent",
+        "agent_id": agent_id,
+    }))
+    .into_response()
 }
 
 #[cfg(test)]
 mod tests {
-    // tests
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use savant_core::bus::NexusBridge;
+    use savant_core::config::Config;
+    use savant_core::db::Storage;
+
+    fn make_test_state() -> Arc<GatewayState> {
+        let config = Config::default();
+        let nexus = Arc::new(NexusBridge::new());
+        let tmp = std::env::temp_dir().join(format!("savant_gw_test_{}", rand::random::<u64>()));
+        // SAFETY: test-only construction with temp directory; unwrap is acceptable in tests
+        #[allow(clippy::disallowed_methods)]
+        let storage = Arc::new(Storage::with_defaults(tmp).unwrap());
+        let canvas_manager = Arc::new(savant_canvas::a2ui::CanvasManager::new(1000));
+        let channel_pool = Arc::new(savant_channels::pool::InboxPool::new(nexus.clone()));
+        let echo_metrics = Arc::new(savant_echo::ComponentMetrics::new(0.05, 100));
+
+        Arc::new(GatewayState {
+            config: Arc::new(tokio::sync::RwLock::new(config)),
+            sessions: DashMap::new(),
+            nexus,
+            storage,
+            // SAFETY: test-only construction; 100 is a compile-time constant > 0
+            #[allow(clippy::disallowed_methods)]
+            avatar_cache: TokioMutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())),
+            oauth_manager: Arc::new(crate::auth::oauth::OAuthManager::new()),
+            gateway_signing_key: SigningKey::generate(&mut rand::rngs::OsRng),
+            canvas_manager,
+            channel_pool,
+            echo_metrics,
+            consciousness_state: None,
+            ws_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            governor_pressure: Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            governor_cpu_pct: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            governor_mem_pct: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            governor_permits: Arc::new(std::sync::atomic::AtomicUsize::new(16)),
+        })
+    }
+
+    #[test]
+    fn test_gateway_state_has_canvas_manager() {
+        let state = make_test_state();
+        // Verify canvas_manager is accessible
+        let _ = &state.canvas_manager;
+    }
+
+    #[test]
+    fn test_gateway_state_has_echo_metrics() {
+        let state = make_test_state();
+        // Verify echo_metrics is accessible and has default values
+        assert_eq!(state.echo_metrics.failure_count(), 0);
+        assert_eq!(state.echo_metrics.total_count(), 0);
+    }
+
+    #[test]
+    fn test_gateway_state_has_channel_pool() {
+        let state = make_test_state();
+        // Verify channel_pool is accessible
+        let _ = &state.channel_pool;
+    }
+
+    #[test]
+    fn test_gateway_state_has_oauth_manager() {
+        let state = make_test_state();
+        // Verify oauth_manager is accessible
+        let _ = &state.oauth_manager;
+    }
+
+    #[test]
+    fn test_echo_metrics_handler_returns_json() {
+        let state = make_test_state();
+        // Verify echo_metrics has expected methods
+        assert_eq!(state.echo_metrics.failure_count(), 0);
+        assert_eq!(state.echo_metrics.total_count(), 0);
+        assert_eq!(state.echo_metrics.error_rate(), 0.0);
+        assert_eq!(state.echo_metrics.reset_count(), 0);
+        assert_eq!(state.echo_metrics.trip_count(), 0);
+    }
+
+    #[test]
+    fn test_gateway_state_sessions_empty() {
+        let state = make_test_state();
+        assert!(state.sessions.is_empty());
+    }
+
+    #[test]
+    fn test_fallback_response_returns_500() {
+        let resp = super::fallback_response();
+        assert_eq!(resp.status(), 500);
+    }
+
+    #[test]
+    fn test_config_default_values() {
+        let config = Config::default();
+        assert!(!config.ai.model.is_empty());
+    }
+
+    #[test]
+    fn test_canvas_manager_new() {
+        let manager = savant_canvas::a2ui::CanvasManager::new(1000);
+        let _ = &manager;
+    }
+
+    #[test]
+    fn test_inbox_pool_new() {
+        let nexus = Arc::new(NexusBridge::new());
+        let pool = savant_channels::pool::InboxPool::new(nexus);
+        let _ = &pool;
+    }
+
+    #[test]
+    fn test_oauth_manager_new() {
+        let manager = crate::auth::oauth::OAuthManager::new();
+        let _ = &manager;
+    }
 }

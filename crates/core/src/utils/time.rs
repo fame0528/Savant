@@ -1,38 +1,35 @@
-/// Reliable time utilities — loud failure on clock errors.
+/// Reliable time utilities — return Result to handle clock errors gracefully.
 ///
 /// The system clock should NEVER return a time before Unix epoch.
-/// If it does, the system is misconfigured and we fail immediately
-/// rather than silently treating the error as epoch 0.
+/// If it does, the system is misconfigured and we return an error
+/// rather than panicking or silently treating the error as epoch 0.
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::error::SavantError;
+
 /// Returns the current time as seconds since Unix epoch.
-/// Fails loudly if the system clock is before Unix epoch.
-/// This replaces all `unwrap_or_default()` patterns that silently return 0.
-pub fn now_secs() -> u64 {
+/// Returns Err if the system clock is before Unix epoch.
+pub fn now_secs() -> Result<u64, SavantError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| {
-            panic!("System clock error: time is before Unix epoch. System is misconfigured.")
-        })
-        .as_secs()
+        .map(|d| d.as_secs())
+        .map_err(|e| SavantError::Unknown(format!("System clock before UNIX epoch: {}", e)))
 }
 
 /// Returns the current time as milliseconds since Unix epoch.
-pub fn now_millis() -> u64 {
+/// Returns Err if the system clock is before Unix epoch.
+pub fn now_millis() -> Result<u64, SavantError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| {
-            panic!("System clock error: time is before Unix epoch. System is misconfigured.")
-        })
-        .as_millis() as u64
+        .map(|d| d.as_millis() as u64)
+        .map_err(|e| SavantError::Unknown(format!("System clock before UNIX epoch: {}", e)))
 }
 
 /// Returns the current time as nanoseconds since Unix epoch.
-pub fn now_nanos() -> u128 {
+/// Returns Err if the system clock is before Unix epoch.
+pub fn now_nanos() -> Result<u128, SavantError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| {
-            panic!("System clock error: time is before Unix epoch. System is misconfigured.")
-        })
-        .as_nanos()
+        .map(|d| d.as_nanos())
+        .map_err(|e| SavantError::Unknown(format!("System clock before UNIX epoch: {}", e)))
 }

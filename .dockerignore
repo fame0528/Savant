@@ -1,0 +1,15 @@
+target/
+node_modules/
+.git/
+.gitignore
+*.md
+!config/
+research/
+logs/
+data/
+workspaces/
+dashboard/
+*.log
+*.tmp
+.env
+.env.*

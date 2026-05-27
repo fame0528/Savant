@@ -2,7 +2,6 @@ use regex::Regex;
 use savant_core::error::SavantError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::net::IpAddr;
 use std::sync::LazyLock;
 use thiserror::Error;
 
@@ -49,6 +48,13 @@ pub struct BrowserConfig {
     pub vision_model_provider: String,
     #[serde(default)]
     pub persist_session: bool,
+    /// Base URL for Ollama API (default: "http://127.0.0.1:11434")
+    #[serde(default = "default_ollama_url")]
+    pub ollama_url: String,
+}
+
+fn default_ollama_url() -> String {
+    "http://127.0.0.1:11434".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -66,6 +72,7 @@ impl Default for BrowserConfig {
             vision_model: String::from("gemma4"),
             vision_model_provider: String::from("ollama"),
             persist_session: false,
+            ollama_url: default_ollama_url(),
         }
     }
 }
@@ -146,6 +153,11 @@ impl BrowserConfig {
                 .get("persist_session")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(default.persist_session),
+            ollama_url: b
+                .get("ollama_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&default.ollama_url)
+                .to_string(),
         })
     }
 }
@@ -282,62 +294,10 @@ impl From<BrowserError> for SavantError {
     }
 }
 
-const BLOCKED_SCHEMES: &[&str] = &["file", "ftp", "sftp", "data", "javascript", "vbscript"];
-
-const BLOCKED_HOSTNAMES: &[&str] = &[
-    "169.254.169.254",
-    "100.100.100.200",
-    "metadata.google.internal",
-];
-
+/// Validates a URL for SSRF protection. Delegates to shared `savant_core::net::validate_url`.
 pub fn validate_url(url_str: &str) -> Result<(), BrowserError> {
-    let parsed = url::Url::parse(url_str)
-        .map_err(|e| BrowserError::NavigationFailed(format!("Invalid URL: {}", e)))?;
-
-    if BLOCKED_SCHEMES.contains(&parsed.scheme()) {
-        return Err(BrowserError::NavigationFailed(format!(
-            "Blocked URL scheme: {}",
-            parsed.scheme()
-        )));
-    }
-
-    let host = match parsed.host_str() {
-        Some(h) => h.to_ascii_lowercase(),
-        None => return Ok(()),
-    };
-
-    // Block known metadata hostnames
-    for blocked in BLOCKED_HOSTNAMES {
-        if host.as_str() == *blocked {
-            return Err(BrowserError::NavigationFailed(format!(
-                "Blocked internal host: {}",
-                host
-            )));
-        }
-    }
-
-    // Block RFC1918 / loopback / link-local IP ranges
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        let is_restricted = match ip {
-            IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_unspecified(),
-            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
-        };
-        if is_restricted {
-            return Err(BrowserError::NavigationFailed(format!(
-                "Blocked private/loopback IP: {ip}"
-            )));
-        }
-    }
-
-    // Block bare hostnames that resolve to localhost (e.g. "localhost")
-    if host == "localhost" || host.ends_with(".local") {
-        return Err(BrowserError::NavigationFailed(format!(
-            "Blocked local hostname: {}",
-            host
-        )));
-    }
-
-    Ok(())
+    savant_core::net::validate_url(url_str)
+        .map_err(|e| BrowserError::NavigationFailed(e.to_string()))
 }
 
 #[allow(clippy::disallowed_methods)]
@@ -350,7 +310,11 @@ static JS_BLOCKED_RE: LazyLock<Regex> = LazyLock::new(|| {
         | \b window \. open \s* \(
         | \b document \. cookie \b
         | \b navigator \. serviceWorker \b
-        | \b fetch \s* \(
+        | \b fetch \s* \( \s* ['"] (?:file|data|javascript) :
+        | \b eval \s* \(
+        | \b Function \s* \(
+        | \b setTimeout \s* \(
+        | \b setInterval \s* \(
     "#,
     )
     .expect("Hardcoded JS block regex is valid at compile time")
@@ -446,7 +410,10 @@ mod tests {
         assert!(is_js_blocked("alert('hi')").is_some());
         assert!(is_js_blocked("window.open('url')").is_some());
         assert!(is_js_blocked("document.cookie = 'x'").is_some());
-        assert!(is_js_blocked("fetch('/api')").is_some());
+        // Narrowed: only suspicious fetch patterns are blocked
+        assert!(is_js_blocked("fetch('file:///etc/passwd')").is_some());
+        assert!(is_js_blocked("fetch('data:text/html,<script>')").is_some());
+        assert!(is_js_blocked("fetch('/api')").is_none());
     }
 
     #[test]
@@ -504,7 +471,10 @@ mod tests {
         assert!(result.ends_with("characters]"));
         // Verify the truncated portion ends at a valid UTF-8 char boundary
         let truncated = &result[..result.len() - 1]; // exclude trailing ']'
-        let content_portion = truncated.rfind('\n').map(|pos| &truncated[..pos]).unwrap_or(truncated);
+        let content_portion = truncated
+            .rfind('\n')
+            .map(|pos| &truncated[..pos])
+            .unwrap_or(truncated);
         // The content portion should only contain valid UTF-8 (no panic on char boundary check)
         assert!(content_portion.is_char_boundary(content_portion.len()));
         // Verify the original content was actually truncated

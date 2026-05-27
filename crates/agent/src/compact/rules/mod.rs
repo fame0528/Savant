@@ -60,7 +60,6 @@ impl RuleRegistry {
             "[compact] Registry recompiled: {} rules loaded",
             self.rules.len()
         );
-
     }
 
     /// Loads a single rule from JSON.
@@ -167,7 +166,9 @@ impl RuleRegistry {
 
     /// Finds a rule by exact ID.
     pub fn get_by_id(&self, id: &str) -> Option<Arc<CompiledRule>> {
-        self.id_index.get(id).and_then(|&idx| self.rules.get(idx).cloned())
+        self.id_index
+            .get(id)
+            .and_then(|&idx| self.rules.get(idx).cloned())
     }
 
     /// Returns all rules for iteration.
@@ -200,6 +201,9 @@ static BUILTIN_RULE_JSONS: &[(&str, &str)] = &[
     // ── Build ──
     ("cargo/check", include_str!("builtin/cargo__check.json")),
     ("cargo/build", include_str!("builtin/cargo__build.json")),
+    ("cargo/clippy", include_str!("builtin/cargo__clippy.json")),
+    ("cargo/clippy", include_str!("builtin/cargo__clippy.json")),
+    ("cargo/clippy", include_str!("builtin/cargo__clippy.json")),
     // ── Package Manager ──
     ("npm/install", include_str!("builtin/npm__install.json")),
     // ── Infrastructure ──
@@ -210,7 +214,10 @@ static BUILTIN_RULE_JSONS: &[(&str, &str)] = &[
     ("gh/pr/list", include_str!("builtin/gh__pr_list.json")),
     // ── Filesystem ──
     ("filesystem/ls", include_str!("builtin/filesystem__ls.json")),
-    ("filesystem/find", include_str!("builtin/filesystem__find.json")),
+    (
+        "filesystem/find",
+        include_str!("builtin/filesystem__find.json"),
+    ),
     // ── Search ──
     ("search/grep", include_str!("builtin/search__grep.json")),
     ("search/rg", include_str!("builtin/search__rg.json")),
@@ -218,12 +225,19 @@ static BUILTIN_RULE_JSONS: &[(&str, &str)] = &[
     ("system/ps", include_str!("builtin/system__ps.json")),
     ("system/df", include_str!("builtin/system__df.json")),
     // ── Observability ──
-    ("observability/free", include_str!("builtin/observability__free.json")),
+    (
+        "observability/free",
+        include_str!("builtin/observability__free.json"),
+    ),
     // ── Generic ──
-    ("generic/fallback", include_str!("builtin/generic__fallback.json")),
+    (
+        "generic/fallback",
+        include_str!("builtin/generic__fallback.json"),
+    ),
 ];
 
 #[cfg(test)]
+#[expect(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

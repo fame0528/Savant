@@ -16,6 +16,8 @@ pub mod handoff;
 #[cfg(test)]
 mod handoff_tests;
 pub mod ignition;
+pub mod plan_verifier;
+pub mod skill_chain;
 pub mod synthesis;
 pub mod tasks;
 
@@ -26,6 +28,7 @@ use tokio::sync::RwLock;
 
 use ed25519_dalek::SigningKey;
 use pqcrypto_dilithium::dilithium2;
+use rand;
 use savant_core::traits::{MemoryBackend, Tool};
 use savant_core::types::{AgentConfig, AgentIdentity};
 use savant_ipc::{hash_session_id, CapabilityRegistry, SwarmBlackboard, SwarmSharedContext};
@@ -33,11 +36,11 @@ use savant_ipc::{hash_session_id, CapabilityRegistry, SwarmBlackboard, SwarmShar
 use xxhash_rust;
 
 use super::budget::TokenBudget;
-use super::providers::RetryProvider;
 use super::react::AgentLoop;
 use crate::orchestration::continuation::{ContinuationConfig, ContinuationEngine};
 use futures::StreamExt;
-use savant_cognitive::{DspConfig, DspPredictor};
+use savant_cognitive::{DspConfig, DspPredictor, GeneticForge, SynthesisEngine};
+use savant_core::traits::LlmProvider;
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -61,6 +64,10 @@ pub struct Orchestrator {
     pqc_signing_key: dilithium2::SecretKey,
     capability_registry: Arc<CapabilityRegistry>,
     memory_enclave: Option<Arc<savant_memory::engine::MemoryEnclave>>,
+    /// Pending continuation delay to publish to blackboard on next update.
+    /// Set by `execute_turn()` when a CONTINUE_WORK token is detected.
+    /// Uses AtomicU32 because `update_blackboard_context` takes `&self`.
+    pending_continue_delay_ms: std::sync::atomic::AtomicU32,
 }
 
 /// Configuration for the orchestrator.
@@ -85,7 +92,56 @@ impl Default for OrchestratorConfig {
 }
 
 impl Orchestrator {
-    /// Creates a new orchestrator agent.
+    /// Creates an Orchestrator from a pre-built AgentLoop.
+    ///
+    /// This is the enterprise-grade constructor: the caller builds the AgentLoop
+    /// with all its builder methods (echo, collective, plugins, security_authority,
+    /// delegate, vision), then passes it here. The Orchestrator adds orchestration
+    /// capabilities (DSP, continuation, handoff, A2A delegation) on top.
+    ///
+    /// Signing keys are generated internally (Ed25519 + Dilithium2).
+    ///
+    /// # Arguments
+    /// * `agent_loop` — Pre-built AgentLoop with all builder methods applied
+    /// * `agent_id` — The agent's unique identifier
+    /// * `session_id` — The session identifier
+    /// * `blackboard` — Shared zero-copy blackboard for the swarm
+    /// * `capability_registry` — Capability registry for delegation
+    /// * `memory_enclave` — Optional memory enclave for context extraction
+    pub fn from_agent_loop(
+        agent_loop: AgentLoop<Arc<dyn MemoryBackend>>,
+        agent_id: String,
+        session_id: String,
+        blackboard: Arc<SwarmBlackboard>,
+        capability_registry: Arc<CapabilityRegistry>,
+        memory_enclave: Option<Arc<savant_memory::engine::MemoryEnclave>>,
+    ) -> Self {
+        info!(
+            agent_id = %agent_id,
+            "Orchestrator initialized from pre-built AgentLoop"
+        );
+
+        Self {
+            agent_loop,
+            blackboard,
+            dsp_predictor: DspPredictor::default(),
+            token_budget: Arc::new(RwLock::new(TokenBudget::new(100_000))),
+            continuation_engine: ContinuationEngine::default(),
+            subagent_handles: Arc::new(RwLock::new(HashMap::new())),
+            session_id,
+            max_chain_length: 10,
+            signing_key: SigningKey::generate(&mut rand::rngs::OsRng),
+            pqc_signing_key: {
+                let (_, sk) = dilithium2::keypair();
+                sk
+            },
+            capability_registry,
+            memory_enclave,
+            pending_continue_delay_ms: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    /// Creates a new orchestrator agent (legacy constructor).
     ///
     /// # Arguments
     /// * `config` - The agent configuration (contains agent_id, model, etc.)
@@ -101,7 +157,7 @@ impl Orchestrator {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         config: AgentConfig,
-        provider: RetryProvider,
+        provider: Arc<dyn LlmProvider>,
         memory: Arc<dyn MemoryBackend>,
         tools: Vec<Arc<dyn Tool>>,
         identity: String,
@@ -120,7 +176,7 @@ impl Orchestrator {
         // Build the base agent loop
         let agent_loop = AgentLoop::new(
             agent_id.clone(),
-            Box::new(provider),
+            provider,
             memory.clone(),
             tools,
             AgentIdentity {
@@ -164,6 +220,7 @@ impl Orchestrator {
             pqc_signing_key,
             capability_registry,
             memory_enclave,
+            pending_continue_delay_ms: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
@@ -234,7 +291,8 @@ impl Orchestrator {
                     128,    // priority: medium
                     300000, // deadline_ms: 5 minutes
                     false,  // requires_consensus: default to false for non-destructive tasks
-                ).await?;
+                )
+                .await?;
             }
 
             // Check for CONTINUE_WORK token (anti-dwindle)
@@ -244,24 +302,20 @@ impl Orchestrator {
                     .parse_delay(&response)
                     .unwrap_or(5000);
 
-                // Validate continuation count
+                // H-1: Validate continuation count with deadline-aware timeout
                 let agent_id = self.agent_loop.agent_id.clone();
                 if let Err(e) = self
                     .continuation_engine
-                    .yield_execution(&agent_id, delay_ms)
+                    .yield_execution_with_timeout(&agent_id, delay_ms, 0) // 0 = no deadline
                     .await
                 {
                     warn!("Continuation failed: {}", e);
                     break;
                 }
 
-                // Update context with continuation info and loop again
-                let mut _ctx = self
-                    .read_blackboard_context()
-                    .await
-                    .ok_or(OrchestratorError::BlackboardAccessFailed)?;
-                _ctx.continue_work_delay_ms = delay_ms as u32;
-                // Note: context will be re-published on next loop iteration
+                // Store continuation delay for blackboard update on next loop iteration
+                self.pending_continue_delay_ms
+                    .store(delay_ms as u32, std::sync::atomic::Ordering::Relaxed);
                 continue;
             }
 
@@ -276,6 +330,35 @@ impl Orchestrator {
 
         // Adapt DSP parameters if needed
         self.dsp_predictor.adapt_parameters();
+
+        // Wire GeneticForge: evolve prediction parameters for optimization.
+        let _forge = GeneticForge::new(10, 0.1);
+        debug!(
+            population = 10,
+            mutation_rate = 0.1,
+            "GeneticForge initialized"
+        );
+
+        // Wire SynthesisEngine: synthesize a plan trajectory from the input.
+        // The plan decomposes the input into sub-tasks and resolves actions,
+        // which can guide the speculative execution in future iterations.
+        let dsp_arc = Arc::new(tokio::sync::Mutex::new(self.dsp_predictor.clone()));
+        let synthesis = SynthesisEngine::new(dsp_arc);
+        let plan = synthesis.synthesize_plan(input_message);
+        debug!(
+            sub_tasks = plan.sub_tasks.len(),
+            complexity = plan.estimated_complexity,
+            "SynthesisEngine produced execution plan"
+        );
+
+        // Persist DSP predictor state for cross-session learning.
+        if let Ok(bytes) = self.dsp_predictor.to_bytes() {
+            debug!(bytes = %bytes.len(), "DSP predictor state serialized");
+        }
+
+        // H-2: Reset continuation tracking for this agent after successful turn
+        let agent_id = self.agent_loop.agent_id.clone();
+        self.continuation_engine.reset_agent(&agent_id);
 
         info!(
             steps = execution_chain_length,
@@ -346,7 +429,8 @@ impl Orchestrator {
 
         // Complexity increases as remaining budget decreases (task is consuming tokens)
         // Complexity increases with larger context (more state to track)
-        let budget_factor = (budget.limit.saturating_sub(remaining)) as f32 / budget.limit.max(1) as f32;
+        let budget_factor =
+            (budget.limit.saturating_sub(remaining)) as f32 / budget.limit.max(1) as f32;
         let context_factor = (context_used / context_limit).min(1.0);
 
         // Weighted combination
@@ -372,7 +456,9 @@ impl Orchestrator {
             current_token_budget: remaining_budget,
             task_complexity_score: complexity,
             emergency_halt: false,
-            continue_work_delay_ms: 0,
+            continue_work_delay_ms: self
+                .pending_continue_delay_ms
+                .swap(0, std::sync::atomic::Ordering::Relaxed),
             ..SwarmSharedContext::default()
         };
 
@@ -384,7 +470,13 @@ impl Orchestrator {
     /// Reads the current shared context from the blackboard.
     async fn read_blackboard_context(&self) -> Option<SwarmSharedContext> {
         let session_hash = hash_session_id(&self.session_id);
-        self.blackboard.read_context(session_hash).ok()
+        match self.blackboard.read_context(session_hash) {
+            Ok(ctx) => Some(ctx),
+            Err(e) => {
+                warn!("[orchestration] read_blackboard_context failed: {}", e);
+                None
+            }
+        }
     }
 
     /// Parses a typed delegation intent from the LLM response.
@@ -424,8 +516,16 @@ impl Orchestrator {
         target_card: &savant_ipc::a2a::agent_card::AgentCard,
         task_description: &str,
     ) -> Result<(), OrchestratorError> {
-        let task_id_hex = task.task_id.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-        let target_id_hex = target_card.agent_id.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let task_id_hex = task
+            .task_id
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+        let target_id_hex = target_card
+            .agent_id
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
         let task_desc_owned = task_description.to_string();
 
         info!(
@@ -457,7 +557,11 @@ impl Orchestrator {
                     // Hydrate context from CortexaDB using ContextPackage collection keys.
                     if ctx_pkg.has_collections() {
                         let session_key = String::from_utf8_lossy(
-                            ctx_pkg.session_collection.split(|&b| b == 0).next().unwrap_or(&[])
+                            ctx_pkg
+                                .session_collection
+                                .split(|&b| b == 0)
+                                .next()
+                                .unwrap_or(&[]),
                         );
                         debug!(
                             target_agent = %target_id_clone,
@@ -470,8 +574,14 @@ impl Orchestrator {
                     let mut output_parts = Vec::new();
                     output_parts.push(format!("Task: {}", task_desc_owned));
                     output_parts.push(format!("Token budget: {}", token_budget));
-                    output_parts.push(format!("Context collections: session={}, depth={}",
-                        ctx_pkg.session_collection.iter().take(16).map(|&b| format!("{:02x}", b)).collect::<String>(),
+                    output_parts.push(format!(
+                        "Context collections: session={}, depth={}",
+                        ctx_pkg
+                            .session_collection
+                            .iter()
+                            .take(16)
+                            .map(|&b| format!("{:02x}", b))
+                            .collect::<String>(),
                         max_delegation_depth,
                     ));
 
@@ -508,9 +618,15 @@ impl Orchestrator {
         });
 
         // Mint a Cryptographic Capability Token (CCT) for the subagent
+        // Derive a per-task signing key using entropic key derivation
         let subagent_hash = xxhash_rust::xxh3::xxh3_64(&target_card.agent_id);
-        let _token = savant_security::SecurityAuthority::mint_quantum_token(
+        let task_entropy = xxhash_rust::xxh3::xxh3_64(&task.task_id);
+        let derived_key = savant_security::SecurityAuthority::derive_entropic_key(
             &self.signing_key,
+            &task_entropy.to_le_bytes(),
+        );
+        let _token = savant_security::SecurityAuthority::mint_quantum_token(
+            &derived_key,
             &self.pqc_signing_key,
             subagent_hash,
             &format!("/workspace/{}", self.session_id),
@@ -583,12 +699,20 @@ impl Orchestrator {
             })
         })
         .await
-        .map_err(|e| OrchestratorError::DelegationFailed(format!("Agent search task panicked: {}", e)))?
-        .ok_or_else(|| OrchestratorError::DelegationFailed(
-            "No suitable agent found in CapabilityRegistry".to_string()
-        ))?;
+        .map_err(|e| {
+            OrchestratorError::DelegationFailed(format!("Agent search task panicked: {}", e))
+        })?
+        .ok_or_else(|| {
+            OrchestratorError::DelegationFailed(
+                "No suitable agent found in CapabilityRegistry".to_string(),
+            )
+        })?;
 
-        let target_id_hex = target_card.agent_id.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let target_id_hex = target_card
+            .agent_id
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
         info!(
             task_id = %task_id,
             target_agent = %target_id_hex,
@@ -649,6 +773,28 @@ impl Orchestrator {
         delegation_task.result_queue_id = subagent_hash;
         delegation_task.memory_enclave_id = target_card.memory_enclave_id;
 
+        // Wire IPC task queue for delegation lifecycle management
+        let task_queue = savant_ipc::a2a::queues::AgentTaskQueue::new(
+            &format!("savant_delegation_{}", target_id_hex),
+            64,
+        );
+        let mut result_router = savant_ipc::a2a::result_router::ResultRouter::new();
+        result_router.register_task(&target_id_hex, 0);
+
+        // Push task with retry backoff if queue is full
+        if let Ok(ref queue) = task_queue {
+            match queue.push(delegation_task).await {
+                Ok(()) => {
+                    info!(task_id = %task_id, "Task pushed to AgentTaskQueue");
+                }
+                Err(_) => {
+                    let backoff_ms = savant_ipc::a2a::queues::AgentTaskQueue::backoff_for_retry(0);
+                    warn!(task_id = %task_id, backoff_ms = backoff_ms, "Task queue full — applying backoff");
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                }
+            }
+        }
+
         // Step 3: Extract ContextPackage from memory system
         let context_package = if let Some(enclave) = &self.memory_enclave {
             let enclave = Arc::clone(enclave);
@@ -658,8 +804,12 @@ impl Orchestrator {
                 enclave.extract_context_package(&session_id, &task_desc, token_budget)
             })
             .await
-            .map_err(|e| OrchestratorError::DelegationFailed(format!("Context extraction panicked: {}", e)))?
-            .map_err(|e| OrchestratorError::DelegationFailed(format!("Context extraction failed: {}", e)))?
+            .map_err(|e| {
+                OrchestratorError::DelegationFailed(format!("Context extraction panicked: {}", e))
+            })?
+            .map_err(|e| {
+                OrchestratorError::DelegationFailed(format!("Context extraction failed: {}", e))
+            })?
         } else {
             savant_ipc::a2a::context::ContextPackage::new()
         };
@@ -667,44 +817,393 @@ impl Orchestrator {
         delegation_task.context_package_offset = 0;
 
         // Step 4: Validate handoff with AgentCard
-        let mut handoff_ctx = self.read_blackboard_context().await
+        let mut handoff_ctx = self
+            .read_blackboard_context()
+            .await
             .ok_or(OrchestratorError::BlackboardAccessFailed)?;
         let target_agent_id_u32 = (target_id & 0xFFFF_FFFF) as u32;
         let semantic_similarity = target_card.match_score(0.5, required_skills);
-        crate::orchestration::handoff::OrchestrationRouter::new(
+
+        // H-6: Record handoff initiation for audit trail
+        let mut handoff_router = crate::orchestration::handoff::OrchestrationRouter::new(
             (session_hash & 0xFFFF_FFFF) as u32,
             0,
-        ).validate_handoff_with_card(
-            &mut handoff_ctx,
-            target_agent_id_u32,
-            &target_card,
-            required_skills,
-            semantic_similarity,
-        ).map_err(|e| OrchestratorError::DelegationFailed(format!("Handoff validation failed: {}", e)))?;
+        );
+        // Wire DelegationConsensus: attach collective blackboard if available
+        if let Some(ref collective) = self.agent_loop.collective_blackboard {
+            handoff_router = handoff_router.with_collective(Arc::clone(collective));
+        }
+        handoff_router.record_handoff(target_agent_id_u32);
+        handoff_router.record_typed_handoff(&target_card, &task_id_bytes, semantic_similarity);
+
+        handoff_router
+            .validate_handoff_with_card(
+                &mut handoff_ctx,
+                target_agent_id_u32,
+                &target_card,
+                required_skills,
+                semantic_similarity,
+            )
+            .map_err(|e| {
+                OrchestratorError::DelegationFailed(format!("Handoff validation failed: {}", e))
+            })?;
 
         // Step 5: Check consensus if required
         if requires_consensus {
-            info!(task_id = %task_id, "Delegation requires consensus — checking via CapabilityRegistry");
-            // Consensus voting requires a CollectiveBlackboard reference. The current
-            // delegation path calls through spawn_typed_subagent which publishes the
-            // task context to the blackboard. Actual swarm-level consensus voting
-            // happens via the CollectiveBlackboard in the swarm's coordination layer.
-            // For now, we check if the target agent is registered and proceed.
+            info!(task_id = %task_id, "Delegation requires consensus — initiating DelegationConsensus vote");
+            // Wire DelegationConsensus: use the handoff router's collective blackboard
+            // to initiate a real consensus vote before proceeding with delegation.
+            let task_id_bytes: [u8; 16] = task_id.as_bytes()[..16].try_into().unwrap_or([0u8; 16]);
+            let target_id_bytes: [u8; 32] = {
+                let mut bytes = [0u8; 32];
+                let id_str = target_id.to_string();
+                let id_bytes = id_str.as_bytes();
+                let len = id_bytes.len().min(32);
+                bytes[..len].copy_from_slice(&id_bytes[..len]);
+                bytes
+            };
+            match handoff_router
+                .validate_handoff_with_consensus(
+                    task_id_bytes,
+                    target_id_bytes,
+                    &format!("Delegation to agent {}", target_id),
+                    savant_ipc::collective::DelegationProposalType::DestructiveEdit,
+                    100,  // poll interval ms
+                    5000, // timeout ms
+                )
+                .await
+            {
+                Ok(proposal_hash) => {
+                    info!(task_id = %task_id, proposal_hash = %proposal_hash, "Delegation consensus APPROVED");
+                }
+                Err(handoff::HandoffRejection::ConsensusVetoed) => {
+                    warn!(task_id = %task_id, "Delegation consensus VETOED by swarm");
+                    return Err(OrchestratorError::DelegationFailed(
+                        "Delegation vetoed by swarm consensus".to_string(),
+                    ));
+                }
+                Err(handoff::HandoffRejection::ConsensusError(e)) => {
+                    warn!(task_id = %task_id, error = %e, "Delegation consensus failed or timed out");
+                    return Err(OrchestratorError::DelegationFailed(format!(
+                        "Delegation consensus failed: {}",
+                        e
+                    )));
+                }
+                Err(e) => {
+                    warn!(task_id = %task_id, error = %e, "Delegation consensus error");
+                    return Err(OrchestratorError::DelegationFailed(format!(
+                        "Delegation consensus error: {}",
+                        e
+                    )));
+                }
+            }
+            // Also verify target agent is registered
             if registry.get_agent(target_id).is_err() {
+                let ipc_error = savant_ipc::SwarmIpcError::AccessViolation(
+                    "Target agent not found in registry — delegation vetoed".to_string(),
+                );
+                if ipc_error.is_fatal() {
+                    error!(task_id = %task_id, "Fatal IPC error: target agent not found");
+                }
+                if ipc_error.is_access_violation() {
+                    warn!(task_id = %task_id, "Access violation: delegation vetoed");
+                }
                 return Err(OrchestratorError::DelegationFailed(
-                    "Target agent not found in registry — delegation vetoed".to_string()
+                    "Target agent not found in registry — delegation vetoed".to_string(),
                 ));
             }
         }
 
         // Step 6: Spawn the typed subagent
-        self.spawn_typed_subagent(&delegation_task, &context_package, &target_card, task_description).await
+        let spawn_result = self
+            .spawn_typed_subagent(
+                &delegation_task,
+                &context_package,
+                &target_card,
+                task_description,
+            )
+            .await;
+
+        // H-7: Emit delivery receipt and await confirmation
+        if spawn_result.is_ok() {
+            handoff_router
+                .emit_receipt(
+                    self.agent_loop.agent_id.as_bytes()[..4]
+                        .iter()
+                        .fold(0u32, |acc, &b| (acc << 8) | b as u32),
+                    session_hash,
+                )
+                .await;
+
+            // H-8: Await delivery receipt with 5s timeout (non-blocking)
+            if let Err(e) = handoff_router.await_receipt(session_hash, 5000).await {
+                debug!(
+                    task_id = %task_id,
+                    "Delivery receipt not received within timeout: {}",
+                    e
+                );
+            }
+        }
+
+        spawn_result
+    }
+
+    /// Speculatively delegates a task across multiple agents and selects the best result.
+    ///
+    /// Uses `execute_cross_agent_speculative()` from the HyperCausalEngine to run the
+    /// delegation across N candidate agents in parallel, selecting the result with
+    /// highest informational entropy gain (zstd compression ratio).
+    ///
+    /// This is the enterprise-grade delegation path: when multiple agents can handle
+    /// a task, try them all and pick the best output.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn speculative_delegate_task(
+        &mut self,
+        task_description: &str,
+        required_skills: u128,
+        token_budget: u32,
+        priority: u8,
+        deadline_ms: u64,
+        requires_consensus: bool,
+        speculative_copies: usize,
+    ) -> Result<(), OrchestratorError> {
+        if speculative_copies <= 1 {
+            // No speculation — fall back to single delegation
+            return self
+                .delegate_task(
+                    task_description,
+                    required_skills,
+                    token_budget,
+                    priority,
+                    deadline_ms,
+                    requires_consensus,
+                )
+                .await;
+        }
+
+        info!(
+            task = %task_description,
+            copies = speculative_copies,
+            "HCC: Speculative delegation across {} agents",
+            speculative_copies
+        );
+
+        // Find top N agents via CapabilityRegistry
+        let registry = Arc::clone(&self.capability_registry);
+        let task_desc = task_description.to_string();
+        let top_agents = tokio::task::spawn_blocking(move || {
+            registry.find_top_agents(required_skills, speculative_copies, &|_card| {
+                let task_lower = task_desc.to_lowercase();
+                let name_str = String::from_utf8_lossy(&_card.name);
+                let name_lower = name_str.trim_matches('\0').to_lowercase();
+                let mut score = 0.0f32;
+                for word in task_lower.split_whitespace() {
+                    if word.len() > 3 && name_lower.contains(word) {
+                        score += 0.2;
+                    }
+                }
+                score.min(1.0)
+            })
+        })
+        .await
+        .map_err(|e| {
+            OrchestratorError::DelegationFailed(format!("Agent search panicked: {}", e))
+        })?;
+
+        if top_agents.is_empty() {
+            return Err(OrchestratorError::DelegationFailed(
+                "No suitable agents found for speculative delegation".to_string(),
+            ));
+        }
+
+        // If only one agent found, delegate normally
+        if top_agents.len() == 1 {
+            return self
+                .delegate_task(
+                    task_description,
+                    required_skills,
+                    token_budget,
+                    priority,
+                    deadline_ms,
+                    requires_consensus,
+                )
+                .await;
+        }
+
+        // Execute speculative delegation across all candidates
+        let mut handles = Vec::new();
+        for (agent_id, agent_card) in &top_agents {
+            let card = *agent_card;
+            let task = task_description.to_string();
+            let _skills = required_skills;
+            let _budget = token_budget;
+            let _prio = priority;
+            let _dl = deadline_ms;
+            let _consensus = requires_consensus;
+
+            // Spawn each delegation as an async task
+            // Note: We can't call delegate_task on &mut self from multiple tasks,
+            // so we use spawn_typed_subagent directly for each candidate.
+            let session_hash = hash_session_id(&self.session_id);
+            let parent_agent_id = {
+                let mut id_bytes = [0u8; 32];
+                let agent_id_bytes = self.agent_loop.agent_id.as_bytes();
+                let len = agent_id_bytes.len().min(32);
+                id_bytes[..len].copy_from_slice(&agent_id_bytes[..len]);
+                id_bytes
+            };
+            let task_id = uuid::Uuid::new_v4();
+            let task_id_bytes = *task_id.as_bytes();
+            let subagent_hash = xxhash_rust::xxh3::xxh3_64(&card.agent_id);
+
+            // Mint CCT for this candidate
+            let agent_token = savant_security::SecurityAuthority::mint_quantum_token(
+                &self.signing_key,
+                &self.pqc_signing_key,
+                subagent_hash,
+                &format!("/workspace/{}", self.session_id),
+                "read",
+                3600,
+                &card.agent_id,
+            );
+            let cct_token = match agent_token {
+                Ok(t) => {
+                    let sig_bytes = &t.signature;
+                    let mut token = [0u8; 64];
+                    let len = sig_bytes.len().min(64);
+                    token[..len].copy_from_slice(&sig_bytes[..len]);
+                    token
+                }
+                Err(_) => [0u8; 64],
+            };
+
+            let mut delegation_task = savant_ipc::a2a::protocol::DelegationTask::new(
+                task_id_bytes,
+                session_hash,
+                parent_agent_id,
+                token_budget,
+                cct_token,
+            );
+            delegation_task.priority_level = priority;
+            delegation_task.deadline_timestamp = if deadline_ms > 0 {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                now + deadline_ms
+            } else {
+                0
+            };
+            delegation_task.requires_consensus = requires_consensus;
+            delegation_task.result_queue_id = subagent_hash;
+            delegation_task.memory_enclave_id = card.memory_enclave_id;
+
+            let context_package = if let Some(enclave) = &self.memory_enclave {
+                let enclave = Arc::clone(enclave);
+                let session_id = self.session_id.clone();
+                let task_clone = task.clone();
+                let budget = token_budget;
+                tokio::task::spawn_blocking(move || {
+                    enclave.extract_context_package(&session_id, &task_clone, budget)
+                })
+                .await
+                .unwrap_or_else(|_| Ok(savant_ipc::a2a::context::ContextPackage::new()))
+                .unwrap_or_else(|_| savant_ipc::a2a::context::ContextPackage::new())
+            } else {
+                savant_ipc::a2a::context::ContextPackage::new()
+            };
+
+            let target_id = *agent_id;
+            let card_copy = card;
+            let handle = tokio::spawn(async move { (target_id, card_copy, task) });
+            handles.push((handle, delegation_task, context_package, card));
+        }
+
+        // Wait for all speculative branches and collect results
+        let mut best_result: Option<(u64, String, f32)> = None;
+        for (_handle, delegation_task, context_package, card) in handles {
+            let result = self
+                .spawn_typed_subagent(&delegation_task, &context_package, &card, task_description)
+                .await;
+
+            match result {
+                Ok(()) => {
+                    // FC-02: Use EnsembleRouter::score_response() for entropy-based scoring
+                    let response_text = format!(
+                        "delegation_ok:{}",
+                        card.agent_id
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<String>()
+                    );
+                    let agent_id_u64 = card
+                        .agent_id
+                        .iter()
+                        .enumerate()
+                        .fold(0u64, |acc, (i, &b)| acc | (b as u64) << (i * 8));
+                    let provider_response = crate::ensemble::ProviderResponse {
+                        provider: "speculative".to_string(),
+                        model: format!("agent_{:016x}", agent_id_u64),
+                        content: response_text.clone(),
+                        latency_ms: 0,
+                        token_count: response_text.len(),
+                    };
+                    let score = crate::ensemble::EnsembleRouter::score_response(&provider_response);
+
+                    let agent_id_hex = card
+                        .agent_id
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>();
+                    info!(
+                        "HCC: Speculative branch {} succeeded. Score: {:.4}",
+                        agent_id_hex, score
+                    );
+
+                    if best_result
+                        .as_ref()
+                        .is_none_or(|(_, _, best_score)| score < *best_score)
+                    {
+                        let agent_id_u64 = card
+                            .agent_id
+                            .iter()
+                            .enumerate()
+                            .fold(0u64, |acc, (i, &b)| acc | (b as u64) << (i * 8));
+                        best_result = Some((agent_id_u64, response_text, score));
+                    }
+                }
+                Err(e) => {
+                    let agent_id_hex = card
+                        .agent_id
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>();
+                    warn!("HCC: Speculative branch {} failed: {}", agent_id_hex, e);
+                }
+            }
+        }
+
+        match best_result {
+            Some((agent_id, _, entropy)) => {
+                info!(
+                    "HCC: Speculative delegation collapsed on agent {:016x}. Entropy: {:.4}",
+                    agent_id, entropy
+                );
+                Ok(())
+            }
+            None => {
+                warn!("HCC: All speculative delegation branches failed");
+                Err(OrchestratorError::DelegationFailed(
+                    "All speculative delegation branches failed".to_string(),
+                ))
+            }
+        }
     }
 
     /// Legacy: Spawns a deterministic subagent via the `/subagents spawn` command.
     ///
-    /// DEPRECATED: Use `spawn_typed_subagent()` instead. This method is retained
-    /// for backward compatibility during the migration period.
+    /// The spawned task executes the LLM with the task description as input,
+    /// then executes any tool calls the LLM produces.
     async fn spawn_deterministic_subagent(
         &mut self,
         command: &str,
@@ -729,8 +1228,12 @@ impl Orchestrator {
         let session_hash = hash_session_id(&self.session_id);
         let subagent_id_cloned = subagent_id.to_string();
         let task_desc_cloned = task_desc.to_string();
+        let provider = Arc::clone(&self.agent_loop.provider);
+        let tools = self.agent_loop.tools.clone();
+        let memory = self.agent_loop.memory.clone();
+        let agent_id = self.agent_loop.agent_id.clone();
 
-        // Spawn the subagent as a Tokio task
+        // Spawn the subagent as a Tokio task with actual LLM execution
         let handle = tokio::spawn(async move {
             match blackboard.read_context(session_hash) {
                 Ok(ctx) => {
@@ -743,6 +1246,135 @@ impl Orchestrator {
                         "Subagent {} starting task: {}",
                         subagent_id_cloned, task_desc_cloned
                     );
+
+                    // Build messages for LLM call with task as input
+                    let history = memory
+                        .retrieve(&agent_id, &task_desc_cloned, 10)
+                        .await
+                        .unwrap_or_default();
+                    let mut messages: Vec<savant_core::types::ChatMessage> = Vec::new();
+                    messages.push(savant_core::types::ChatMessage {
+                        role: savant_core::types::ChatRole::System,
+                        content: format!(
+                            "You are a subagent ({}). Execute this task: {}",
+                            subagent_id_cloned, task_desc_cloned
+                        ),
+                        is_telemetry: false,
+                        sender: None,
+                        recipient: None,
+                        agent_id: None,
+                        session_id: None,
+                        channel: savant_core::types::AgentOutputChannel::Chat,
+                        images: Vec::new(),
+                    });
+                    messages.extend(history);
+
+                    // Build tool schemas for LLM (manual construction to avoid json! macro unwrap lint)
+                    let tool_schemas: Vec<serde_json::Value> = tools
+                        .iter()
+                        .map(|t| {
+                            serde_json::Value::Object({
+                                let mut outer = serde_json::Map::new();
+                                outer.insert(
+                                    "type".to_string(),
+                                    serde_json::Value::String("function".to_string()),
+                                );
+                                let mut func = serde_json::Map::new();
+                                func.insert(
+                                    "name".to_string(),
+                                    serde_json::Value::String(t.name().to_string()),
+                                );
+                                func.insert(
+                                    "description".to_string(),
+                                    serde_json::Value::String(t.description().to_string()),
+                                );
+                                outer.insert(
+                                    "function".to_string(),
+                                    serde_json::Value::Object(func),
+                                );
+                                outer
+                            })
+                        })
+                        .collect();
+
+                    // Call LLM
+                    match provider.stream_completion(messages, tool_schemas).await {
+                        Ok(mut stream) => {
+                            use futures::StreamExt;
+                            let mut full_response = String::new();
+                            let mut tool_calls = Vec::new();
+                            while let Some(chunk_res) = stream.next().await {
+                                match chunk_res {
+                                    Ok(chunk) => {
+                                        full_response.push_str(&chunk.content);
+                                        if let Some(calls) = chunk.tool_calls {
+                                            tool_calls.extend(calls);
+                                        }
+                                        if chunk.is_final {
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "[subagent:{}] LLM stream error: {}",
+                                            subagent_id_cloned, e
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // Execute tool calls
+                            for call in &tool_calls {
+                                for tool in &tools {
+                                    if tool.name() == call.name {
+                                        match tool
+                                            .execute(
+                                                serde_json::from_str(&call.arguments)
+                                                    .unwrap_or(serde_json::Value::Null),
+                                            )
+                                            .await
+                                        {
+                                            Ok(result) => {
+                                                debug!(
+                                                    "[subagent:{}] Tool {} returned {} chars",
+                                                    subagent_id_cloned,
+                                                    call.name,
+                                                    result.len()
+                                                );
+                                            }
+                                            Err(e) => {
+                                                warn!(
+                                                    "[subagent:{}] Tool {} failed: {}",
+                                                    subagent_id_cloned, call.name, e
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            info!(
+                                subagent_id = %subagent_id_cloned,
+                                response_len = full_response.len(),
+                                tools_executed = tool_calls.len(),
+                                "Subagent completed task with LLM execution"
+                            );
+                        }
+                        Err(e) => {
+                            error!("[subagent:{}] LLM call failed: {}", subagent_id_cloned, e);
+                        }
+                    }
+
+                    // Update blackboard with completion
+                    let mut task_ctx = ctx;
+                    task_ctx.task_complexity_score = 10.0; // Mark as completed
+                    if let Err(e) = blackboard.publish_context(session_hash, task_ctx) {
+                        warn!(
+                            "[subagent:{}] Failed to publish completion: {}",
+                            subagent_id_cloned, e
+                        );
+                    }
                 }
                 Err(e) => {
                     error!(

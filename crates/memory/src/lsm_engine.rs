@@ -24,7 +24,8 @@ use crate::models::{verify_tool_pair_integrity, AgentMessage};
 
 /// Vector dimension for CortexaDB embeddings (default fallback only).
 /// Actual dimension should come from LsmConfig.vector_dimension.
-const DEFAULT_VECTOR_DIM: usize = 384;
+/// Must match OllamaEmbeddingService::dimensions() (2560 for gemma4:e4b).
+const DEFAULT_VECTOR_DIM: usize = 2560;
 
 /// Maximum entries to retrieve per collection query.
 const MAX_BATCH_SIZE: usize = 100_000;
@@ -68,12 +69,15 @@ pub struct LsmStorageEngine {
     sessions: dashmap::DashSet<String>,
     /// Configured vector dimension for zero-embedding construction.
     vector_dimension: usize,
+    /// Message ID -> session ID index for O(1) lookups.
+    /// Updated on append_message and atomic_compact.
+    message_session_index: dashmap::DashMap<String, String>,
 }
 
 /// Configuration for the CortexaDB storage engine.
 #[derive(Debug, Clone)]
 pub struct LsmConfig {
-    /// Vector dimension for embeddings (default: 384)
+    /// Vector dimension for embeddings (default: 2560)
     pub vector_dimension: usize,
     /// Sync policy: true = sync after every write, false = async (default: true)
     pub strict_sync: bool,
@@ -87,6 +91,29 @@ impl Default for LsmConfig {
             vector_dimension: DEFAULT_VECTOR_DIM,
             strict_sync: true,
             checkpoint_every_ops: 1000,
+        }
+    }
+}
+
+/// Lazy iterator over all messages across sessions.
+///
+/// Messages are collected and sorted by timestamp on construction,
+/// then yielded one at a time via `next()`.
+pub struct AllMessagesIterator {
+    messages: Vec<AgentMessage>,
+    index: usize,
+}
+
+impl Iterator for AllMessagesIterator {
+    type Item = AgentMessage;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.messages.len() {
+            let msg = self.messages[self.index].clone();
+            self.index += 1;
+            Some(msg)
+        } else {
+            None
         }
     }
 }
@@ -133,6 +160,7 @@ impl LsmStorageEngine {
             db,
             sessions,
             vector_dimension,
+            message_session_index: dashmap::DashMap::new(),
         }))
     }
 
@@ -193,13 +221,21 @@ impl LsmStorageEngine {
             }
         }
 
+        // Update message ID -> session ID index for O(1) lookup
+        self.message_session_index
+            .insert(message.id.clone(), session_id.to_string());
+
         debug!("Appended message {} to session {}", message.id, session_id);
         Ok(())
     }
 
     /// Iterates over messages across all sessions, with optional limit.
     /// Uses MAX_BATCH_SIZE as the cap per session scoped query to bound memory usage.
-    pub fn iter_all_messages(&self, limit: usize) -> impl Iterator<Item = AgentMessage> + '_ {
+    ///
+    /// Returns a lazy iterator that yields messages one at a time from a pre-sorted
+    /// internal buffer. The full message set is collected and sorted on first call,
+    /// then yielded incrementally to avoid holding all messages in scope simultaneously.
+    pub fn iter_all_messages(&self, limit: usize) -> AllMessagesIterator {
         let mut all_msgs: Vec<AgentMessage> = Vec::new();
         let batch_limit = if limit > 0 { limit } else { MAX_BATCH_SIZE };
 
@@ -207,12 +243,10 @@ impl LsmStorageEngine {
             let session_id = session_ref.key().clone();
             let collection = Self::transcript_collection(&session_id);
 
-            if let Ok(hits) = self.db.search_in_collection(
-                &collection,
-                self.zero_embedding(),
-                batch_limit,
-                None,
-            ) {
+            if let Ok(hits) =
+                self.db
+                    .search_in_collection(&collection, self.zero_embedding(), batch_limit, None)
+            {
                 for hit in hits {
                     if all_msgs.len() >= batch_limit {
                         break;
@@ -240,7 +274,10 @@ impl LsmStorageEngine {
         }
 
         all_msgs.sort_by_key(|m| i64::from(m.timestamp));
-        all_msgs.into_iter()
+        AllMessagesIterator {
+            messages: all_msgs,
+            index: 0,
+        }
     }
 
     /// Iterates over messages from the last N hours across all sessions.
@@ -282,14 +319,19 @@ impl LsmStorageEngine {
             m
         };
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection("metadata", self.zero_embedding(), 1, Some(filter))
+        match self
+            .db
+            .search_in_collection("metadata", self.zero_embedding(), 1, Some(filter))
         {
-            for hit in hits {
-                self.db
-                    .delete(hit.id)
-                    .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+            Ok(hits) => {
+                for hit in hits {
+                    self.db
+                        .delete(hit.id)
+                        .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] remove_metadata failed: {}", e);
             }
         }
         Ok(())
@@ -309,13 +351,19 @@ impl LsmStorageEngine {
             None,
         ) {
             Ok(h) => h,
-            Err(_) => return messages,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to query messages, returning partial results");
+                return messages;
+            }
         };
 
         for hit in hits {
             let memory = match self.db.get_memory(hit.id) {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!(id = %hit.id, error = %e, "Failed to get memory, skipping");
+                    continue;
+                }
             };
 
             if memory.content.len() > 10 * 1024 * 1024 {
@@ -327,7 +375,12 @@ impl LsmStorageEngine {
                 &memory.content,
             ) {
                 Ok(a) => a,
-                Err(_) => {
+                Err(e) => {
+                    tracing::warn!(
+                        session = %memory.metadata.get("session_id").map(|s| s.as_str()).unwrap_or("unknown"),
+                        error = %e,
+                        "Skipping corrupt message (rkyv access failed)"
+                    );
                     validation_failures += 1;
                     continue;
                 }
@@ -339,7 +392,12 @@ impl LsmStorageEngine {
                         messages.push(msg);
                     }
                 }
-                Err(_) => {
+                Err(e) => {
+                    tracing::warn!(
+                        session = %memory.metadata.get("session_id").map(|s| s.as_str()).unwrap_or("unknown"),
+                        error = %e,
+                        "Skipping corrupt message (rkyv deserialize failed)"
+                    );
                     validation_failures += 1;
                 }
             }
@@ -382,6 +440,19 @@ impl LsmStorageEngine {
 
         let collection = Self::transcript_collection(session_id);
 
+        // Phase 0: Capture all existing entry IDs BEFORE inserting the new batch.
+        // We will only delete these old entries in Phase 2, preserving the newly
+        // inserted batch from being deleted by its own compaction.
+        let mut old_hit_ids: Vec<u64> = Vec::new();
+        if let Ok(hits) =
+            self.db
+                .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
+        {
+            for hit in hits {
+                old_hit_ids.push(hit.id);
+            }
+        }
+
         // Phase 1: Insert compacted batch FIRST (write-before-delete ensures data safety)
         // If this fails, old entries remain intact — no data loss.
         let mut records: Vec<BatchRecord> = Vec::with_capacity(batch.len());
@@ -405,18 +476,19 @@ impl LsmStorageEngine {
             .add_batch(records)
             .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
 
-        // Phase 2: Delete old entries AFTER successful insert
+        // Phase 2: Delete ONLY the old entries captured in Phase 0.
+        // This avoids deleting the newly-inserted batch entries.
         // If this fails, duplicates exist temporarily but next compaction cleans them up.
-        // This ordering guarantees no data loss — the insert is the commitment point.
-        if let Ok(hits) =
+        for old_id in old_hit_ids {
             self.db
-                .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
-        {
-            for hit in hits {
-                self.db
-                    .delete(hit.id)
-                    .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
-            }
+                .delete(old_id)
+                .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        }
+
+        // Update message ID -> session ID index for the newly inserted batch
+        for msg in &batch {
+            self.message_session_index
+                .insert(msg.id.clone(), session_id.to_string());
         }
 
         info!(
@@ -442,16 +514,21 @@ impl LsmStorageEngine {
         let collection = Self::transcript_collection(session_id);
         let mut ids = Vec::new();
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
+        match self
+            .db
+            .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
-            for hit in hits {
-                if let Ok(memory) = self.db.get_memory(hit.id) {
-                    if let Some(key) = memory.metadata.get("key") {
-                        ids.push(key.clone());
+            Ok(hits) => {
+                for hit in hits {
+                    if let Ok(memory) = self.db.get_memory(hit.id) {
+                        if let Some(key) = memory.metadata.get("key") {
+                            ids.push(key.clone());
+                        }
                     }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] fetch_all_message_ids_for_session failed: {}", e);
             }
         }
         ids
@@ -462,15 +539,20 @@ impl LsmStorageEngine {
         let collection = Self::transcript_collection(session_id);
         let mut deleted = 0;
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
+        match self
+            .db
+            .search_in_collection(&collection, self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
-            for hit in hits {
-                self.db
-                    .delete(hit.id)
-                    .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
-                deleted += 1;
+            Ok(hits) => {
+                for hit in hits {
+                    self.db
+                        .delete(hit.id)
+                        .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+                    deleted += 1;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] delete_session failed: {}", e);
             }
         }
 
@@ -521,35 +603,45 @@ impl LsmStorageEngine {
         let mut entries = Vec::new();
         let mut stale_count = 0;
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection("metadata", self.zero_embedding(), MAX_BATCH_SIZE, None)
+        match self
+            .db
+            .search_in_collection("metadata", self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
-            for hit in hits {
-                if let Ok(memory) = self.db.get_memory(hit.id) {
-                    if memory.content.len() > 1024 * 1024 {
-                        stale_count += 1;
-                        continue;
-                    }
-                    let archived = match rkyv::access::<
-                        <crate::models::MemoryEntry as rkyv::Archive>::Archived,
-                        RkyvError,
-                    >(&memory.content)
-                    {
-                        Ok(a) => a,
-                        Err(_) => {
+            Ok(hits) => {
+                for hit in hits {
+                    if let Ok(memory) = self.db.get_memory(hit.id) {
+                        if memory.content.len() > 1024 * 1024 {
                             stale_count += 1;
                             continue;
                         }
-                    };
-                    if let Ok(entry) =
-                        rkyv::deserialize::<crate::models::MemoryEntry, RkyvError>(archived)
-                    {
-                        entries.push(entry);
-                    } else {
-                        stale_count += 1;
+                        let archived = match rkyv::access::<
+                            <crate::models::MemoryEntry as rkyv::Archive>::Archived,
+                            RkyvError,
+                        >(&memory.content)
+                        {
+                            Ok(a) => a,
+                            Err(e) => {
+                                tracing::warn!(
+                                    session = %memory.metadata.get("session_id").map(|s| s.as_str()).unwrap_or("unknown"),
+                                    error = %e,
+                                    "Skipping stale memory entry (rkyv access failed)"
+                                );
+                                stale_count += 1;
+                                continue;
+                            }
+                        };
+                        if let Ok(entry) =
+                            rkyv::deserialize::<crate::models::MemoryEntry, RkyvError>(archived)
+                        {
+                            entries.push(entry);
+                        } else {
+                            stale_count += 1;
+                        }
                     }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] iter_metadata failed: {}", e);
             }
         }
 
@@ -591,17 +683,22 @@ impl LsmStorageEngine {
             m
         };
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection("temporal", self.zero_embedding(), 1, Some(filter))
+        match self
+            .db
+            .search_in_collection("temporal", self.zero_embedding(), 1, Some(filter))
         {
-            if let Some(hit) = hits.first() {
-                if let Ok(memory) = self.db.get_memory(hit.id) {
-                    let temporal: crate::models::TemporalMetadata =
-                        serde_json::from_slice(&memory.content)
-                            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
-                    return Ok(Some(temporal));
+            Ok(hits) => {
+                if let Some(hit) = hits.first() {
+                    if let Ok(memory) = self.db.get_memory(hit.id) {
+                        let temporal: crate::models::TemporalMetadata =
+                            serde_json::from_slice(&memory.content)
+                                .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+                        return Ok(Some(temporal));
+                    }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] get_temporal_metadata failed: {}", e);
             }
         }
         Ok(None)
@@ -614,20 +711,26 @@ impl LsmStorageEngine {
     ) -> Result<Vec<crate::models::TemporalMetadata>, MemoryError> {
         let mut results = Vec::new();
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection("temporal", self.zero_embedding(), MAX_BATCH_SIZE, None)
+        match self
+            .db
+            .search_in_collection("temporal", self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
-            for hit in hits {
-                if let Ok(memory) = self.db.get_memory(hit.id) {
-                    if let Ok(temporal) =
-                        serde_json::from_slice::<crate::models::TemporalMetadata>(&memory.content)
-                    {
-                        if temporal.is_active() && temporal.entity_name == entity_name {
-                            results.push(temporal);
+            Ok(hits) => {
+                for hit in hits {
+                    if let Ok(memory) = self.db.get_memory(hit.id) {
+                        if let Ok(temporal) = serde_json::from_slice::<
+                            crate::models::TemporalMetadata,
+                        >(&memory.content)
+                        {
+                            if temporal.is_active() && temporal.entity_name == entity_name {
+                                results.push(temporal);
+                            }
                         }
                     }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] find_active_temporal_by_entity failed: {}", e);
             }
         }
         Ok(results)
@@ -669,16 +772,21 @@ impl LsmStorageEngine {
             m
         };
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection("dag", self.zero_embedding(), 1, Some(filter))
+        match self
+            .db
+            .search_in_collection("dag", self.zero_embedding(), 1, Some(filter))
         {
-            if let Some(hit) = hits.first() {
-                if let Ok(memory) = self.db.get_memory(hit.id) {
-                    let node: crate::models::DagNode = serde_json::from_slice(&memory.content)
-                        .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
-                    return Ok(Some(node));
+            Ok(hits) => {
+                if let Some(hit) = hits.first() {
+                    if let Ok(memory) = self.db.get_memory(hit.id) {
+                        let node: crate::models::DagNode = serde_json::from_slice(&memory.content)
+                            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+                        return Ok(Some(node));
+                    }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] load_dag_node failed: {}", e);
             }
         }
         Ok(None)
@@ -714,26 +822,31 @@ impl LsmStorageEngine {
     pub fn iter_facts(&self) -> Vec<(String, String, String, u64)> {
         let mut results = Vec::new();
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection("facts", self.zero_embedding(), MAX_BATCH_SIZE, None)
+        match self
+            .db
+            .search_in_collection("facts", self.zero_embedding(), MAX_BATCH_SIZE, None)
         {
-            for hit in hits {
-                if let Ok(memory) = self.db.get_memory(hit.id) {
-                    let object = String::from_utf8_lossy(&memory.content).to_string();
-                    let subject = memory.metadata.get("subject").cloned().unwrap_or_default();
-                    let predicate = memory
-                        .metadata
-                        .get("predicate")
-                        .cloned()
-                        .unwrap_or_default();
-                    let entry_id = memory
-                        .metadata
-                        .get("entry_id")
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .unwrap_or(0);
-                    results.push((subject, predicate, object, entry_id));
+            Ok(hits) => {
+                for hit in hits {
+                    if let Ok(memory) = self.db.get_memory(hit.id) {
+                        let object = String::from_utf8_lossy(&memory.content).to_string();
+                        let subject = memory.metadata.get("subject").cloned().unwrap_or_default();
+                        let predicate = memory
+                            .metadata
+                            .get("predicate")
+                            .cloned()
+                            .unwrap_or_default();
+                        let entry_id = memory
+                            .metadata
+                            .get("entry_id")
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+                        results.push((subject, predicate, object, entry_id));
+                    }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] iter_facts failed: {}", e);
             }
         }
         results
@@ -748,30 +861,35 @@ impl LsmStorageEngine {
             m
         };
 
-        if let Ok(hits) = self.db.search_in_collection(
+        match self.db.search_in_collection(
             "facts",
             self.zero_embedding(),
             MAX_BATCH_SIZE,
             Some(filter),
         ) {
-            for hit in hits {
-                if let Ok(memory) = self.db.get_memory(hit.id) {
-                    let predicate = memory
-                        .metadata
-                        .get("predicate")
-                        .cloned()
-                        .unwrap_or_default();
-                    let entry_id = memory
-                        .metadata
-                        .get("entry_id")
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .unwrap_or(0);
-                    results.push((
-                        predicate,
-                        String::from_utf8_lossy(&memory.content).to_string(),
-                        entry_id,
-                    ));
+            Ok(hits) => {
+                for hit in hits {
+                    if let Ok(memory) = self.db.get_memory(hit.id) {
+                        let predicate = memory
+                            .metadata
+                            .get("predicate")
+                            .cloned()
+                            .unwrap_or_default();
+                        let entry_id = memory
+                            .metadata
+                            .get("entry_id")
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+                        results.push((
+                            predicate,
+                            String::from_utf8_lossy(&memory.content).to_string(),
+                            entry_id,
+                        ));
+                    }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] get_facts_by_subject failed: {}", e);
             }
         }
         results
@@ -791,14 +909,19 @@ impl LsmStorageEngine {
             m
         };
 
-        if let Ok(hits) =
-            self.db
-                .search_in_collection("facts", self.zero_embedding(), 1, Some(filter))
+        match self
+            .db
+            .search_in_collection("facts", self.zero_embedding(), 1, Some(filter))
         {
-            for hit in hits {
-                self.db
-                    .delete(hit.id)
-                    .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+            Ok(hits) => {
+                for hit in hits {
+                    self.db
+                        .delete(hit.id)
+                        .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] delete_fact failed: {}", e);
             }
         }
         Ok(())
@@ -843,36 +966,52 @@ impl LsmStorageEngine {
     }
 
     /// Fetches a single message by ID across all sessions.
+    ///
+    /// Uses the message_session_index for O(1) session lookup when available,
+    /// falling back to full scan for messages not yet indexed.
     pub fn fetch_message_by_id(&self, msg_id: &str) -> Result<Option<AgentMessage>, MemoryError> {
-        for session_ref in self.sessions.iter() {
-            let session_id = session_ref.key().clone();
+        // Fast path: look up session ID from the index
+        let sessions_to_search: Vec<String> =
+            if let Some(session_ref) = self.message_session_index.get(msg_id) {
+                vec![session_ref.value().clone()]
+            } else {
+                // Fallback: scan all sessions
+                self.sessions.iter().map(|s| s.key().clone()).collect()
+            };
+
+        for session_id in sessions_to_search {
             let collection = Self::transcript_collection(&session_id);
 
-            if let Ok(hits) = self.db.search_in_collection(
+            match self.db.search_in_collection(
                 &collection,
                 self.zero_embedding(),
                 MAX_BATCH_SIZE,
                 None,
             ) {
-                for hit in hits {
-                    if let Ok(memory) = self.db.get_memory(hit.id) {
-                        if memory.content.len() > 10 * 1024 * 1024 {
-                            continue;
-                        }
-                        if let Ok(archived) = rkyv::access::<
-                            <AgentMessage as rkyv::Archive>::Archived,
-                            rkyv::rancor::Error,
-                        >(&memory.content)
-                        {
-                            if let Ok(msg) =
-                                rkyv::deserialize::<AgentMessage, rkyv::rancor::Error>(archived)
+                Ok(hits) => {
+                    for hit in hits {
+                        if let Ok(memory) = self.db.get_memory(hit.id) {
+                            if memory.content.len() > 10 * 1024 * 1024 {
+                                continue;
+                            }
+                            if let Ok(archived) = rkyv::access::<
+                                <AgentMessage as rkyv::Archive>::Archived,
+                                rkyv::rancor::Error,
+                            >(&memory.content)
                             {
-                                if msg.id == msg_id {
-                                    return Ok(Some(msg));
+                                if let Ok(msg) =
+                                    rkyv::deserialize::<AgentMessage, rkyv::rancor::Error>(archived)
+                                {
+                                    if msg.id == msg_id {
+                                        return Ok(Some(msg));
+                                    }
                                 }
                             }
                         }
                     }
+                }
+                Err(e) => {
+                    tracing::warn!("[lsm] fetch_message_by_id failed: {}", e);
                 }
             }
         }
@@ -1169,56 +1308,65 @@ impl LsmStorageEngine {
     ) -> Result<Vec<(String, savant_ipc::a2a::protocol::TaskState)>, MemoryError> {
         let mut interrupted = Vec::new();
 
-        if let Ok(hits) = self.db.search_in_collection(
+        match self.db.search_in_collection(
             "task_state_journal",
             self.zero_embedding(),
             MAX_BATCH_SIZE,
             None,
         ) {
-            // Collect all state entries per task_id
-            let mut task_states: std::collections::HashMap<String, Vec<(savant_ipc::a2a::protocol::TaskState, u64)>> =
-                std::collections::HashMap::new();
+            Ok(hits) => {
+                // Collect all state entries per task_id
+                let mut task_states: std::collections::HashMap<
+                    String,
+                    Vec<(savant_ipc::a2a::protocol::TaskState, u64)>,
+                > = std::collections::HashMap::new();
 
-            for hit in hits {
-                if let Ok(memory) = self.db.get_memory(hit.id) {
-                    if let Some(task_id) = memory.metadata.get("task_id") {
-                        if let Some(state_str) = memory.metadata.get("state") {
-                            if let Ok(state_val) = state_str.parse::<u8>() {
-                                if let Some(ts_str) = memory.metadata.get("timestamp_ms") {
-                                    if let Ok(ts) = ts_str.parse::<u64>() {
-                                        let state = match state_val {
-                                            0 => savant_ipc::a2a::protocol::TaskState::Submitted,
-                                            1 => savant_ipc::a2a::protocol::TaskState::Working,
-                                            2 => savant_ipc::a2a::protocol::TaskState::InputRequired,
-                                            3 => savant_ipc::a2a::protocol::TaskState::Completed,
-                                            4 => savant_ipc::a2a::protocol::TaskState::Failed,
-                                            5 => savant_ipc::a2a::protocol::TaskState::Canceled,
-                                            _ => continue,
-                                        };
-                                        task_states
-                                            .entry(task_id.clone())
-                                            .or_default()
-                                            .push((state, ts));
+                for hit in hits {
+                    if let Ok(memory) = self.db.get_memory(hit.id) {
+                        if let Some(task_id) = memory.metadata.get("task_id") {
+                            if let Some(state_str) = memory.metadata.get("state") {
+                                if let Ok(state_val) = state_str.parse::<u8>() {
+                                    if let Some(ts_str) = memory.metadata.get("timestamp_ms") {
+                                        if let Ok(ts) = ts_str.parse::<u64>() {
+                                            let state = match state_val {
+                                                0 => savant_ipc::a2a::protocol::TaskState::Submitted,
+                                                1 => savant_ipc::a2a::protocol::TaskState::Working,
+                                                2 => {
+                                                    savant_ipc::a2a::protocol::TaskState::InputRequired
+                                                }
+                                                3 => savant_ipc::a2a::protocol::TaskState::Completed,
+                                                4 => savant_ipc::a2a::protocol::TaskState::Failed,
+                                                5 => savant_ipc::a2a::protocol::TaskState::Canceled,
+                                                _ => continue,
+                                            };
+                                            task_states
+                                                .entry(task_id.clone())
+                                                .or_default()
+                                                .push((state, ts));
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // Find tasks whose latest state is Working or InputRequired (interrupted)
-            for (task_id, mut states) in task_states {
-                states.sort_by_key(|(_, ts)| *ts);
-                if let Some((latest_state, _)) = states.last() {
-                    if matches!(
-                        latest_state,
-                        savant_ipc::a2a::protocol::TaskState::Working
-                            | savant_ipc::a2a::protocol::TaskState::InputRequired
-                    ) {
-                        interrupted.push((task_id, *latest_state));
+                // Find tasks whose latest state is Working or InputRequired (interrupted)
+                for (task_id, mut states) in task_states {
+                    states.sort_by_key(|(_, ts)| *ts);
+                    if let Some((latest_state, _)) = states.last() {
+                        if matches!(
+                            latest_state,
+                            savant_ipc::a2a::protocol::TaskState::Working
+                                | savant_ipc::a2a::protocol::TaskState::InputRequired
+                        ) {
+                            interrupted.push((task_id, *latest_state));
+                        }
                     }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("[lsm] recover_interrupted_delegations failed: {}", e);
             }
         }
 
@@ -1227,6 +1375,16 @@ impl LsmStorageEngine {
             "Scanned task state journal for interrupted delegations"
         );
         Ok(interrupted)
+    }
+}
+
+/// Flush pending writes to disk on engine drop.
+/// Ensures data durability when the engine is dropped without explicit flush.
+impl Drop for LsmStorageEngine {
+    fn drop(&mut self) {
+        if let Err(e) = self.flush() {
+            tracing::warn!("LsmStorageEngine: flush on drop failed: {}", e);
+        }
     }
 }
 
@@ -1240,15 +1398,18 @@ mod tests {
 
     #[test]
     fn test_lsm_engine_basic_operations() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "savant_memory_test_cortexa_{}",
-            Uuid::new_v4()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("savant_memory_test_cortexa_{}", Uuid::new_v4()));
         if let Err(e) = fs::create_dir_all(&temp_dir) {
             panic!("Failed to create temp dir: {}", e);
         }
 
-        let engine = LsmStorageEngine::with_defaults(&temp_dir).unwrap();
+        // Use small vector dimension for tests to avoid 332MB allocation on Windows
+        let config = LsmConfig {
+            vector_dimension: 64,
+            ..LsmConfig::default()
+        };
+        let engine = LsmStorageEngine::new(&temp_dir, config).unwrap();
 
         let msg = AgentMessage::user("session123", "Hello, world!");
         engine.append_message("session123", &msg).unwrap();

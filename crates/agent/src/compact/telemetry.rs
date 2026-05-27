@@ -41,18 +41,14 @@ impl From<&CompactionResult> for CompressionEvent {
             processing_us: result.processing_us,
             counters: result.counters.clone(),
             was_truncated: result.was_truncated,
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: savant_core::utils::time::now_millis().unwrap_or(0) as i64,
         }
     }
 }
 
 impl CompressionEvent {
     /// Creates a new event with tool context.
-    pub fn with_context(
-        result: &CompactionResult,
-        tool_name: &str,
-        family: &str,
-    ) -> Self {
+    pub fn with_context(result: &CompactionResult, tool_name: &str, family: &str) -> Self {
         let mut event = Self::from(result);
         event.tool_name = tool_name.to_string();
         event.family = family.to_string();
@@ -62,24 +58,48 @@ impl CompressionEvent {
 
 /// Emits a compression event to the Nexus bus.
 #[cfg(feature = "nexus")]
-pub async fn emit_event(
-    nexus: &savant_core::bus::NexusBridge,
-    event: &CompressionEvent,
-) {
-    let payload = serde_json::to_string(event).unwrap_or_default();
-    if let Err(e) = nexus
-        .publish("system.compact.compression", &payload)
-        .await
-    {
+pub async fn emit_event(nexus: &savant_core::bus::NexusBridge, event: &CompressionEvent) {
+    let payload = match serde_json::to_string(event) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("[telemetry] Failed to serialize compression event: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = nexus.publish("system.compact.compression", &payload).await {
         tracing::warn!("[telemetry] Failed to publish compression event: {}", e);
     }
 }
 
-/// No-op emit when nexus feature is not enabled.
+/// Fallback: write to local JSONL file when nexus feature is not enabled.
 #[cfg(not(feature = "nexus"))]
-pub async fn emit_event(
-    _nexus: &savant_core::bus::NexusBridge,
-    _event: &CompressionEvent,
-) {
-    // No-op
+pub async fn emit_event(_nexus: &savant_core::bus::NexusBridge, event: &CompressionEvent) {
+    let telemetry_dir = std::path::PathBuf::from("data/telemetry");
+    if let Err(e) = savant_core::utils::io::ensure_dir(&telemetry_dir).await {
+        tracing::warn!("[telemetry] Failed to create telemetry directory: {}", e);
+        return;
+    }
+    let file_path = telemetry_dir.join("compact_events.jsonl");
+    let payload = match serde_json::to_string(event) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("[telemetry] Failed to serialize compression event: {}", e);
+            return;
+        }
+    };
+    use std::io::Write;
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{}", payload) {
+                tracing::warn!("[telemetry] Failed to write telemetry event: {}", e);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("[telemetry] Failed to open telemetry file: {}", e);
+        }
+    }
 }

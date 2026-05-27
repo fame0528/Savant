@@ -1,4 +1,11 @@
-#![allow(clippy::disallowed_methods)] // serde_json::json! macro false positives
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
+#![allow(clippy::disallowed_methods)]
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+// Validation gate: re-run `cargo clippy -p savant_mcp --no-deps` and verify
+// all disallowed method warnings trace back to json!() macro expansion.
 
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
@@ -11,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
 /// JSON-RPC request for MCP protocol
@@ -85,6 +93,8 @@ pub struct McpClient {
     read_task: Option<tokio::task::JoinHandle<()>>,
     /// Pending responses channel
     responses: Arc<DashMap<u64, tokio::sync::oneshot::Sender<Value>>>,
+    /// Cancellation token for graceful shutdown of the read task
+    cancel_token: CancellationToken,
 }
 
 impl McpClient {
@@ -96,6 +106,7 @@ impl McpClient {
             tools: Vec::new(),
             read_task: None,
             responses: Arc::new(DashMap::new()),
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -114,8 +125,9 @@ impl McpClient {
 
         // Spawn a task to handle incoming messages
         let responses = self.responses.clone();
+        let cancel_token = self.cancel_token.clone();
         let read_task = tokio::spawn(async move {
-            Self::handle_incoming(read, responses).await;
+            Self::handle_incoming(read, responses, cancel_token).await;
         });
 
         self.connection = Some(Arc::new(Mutex::new(McpConnection { write, next_id: 1 })));
@@ -154,8 +166,9 @@ impl McpClient {
         let (write, read) = ws_stream.split();
 
         let responses = self.responses.clone();
+        let cancel_token = self.cancel_token.clone();
         let read_task = tokio::spawn(async move {
-            Self::handle_incoming(read, responses).await;
+            Self::handle_incoming(read, responses, cancel_token).await;
         });
 
         self.connection = Some(Arc::new(Mutex::new(McpConnection { write, next_id: 1 })));
@@ -182,6 +195,7 @@ impl McpClient {
     }
 
     /// Handles incoming WebSocket messages and routes responses.
+    /// Supports graceful shutdown via CancellationToken.
     async fn handle_incoming(
         mut read: futures_util::stream::SplitStream<
             tokio_tungstenite::WebSocketStream<
@@ -189,30 +203,52 @@ impl McpClient {
             >,
         >,
         responses: Arc<DashMap<u64, tokio::sync::oneshot::Sender<Value>>>,
+        cancel_token: CancellationToken,
     ) {
-        while let Some(Ok(msg)) = read.next().await {
-            if let Message::Text(text) = msg {
-                match serde_json::from_str::<JsonRpcResponse>(&text) {
-                    Ok(resp) => {
-                        if let Some(id) = resp.id {
-                            if let Some((_, tx)) = responses.remove(&id) {
-                                let value = resp.result.unwrap_or_else(|| {
-                                    serde_json::json!({
-                                        "error": resp.error.map(|e| {
-                                            format!("Error {}: {}", e.code, e.message)
-                                        })
-                                        .unwrap_or_else(|| "Unknown error".to_string())
-                                    })
-                                });
-                                if let Err(e) = tx.send(value) {
-                                    debug!("[mcp::client] Failed to forward MCP response: {:?}", e);
+        loop {
+            tokio::select! {
+                msg = read.next() => {
+                    match msg {
+                        Some(Ok(Message::Text(text))) => {
+                            match serde_json::from_str::<JsonRpcResponse>(&text) {
+                                Ok(resp) => {
+                                    if let Some(id) = resp.id {
+                                        if let Some((_, tx)) = responses.remove(&id) {
+                                            let value = resp.result.unwrap_or_else(|| {
+                                                serde_json::json!({
+                                                    "error": resp.error.map(|e| {
+                                                        format!("Error {}: {}", e.code, e.message)
+                                                    })
+                                                    .unwrap_or_else(|| "Unknown error".to_string())
+                                                })
+                                            });
+                                            if let Err(e) = tx.send(value) {
+                                                debug!("[mcp::client] Failed to forward MCP response: {:?}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("Failed to parse MCP response: {}", e);
                                 }
                             }
                         }
+                        Some(Ok(_)) => {
+                            // Non-text message, ignore
+                        }
+                        Some(Err(e)) => {
+                            debug!("[mcp::client] WebSocket read error: {}", e);
+                            break;
+                        }
+                        None => {
+                            debug!("[mcp::client] WebSocket stream ended");
+                            break;
+                        }
                     }
-                    Err(e) => {
-                        debug!("Failed to parse MCP response: {}", e);
-                    }
+                }
+                _ = cancel_token.cancelled() => {
+                    info!("MCP client shutting down gracefully");
+                    break;
                 }
             }
         }
@@ -251,7 +287,7 @@ impl McpClient {
 
             conn_guard
                 .write
-                .send(Message::Text(json))
+                .send(Message::Text(json.into()))
                 .await
                 .map_err(|e| SavantError::Unknown(format!("Failed to send MCP request: {}", e)))?;
 
@@ -376,6 +412,9 @@ impl McpClient {
 
     /// Disconnects from the MCP server.
     pub async fn disconnect(&mut self) {
+        // Signal the read task to shut down gracefully
+        self.cancel_token.cancel();
+
         if let Some(conn) = self.connection.take() {
             let mut conn_guard = conn.lock().await;
             if let Err(e) = conn_guard.write.close().await {
@@ -389,6 +428,8 @@ impl McpClient {
             task.abort();
         }
         self.tools.clear();
+        // Reset the cancel token for potential reconnection
+        self.cancel_token = CancellationToken::new();
         info!("Disconnected from MCP server");
     }
 }
@@ -600,6 +641,23 @@ impl McpClientPool {
     pub async fn connect(&self, server_url: &str) -> Result<usize, SavantError> {
         let mut discovery = self.discovery.lock().await;
         discovery.connect_server(server_url).await
+    }
+
+    /// Connects to an MCP server with auth token and discovers tools.
+    pub async fn connect_server_with_auth(
+        &self,
+        server_url: &str,
+        auth_token: &str,
+    ) -> Result<usize, SavantError> {
+        let mut discovery = self.discovery.lock().await;
+        discovery
+            .connect_server_with_auth(server_url, auth_token)
+            .await
+    }
+
+    /// Connects to an MCP server and discovers tools (alias for connect).
+    pub async fn connect_server(&self, server_url: &str) -> Result<usize, SavantError> {
+        self.connect(server_url).await
     }
 
     /// Executes a tool by name, routing to the appropriate MCP server.

@@ -11,7 +11,8 @@
 //! Reference: ruvector-core benchmarks show <0.5ms p50 for 1M vectors.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{debug, info, instrument, warn};
 
 use rkyv::rancor::Error as RkyvError;
@@ -26,6 +27,8 @@ use crate::error::MemoryError;
 
 /// Maximum number of vectors to persist per batch (prevents OOM on huge indexes)
 const MAX_PERSIST_VECTORS: usize = 10_000_000;
+/// Maximum number of entries in the in-memory cache (RC-09).
+const MAX_ENTRIES_CACHE: usize = 50_000;
 
 /// Magic bytes for persistence files to validate format
 const PERSIST_MAGIC: &[u8; 8] = b"SAVANT_V";
@@ -109,7 +112,7 @@ struct PersistedData {
 /// Configuration for the semantic vector engine.
 #[derive(Debug, Clone)]
 pub struct VectorConfig {
-    /// Vector dimensionality (e.g., 384 for typical embeddings)
+    /// Vector dimensionality (must match OllamaEmbeddingService::dimensions())
     pub dimensions: usize,
     /// HNSW M parameter (number of bi-directional links per node)
     pub hnsw_m: usize,
@@ -127,7 +130,7 @@ pub struct VectorConfig {
 impl Default for VectorConfig {
     fn default() -> Self {
         Self {
-            dimensions: 384, // Standard sentence embedding size
+            dimensions: 2560, // Must match OllamaEmbeddingService::dimensions()
             hnsw_m: 16,
             hnsw_ef_construction: 200,
             hnsw_ef_search: 50,
@@ -230,8 +233,8 @@ impl SemanticVectorEngine {
         }))
     }
 
-    /// Convenience: Create with default configuration (384 dims, quantization enabled).
-    pub fn default_384() -> Result<Arc<Self>, MemoryError> {
+    /// Convenience: Create with default configuration (2560 dims, quantization enabled).
+    pub fn default_2560() -> Result<Arc<Self>, MemoryError> {
         Self::new("./ruvector.db", VectorConfig::default())
     }
 
@@ -333,9 +336,7 @@ impl SemanticVectorEngine {
 
         // Re-insert all entries into the VectorDB
         {
-            let mut engine_entries = engine.entries.lock().map_err(|_| {
-                MemoryError::SerializationFailed("Failed to lock entries mutex".to_string())
-            })?;
+            let mut engine_entries = engine.entries.blocking_lock();
             for entry in &entries {
                 engine
                     .db
@@ -371,10 +372,8 @@ impl SemanticVectorEngine {
         // Ensure the directory exists
         std::fs::create_dir_all(persist_dir).map_err(MemoryError::Io)?;
 
-        // Lock the entries mutex
-        let entries = self.entries.lock().map_err(|_| {
-            MemoryError::SerializationFailed("Failed to lock entries mutex".to_string())
-        })?;
+        // Lock the entries mutex (blocking_lock for sync context)
+        let entries = self.entries.blocking_lock();
 
         if entries.len() > MAX_PERSIST_VECTORS {
             return Err(MemoryError::SerializationFailed(format!(
@@ -416,6 +415,11 @@ impl SemanticVectorEngine {
         // Write to file atomically: write to temp file, then rename
         let tmp_file = persist_dir.join("vectors.rkyv.tmp");
         std::fs::write(&tmp_file, &file_data).map_err(MemoryError::Io)?;
+        // RC-28: On Windows, rename fails if target exists. Remove first.
+        #[cfg(target_os = "windows")]
+        if persist_file.exists() {
+            std::fs::remove_file(&persist_file).map_err(MemoryError::Io)?;
+        }
         std::fs::rename(&tmp_file, &persist_file).map_err(MemoryError::Io)?;
 
         info!(
@@ -481,9 +485,7 @@ impl SemanticVectorEngine {
         };
 
         // Acquire lock once and perform both DB insert and cache push atomically
-        let mut entries = self.entries.lock().map_err(|_| {
-            MemoryError::VectorInsertFailed("Failed to lock entries mutex".to_string())
-        })?;
+        let mut entries = self.entries.blocking_lock();
 
         // Insert into VectorDB
         self.db
@@ -491,7 +493,15 @@ impl SemanticVectorEngine {
             .map_err(|e| MemoryError::VectorInsertFailed(e.to_string()))?;
 
         // Store in internal cache for persistence (under same lock)
-        entries.push(entry);
+        // RC-09: Cap the cache to prevent unbounded growth
+        if entries.len() < MAX_ENTRIES_CACHE {
+            entries.push(entry);
+        } else {
+            debug!(
+                "VectorEngine entries cache at capacity ({}), skipping cache insert",
+                MAX_ENTRIES_CACHE
+            );
+        }
 
         debug!("Indexed memory with ID: {}", memory_id);
         Ok(())
@@ -609,7 +619,8 @@ impl SemanticVectorEngine {
             .map_err(|e| MemoryError::VectorDeleteFailed(e.to_string()))?;
 
         // Remove from internal cache
-        if let Ok(mut entries) = self.entries.lock() {
+        {
+            let mut entries = self.entries.blocking_lock();
             entries.retain(|e| e.id.as_deref() != Some(memory_id));
         }
 
@@ -622,7 +633,7 @@ impl SemanticVectorEngine {
     /// This uses the internal entry cache, which is the source of truth
     /// for the vector count since ruvector-core does not expose a count API.
     pub fn vector_count(&self) -> usize {
-        self.entries.lock().map(|e| e.len()).unwrap_or(0)
+        self.entries.blocking_lock().len()
     }
 
     /// Returns the engine configuration.
@@ -653,7 +664,9 @@ impl SemanticVectorEngine {
 
 impl Drop for SemanticVectorEngine {
     fn drop(&mut self) {
-        // Attempt to persist vectors on drop to prevent data loss on exit
+        // Attempt to persist vectors on drop to prevent data loss on exit.
+        // persist() -> save_to_path() -> blocking_lock() on entries.
+        // This is safe because Drop is the only caller, and the lock is not held.
         if let Err(e) = self.persist() {
             tracing::warn!("Failed to persist vector index on drop: {}", e);
         }
@@ -684,10 +697,6 @@ pub struct SearchResult {
 pub struct SearchOptions {
     /// Override the ef_search parameter (larger = more accurate but slower)
     pub ef_search: Option<usize>,
-    /// Maximum distance threshold (early termination)
-    pub max_distance: Option<f32>,
-    /// Whether to include quantized vectors only (faster, less accurate)
-    pub quantized_only: bool,
 }
 
 #[cfg(test)]
@@ -699,8 +708,8 @@ mod tests {
 
     #[test]
     fn test_vector_engine_creation() {
-        let engine = SemanticVectorEngine::default_384().unwrap();
-        assert_eq!(engine.config().dimensions, 384);
+        let engine = SemanticVectorEngine::default_2560().unwrap();
+        assert_eq!(engine.config().dimensions, 2560);
     }
 
     #[test]
@@ -718,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_dimension_mismatch_error() {
-        let engine = SemanticVectorEngine::default_384().unwrap();
+        let engine = SemanticVectorEngine::default_2560().unwrap();
         let wrong_dims = vec![0.1; 128];
         let result = engine.index_memory("test", &wrong_dims);
         assert!(matches!(result, Err(MemoryError::DimensionMismatch { .. })));
@@ -726,31 +735,35 @@ mod tests {
 
     #[test]
     fn test_vector_count_initially_zero() {
-        let engine = SemanticVectorEngine::default_384().unwrap();
+        let engine = SemanticVectorEngine::default_2560().unwrap();
         assert_eq!(engine.vector_count(), 0);
     }
 
     #[test]
     fn test_vector_count_increments() {
-        let engine = SemanticVectorEngine::default_384().unwrap();
-        let embedding = vec![0.1; 384];
+        let db_path = format!("./ruvector_test_count_{}.db", std::process::id());
+        let engine = SemanticVectorEngine::new(&db_path, VectorConfig::default()).unwrap();
+        let embedding = vec![0.1; 2560];
         engine.index_memory("mem-1", &embedding).unwrap();
         assert_eq!(engine.vector_count(), 1);
 
         engine.index_memory("mem-2", &embedding).unwrap();
         assert_eq!(engine.vector_count(), 2);
+        std::fs::remove_file(&db_path).ok();
     }
 
     #[test]
     fn test_remove_decrements_count() {
-        let engine = SemanticVectorEngine::default_384().unwrap();
-        let embedding = vec![0.1; 384];
+        let db_path = format!("./ruvector_test_remove_{}.db", std::process::id());
+        let engine = SemanticVectorEngine::new(&db_path, VectorConfig::default()).unwrap();
+        let embedding = vec![0.1; 2560];
         engine.index_memory("mem-1", &embedding).unwrap();
         engine.index_memory("mem-2", &embedding).unwrap();
         assert_eq!(engine.vector_count(), 2);
 
         engine.remove("mem-1").unwrap();
         assert_eq!(engine.vector_count(), 1);
+        std::fs::remove_file(&db_path).ok();
     }
 
     #[test]
@@ -759,9 +772,9 @@ mod tests {
 
         // Create engine and index some vectors
         let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::default()).unwrap();
-        engine.index_memory("mem-1", &vec![0.1; 384]).unwrap();
-        engine.index_memory("mem-2", &vec![0.2; 384]).unwrap();
-        engine.index_memory("mem-3", &vec![0.3; 384]).unwrap();
+        engine.index_memory("mem-1", &vec![0.1; 2560]).unwrap();
+        engine.index_memory("mem-2", &vec![0.2; 2560]).unwrap();
+        engine.index_memory("mem-3", &vec![0.3; 2560]).unwrap();
         assert_eq!(engine.vector_count(), 3);
 
         // Save to disk
@@ -783,9 +796,9 @@ mod tests {
 
         // Create engine with known vectors
         let engine = SemanticVectorEngine::new(dir.path(), VectorConfig::default()).unwrap();
-        let query = vec![1.0; 384];
-        let similar = vec![0.9; 384];
-        let dissimilar = vec![-1.0; 384];
+        let query = vec![1.0; 2560];
+        let similar = vec![0.9; 2560];
+        let dissimilar = vec![-1.0; 2560];
 
         engine.index_memory("similar", &similar).unwrap();
         engine.index_memory("dissimilar", &dissimilar).unwrap();
@@ -814,7 +827,7 @@ mod tests {
         let nested = dir.path().join("deep/nested/path");
 
         let engine = SemanticVectorEngine::new(&nested, VectorConfig::default()).unwrap();
-        engine.index_memory("mem-1", &vec![0.1; 384]).unwrap();
+        engine.index_memory("mem-1", &vec![0.1; 2560]).unwrap();
         engine.save_to_path(&nested).unwrap();
 
         assert!(nested.join("vectors.rkyv").exists());

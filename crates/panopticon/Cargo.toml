@@ -1,7 +1,8 @@
 [package]
 name = "savant_panopticon"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 savant_core = { path = "../core" }
@@ -19,3 +20,6 @@ opentelemetry-otlp = { version = "0.14", features = ["grpc-tonic", "trace"] }
 anyhow = "1.0"
 thiserror = "1.0"
 async-trait = "0.1"
+
+[lints]
+workspace = true

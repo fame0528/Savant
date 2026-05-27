@@ -1,14 +1,16 @@
 [package]
 name = "savant_mcp"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 savant_core = { workspace = true }
 savant_skills = { workspace = true }
-rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk" }
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", rev = "1a4a52a1732d78d8e63a55652ecab92de442e197" }
 tokio = { workspace = true }
-tokio-tungstenite = "0.21"
+tokio-util = { workspace = true }
+tokio-tungstenite = "0.26"
 futures-util = "0.3"
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -20,3 +22,6 @@ async-trait = { workspace = true }
 dashmap = { workspace = true }
 url = "2.5"
 blake3 = "1.5"
+
+[lints]
+workspace = true

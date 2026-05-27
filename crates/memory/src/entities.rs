@@ -146,7 +146,10 @@ impl EntityExtractor {
     /// Extracts entities from text content.
     pub fn extract(&self, text: &str, session_id: &str) -> Vec<Entity> {
         let mut entities = Vec::new();
-        let now = savant_core::utils::time::now_millis() as i64;
+        let now = savant_core::utils::time::now_millis().unwrap_or_else(|e| {
+            tracing::warn!("Failed to get current time: {}, using 0", e);
+            0
+        }) as i64;
 
         // Context-aware sentence splitting: split on sentence-ending periods
         // (followed by space + uppercase) but NOT periods in URLs, decimals, abbreviations
@@ -206,8 +209,7 @@ impl EntityExtractor {
 
                 // Skip if it's a decimal (digit.digit)
                 let prev = if i > 0 { chars[i - 1] } else { ' ' };
-                let is_decimal =
-                    prev.is_ascii_digit() && next.is_some_and(|c| c.is_ascii_digit());
+                let is_decimal = prev.is_ascii_digit() && next.is_some_and(|c| c.is_ascii_digit());
 
                 // Skip if it's a URL fragment (preceded by ://)
                 let is_url =
@@ -308,7 +310,6 @@ struct RelationPattern {
     /// Base confidence for this pattern
     confidence: f32,
     /// Whether the pattern is directional (source → target)
-    #[allow(dead_code)]
     directional: bool,
 }
 
@@ -324,62 +325,102 @@ impl RelationExtractor {
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["part of".to_string(), "part_of".to_string(), "belongs to".to_string()],
+                    keywords: vec![
+                        "part of".to_string(),
+                        "part_of".to_string(),
+                        "belongs to".to_string(),
+                    ],
                     relation_type: "part_of".to_string(),
                     confidence: 0.90,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["subclass of".to_string(), "subclass_of".to_string(), "extends".to_string()],
+                    keywords: vec![
+                        "subclass of".to_string(),
+                        "subclass_of".to_string(),
+                        "extends".to_string(),
+                    ],
                     relation_type: "subclass_of".to_string(),
                     confidence: 0.92,
                     directional: true,
                 },
                 // ── Social (FOAF) ──
                 RelationPattern {
-                    keywords: vec!["ceo of".to_string(), "cto of".to_string(), "cfo of".to_string(), "vp of".to_string()],
+                    keywords: vec![
+                        "ceo of".to_string(),
+                        "cto of".to_string(),
+                        "cfo of".to_string(),
+                        "vp of".to_string(),
+                    ],
                     relation_type: "works_for".to_string(),
                     confidence: 0.95,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["works for".to_string(), "works at".to_string(), "employed by".to_string()],
+                    keywords: vec![
+                        "works for".to_string(),
+                        "works at".to_string(),
+                        "employed by".to_string(),
+                    ],
                     relation_type: "works_for".to_string(),
                     confidence: 0.93,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["founded".to_string(), "co-founded".to_string(), "started".to_string()],
+                    keywords: vec![
+                        "founded".to_string(),
+                        "co-founded".to_string(),
+                        "started".to_string(),
+                    ],
                     relation_type: "founded".to_string(),
                     confidence: 0.94,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["advises".to_string(), "advisor to".to_string(), "mentors".to_string()],
+                    keywords: vec![
+                        "advises".to_string(),
+                        "advisor to".to_string(),
+                        "mentors".to_string(),
+                    ],
                     relation_type: "advises".to_string(),
                     confidence: 0.91,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["invested in".to_string(), "funded".to_string(), "backed".to_string()],
+                    keywords: vec![
+                        "invested in".to_string(),
+                        "funded".to_string(),
+                        "backed".to_string(),
+                    ],
                     relation_type: "invested_in".to_string(),
                     confidence: 0.92,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["knows".to_string(), "met".to_string(), "connected with".to_string()],
+                    keywords: vec![
+                        "knows".to_string(),
+                        "met".to_string(),
+                        "connected with".to_string(),
+                    ],
                     relation_type: "knows".to_string(),
                     confidence: 0.80,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["attended".to_string(), "graduated from".to_string(), "studied at".to_string()],
+                    keywords: vec![
+                        "attended".to_string(),
+                        "graduated from".to_string(),
+                        "studied at".to_string(),
+                    ],
                     relation_type: "attended".to_string(),
                     confidence: 0.88,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["collaborates with".to_string(), "partnered with".to_string()],
+                    keywords: vec![
+                        "collaborates with".to_string(),
+                        "partnered with".to_string(),
+                    ],
                     relation_type: "collaborates_with".to_string(),
                     confidence: 0.85,
                     directional: false,
@@ -398,7 +439,11 @@ impl RelationExtractor {
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["evolved into".to_string(), "became".to_string(), "transformed into".to_string()],
+                    keywords: vec![
+                        "evolved into".to_string(),
+                        "became".to_string(),
+                        "transformed into".to_string(),
+                    ],
                     relation_type: "evolved_into".to_string(),
                     confidence: 0.88,
                     directional: true,
@@ -411,26 +456,42 @@ impl RelationExtractor {
                     directional: false,
                 },
                 RelationPattern {
-                    keywords: vec!["supports".to_string(), "confirms".to_string(), "validates".to_string()],
+                    keywords: vec![
+                        "supports".to_string(),
+                        "confirms".to_string(),
+                        "validates".to_string(),
+                    ],
                     relation_type: "supports".to_string(),
                     confidence: 0.82,
                     directional: true,
                 },
                 // ── Operational ──
                 RelationPattern {
-                    keywords: vec!["requires".to_string(), "depends on".to_string(), "needs".to_string()],
+                    keywords: vec![
+                        "requires".to_string(),
+                        "depends on".to_string(),
+                        "needs".to_string(),
+                    ],
                     relation_type: "requires".to_string(),
                     confidence: 0.85,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["generates".to_string(), "produces".to_string(), "creates".to_string()],
+                    keywords: vec![
+                        "generates".to_string(),
+                        "produces".to_string(),
+                        "creates".to_string(),
+                    ],
                     relation_type: "generates".to_string(),
                     confidence: 0.83,
                     directional: true,
                 },
                 RelationPattern {
-                    keywords: vec!["modifies".to_string(), "changes".to_string(), "updates".to_string()],
+                    keywords: vec![
+                        "modifies".to_string(),
+                        "changes".to_string(),
+                        "updates".to_string(),
+                    ],
                     relation_type: "modifies".to_string(),
                     confidence: 0.80,
                     directional: true,
@@ -456,11 +517,20 @@ impl RelationExtractor {
                         Self::extract_entity_after(after, known_entities),
                     ) {
                         relations.push(EntityRelation {
-                            source,
-                            target,
+                            source: source.clone(),
+                            target: target.clone(),
                             relation_type: pattern.relation_type.clone(),
                             confidence: pattern.confidence,
                         });
+                        // Non-directional patterns also emit the reverse relation
+                        if !pattern.directional {
+                            relations.push(EntityRelation {
+                                source: target,
+                                target: source,
+                                relation_type: pattern.relation_type.clone(),
+                                confidence: pattern.confidence,
+                            });
+                        }
                     }
                 }
             }
@@ -478,7 +548,9 @@ impl RelationExtractor {
             let entity_lower = entity.to_lowercase();
             let trimmed_lower = trimmed.to_lowercase();
             if trimmed_lower.ends_with(&entity_lower)
-                && best_match.as_ref().is_none_or(|m: &String| entity.len() > m.len())
+                && best_match
+                    .as_ref()
+                    .is_none_or(|m: &String| entity.len() > m.len())
             {
                 best_match = Some(entity.clone());
             }
@@ -510,7 +582,9 @@ impl RelationExtractor {
             let entity_lower = entity.to_lowercase();
             let trimmed_lower = trimmed.to_lowercase();
             if trimmed_lower.starts_with(&entity_lower)
-                && best_match.as_ref().is_none_or(|m: &String| entity.len() > m.len())
+                && best_match
+                    .as_ref()
+                    .is_none_or(|m: &String| entity.len() > m.len())
             {
                 best_match = Some(entity.clone());
             }
@@ -566,11 +640,7 @@ impl EntityResolver {
     ///
     /// Returns the canonical entity ID if a match is found,
     /// or None if this is a new entity.
-    pub fn resolve(
-        &self,
-        mention: &str,
-        known_entities: &[Entity],
-    ) -> Option<String> {
+    pub fn resolve(&self, mention: &str, known_entities: &[Entity]) -> Option<String> {
         let mention_lower = mention.to_lowercase();
 
         // Exact match (case-insensitive)
@@ -582,7 +652,10 @@ impl EntityResolver {
 
         // Substring match
         for entity in known_entities {
-            if entity.canonical_name.to_lowercase().contains(&mention_lower)
+            if entity
+                .canonical_name
+                .to_lowercase()
+                .contains(&mention_lower)
                 || mention_lower.contains(&entity.canonical_name.to_lowercase())
             {
                 return Some(entity.entity_id.clone());
@@ -603,7 +676,9 @@ impl EntityResolver {
             }
             let jaccard = intersection.len() as f32 / union.len() as f32;
             if jaccard >= self.similarity_threshold
-                && best_match.as_ref().is_none_or(|(_, score)| jaccard > *score)
+                && best_match
+                    .as_ref()
+                    .is_none_or(|(_, score)| jaccard > *score)
             {
                 best_match = Some((entity.entity_id.clone(), jaccard));
             }
@@ -713,10 +788,7 @@ mod tests {
     fn test_relation_extractor_works_for() {
         let extractor = RelationExtractor::new();
         let entities = vec!["Spencer".to_string(), "Savant".to_string()];
-        let relations = extractor.extract_relations(
-            "Spencer works for Savant.",
-            &entities,
-        );
+        let relations = extractor.extract_relations("Spencer works for Savant.", &entities);
         assert!(!relations.is_empty());
         assert_eq!(relations[0].relation_type, "works_for");
         assert_eq!(relations[0].source, "Spencer");
@@ -727,10 +799,7 @@ mod tests {
     fn test_relation_extractor_founded() {
         let extractor = RelationExtractor::new();
         let entities = vec!["Spencer".to_string(), "Savant".to_string()];
-        let relations = extractor.extract_relations(
-            "Spencer founded Savant.",
-            &entities,
-        );
+        let relations = extractor.extract_relations("Spencer founded Savant.", &entities);
         assert!(!relations.is_empty());
         assert_eq!(relations[0].relation_type, "founded");
     }
@@ -739,10 +808,7 @@ mod tests {
     fn test_relation_extractor_advises() {
         let extractor = RelationExtractor::new();
         let entities = vec!["Alice".to_string(), "Bob".to_string()];
-        let relations = extractor.extract_relations(
-            "Alice advises Bob.",
-            &entities,
-        );
+        let relations = extractor.extract_relations("Alice advises Bob.", &entities);
         assert!(!relations.is_empty());
         assert_eq!(relations[0].relation_type, "advises");
     }
@@ -751,10 +817,7 @@ mod tests {
     fn test_relation_extractor_invested_in() {
         let extractor = RelationExtractor::new();
         let entities = vec!["Sequoia".to_string(), "Savant".to_string()];
-        let relations = extractor.extract_relations(
-            "Sequoia invested in Savant.",
-            &entities,
-        );
+        let relations = extractor.extract_relations("Sequoia invested in Savant.", &entities);
         assert!(!relations.is_empty());
         assert_eq!(relations[0].relation_type, "invested_in");
     }
@@ -763,10 +826,7 @@ mod tests {
     fn test_relation_extractor_is_a() {
         let extractor = RelationExtractor::new();
         let entities = vec!["Rust".to_string(), "programming language".to_string()];
-        let relations = extractor.extract_relations(
-            "Rust is a programming language.",
-            &entities,
-        );
+        let relations = extractor.extract_relations("Rust is a programming language.", &entities);
         assert!(!relations.is_empty());
         assert_eq!(relations[0].relation_type, "is_a");
         assert_eq!(relations[0].source, "Rust");
@@ -777,10 +837,7 @@ mod tests {
     fn test_relation_extractor_requires() {
         let extractor = RelationExtractor::new();
         let entities = vec!["Savant".to_string(), "Rust".to_string()];
-        let relations = extractor.extract_relations(
-            "Savant requires Rust.",
-            &entities,
-        );
+        let relations = extractor.extract_relations("Savant requires Rust.", &entities);
         assert!(!relations.is_empty());
         assert_eq!(relations[0].relation_type, "requires");
     }

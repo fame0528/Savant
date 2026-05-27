@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 #[cfg(test)]
 use super::*;
 use async_trait::async_trait;
@@ -8,8 +10,6 @@ use savant_core::traits::{LlmProvider, MemoryBackend};
 use savant_core::types::{AgentIdentity, AgentOutputChannel, ChatMessage};
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
-// use std::sync::Arc;
-
 struct AmbiguousLlm {
     responses: Vec<String>,
     call_count: std::sync::atomic::AtomicUsize,
@@ -111,9 +111,9 @@ impl MemoryBackend for MockMemory {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_autonomous_ambiguity_synthesis() {
-    let provider = Box::new(AmbiguousLlm {
+    let provider = Arc::new(AmbiguousLlm {
         responses: vec![
             "Thought: I should use a tool.\nAction: MockTool missing_brackets".to_string(),
             "Thought: Done.\nAction: None".to_string(),
@@ -157,9 +157,9 @@ async fn test_autonomous_ambiguity_synthesis() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_checkpoint_creation() {
-    let provider = Box::new(AmbiguousLlm {
+    let provider = Arc::new(AmbiguousLlm {
         responses: vec!["Action: Tool1[]".to_string()],
         call_count: std::sync::atomic::AtomicUsize::new(0),
     });

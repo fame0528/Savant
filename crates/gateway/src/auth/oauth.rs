@@ -58,22 +58,42 @@ impl OAuthManager {
     }
 
     /// Retrieves a valid token, triggering refresh if necessary.
+    /// GTW-07: Releases write lock before network I/O to prevent deadlock.
     pub async fn get_token(&self, id: &str) -> Option<String> {
-        let mut lock = self.tokens.write().await;
-        if let Some(token) = lock.get_mut(id) {
-            if token.is_expired() && token.refresh_token.is_some() {
-                // 🏰 AAA: Autonomous Token Rotation
-                tracing::info!("Refreshing OAuth token for {}", id);
-                if let Ok(new_token) = self.perform_refresh(token).await {
-                    *token = new_token;
-                } else {
-                    tracing::error!("Failed to refresh OAuth token for {}", id);
-                    return None;
+        // Check if refresh is needed (read-only, quick)
+        let needs_refresh = {
+            let lock = self.tokens.read().await;
+            if let Some(token) = lock.get(id) {
+                token.is_expired() && token.refresh_token.is_some()
+            } else {
+                return None;
+            }
+        };
+
+        // Perform refresh without holding the lock
+        if needs_refresh {
+            tracing::info!("Refreshing OAuth token for {}", id);
+            let token_snapshot = {
+                let lock = self.tokens.read().await;
+                lock.get(id).cloned()
+            };
+            if let Some(token) = token_snapshot {
+                match self.perform_refresh(&token).await {
+                    Ok(new_token) => {
+                        let mut lock = self.tokens.write().await;
+                        lock.insert(id.to_string(), new_token);
+                    }
+                    Err(_) => {
+                        tracing::error!("Failed to refresh OAuth token for {}", id);
+                        return None;
+                    }
                 }
             }
-            return Some(token.access_token.clone());
         }
-        None
+
+        // Return the current token
+        let lock = self.tokens.read().await;
+        lock.get(id).map(|t| t.access_token.clone())
     }
 
     /// Internal logic for performing the refresh request.

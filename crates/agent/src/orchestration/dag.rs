@@ -5,7 +5,7 @@ use std::collections::HashSet;
 pub struct SpeculativeNode {
     pub name: String,
     pub args: String,
-    pub dependencies: HashSet<usize>, // Indicies of parent nodes in the execution sequence
+    pub dependencies: HashSet<usize>, // Indices of parent nodes in the execution sequence
 }
 
 /// A DAG representing a speculative execution plan.
@@ -62,7 +62,12 @@ impl SpeculativeDag {
             }
 
             if current_lane.is_empty() {
-                // Dependency cycle detected or missing dependencies
+                tracing::warn!(
+                    remaining = %remaining.len(),
+                    "DAG partition_lanes: no progress — possible cycle or missing dependency. \
+                     {} nodes left unprocessed.",
+                    remaining.len()
+                );
                 break;
             }
 

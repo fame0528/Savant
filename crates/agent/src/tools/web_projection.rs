@@ -4,6 +4,11 @@
 //! - Content-root detection (main → article → [role=main] → body)
 //! - SHA256 boundary markers for external content injection prevention
 //! - Skip-elements list (non-content elements)
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
 
 use async_trait::async_trait;
 use savant_core::error::SavantError;
@@ -33,7 +38,7 @@ fn content_boundary_marker(content: &str) -> String {
 pub struct ChromeProjection {
     url: String,
     /// The last projected HTML content, used for intent coherence verification.
-    last_html: std::sync::RwLock<String>,
+    last_html: tokio::sync::RwLock<String>,
 }
 
 impl Default for ChromeProjection {
@@ -46,16 +51,14 @@ impl ChromeProjection {
     pub fn new() -> Self {
         Self {
             url: "about:blank".to_string(),
-            last_html: std::sync::RwLock::new(String::new()),
+            last_html: tokio::sync::RwLock::new(String::new()),
         }
     }
 
     /// Projects HTML into a structured Markdown representation with content-root detection.
-    pub fn project_html(&self, html: &str, url: &str) -> String {
+    pub async fn project_html(&self, html: &str, url: &str) -> String {
         // Store the HTML for intent coherence verification
-        if let Ok(mut last) = self.last_html.write() {
-            *last = html.to_string();
-        }
+        *self.last_html.write().await = html.to_string();
         let document = Html::parse_document(html);
 
         // Content-root detection: main → article → [role=main] → body
@@ -232,7 +235,9 @@ impl SymbolicBrowser for ChromeProjection {
         );
 
         // Validate the action type
-        let valid_actions = ["click", "type", "scroll", "navigate", "select", "hover", "focus", "submit", "read"];
+        let valid_actions = [
+            "click", "type", "scroll", "navigate", "select", "hover", "focus", "submit", "read",
+        ];
         if !valid_actions.contains(&action) {
             tracing::warn!("Projection: Unknown action type '{}'", action);
             return Ok(false);
@@ -244,27 +249,32 @@ impl SymbolicBrowser for ChromeProjection {
             return Ok(false);
         }
 
-        // Check coherence against the last projected DOM
-        let html = match self.last_html.read() {
-            Ok(guard) => guard,
-            Err(_) => return Ok(true), // Lock poisoned; allow with warning
+        // Clone the HTML string and drop the lock before CPU-intensive DOM parsing.
+        let html_content = {
+            let html = self.last_html.read().await;
+
+            if html.is_empty() {
+                // No projected DOM yet; allow the action but log it
+                tracing::debug!(
+                    "Projection: No projected DOM for coherence check; allowing action '{}'",
+                    action
+                );
+                return Ok(true);
+            }
+            html.clone()
+            // Lock dropped here
         };
 
-        if html.is_empty() {
-            // No projected DOM yet; allow the action but log it
-            tracing::debug!("Projection: No projected DOM for coherence check; allowing action '{}'", action);
-            return Ok(true);
-        }
-
         // Verify the selector matches at least one element in the projected DOM
-        let document = Html::parse_document(&html);
+        let document = Html::parse_document(&html_content);
         match Selector::parse(selector) {
             Ok(sel) => {
                 let found = document.select(&sel).next().is_some();
                 if !found {
                     tracing::warn!(
                         "Projection: Selector '{}' not found in projected DOM for action '{}'",
-                        selector, action
+                        selector,
+                        action
                     );
                 }
                 Ok(found)
@@ -296,8 +306,8 @@ mod tests {
         assert!(marker.ends_with("-->"));
     }
 
-    #[test]
-    fn test_html_to_markdown() {
+    #[tokio::test]
+    async fn test_html_to_markdown() {
         let projection = ChromeProjection::new();
         let html = r#"
             <html><body>
@@ -308,15 +318,15 @@ mod tests {
                 </main>
             </body></html>
         "#;
-        let md = projection.project_html(html, "https://example.com");
+        let md = projection.project_html(html, "https://example.com").await;
         assert!(md.contains("# Hello World"));
         assert!(md.contains("**test**"));
         assert!(md.contains("- Item 1"));
         assert!(md.contains("boundary:"));
     }
 
-    #[test]
-    fn test_content_root_detection() {
+    #[tokio::test]
+    async fn test_content_root_detection() {
         let projection = ChromeProjection::new();
         let html = r#"
             <html><body>
@@ -327,7 +337,7 @@ mod tests {
                 <footer>Footer</footer>
             </body></html>
         "#;
-        let md = projection.project_html(html, "https://example.com");
+        let md = projection.project_html(html, "https://example.com").await;
         assert!(md.contains("Main Content"));
         assert!(!md.contains("Navigation"));
         assert!(!md.contains("Footer"));

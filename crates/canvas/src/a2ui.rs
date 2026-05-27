@@ -150,12 +150,11 @@ impl CanvasManager {
         state.version += 1;
 
         // Broadcast state diff
-        let diff = compute_diff(
-            &serde_json::to_value(&old_state).unwrap_or_default(),
-            &serde_json::to_value(&*state).unwrap_or_default(),
-            old_version,
-            state.version,
-        );
+        let old_val = serde_json::to_value(&old_state)
+            .map_err(|e| format!("Failed to serialize old state: {}", e))?;
+        let new_val = serde_json::to_value(&*state)
+            .map_err(|e| format!("Failed to serialize new state: {}", e))?;
+        let diff = compute_diff(&old_val, &new_val, old_version, state.version);
         if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
             warn!("[canvas::a2ui] Failed to broadcast state diff: {:?}", e);
         }
@@ -186,12 +185,11 @@ impl CanvasManager {
         state.version += 1;
 
         // Broadcast state diff
-        let diff = compute_diff(
-            &serde_json::to_value(&old_state).unwrap_or_default(),
-            &serde_json::to_value(&*state).unwrap_or_default(),
-            old_version,
-            state.version,
-        );
+        let old_val = serde_json::to_value(&old_state)
+            .map_err(|e| format!("Failed to serialize old state: {}", e))?;
+        let new_val = serde_json::to_value(&*state)
+            .map_err(|e| format!("Failed to serialize new state: {}", e))?;
+        let diff = compute_diff(&old_val, &new_val, old_version, state.version);
         if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
             warn!("[canvas::a2ui] Failed to broadcast state diff: {:?}", e);
         }
@@ -209,12 +207,11 @@ impl CanvasManager {
         state.version += 1;
 
         // Broadcast state diff
-        let diff = compute_diff(
-            &serde_json::to_value(&old_state).unwrap_or_default(),
-            &serde_json::to_value(&*state).unwrap_or_default(),
-            old_version,
-            state.version,
-        );
+        let old_val = serde_json::to_value(&old_state)
+            .map_err(|e| format!("Failed to serialize old state: {}", e))?;
+        let new_val = serde_json::to_value(&*state)
+            .map_err(|e| format!("Failed to serialize new state: {}", e))?;
+        let diff = compute_diff(&old_val, &new_val, old_version, state.version);
         if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
             warn!("[canvas::a2ui] Failed to broadcast state diff: {:?}", e);
         }
@@ -243,7 +240,7 @@ pub async fn a2ui_handler(
 }
 
 /// Handles an individual A2UI WebSocket connection.
-async fn handle_a2ui_connection(socket: WebSocket, canvas: Arc<CanvasManager>) {
+pub async fn handle_a2ui_connection(socket: WebSocket, canvas: Arc<CanvasManager>) {
     let (mut sender, mut receiver) = socket.split();
 
     // Use mpsc channel to unify sending to the WebSocket
@@ -397,7 +394,10 @@ mod tests {
             properties: HashMap::new(),
         };
 
-        let version = manager.update_elements(vec![element]).await.unwrap();
+        let version = manager
+            .update_elements(vec![element])
+            .await
+            .expect("update_elements should succeed");
         assert_eq!(version, 1);
 
         let state = manager.get_state().await;
@@ -415,11 +415,14 @@ mod tests {
             properties: HashMap::new(),
         };
 
-        manager.update_elements(vec![element]).await.unwrap();
+        manager
+            .update_elements(vec![element])
+            .await
+            .expect("update_elements should succeed");
         let version = manager
             .remove_elements(vec!["test-1".to_string()])
             .await
-            .unwrap();
+            .expect("remove_elements should succeed");
         assert_eq!(version, 2);
 
         let state = manager.get_state().await;
@@ -443,8 +446,11 @@ mod tests {
             },
         ];
 
-        manager.update_elements(elements).await.unwrap();
-        let version = manager.clear().await.unwrap();
+        manager
+            .update_elements(elements)
+            .await
+            .expect("update_elements should succeed");
+        let version = manager.clear().await.expect("clear should succeed");
         assert_eq!(version, 2);
 
         let state = manager.get_state().await;
@@ -478,5 +484,85 @@ mod tests {
         assert!(result
             .unwrap_err()
             .contains("Element count would exceed limit"));
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_new_empty() {
+        let manager = CanvasManager::new(100);
+        let state = manager.get_state().await;
+        assert!(state.elements.is_empty());
+        assert_eq!(state.version, 0);
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_get_state_after_update() {
+        let manager = CanvasManager::new(100);
+        let element = CanvasElement {
+            id: "el-1".to_string(),
+            element_type: "text".to_string(),
+            properties: HashMap::new(),
+        };
+        manager.update_elements(vec![element]).await.unwrap();
+        let state = manager.get_state().await;
+        assert_eq!(state.elements.len(), 1);
+        assert!(state.elements.contains_key("el-1"));
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_version_increments() {
+        let manager = CanvasManager::new(100);
+        let e1 = CanvasElement {
+            id: "el-1".to_string(),
+            element_type: "rect".to_string(),
+            properties: HashMap::new(),
+        };
+        let v1 = manager.update_elements(vec![e1]).await.unwrap();
+        assert_eq!(v1, 1);
+
+        let e2 = CanvasElement {
+            id: "el-2".to_string(),
+            element_type: "circle".to_string(),
+            properties: HashMap::new(),
+        };
+        let v2 = manager.update_elements(vec![e2]).await.unwrap();
+        assert_eq!(v2, 2);
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_update_existing_element() {
+        let manager = CanvasManager::new(100);
+        let e1 = CanvasElement {
+            id: "el-1".to_string(),
+            element_type: "rect".to_string(),
+            properties: HashMap::new(),
+        };
+        manager.update_elements(vec![e1]).await.unwrap();
+
+        let mut props = HashMap::new();
+        props.insert("color".to_string(), "red".to_string());
+        let e1_updated = CanvasElement {
+            id: "el-1".to_string(),
+            element_type: "rect".to_string(),
+            properties: props,
+        };
+        manager.update_elements(vec![e1_updated]).await.unwrap();
+
+        let state = manager.get_state().await;
+        let el = state.elements.get("el-1").unwrap();
+        assert_eq!(el.properties.get("color").unwrap(), "red");
+    }
+
+    #[tokio::test]
+    async fn test_canvas_manager_subscribe() {
+        let manager = CanvasManager::new(100);
+        let mut rx = manager.subscribe();
+        let element = CanvasElement {
+            id: "el-1".to_string(),
+            element_type: "rect".to_string(),
+            properties: HashMap::new(),
+        };
+        manager.update_elements(vec![element]).await.unwrap();
+        let event = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
+        assert!(event.is_ok());
     }
 }

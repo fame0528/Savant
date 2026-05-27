@@ -42,7 +42,7 @@ impl AgentCard {
             name: name_bytes,
             description_vector_id: 0,
             allowed_skills_mask: 0,
-            input_modes: 0x01, // Text by default
+            input_modes: 0x01,  // Text by default
             output_modes: 0x01, // Text by default
             pressure: 0.0,
             total_successes: 0,

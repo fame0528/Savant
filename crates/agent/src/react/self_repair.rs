@@ -171,6 +171,21 @@ impl SelfRepair {
         detector.reset();
     }
 
+    /// Returns a structured repair outcome based on current state.
+    /// This is the enterprise-grade version of `recovery_hint()` that returns
+    /// a typed enum instead of a raw string.
+    pub async fn recovery_outcome(&self) -> RepairOutcome {
+        let excluded = self.get_excluded_tools().await;
+        if excluded.is_empty() {
+            RepairOutcome::Retry
+        } else {
+            RepairOutcome::ManualRequired(format!(
+                "Tools disabled: {}. Try a different approach.",
+                excluded.join(", ")
+            ))
+        }
+    }
+
     /// Generates a recovery hint message for the LLM.
     pub async fn recovery_hint(&self) -> String {
         let excluded = self.get_excluded_tools().await;

@@ -1,8 +1,7 @@
 //! ECHO protocol tests - circuit breaker state transitions.
 
-#![allow(clippy::disallowed_methods)]
-
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod echo_tests {
     use savant_echo::circuit_breaker::{CircuitState, ComponentMetrics};
 

@@ -1,16 +1,191 @@
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
+#![allow(clippy::disallowed_methods)]
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+
 use crate::auth::AuthenticatedSession;
+use axum::{http::StatusCode, response::IntoResponse, Json};
 use savant_core::bus::NexusBridge;
 use savant_core::types::{ChatMessage, ChatRole, RequestFrame};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::sync::Arc;
-use tracing::info;
-use axum::{http::StatusCode, response::IntoResponse, Json};
+use tracing::{info, warn};
+
+fn validate_config_path(path: &str) -> Result<String, String> {
+    if path.contains("..") {
+        return Err("Path traversal ('..') is not allowed".to_string());
+    }
+    if path.contains('\0') {
+        return Err("Null bytes in path are not allowed".to_string());
+    }
+    Ok(path.to_string())
+}
+
+/// Sanitize an agent ID to prevent path traversal attacks.
+/// Only allows alphanumeric characters, hyphens, and underscores.
+/// Returns `None` if the ID is empty after sanitization.
+fn sanitize_agent_id(agent_id: &str) -> Option<String> {
+    let sanitized: String = agent_id
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if sanitized.is_empty() {
+        None
+    } else {
+        Some(sanitized)
+    }
+}
 
 pub mod mcp;
 pub mod pairing;
+pub mod schedules;
 pub mod setup;
 pub mod skills;
+pub mod status;
+
+/// Request payload for the OAuth store endpoint.
+#[derive(serde::Deserialize)]
+pub struct OAuthStoreRequest {
+    pub provider: String,
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
+}
+
+/// Maximum allowed length for the `provider` field.
+const OAUTH_PROVIDER_MAX_LEN: usize = 256;
+/// Maximum allowed length for the `access_token` field.
+const OAUTH_TOKEN_MAX_LEN: usize = 8192;
+/// Maximum allowed length for the `refresh_token` field.
+const OAUTH_REFRESH_TOKEN_MAX_LEN: usize = 4096;
+/// Maximum allowed value for `expires_in` (must fit in i64 without overflow).
+const OAUTH_MAX_EXPIRES_IN: u64 = i64::MAX as u64;
+
+/// POST /api/oauth/store — stores OAuth credentials for a provider.
+///
+/// Accepts a JSON body with `provider`, `access_token`, optional `refresh_token`,
+/// and optional `expires_in` (seconds from now). Stores the token in the
+/// in-memory `OAuthManager` for subsequent authenticated requests.
+pub async fn oauth_store_handler(
+    axum::extract::State(state): axum::extract::State<Arc<crate::server::GatewayState>>,
+    axum::Json(payload): axum::Json<OAuthStoreRequest>,
+) -> impl axum::response::IntoResponse {
+    // Validate required fields
+    if payload.provider.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "status": "error",
+                "message": "provider is required and must not be empty"
+            })),
+        );
+    }
+    if payload.provider.len() > OAUTH_PROVIDER_MAX_LEN {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "status": "error",
+                "message": format!("provider exceeds maximum length of {}", OAUTH_PROVIDER_MAX_LEN)
+            })),
+        );
+    }
+    if payload.access_token.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "status": "error",
+                "message": "access_token is required and must not be empty"
+            })),
+        );
+    }
+    if payload.access_token.len() > OAUTH_TOKEN_MAX_LEN {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "status": "error",
+                "message": format!("access_token exceeds maximum length of {}", OAUTH_TOKEN_MAX_LEN)
+            })),
+        );
+    }
+    if let Some(ref rt) = payload.refresh_token {
+        if rt.len() > OAUTH_REFRESH_TOKEN_MAX_LEN {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "status": "error",
+                    "message": format!("refresh_token exceeds maximum length of {}", OAUTH_REFRESH_TOKEN_MAX_LEN)
+                })),
+            );
+        }
+    }
+
+    // Reject expires_in: 0 — token would be immediately expired
+    if payload.expires_in == Some(0) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "status": "error",
+                "message": "expires_in must be greater than 0"
+            })),
+        );
+    }
+    // Reject expires_in > i64::MAX — would overflow when cast to i64
+    if payload.expires_in.is_some_and(|s| s > OAUTH_MAX_EXPIRES_IN) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "status": "error",
+                "message": format!("expires_in exceeds maximum of {}", OAUTH_MAX_EXPIRES_IN)
+            })),
+        );
+    }
+
+    // Calculate expiration timestamp if expires_in is provided
+    let expires_at = payload.expires_in.map(|secs| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before UNIX epoch")
+            .as_secs() as i64
+            + secs as i64
+    });
+
+    // Build the OAuth token
+    let token = crate::auth::oauth::OAuthToken {
+        access_token: payload.access_token,
+        refresh_token: payload.refresh_token.filter(|s| !s.is_empty()),
+        expires_at,
+        provider: payload.provider.clone(),
+    };
+
+    // Generate a unique storage key: "provider:uuid"
+    let storage_key = format!("{}:{}", payload.provider, uuid::Uuid::new_v4());
+
+    // Store token in the OAuthManager
+    state
+        .oauth_manager
+        .store_token(storage_key.clone(), token)
+        .await;
+
+    tracing::info!(
+        "OAuth token stored for provider '{}', key={}",
+        payload.provider,
+        storage_key
+    );
+
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "status": "stored",
+            "token_id": storage_key,
+            "provider": payload.provider,
+        })),
+    )
+}
 
 /// Shared application state for axum handlers.
 pub struct AppState {
@@ -173,7 +348,10 @@ pub async fn handle_message(
                 savant_core::types::ControlFrame::SoulUpdate { agent_id, content } => {
                     tracing::info!("[gateway] Soul update requested for agent: {}", agent_id);
                     let registry = savant_core::fs::registry::AgentRegistry::new(
-                        std::env::current_dir().unwrap_or_default(),
+                        std::env::current_dir().unwrap_or_else(|e| {
+                            tracing::warn!("Failed to get current directory: {}", e);
+                            std::path::PathBuf::from(".")
+                        }),
                         state.config.ai.clone(),
                         savant_core::config::AgentDefaults::default(),
                     );
@@ -182,27 +360,35 @@ pub async fn handle_message(
                         Ok(Some(path)) => {
                             let soul_path = path.join("SOUL.md");
 
-                        // Snapshot existing SOUL.md before overwriting
-                        if soul_path.exists() {
-                            let timestamp = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs();
+                            // Snapshot existing SOUL.md before overwriting
+                            if soul_path.exists() {
+                                let timestamp = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .expect("system clock before UNIX epoch")
+                                    .as_secs();
                                 let backup_path = path.join(format!("SOUL.{}.bak", timestamp));
                                 if let Err(e) = std::fs::copy(&soul_path, &backup_path) {
                                     tracing::warn!("[gateway] Failed to snapshot SOUL.md: {}", e);
                                 } else {
-                                    tracing::info!("[gateway] SOUL.md snapshot saved to {:?}", backup_path);
+                                    tracing::info!(
+                                        "[gateway] SOUL.md snapshot saved to {:?}",
+                                        backup_path
+                                    );
                                 }
                             }
 
                             // Validate immutable sections before writing
-                            let immutable_sections = state.config.evolution.immutable_sections.clone();
+                            let immutable_sections =
+                                state.config.evolution.immutable_sections.clone();
                             if !immutable_sections.is_empty() {
                                 if let Ok(current_soul) = std::fs::read_to_string(&soul_path) {
                                     for section in &immutable_sections {
-                                        if let Some(old_sec) = extract_section(&current_soul, section) {
-                                            if let Some(new_sec) = extract_section(&content, section) {
+                                        if let Some(old_sec) =
+                                            extract_section(&current_soul, section)
+                                        {
+                                            if let Some(new_sec) =
+                                                extract_section(&content, section)
+                                            {
                                                 if old_sec != new_sec {
                                                     tracing::error!(
                                                         "[gateway] SOUL.md update BLOCKED: immutable section '{}' was modified",
@@ -214,9 +400,13 @@ pub async fn handle_message(
                                                         "reason": format!("Immutable section '{}' cannot be modified", section),
                                                     });
                                                     if let Err(e) = send_control_response(
-                                                        "UPDATE_BLOCKED", result,
-                                                        &session.session_id, &state.nexus,
-                                                    ).await {
+                                                        "UPDATE_BLOCKED",
+                                                        result,
+                                                        &session.session_id,
+                                                        &state.nexus,
+                                                    )
+                                                    .await
+                                                    {
                                                         tracing::warn!("[gateway] Failed to send UPDATE_BLOCKED response: {}", e);
                                                     }
                                                     return;
@@ -230,11 +420,18 @@ pub async fn handle_message(
                             if let Err(e) = std::fs::write(&soul_path, &content) {
                                 tracing::error!("[gateway] Failed to write SOUL.md: {}", e);
                             } else {
-                                tracing::info!("[gateway] SOUL.md updated for {}. Hot-reload triggering.", agent_id);
+                                tracing::info!(
+                                    "[gateway] SOUL.md updated for {}. Hot-reload triggering.",
+                                    agent_id
+                                );
 
                                 // Write provenance to EVOLUTION.jsonl
                                 let evolution_path = path.join("EVOLUTION.jsonl");
-                                let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis().to_string();
+                                let timestamp = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .expect("system clock before UNIX epoch")
+                                    .as_millis()
+                                    .to_string();
                                 let provenance_entry = serde_json::json!({
                                     "agent_id": agent_id,
                                     "action": "soul_update",
@@ -247,18 +444,29 @@ pub async fn handle_message(
                                     .open(&evolution_path)
                                 {
                                     use std::io::Write;
-                                    let line = serde_json::to_string(&provenance_entry).unwrap_or_default();
+                                    let line = serde_json::to_string(&provenance_entry)
+                                        .unwrap_or_default();
                                     if let Err(e) = writeln!(file, "{}", line) {
-                                        tracing::warn!("[gateway] Failed to write to EVOLUTION.jsonl: {}", e);
+                                        tracing::warn!(
+                                            "[gateway] Failed to write to EVOLUTION.jsonl: {}",
+                                            e
+                                        );
                                     }
                                 }
 
                                 let result = serde_json::json!({ "agent_id": agent_id, "status": "success" });
                                 if let Err(e) = send_control_response(
-                                    "UPDATE_SUCCESS", result,
-                                    &session.session_id, &state.nexus,
-                                ).await {
-                                    tracing::warn!("[gateway] Failed to send UPDATE_SUCCESS response: {}", e);
+                                    "UPDATE_SUCCESS",
+                                    result,
+                                    &session.session_id,
+                                    &state.nexus,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        "[gateway] Failed to send UPDATE_SUCCESS response: {}",
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -266,17 +474,30 @@ pub async fn handle_message(
                             tracing::info!("[gateway] Manifesting NEW workspace for {}", agent_id);
                             match registry.scaffold_workspace(&agent_id, &content, None) {
                                 Ok(config) => {
-                                    tracing::info!("[gateway] Workspace birthed: {}", config.workspace_path.display());
+                                    tracing::info!(
+                                        "[gateway] Workspace birthed: {}",
+                                        config.workspace_path.display()
+                                    );
                                     let result = serde_json::json!({ "agent_id": config.agent_id, "status": "created" });
                                     if let Err(e) = send_control_response(
-                                        "UPDATE_SUCCESS", result,
-                                        &session.session_id, &state.nexus,
-                                    ).await {
-                                        tracing::warn!("[gateway] Failed to send UPDATE_SUCCESS response: {}", e);
+                                        "UPDATE_SUCCESS",
+                                        result,
+                                        &session.session_id,
+                                        &state.nexus,
+                                    )
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            "[gateway] Failed to send UPDATE_SUCCESS response: {}",
+                                            e
+                                        );
                                     }
                                 }
                                 Err(e) => {
-                                    tracing::error!("[gateway] Failed to scaffold workspace: {}", e);
+                                    tracing::error!(
+                                        "[gateway] Failed to scaffold workspace: {}",
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -284,9 +505,18 @@ pub async fn handle_message(
                 }
                 savant_core::types::ControlFrame::BulkManifest { agents } => {
                     let agent_count = agents.len();
-                    tracing::info!("🌈 Bulk manifestation requested for {} agents", agent_count);
+                    // SEC #8: Limit agents per BulkManifest request
+                    const MAX_BULK_AGENTS: usize = 10;
+                    if agent_count > MAX_BULK_AGENTS {
+                        tracing::warn!("[gateway] BulkManifest rejected: {} agents exceeds limit of {}", agent_count, MAX_BULK_AGENTS);
+                        return;
+                    }
+                    tracing::info!("Bulk manifestation requested for {} agents", agent_count);
                     let registry = savant_core::fs::registry::AgentRegistry::new(
-                        std::env::current_dir().unwrap_or_default(),
+                        std::env::current_dir().unwrap_or_else(|e| {
+                            tracing::warn!("Failed to get current directory: {}", e);
+                            std::path::PathBuf::from(".")
+                        }),
                         state.config.ai.clone(),
                         savant_core::config::AgentDefaults::default(),
                     );
@@ -447,6 +677,12 @@ pub async fn handle_message(
                 }
                 // Natural language command
                 savant_core::types::ControlFrame::NLCommand { text } => {
+                    // SEC #9: Input length limit on NLCommand
+                    const MAX_NL_COMMAND_LEN: usize = 10_000;
+                    if text.len() > MAX_NL_COMMAND_LEN {
+                        tracing::warn!("[gateway] NLCommand rejected: {} bytes exceeds limit of {}", text.len(), MAX_NL_COMMAND_LEN);
+                        return;
+                    }
                     let intent = savant_core::nlp::parse_command(&text);
                     if let Err(e) = send_control_response(
                         "NL_COMMAND_RESULT",
@@ -483,8 +719,29 @@ pub async fn handle_message(
                     conversations_triggered,
                     confidence,
                 } => {
+                    // SEC #7: Size limits on SoulMutationPropose fields
+                    const MAX_SOUL_CONTENT_LEN: usize = 100_000;
+                    if proposed_content.len() > MAX_SOUL_CONTENT_LEN {
+                        tracing::warn!("[gateway] SoulMutationPropose rejected: content {} bytes exceeds limit", proposed_content.len());
+                        return;
+                    }
+                    if reasoning.len() > MAX_SOUL_CONTENT_LEN {
+                        tracing::warn!("[gateway] SoulMutationPropose rejected: reasoning {} bytes exceeds limit", reasoning.len());
+                        return;
+                    }
+                    let agent_id = match sanitize_agent_id(&agent_id) {
+                        Some(id) => id,
+                        None => {
+                            warn!("[gateway] Invalid agent_id in SoulMutationPropose — rejected");
+                            // Skip this handler — invalid agent_id
+                            return;
+                        }
+                    };
                     let mutation_id = uuid::Uuid::new_v4().to_string();
-                    let proposed_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                    let proposed_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64;
 
                     let mutation = serde_json::json!({
                         "status": "pending",
@@ -503,26 +760,82 @@ pub async fn handle_message(
                         "before_hash": "",
                     });
 
-                    let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
-                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&evo_path) {
-                        let line = serde_json::to_string(&mutation).unwrap_or_default();
+                    let evo_path = std::path::Path::new(&state.config.system.agents_path)
+                        .join(&agent_id)
+                        .join("EVOLUTION.jsonl");
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&evo_path)
+                    {
+                        let line = match serde_json::to_string(&mutation) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("[gateway] Failed to serialize mutation: {}", e);
+                                return;
+                            }
+                        };
                         if let Err(e) = writeln!(file, "{}", line) {
-                            tracing::warn!("[gateway] Failed to write mutation to EVOLUTION.jsonl: {}", e);
+                            tracing::warn!(
+                                "[gateway] Failed to write mutation to EVOLUTION.jsonl: {}",
+                                e
+                            );
                         }
                     } else {
-                        tracing::warn!("[gateway] Failed to open EVOLUTION.jsonl at {:?}", evo_path);
+                        tracing::warn!(
+                            "[gateway] Failed to open EVOLUTION.jsonl at {:?}",
+                            evo_path
+                        );
                     }
 
-                    if let Err(e) = state.nexus.publish("system.evolution.mutation_proposed", &serde_json::to_string(&mutation).unwrap_or_default()).await {
-                        tracing::warn!("[gateway] Failed to publish mutation_proposed event: {}", e);
+                    let mutation_json = match serde_json::to_string(&mutation) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("[gateway] Failed to serialize mutation: {}", e);
+                            return;
+                        }
+                    };
+                    if let Err(e) = state
+                        .nexus
+                        .publish("system.evolution.mutation_proposed", &mutation_json)
+                        .await
+                    {
+                        tracing::warn!(
+                            "[gateway] Failed to publish mutation_proposed event: {}",
+                            e
+                        );
                     }
-                    if let Err(e) = send_control_response("MUTATION_PROPOSED", mutation, &session.session_id, &state.nexus).await {
-                        tracing::warn!("[gateway] Failed to send MUTATION_PROPOSED response: {}", e);
+                    if let Err(e) = send_control_response(
+                        "MUTATION_PROPOSED",
+                        mutation,
+                        &session.session_id,
+                        &state.nexus,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "[gateway] Failed to send MUTATION_PROPOSED response: {}",
+                            e
+                        );
                     }
                 }
-                savant_core::types::ControlFrame::SoulMutationApprove { agent_id, mutation_id } => {
-                    let decided_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
-                    let workspace_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id);
+                savant_core::types::ControlFrame::SoulMutationApprove {
+                    agent_id,
+                    mutation_id,
+                } => {
+                    let agent_id = match sanitize_agent_id(&agent_id) {
+                        Some(id) => id,
+                        None => {
+                            warn!("[gateway] Invalid agent_id in SoulMutationApprove — rejected");
+                            return;
+                        }
+                    };
+                    let decided_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("system clock before UNIX epoch")
+                        .as_millis() as i64;
+                    let workspace_path =
+                        std::path::Path::new(&state.config.system.agents_path).join(&agent_id);
 
                     let evo_path = workspace_path.join("EVOLUTION.jsonl");
                     let mut mutations: Vec<serde_json::Value> = Vec::new();
@@ -530,7 +843,9 @@ pub async fn handle_message(
                         if let Ok(content) = std::fs::read_to_string(&evo_path) {
                             for line in content.lines() {
                                 if let Ok(mut m) = serde_json::from_str::<serde_json::Value>(line) {
-                                    if m.get("mutation_id").and_then(|v| v.as_str()) == Some(&mutation_id) {
+                                    if m.get("mutation_id").and_then(|v| v.as_str())
+                                        == Some(&mutation_id)
+                                    {
                                         m["status"] = serde_json::json!("approved");
                                         m["decided_at"] = serde_json::json!(decided_at);
                                     }
@@ -540,23 +855,72 @@ pub async fn handle_message(
                         }
                     }
 
-                    if let Err(e) = std::fs::write(&evo_path, mutations.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect::<Vec<_>>().join("\n") + "\n") {
+                    if let Err(e) = std::fs::write(
+                        &evo_path,
+                        mutations
+                            .iter()
+                            .filter_map(|m| match serde_json::to_string(m) {
+                                Ok(s) => Some(s),
+                                Err(e) => {
+                                    tracing::warn!("[gateway] Failed to serialize mutation: {}", e);
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                            + "\n",
+                    ) {
                         tracing::warn!("[gateway] Failed to write EVOLUTION.jsonl: {}", e);
                     }
 
                     let config_path = workspace_path.join("agent.json");
                     if config_path.exists() {
                         if let Ok(config_content) = std::fs::read_to_string(&config_path) {
-                            if let Ok(mut config_val) = serde_json::from_str::<serde_json::Value>(&config_content) {
+                            if let Ok(mut config_val) =
+                                serde_json::from_str::<serde_json::Value>(&config_content)
+                            {
                                 if let Some(state_obj) = config_val.as_object_mut() {
-                                    let evo_state = state_obj.entry("evolution_state").or_insert_with(|| serde_json::json!({}));
-                                    let approved_count = mutations.iter().filter(|m| m.get("status").and_then(|v| v.as_str()) == Some("approved")).count();
+                                    let evo_state = state_obj
+                                        .entry("evolution_state")
+                                        .or_insert_with(|| serde_json::json!({}));
+                                    let approved_count = mutations
+                                        .iter()
+                                        .filter(|m| {
+                                            m.get("status").and_then(|v| v.as_str())
+                                                == Some("approved")
+                                        })
+                                        .count();
                                     evo_state["mutation_count"] = serde_json::json!(approved_count);
                                     evo_state["last_mutation_at"] = serde_json::json!(decided_at);
-                                    evo_state["evolution_score"] = serde_json::json!((approved_count as f32 / 10.0).min(1.0));
-                                    evo_state["stage"] = serde_json::json!(if approved_count >= 10 { "Sovereign" } else if approved_count >= 5 { "Mature" } else if approved_count >= 2 { "Growing" } else { "Seedling" });
-                                    if let Err(e) = std::fs::write(&config_path, serde_json::to_string_pretty(&config_val).unwrap_or_default()) {
-                                        tracing::warn!("[gateway] Failed to write agent.json: {}", e);
+                                    evo_state["evolution_score"] =
+                                        serde_json::json!((approved_count as f32 / 10.0).min(1.0));
+                                    evo_state["stage"] =
+                                        serde_json::json!(if approved_count >= 10 {
+                                            "Sovereign"
+                                        } else if approved_count >= 5 {
+                                            "Mature"
+                                        } else if approved_count >= 2 {
+                                            "Growing"
+                                        } else {
+                                            "Seedling"
+                                        });
+                                    if let Err(e) = std::fs::write(
+                                        &config_path,
+                                        match serde_json::to_string_pretty(&config_val) {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    "[gateway] Failed to serialize config: {}",
+                                                    e
+                                                );
+                                                return;
+                                            }
+                                        },
+                                    ) {
+                                        tracing::warn!(
+                                            "[gateway] Failed to write agent.json: {}",
+                                            e
+                                        );
                                     }
                                 }
                             }
@@ -564,23 +928,62 @@ pub async fn handle_message(
                     }
 
                     let result = serde_json::json!({ "status": "approved", "mutation_id": mutation_id, "agent_id": agent_id, "decided_at": decided_at });
-                    if let Err(e) = state.nexus.publish("system.evolution.mutation_applied", &serde_json::to_string(&result).unwrap_or_default()).await {
+                    let result_json = match serde_json::to_string(&result) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("[gateway] Failed to serialize result: {}", e);
+                            return;
+                        }
+                    };
+                    if let Err(e) = state
+                        .nexus
+                        .publish("system.evolution.mutation_applied", &result_json)
+                        .await
+                    {
                         tracing::warn!("[gateway] Failed to publish mutation_applied event: {}", e);
                     }
-                    if let Err(e) = send_control_response("MUTATION_APPROVED", result, &session.session_id, &state.nexus).await {
-                        tracing::warn!("[gateway] Failed to send MUTATION_APPROVED response: {}", e);
+                    if let Err(e) = send_control_response(
+                        "MUTATION_APPROVED",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "[gateway] Failed to send MUTATION_APPROVED response: {}",
+                            e
+                        );
                     }
                 }
-                savant_core::types::ControlFrame::SoulMutationReject { agent_id, mutation_id, reason } => {
-                    let decided_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
-                    let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
+                savant_core::types::ControlFrame::SoulMutationReject {
+                    agent_id,
+                    mutation_id,
+                    reason,
+                } => {
+                    let agent_id = match sanitize_agent_id(&agent_id) {
+                        Some(id) => id,
+                        None => {
+                            warn!("[gateway] Invalid agent_id in SoulMutationReject — rejected");
+                            return;
+                        }
+                    };
+                    let decided_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("system clock before UNIX epoch")
+                        .as_millis() as i64;
+                    let evo_path = std::path::Path::new(&state.config.system.agents_path)
+                        .join(&agent_id)
+                        .join("EVOLUTION.jsonl");
 
                     let mut mutations: Vec<serde_json::Value> = Vec::new();
                     if evo_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&evo_path) {
                             for line in content.lines() {
                                 if let Ok(mut m) = serde_json::from_str::<serde_json::Value>(line) {
-                                    if m.get("mutation_id").and_then(|v| v.as_str()) == Some(&mutation_id) {
+                                    if m.get("mutation_id").and_then(|v| v.as_str())
+                                        == Some(&mutation_id)
+                                    {
                                         m["status"] = serde_json::json!("rejected");
                                         m["decided_at"] = serde_json::json!(decided_at);
                                         m["reason"] = serde_json::json!(reason);
@@ -590,55 +993,205 @@ pub async fn handle_message(
                             }
                         }
                     }
-                    if let Err(e) = std::fs::write(&evo_path, mutations.iter().map(|m| serde_json::to_string(m).unwrap_or_default()).collect::<Vec<_>>().join("\n") + "\n") {
+                    if let Err(e) = std::fs::write(
+                        &evo_path,
+                        mutations
+                            .iter()
+                            .filter_map(|m| match serde_json::to_string(m) {
+                                Ok(s) => Some(s),
+                                Err(e) => {
+                                    tracing::warn!("[gateway] Failed to serialize mutation: {}", e);
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                            + "\n",
+                    ) {
                         tracing::warn!("[gateway] Failed to write EVOLUTION.jsonl: {}", e);
                     }
 
                     let result = serde_json::json!({ "status": "rejected", "mutation_id": mutation_id, "agent_id": agent_id, "reason": reason, "decided_at": decided_at });
-                    if let Err(e) = state.nexus.publish("system.evolution.mutation_applied", &serde_json::to_string(&result).unwrap_or_default()).await {
+                    let result_json = match serde_json::to_string(&result) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("[gateway] Failed to serialize result: {}", e);
+                            return;
+                        }
+                    };
+                    if let Err(e) = state
+                        .nexus
+                        .publish("system.evolution.mutation_applied", &result_json)
+                        .await
+                    {
                         tracing::warn!("[gateway] Failed to publish mutation_applied event: {}", e);
                     }
-                    if let Err(e) = send_control_response("MUTATION_REJECTED", result, &session.session_id, &state.nexus).await {
-                        tracing::warn!("[gateway] Failed to send MUTATION_REJECTED response: {}", e);
+                    if let Err(e) = send_control_response(
+                        "MUTATION_REJECTED",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "[gateway] Failed to send MUTATION_REJECTED response: {}",
+                            e
+                        );
                     }
                 }
                 savant_core::types::ControlFrame::SoulMutationRevert { .. } => {
                     tracing::info!("[evolution] Revert requested (not yet implemented)");
                 }
                 savant_core::types::ControlFrame::EvolutionHistoryRequest { agent_id, limit } => {
-                    let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
+                    let agent_id = match sanitize_agent_id(&agent_id) {
+                        Some(id) => id,
+                        None => {
+                            warn!(
+                                "[gateway] Invalid agent_id in EvolutionHistoryRequest — rejected"
+                            );
+                            return;
+                        }
+                    };
+                    let evo_path = std::path::Path::new(&state.config.system.agents_path)
+                        .join(&agent_id)
+                        .join("EVOLUTION.jsonl");
                     let mutations: Vec<serde_json::Value> = if evo_path.exists() {
-                        std::fs::read_to_string(&evo_path).unwrap_or_default().lines().filter_map(|line| serde_json::from_str(line).ok()).collect()
-                    } else { Vec::new() };
+                        match std::fs::read_to_string(&evo_path) {
+                            Ok(contents) => contents
+                                .lines()
+                                .enumerate()
+                                .filter_map(|(i, line)| match serde_json::from_str(line) {
+                                    Ok(v) => Some(v),
+                                    Err(e) => {
+                                        warn!(
+                                            "[gateway] Malformed evolution line {} in {}: {}",
+                                            i + 1,
+                                            evo_path.display(),
+                                            e
+                                        );
+                                        None
+                                    }
+                                })
+                                .collect(),
+                            Err(e) => {
+                                warn!(
+                                    "[gateway] Failed to read evolution file {}: {}",
+                                    evo_path.display(),
+                                    e
+                                );
+                                Vec::new()
+                            }
+                        }
+                    } else {
+                        Vec::new()
+                    };
                     let total = mutations.len();
-                    let limited: Vec<_> = if limit > 0 { mutations.into_iter().rev().take(limit).collect() } else { mutations };
+                    let limited: Vec<_> = if limit > 0 {
+                        mutations.into_iter().rev().take(limit).collect()
+                    } else {
+                        mutations
+                    };
                     let result = serde_json::json!({ "agent_id": agent_id, "mutations": limited, "total": total });
-                    if let Err(e) = send_control_response("EVOLUTION_HISTORY", result, &session.session_id, &state.nexus).await {
-                        tracing::warn!("[gateway] Failed to send EVOLUTION_HISTORY response: {}", e);
+                    if let Err(e) = send_control_response(
+                        "EVOLUTION_HISTORY",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "[gateway] Failed to send EVOLUTION_HISTORY response: {}",
+                            e
+                        );
                     }
                 }
                 savant_core::types::ControlFrame::EvolutionScoreRequest { agent_id } => {
-                    let config_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("agent.json");
+                    let agent_id = match sanitize_agent_id(&agent_id) {
+                        Some(id) => id,
+                        None => {
+                            warn!("[gateway] Invalid agent_id in EvolutionScoreRequest — rejected");
+                            return;
+                        }
+                    };
+                    let config_path = std::path::Path::new(&state.config.system.agents_path)
+                        .join(&agent_id)
+                        .join("agent.json");
                     let (score, stage, mutation_count) = if config_path.exists() {
-                        std::fs::read_to_string(&config_path).ok()
-                            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-                            .and_then(|v| v.get("evolution_state").cloned())
-                            .map(|es| {
-                                let count = es.get("mutation_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                                let score = es.get("evolution_score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                                let stage = es.get("stage").and_then(|v| v.as_str()).unwrap_or("Seedling").to_string();
-                                (score, stage, count)
-                            })
-                            .unwrap_or((0.0, "Seedling".to_string(), 0))
-                    } else { (0.0, "Seedling".to_string(), 0) };
+                        match std::fs::read_to_string(&config_path) {
+                            Ok(c) => match serde_json::from_str::<serde_json::Value>(&c) {
+                                Ok(v) => v
+                                    .get("evolution_state")
+                                    .cloned()
+                                    .map(|es| {
+                                        let count = es
+                                            .get("mutation_count")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0);
+                                        let score = es
+                                            .get("evolution_score")
+                                            .and_then(|v| v.as_f64())
+                                            .unwrap_or(0.0)
+                                            as f32;
+                                        let stage = es
+                                            .get("stage")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("Seedling")
+                                            .to_string();
+                                        (score, stage, count)
+                                    })
+                                    .unwrap_or((0.0, "Seedling".to_string(), 0)),
+                                Err(e) => {
+                                    warn!(
+                                        "[gateway] Failed to parse agent config {}: {}",
+                                        config_path.display(),
+                                        e
+                                    );
+                                    (0.0, "Seedling".to_string(), 0)
+                                }
+                            },
+                            Err(e) => {
+                                warn!(
+                                    "[gateway] Failed to read agent config {}: {}",
+                                    config_path.display(),
+                                    e
+                                );
+                                (0.0, "Seedling".to_string(), 0)
+                            }
+                        }
+                    } else {
+                        (0.0, "Seedling".to_string(), 0)
+                    };
                     let result = serde_json::json!({ "agent_id": agent_id, "evolution_score": score, "stage": stage, "mutation_count": mutation_count });
-                    if let Err(e) = send_control_response("EVOLUTION_SCORE", result, &session.session_id, &state.nexus).await {
+                    if let Err(e) = send_control_response(
+                        "EVOLUTION_SCORE",
+                        result,
+                        &session.session_id,
+                        &state.nexus,
+                    )
+                    .await
+                    {
                         tracing::warn!("[gateway] Failed to send EVOLUTION_SCORE response: {}", e);
                     }
                 }
-                savant_core::types::ControlFrame::EvolutionIdeaSubmit { agent_id, content, significance } => {
+                savant_core::types::ControlFrame::EvolutionIdeaSubmit {
+                    agent_id,
+                    content,
+                    significance,
+                } => {
+                    let agent_id = match sanitize_agent_id(&agent_id) {
+                        Some(id) => id,
+                        None => {
+                            warn!("[gateway] Invalid agent_id in EvolutionIdeaSubmit — rejected");
+                            return;
+                        }
+                    };
                     let mutation_id = uuid::Uuid::new_v4().to_string();
-                    let proposed_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                    let proposed_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("system clock before UNIX epoch")
+                        .as_millis() as i64;
                     let mutation = serde_json::json!({
                         "status": "pending", "mutation_id": mutation_id, "agent_id": agent_id,
                         "mutation_type": "additive", "target_section": "IDEAS",
@@ -648,19 +1201,45 @@ pub async fn handle_message(
                         "proposed_at": proposed_at, "decided_at": serde_json::Value::Null,
                         "source_evidence": [], "before_hash": "",
                     });
-                    let evo_path = std::path::Path::new(&state.config.system.agents_path).join(&agent_id).join("EVOLUTION.jsonl");
-                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&evo_path) {
-                        let line = serde_json::to_string(&mutation).unwrap_or_default();
+                    let evo_path = std::path::Path::new(&state.config.system.agents_path)
+                        .join(&agent_id)
+                        .join("EVOLUTION.jsonl");
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&evo_path)
+                    {
+                        let line = match serde_json::to_string(&mutation) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("[gateway] Failed to serialize mutation: {}", e);
+                                return;
+                            }
+                        };
                         if let Err(e) = writeln!(file, "{}", line) {
-                            tracing::warn!("[gateway] Failed to write idea to EVOLUTION.jsonl: {}", e);
+                            tracing::warn!(
+                                "[gateway] Failed to write idea to EVOLUTION.jsonl: {}",
+                                e
+                            );
                         }
                     }
-                    if let Err(e) = send_control_response("IDEA_SUBMITTED", mutation, &session.session_id, &state.nexus).await {
+                    if let Err(e) = send_control_response(
+                        "IDEA_SUBMITTED",
+                        mutation,
+                        &session.session_id,
+                        &state.nexus,
+                    )
+                    .await
+                    {
                         tracing::warn!("[gateway] Failed to send IDEA_SUBMITTED response: {}", e);
                     }
                 }
-                savant_core::types::ControlFrame::PersonalityExportRequest { agent_id } | savant_core::types::ControlFrame::PersonalityImportRequest { agent_id, .. } => {
-                    tracing::info!("[evolution] Personality export/import requested for agent {}", agent_id);
+                savant_core::types::ControlFrame::PersonalityExportRequest { agent_id }
+                | savant_core::types::ControlFrame::PersonalityImportRequest { agent_id, .. } => {
+                    tracing::info!(
+                        "[evolution] Personality export/import requested for agent {}",
+                        agent_id
+                    );
                     let result = serde_json::json!({
                         "agent_id": agent_id,
                         "status": "not_implemented",
@@ -671,7 +1250,9 @@ pub async fn handle_message(
                         result,
                         &session.session_id,
                         &state.nexus,
-                    ).await {
+                    )
+                    .await
+                    {
                         tracing::warn!("[gateway] Failed to send PERSONALITY_IO response: {}", e);
                     }
                 }
@@ -740,7 +1321,10 @@ async fn send_control_response(
     let payload_str = payload.to_string();
     let channel = format!("session.{}.{}", session_id.0, tag.to_lowercase());
 
-    nexus.publish(&channel, &payload_str).await?;
+    nexus
+        .publish(&channel, &payload_str)
+        .await
+        .map_err(|e| format!("Failed to publish control response: {}", e))?;
 
     tracing::info!("📤 Control response published to channel: {}", channel);
     Ok(())
@@ -1447,11 +2031,14 @@ pub async fn handle_agent_config_get(
 
     // Resolve agent path
     let registry = savant_core::fs::registry::AgentRegistry::new(
-        std::env::current_dir().unwrap_or_default(),
-        savant_core::config::Config::load()
-            .unwrap_or_default()
-            .ai
-            .clone(),
+        std::env::current_dir().unwrap_or_else(|e| {
+            tracing::warn!("Failed to get current directory: {}", e);
+            std::path::PathBuf::from(".")
+        }),
+        match savant_core::config::Config::load() {
+            Ok(config) => config.ai.clone(),
+            Err(e) => return Err(format!("Failed to load config: {}", e)),
+        },
         savant_core::config::AgentDefaults::default(),
     );
     let agent_path = registry
@@ -1486,11 +2073,14 @@ pub async fn handle_agent_config_set(
 
     // Resolve agent path
     let registry = savant_core::fs::registry::AgentRegistry::new(
-        std::env::current_dir().unwrap_or_default(),
-        savant_core::config::Config::load()
-            .unwrap_or_default()
-            .ai
-            .clone(),
+        std::env::current_dir().unwrap_or_else(|e| {
+            tracing::warn!("Failed to get current directory: {}", e);
+            std::path::PathBuf::from(".")
+        }),
+        match savant_core::config::Config::load() {
+            Ok(config) => config.ai.clone(),
+            Err(e) => return Err(format!("Failed to load config: {}", e)),
+        },
         savant_core::config::AgentDefaults::default(),
     );
     let agent_path = registry
@@ -1717,17 +2307,15 @@ pub async fn models_rest_handler() -> impl IntoResponse {
             });
             (StatusCode::OK, Json(response)).into_response()
         }
-        Err(e) => {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "error": e,
-                    "models": [],
-                    "free_models": []
-                })),
-            )
-                .into_response()
-        }
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": e,
+                "models": [],
+                "free_models": []
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -1748,22 +2336,22 @@ pub async fn models_free_handler() -> impl IntoResponse {
             });
             (StatusCode::OK, Json(response)).into_response()
         }
-        Err(e) => {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "error": e,
-                    "free_models": []
-                })),
-            )
-                .into_response()
-        }
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": e,
+                "free_models": []
+            })),
+        )
+            .into_response(),
     }
 }
 
 /// Get parameter descriptors for the config UI
 /// Returns detailed explanations for each configurable parameter
-pub async fn handle_parameter_descriptors(nexus: &Arc<NexusBridge>) -> Result<serde_json::Value, String> {
+pub async fn handle_parameter_descriptors(
+    nexus: &Arc<NexusBridge>,
+) -> Result<serde_json::Value, String> {
     let descriptors = savant_core::types::LlmParams::get_parameter_descriptors();
 
     let response = serde_json::json!({
@@ -1821,6 +2409,19 @@ pub async fn handle_config_set(
     let mut config =
         savant_core::config::Config::load().map_err(|e| format!("Failed to load config: {}", e))?;
 
+    // Block runtime changes to security-critical fields
+    if crate::handlers::setup::is_immutable_config_field(&request.section, &request.key) {
+        tracing::warn!(
+            "[config] WS blocked attempt to modify immutable field: {}.{}",
+            request.section,
+            request.key
+        );
+        return Err(format!(
+            "Field '{}.{}' is immutable at runtime. Update the config file and restart.",
+            request.section, request.key
+        ));
+    }
+
     match request.section.as_str() {
         "ai" => match request.key.as_str() {
             "provider" => {
@@ -1857,7 +2458,17 @@ pub async fn handle_config_set(
         },
         "server" => match request.key.as_str() {
             "port" => config.server.port = request.value.as_u64().unwrap_or(3000) as u16,
-            "host" => config.server.host = request.value.as_str().unwrap_or("0.0.0.0").to_string(),
+            "host" => {
+                let new_host = request.value.as_str().unwrap_or("0.0.0.0");
+                if new_host == "0.0.0.0"
+                    && std::env::var("SAVANT_ALLOW_BIND_ALL").as_deref() != Ok("true")
+                {
+                    return Err(
+                        "Binding to 0.0.0.0 requires SAVANT_ALLOW_BIND_ALL=true".to_string()
+                    );
+                }
+                config.server.host = new_host.to_string();
+            }
             "max_connections" => {
                 config.server.max_connections = request.value.as_u64().unwrap_or(1000) as usize
             }
@@ -1873,7 +2484,10 @@ pub async fn handle_config_set(
             _ => return Err(format!("Unknown server key: {}", request.key)),
         },
         "skills" => match request.key.as_str() {
-            "path" => config.skills.path = request.value.as_str().unwrap_or("./skills").to_string(),
+            "path" => {
+                config.skills.path =
+                    validate_config_path(request.value.as_str().unwrap_or("./skills"))?
+            }
             "enable_clawhub" => {
                 config.skills.enable_clawhub = request.value.as_bool().unwrap_or(true)
             }
@@ -1882,7 +2496,8 @@ pub async fn handle_config_set(
         },
         "memory" => match request.key.as_str() {
             "base_path" => {
-                config.memory.base_path = request.value.as_str().unwrap_or("./memory").to_string()
+                config.memory.base_path =
+                    validate_config_path(request.value.as_str().unwrap_or("./memory"))?
             }
             "cache_size_mb" => {
                 config.memory.cache_size_mb = request.value.as_u64().unwrap_or(512) as u32
@@ -1916,25 +2531,17 @@ pub async fn handle_config_set(
         },
         "system" => match request.key.as_str() {
             "db_path" => {
-                config.system.db_path = request
-                    .value
-                    .as_str()
-                    .unwrap_or("./data/savant")
-                    .to_string()
+                config.system.db_path =
+                    validate_config_path(request.value.as_str().unwrap_or("./data/savant"))?
             }
             "substrate_path" => {
-                config.system.substrate_path = request
-                    .value
-                    .as_str()
-                    .unwrap_or("./workspaces/substrate")
-                    .to_string()
+                config.system.substrate_path = validate_config_path(
+                    request.value.as_str().unwrap_or("./workspaces/substrate"),
+                )?
             }
             "agents_path" => {
-                config.system.agents_path = request
-                    .value
-                    .as_str()
-                    .unwrap_or("./workspaces/agents")
-                    .to_string()
+                config.system.agents_path =
+                    validate_config_path(request.value.as_str().unwrap_or("./workspaces/agents"))?
             }
             _ => return Err(format!("Unknown system key: {}", request.key)),
         },
@@ -1953,23 +2560,21 @@ pub async fn handle_config_set(
                 config.browser.vision_model = request.value.as_str().unwrap_or("gemma4").to_string()
             }
             "vision_model_provider" => {
-                config.browser.vision_model_provider = request.value.as_str().unwrap_or("ollama").to_string()
+                config.browser.vision_model_provider =
+                    request.value.as_str().unwrap_or("ollama").to_string()
             }
             "embedding_model" => {
-                config.browser.embedding_model = request.value.as_str().unwrap_or("gemma4").to_string()
+                config.browser.embedding_model =
+                    request.value.as_str().unwrap_or("gemma4").to_string()
             }
-            "enabled" => {
-                config.browser.enabled = request.value.as_bool().unwrap_or(true)
-            }
+            "enabled" => config.browser.enabled = request.value.as_bool().unwrap_or(true),
             _ => return Err(format!("Unknown browser key: {}", request.key)),
         },
         "obsidian" => match request.key.as_str() {
             "vault_path" => {
                 config.obsidian.vault_path = request.value.as_str().map(|s| s.to_string())
             }
-            "enabled" => {
-                config.obsidian.enabled = request.value.as_bool().unwrap_or(true)
-            }
+            "enabled" => config.obsidian.enabled = request.value.as_bool().unwrap_or(true),
             "sync_interval_secs" => {
                 config.obsidian.sync_interval_secs = request.value.as_u64().unwrap_or(300)
             }
@@ -2039,4 +2644,3 @@ fn extract_section(content: &str, section_name: &str) -> Option<String> {
 mod benches {
     // criterion benchmark stub
 }
-

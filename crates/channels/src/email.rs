@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 use async_trait::async_trait;
 use futures::StreamExt;
 use savant_core::error::SavantError;
@@ -297,9 +298,7 @@ impl EmailAdapter {
                     }
                     Ok(())
                 }
-                Err((e, _orig_client)) => {
-                    Err(SavantError::AuthError(format!("IMAP login: {e}")))
-                }
+                Err((e, _orig_client)) => Err(SavantError::AuthError(format!("IMAP login: {e}"))),
             }
         })
         .await
@@ -417,9 +416,7 @@ impl EmailAdapter {
             .await
             .map_err(|e| SavantError::NetworkError(format!("Select INBOX: {e}")))?;
 
-        info!(
-            "[EMAIL_BRIDGE] IMAP connected and INBOX selected (idle={use_idle})."
-        );
+        info!("[EMAIL_BRIDGE] IMAP connected and INBOX selected (idle={use_idle}).");
 
         // Initial fetch of unseen messages
         Self::fetch_and_process(&mut session, "UNSEEN", tx, &config.allowed_senders).await?;
@@ -487,7 +484,8 @@ impl EmailAdapter {
                         .await
                         .map_err(|e| SavantError::NetworkError(format!("Re-select: {e}")))?;
 
-                    Self::fetch_and_process(&mut session, "RECENT", tx, &config.allowed_senders).await?;
+                    Self::fetch_and_process(&mut session, "RECENT", tx, &config.allowed_senders)
+                        .await?;
                 }
             }
         } else {
@@ -500,7 +498,8 @@ impl EmailAdapter {
                     .await
                     .map_err(|e| SavantError::NetworkError(format!("Re-select: {e}")))?;
 
-                Self::fetch_and_process(&mut session, "UNSEEN", tx, &config.allowed_senders).await?;
+                Self::fetch_and_process(&mut session, "UNSEEN", tx, &config.allowed_senders)
+                    .await?;
             }
         }
     }
@@ -518,7 +517,10 @@ impl EmailAdapter {
             .map_err(|e| SavantError::NetworkError(format!("IMAP search: {e}")))?;
 
         if uids.is_empty() {
-            debug!("[email::watch] IMAP search returned no messages for criteria: {}", search_criteria);
+            debug!(
+                "[email::watch] IMAP search returned no messages for criteria: {}",
+                search_criteria
+            );
             return Ok(());
         }
 
@@ -531,7 +533,8 @@ impl EmailAdapter {
             .map_err(|e| SavantError::NetworkError(format!("IMAP fetch: {e}")))?;
 
         while let Some(fetch_result) = fetch_stream.next().await {
-            let msg = fetch_result.map_err(|e| SavantError::NetworkError(format!("IMAP fetch item: {e}")))?;
+            let msg = fetch_result
+                .map_err(|e| SavantError::NetworkError(format!("IMAP fetch item: {e}")))?;
 
             let envelope = msg.envelope().ok_or_else(|| {
                 SavantError::NetworkError("No envelope in IMAP fetch result".into())
@@ -546,7 +549,9 @@ impl EmailAdapter {
             {
                 Some(id) => id,
                 None => {
-                    tracing::warn!("[EMAIL_BRIDGE] Failed to extract Message-ID header, falling back to UID");
+                    tracing::warn!(
+                        "[EMAIL_BRIDGE] Failed to extract Message-ID header, falling back to UID"
+                    );
                     format!("uid-{}", msg.uid.unwrap_or(0))
                 }
             };
@@ -806,9 +811,7 @@ impl EmailAdapter {
                 }
 
                 // Exponential backoff
-                warn!(
-                    "[EMAIL_BRIDGE] Disconnected. Reconnecting in {backoff_secs}s..."
-                );
+                warn!("[EMAIL_BRIDGE] Disconnected. Reconnecting in {backoff_secs}s...");
                 tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                 backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF);
 

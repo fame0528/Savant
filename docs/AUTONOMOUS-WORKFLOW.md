@@ -12,8 +12,27 @@ Every session is a surgical operation on a highly interconnected codebase. One c
 1. **Read 0-EOF before touch.** Every file read completely before any edit. No exceptions. No skimming. No assumptions.
 2. **Present before act.** Every change presented to the user with impact analysis BEFORE implementation. No silent autonomous changes.
 3. **Verify before proceed.** Every change verified with `cargo check --workspace` and `npx tsc --noEmit` (if frontend) before moving on. No broken builds.
+4. **Verify call-graph reachability.** After wiring any feature, grep production entry points to confirm it is actually called. Compilation is NOT verification. Zero grep results = NOT wired.
 
 **Additional Rule:** If you encounter ANY issue -- even outside the current scope -- you flag it for guidance. Never skip past a problem because *"it's not what we're working on."*
+
+### Call-Graph Verification Rule (Non-Negotiable)
+
+After wiring any feature, verify it is actually called from the production execution path. `cargo check` passing is NOT verification — the code exists but nothing may call it.
+
+**Production entry points to grep:**
+1. `crates/agent/src/orchestration/ignition.rs` — startup
+2. `crates/agent/src/swarm.rs` — agent creation
+3. `crates/agent/src/pulse/heartbeat.rs` — agent execution
+4. `crates/agent/src/react/stream.rs` — the ReAct loop
+5. `crates/agent/src/react/reactor.rs` — tool execution
+
+**Verification command:**
+```bash
+grep -rn "feature_name" crates/agent/src/swarm.rs crates/agent/src/react/stream.rs crates/agent/src/react/reactor.rs crates/agent/src/orchestration/ignition.rs crates/agent/src/pulse/heartbeat.rs
+```
+
+**Rule:** Zero results from these 5 files = feature is NOT wired. Do not mark the task complete until the grep shows a call site in production code.
 
 ---
 
@@ -120,7 +139,7 @@ All work is tracked through FIDs (Fix Implementation Documents). We always work 
    git diff --stat
    ```
 
-3. **Dev Folder Audit:** Understand tracking files (`dev/IMPLEMENTATION-TRACKER.md`, `dev/PENDING.md`, `dev/coding-standards/`, `dev/SAVANT-CODING-SYSTEM.md`).
+3. **Dev Folder Audit:** Understand tracking files (`dev/IMPLEMENTATION-TRACKER.md`, `dev/SESSION-SUMMARY.md`, `dev/coding-standards/`, `dev/ECHO.md`).
 4. **Source File Pre-Read:** If the active FID references specific files, read them **0-EOF** BEFORE analysis. Understand purpose, imports, data flow, and call chains.
 5. **Scope Mapping:** Create a prioritized task list. One item per feature/fix. Priority: HIGH/MEDIUM/LOW. Status: pending/in_progress/completed.
 
@@ -219,7 +238,7 @@ For each feature/fix, execute the **Perfection Loop** sequentially:
 | `dev/fids/FID-*.md`               | During and after fix                   | Status -> `FIXED` or `CLOSED`, verification checklist   |
 | `dev/CHANGELOG-INTERNAL.md`       | After EVERY fix                        | Detailed fix description with file, issue, approach     |
 | `CHANGELOG.md` (root)             | Only at release milestones             | User-facing changes                                     |
-| `docs/GAP-ANALYSIS.md`            | After gap analysis                     | Feature roadmap updates                                 |
+| `dev/SESSION-SUMMARY.md`             | After session completion                | Session summary and progress |                                 |
 | `README.md`                       | Only if user-facing features changed   | Public documentation                                    |
 
 **Documentation Rules:** Be specific (paths, line numbers, function names), honest (document limitations), concise, use tables for structured data, include metrics.
@@ -479,17 +498,11 @@ docs/
 ├── ops/
 │   ├── DEPLOYMENT_CHECKLIST.md
 │   └── TROUBLESHOOTING.md
-└── (Legacy/Archived workflows referenced here)
-
-dev/
-├── IMPLEMENTATION-TRACKER.md    # Feature/fix status
-├── CHANGELOG-INTERNAL.md        # Session-level change log
-├── fids/                        # Fix Implementation Documents
-├── PENDING.md                   # Current work items
-├── SESSION-SUMMARY.md           # Latest session report
-├── coding-standards/            # Language-specific rules
-├── SAVANT-CODING-SYSTEM.md      # Meta-instructions
-└── roadmap/                     # Issue tracking
+├── AUTONOMOUS-WORKFLOW.md       # Core protocol (this file)
+├── CodingRules.md               # Coding rules
+├── FID-SYSTEM-PORTABLE.md       # FID reference
+├── CONVENTIONS.md               # Codebase patterns
+└── archive/                     # Historical docs
 ```
 
 ---

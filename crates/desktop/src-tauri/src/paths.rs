@@ -14,14 +14,18 @@ impl SavantPathResolver {
     pub fn new(app: &AppHandle) -> Result<Self, String> {
         // Use Tauri's app data directory for production builds
         // Falls back to the project root if the app data directory is unavailable
-        let app_data_dir = app.path().app_data_dir().map_err(|e| {
-            format!("Failed to resolve app data directory: {}", e)
-        })?;
+        let app_data_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to resolve app data directory: {}", e))?;
 
         // Ensure the data directory exists
         if !app_data_dir.exists() {
             std::fs::create_dir_all(&app_data_dir).map_err(|e| {
-                format!("Failed to create app data directory at {:?}: {}", app_data_dir, e)
+                format!(
+                    "Failed to create app data directory at {:?}: {}",
+                    app_data_dir, e
+                )
             })?;
         }
 
@@ -29,7 +33,10 @@ impl SavantPathResolver {
         let config_dir = app_data_dir.join("config");
         if !config_dir.exists() {
             std::fs::create_dir_all(&config_dir).map_err(|e| {
-                format!("Failed to create config directory at {:?}: {}", config_dir, e)
+                format!(
+                    "Failed to create config directory at {:?}: {}",
+                    config_dir, e
+                )
             })?;
         }
 
@@ -51,17 +58,14 @@ impl SavantPathResolver {
         self.base_data_path.join("workspaces")
     }
 
-    #[allow(dead_code)]
     pub fn skills_dir(&self) -> PathBuf {
         self.base_data_path.join("skills")
     }
 
-    #[allow(dead_code)]
     pub fn data_dir(&self) -> PathBuf {
         self.base_data_path.join("data").join("savant")
     }
 
-    #[allow(dead_code)]
     pub fn memory_dir(&self) -> PathBuf {
         self.base_data_path.join("data").join("memory")
     }

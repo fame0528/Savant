@@ -38,6 +38,8 @@ pub struct DreamConfig {
     pub idle_minutes: u64,
     /// Vendi Score threshold for dream output diversity.
     pub vendi_threshold: f32,
+    /// Interval between idle checks in seconds.
+    pub check_interval_secs: u64,
 }
 
 impl Default for DreamConfig {
@@ -49,6 +51,7 @@ impl Default for DreamConfig {
             idle_threshold: 0.1,
             idle_minutes: 10,
             vendi_threshold: 0.3,
+            check_interval_secs: 30,
         }
     }
 }

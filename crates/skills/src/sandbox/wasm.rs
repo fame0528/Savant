@@ -7,6 +7,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+/// PB-13: Maximum WASM output size in characters.
+const MAX_WASM_OUTPUT: usize = 100_000;
+
 /// High-performance WebAssembly executor using Wassette.
 /// Fetches and executes Wasm Components from OCI registries with MCP integration.
 /// Provides browser-grade isolation and capability-based security.
@@ -199,6 +202,24 @@ impl ToolExecutor for WassetteExecutor {
             .await
             .map_err(|e| SavantError::Unknown(format!("WASM execution failed: {}", e)))?;
 
-        Ok(result)
+        // PB-13: Truncate WASM output to prevent unbounded memory usage
+        if result.len() > MAX_WASM_OUTPUT {
+            warn!(
+                "WASM output exceeded {} chars, truncating from {}",
+                MAX_WASM_OUTPUT,
+                result.len()
+            );
+            let mut end = MAX_WASM_OUTPUT;
+            while end > 0 && !result.is_char_boundary(end) {
+                end -= 1;
+            }
+            Ok(format!(
+                "{}\n\n[... truncated at {} chars]",
+                &result[..end],
+                MAX_WASM_OUTPUT
+            ))
+        } else {
+            Ok(result)
+        }
     }
 }

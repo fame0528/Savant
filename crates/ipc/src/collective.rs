@@ -1,8 +1,8 @@
+use crate::error::SwarmIpcError;
 use iceoryx2::prelude::*;
 use iceoryx2::service::port_factory::blackboard::PortFactory;
 use std::sync::Arc;
 use tracing::{info, warn};
-use crate::error::SwarmIpcError;
 
 /// Individual Agent Entry in the Collective Blackboard.
 ///
@@ -49,7 +49,7 @@ pub struct GlobalState {
     pub total_successes: u64,
     /// Swarm-wide aggregate failures
     pub total_failures: u64,
-    
+
     // --- Swarm Consensus Phase (Voting) ---
     /// The current proposal hash (XXH3) undergoing voting
     pub active_proposal_hash: u64,
@@ -61,7 +61,7 @@ pub struct GlobalState {
     pub veto_mask: [u64; 2],
     /// Threshold required for consensus
     pub quorum_threshold: u8,
-    
+
     /// Reserved for future swarm expansion
     pub reserved: [u8; 31],
 }
@@ -95,7 +95,10 @@ pub struct CollectiveBlackboard {
 impl CollectiveBlackboard {
     /// Initializes the collective blackboard with 129 entries (0=Global, 1-128=Agents).
     pub fn new(service_name: &str) -> Result<Self, SwarmIpcError> {
-        info!("Initializing Distributed Collective Blackboard '{}' (129 entries)", service_name);
+        info!(
+            "Initializing Distributed Collective Blackboard '{}' (129 entries)",
+            service_name
+        );
 
         let node = NodeBuilder::new()
             .create::<ipc::Service>()
@@ -114,8 +117,11 @@ impl CollectiveBlackboard {
                 format!("{}_{}", base_name, attempt)
             };
 
-            let iox_name: iceoryx2::prelude::ServiceName = candidate.as_str().try_into()
-                .map_err(|e: iceoryx2::service::service_name::ServiceNameError| SwarmIpcError::ServiceCreation(e.to_string()))?;
+            let iox_name: iceoryx2::prelude::ServiceName = candidate.as_str().try_into().map_err(
+                |e: iceoryx2::service::service_name::ServiceNameError| {
+                    SwarmIpcError::ServiceCreation(e.to_string())
+                },
+            )?;
 
             let mut builder = node
                 .service_builder(&iox_name)
@@ -140,7 +146,9 @@ impl CollectiveBlackboard {
                 Err(e) => {
                     return Err(SwarmIpcError::ServiceCreation(format!(
                         "Collective Blackboard '{}' creation failed after {} attempts: {}",
-                        base_name, max_attempts + 1, e
+                        base_name,
+                        max_attempts + 1,
+                        e
                     )));
                 }
             }
@@ -163,7 +171,7 @@ impl CollectiveBlackboard {
         let entry = writer.entry::<GlobalState>(&0).map_err(|e| {
             SwarmIpcError::AccessViolation(format!("Global state entry not found: {}", e))
         })?;
-        
+
         entry.update_with_copy(state);
         Ok(())
     }
@@ -177,14 +185,24 @@ impl CollectiveBlackboard {
         if let Ok(entry) = reader.entry::<GlobalState>(&0) {
             Ok(*entry.get())
         } else {
-            Err(SwarmIpcError::AccessViolation("Global state entry not found".to_string()))
+            Err(SwarmIpcError::AccessViolation(
+                "Global state entry not found".to_string(),
+            ))
         }
     }
 
     /// Updates metrics for a specific agent.
-    pub fn update_agent_metrics(&self, agent_index: u8, success: bool, pressure: f32) -> Result<(), SwarmIpcError> {
+    pub fn update_agent_metrics(
+        &self,
+        agent_index: u8,
+        success: bool,
+        pressure: f32,
+    ) -> Result<(), SwarmIpcError> {
         if agent_index == 0 || agent_index > 128 {
-            return Err(SwarmIpcError::AccessViolation(format!("Invalid agent index: {}", agent_index)));
+            return Err(SwarmIpcError::AccessViolation(format!(
+                "Invalid agent index: {}",
+                agent_index
+            )));
         }
 
         // We need a reader to get the current state and a writer to update it
@@ -221,7 +239,7 @@ impl CollectiveBlackboard {
     }
 
     /// Aggregates all agent metrics and publishes them to the global state.
-    /// 
+    ///
     /// This should typically be called by a designated "Swarm Leader" or periodically by agents.
     pub fn aggregate_swarm_metrics(&self) -> Result<GlobalState, SwarmIpcError> {
         let reader = self.service.reader_builder().create().map_err(|e| {
@@ -265,14 +283,28 @@ impl CollectiveBlackboard {
 
     /// Participating in a vote using the per-agent isolated masks in GlobalState.
     pub fn cast_vote(&self, agent_index: u8, approve: bool) -> Result<(), SwarmIpcError> {
+        // IPC-03: Validate agent_index to prevent underflow panic
+        if agent_index == 0 {
+            return Err(SwarmIpcError::AccessViolation(
+                "invalid agent index or mask bounds exceeded".to_string(),
+            ));
+        }
+
         // Note: consensus voting still requires a read-modify-write on GlobalState
         // but it is less frequent than metrics updates.
         let mut state = self.read_global_state()?;
-        
+
         // Agent indices are 1-based for blackboard, but 0-based for masks
         let mask_index = (agent_index - 1) as usize;
         let mask_idx = mask_index / 64;
         let bit_idx = mask_index % 64;
+
+        // IPC-03: Bounds-check mask index to prevent out-of-bounds panic
+        if mask_idx >= state.approve_mask.len() {
+            return Err(SwarmIpcError::AccessViolation(
+                "invalid agent index or mask bounds exceeded".to_string(),
+            ));
+        }
 
         if approve {
             state.approve_mask[mask_idx] |= 1 << bit_idx;
@@ -293,7 +325,8 @@ impl CollectiveBlackboard {
             return ConsensusResult::Vetoed;
         }
 
-        let total_approvals = state.approve_mask[0].count_ones() + state.approve_mask[1].count_ones();
+        let total_approvals =
+            state.approve_mask[0].count_ones() + state.approve_mask[1].count_ones();
         if total_approvals >= state.quorum_threshold as u32 {
             ConsensusResult::Approved
         } else {
@@ -396,11 +429,7 @@ impl<'a> DelegationConsensus<'a> {
     }
 
     /// Casts a vote on the active delegation proposal.
-    pub fn cast_vote(
-        &self,
-        agent_index: u8,
-        approve: bool,
-    ) -> Result<(), SwarmIpcError> {
+    pub fn cast_vote(&self, agent_index: u8, approve: bool) -> Result<(), SwarmIpcError> {
         if agent_index == 0 || agent_index > 128 {
             return Err(SwarmIpcError::AccessViolation(format!(
                 "Invalid agent index: {}",
@@ -527,11 +556,11 @@ mod tests {
 
         // Check consensus (Pending as 1 < 2)
         assert_eq!(state.approve_mask[0].count_ones(), 1);
-        
+
         // Agent 2 approves
         let bit_idx2 = 1;
         state.approve_mask[0] |= 1 << bit_idx2;
-        
+
         assert_eq!(state.approve_mask[0].count_ones(), 2);
     }
 
@@ -541,12 +570,12 @@ mod tests {
             quorum_threshold: 1,
             ..Default::default()
         };
-        
+
         // Approve
         state.approve_mask[0] |= 1 << 5;
         // Veto
         state.veto_mask[0] |= 1 << 10;
-        
+
         // Manual verification of the logic used in check_consensus
         let has_veto = state.veto_mask[0] != 0 || state.veto_mask[1] != 0;
         assert!(has_veto);

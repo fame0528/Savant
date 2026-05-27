@@ -247,10 +247,7 @@ pub enum ContinuationError {
     },
 
     #[error("Task expired for agent {agent_id} — deadline was {deadline_ms}ms")]
-    TaskExpired {
-        agent_id: String,
-        deadline_ms: u64,
-    },
+    TaskExpired { agent_id: String, deadline_ms: u64 },
 }
 
 impl Default for ContinuationEngine {

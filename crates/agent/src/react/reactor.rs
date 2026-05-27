@@ -4,6 +4,24 @@ use savant_core::traits::MemoryBackend;
 use savant_core::types::ChatMessage;
 use tracing::{info, warn};
 
+/// Extracts data references from tool arguments for taint tracking.
+/// Looks for patterns like "web:", "file:", "memory:" prefixes.
+fn extract_data_refs(payload: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    // Simple pattern matching for data references
+    for prefix in &["web:", "file:", "memory:", "external:"] {
+        if let Some(start) = payload.find(prefix) {
+            // Extract the reference up to the next whitespace or quote
+            let end = payload[start..]
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '}' || c == ']')
+                .map(|i| start + i)
+                .unwrap_or(payload.len());
+            refs.push(payload[start..end].to_string());
+        }
+    }
+    refs
+}
+
 /// Outcome of heuristic resolution attempt.
 /// Signals to the agent loop whether to continue with a hint, rollback state, or abort.
 pub(crate) enum HeuristicOutcome {
@@ -62,6 +80,30 @@ impl<M: MemoryBackend> AgentLoop<M> {
     pub(crate) async fn execute_tool(&self, name: &str, args: &str) -> Result<String, SavantError> {
         // CRITICAL: Full cryptographic verification via SecurityAuthority when available
         if let (Some(token), Some(authority)) = (&self.security_token, &self.security_authority) {
+            // Check token expiry before verification
+            if token.is_expired() {
+                warn!(
+                    "[{}] Security token expired for tool [{}]. Requesting refresh.",
+                    self.agent_id, name
+                );
+                // Attempt to get a fresh ephemeral token from the broker
+                let _resource = format!("savant://tools/{}", name);
+                if let Ok(_ephemeral) = self
+                    .credential_broker
+                    .get_credential(
+                        "openrouter",
+                        &self.agent_id,
+                        std::time::Duration::from_secs(3600),
+                    )
+                    .await
+                {
+                    info!(
+                        "[{}] CredentialBroker: issued fresh token for tool [{}]",
+                        self.agent_id, name
+                    );
+                }
+                return Err(SavantError::AuthError("CCT token expired".to_string()));
+            }
             let resource = format!("savant://tools/{}", name);
             authority
                 .verify_token_and_action(token, self.agent_id_hash, &resource, "execute")
@@ -80,19 +122,86 @@ impl<M: MemoryBackend> AgentLoop<M> {
         for tool in &self.tools {
             if tool.name().to_lowercase() == name.to_lowercase() {
                 let mut payload = serde_json::from_str(args).map_err(|e| {
-                    warn!("[{}] Failed to parse tool args for '{}': {}. Args: {}", self.agent_id, name, e, args);
-                    SavantError::Unknown(format!("Invalid JSON arguments for tool '{}': {}", name, e))
+                    warn!(
+                        "[{}] Failed to parse tool args for '{}': {}. Args: {}",
+                        self.agent_id, name, e, args
+                    );
+                    SavantError::Unknown(format!(
+                        "Invalid JSON arguments for tool '{}': {}",
+                        name, e
+                    ))
                 })?;
 
-                // Coerce arguments against tool's JSON Schema
+                // Validate and coerce arguments against tool's JSON Schema
                 let schema = tool.parameters_schema();
                 if schema.get("type").is_some() {
+                    // Schema validation (lenient — log warnings, don't block)
+                    if let Err(e) = crate::tools::schema_validator::validate_tool_schema(&schema) {
+                        warn!(
+                            "[{}] Tool schema validation warning for '{}': {:?}",
+                            self.agent_id, name, e
+                        );
+                    }
+                    // Coerce arguments
                     payload = crate::tools::coercion::prepare_tool_params(&payload, &schema);
+                }
+
+                // Taint tracking: check if tool arguments contain references to untrusted data
+                let payload_str = payload.to_string();
+                let data_refs: Vec<String> = extract_data_refs(&payload_str);
+                for data_id in &data_refs {
+                    if let Some(tag) = self.taint_tracker.get_tag(data_id) {
+                        if tag.requires_human_verification() {
+                            warn!(
+                                "[{}] Tool '{}' accessing untrusted data '{}': trust={:.2}, requires_human_verification=true",
+                                self.agent_id, name, data_id, tag.trust_level
+                            );
+                        }
+                        if self.taint_tracker.requires_verification(data_id) {
+                            warn!(
+                                "[{}] Tool '{}' accessing data requiring verification '{}': trust={:.2}",
+                                self.agent_id, name, data_id, tag.trust_level
+                            );
+                        }
+                        // is_trusted takes a threshold parameter (0.5 = moderate trust)
+                        if !self.taint_tracker.is_trusted(data_id, 0.5) {
+                            warn!(
+                                "[{}] Tool '{}' accessing untrusted data '{}': trust={:.2}",
+                                self.agent_id, name, data_id, tag.trust_level
+                            );
+                        }
+                    }
+                }
+
+                // Compound taint: if multiple data sources are referenced, mark compound
+                // Note: add_transformation is on TaintTag (cloned), used for audit trail
+                if data_refs.len() > 1 {
+                    for data_id in &data_refs {
+                        if let Some(mut tag) = self.taint_tracker.get_tag(data_id) {
+                            tag.add_transformation(&format!("compound_with_{}", data_refs.len()));
+                            // Re-tag with the transformed version
+                            self.taint_tracker.tag(data_id, tag);
+                        }
+                    }
+                }
+
+                // Taint monitoring: log count of tracked data items
+                let taint_count = self.taint_tracker.count();
+                if taint_count > 100 {
+                    warn!(
+                        "[{}] Taint tracker has {} tracked items — clearing oldest",
+                        self.agent_id, taint_count
+                    );
+                    // Clear all taint entries when tracker gets too large
+                    // clear() takes a data_id — clear each ref individually
+                    for data_id in &data_refs {
+                        self.taint_tracker.clear(data_id);
+                    }
                 }
 
                 // Execute with timeout
                 let timeout_secs = tool.timeout_secs();
-                let _max_output = tool.max_output_chars();
+                let max_output = tool.max_output_chars();
                 let tool_clone = tool.clone();
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(timeout_secs),
@@ -103,14 +212,35 @@ impl<M: MemoryBackend> AgentLoop<M> {
                 return match result {
                     Ok(inner_result) => {
                         inner_result.map(|output| {
+                            // Taint tagging: tag tool results based on tool type
+                            let data_id = format!(
+                                "tool:{}:{}",
+                                name,
+                                self.tool_error_count
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                            );
+                            let taint = match name {
+                                "file_read" | "file_write" | "file_create" | "file_move"
+                                | "file_delete" | "file_atomic_edit" => {
+                                    savant_security::continuous::taint::TaintTag::user_file()
+                                }
+                                "shell" | "process" | "exec" => {
+                                    savant_security::continuous::taint::TaintTag::system()
+                                }
+                                "memory_recall" | "memory_consolidate" => {
+                                    savant_security::continuous::taint::TaintTag::nrem_replay()
+                                }
+                                _ => savant_security::continuous::taint::TaintTag::system(),
+                            };
+                            self.taint_tracker.tag(&data_id, taint);
+
+                            // PB-11: Truncate native tool output using tool's configured limit
+                            let truncated = truncate_output(&output, max_output);
                             // Use Compact engine for L1 tool output compression
                             crate::compact::integration::compact_output_sync(
-                                name,
-                                args,
-                                0,
-                                &output,
-                                None,
-                            ).output
+                                name, args, 0, &truncated, None,
+                            )
+                            .output
                         })
                     }
                     Err(_) => Err(SavantError::Unknown(format!(
@@ -128,7 +258,9 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         if let Some(metrics) = &self.echo_metrics {
                             metrics.record_outcome(true);
                         }
-                        return Ok(res);
+                        // Truncate large outputs to prevent context overflow
+                        let truncated = truncate_output(&res, MAX_TOOL_OUTPUT_CHARS);
+                        return Ok(truncated);
                     }
                     Err(e) => {
                         if let Some(metrics) = &self.echo_metrics {
@@ -194,31 +326,21 @@ impl<M: MemoryBackend> AgentLoop<M> {
     }
 }
 
+/// Maximum tool output size in characters before truncation.
+const MAX_TOOL_OUTPUT_CHARS: usize = 50_000;
+
 /// Truncate tool output with head+tail preservation.
-/// Uses char-boundary-aware slicing to prevent UTF-8 panics on multi-byte content.
-#[allow(dead_code)]
+/// Uses char count (not byte count) for accurate multi-byte content handling.
 fn truncate_output(output: &str, max_chars: usize) -> String {
-    if output.len() <= max_chars {
+    let char_count = output.chars().count();
+    if char_count <= max_chars {
         return output.to_string();
     }
     let head_size = (max_chars * 60) / 100;
     let tail_size = (max_chars * 40) / 100;
 
-    // Find safe char boundary for head slice
-    let mut head_end = head_size.min(output.len());
-    while head_end > 0 && !output.is_char_boundary(head_end) {
-        head_end -= 1;
-    }
+    let head: String = output.chars().take(head_size).collect();
+    let tail: String = output.chars().skip(char_count - tail_size).collect();
 
-    // Find safe char boundary for tail slice
-    let mut tail_start = output.len().saturating_sub(tail_size);
-    while tail_start < output.len() && !output.is_char_boundary(tail_start) {
-        tail_start += 1;
-    }
-
-    format!(
-        "{}\n\n[... truncated ...]\n\n{}",
-        &output[..head_end],
-        &output[tail_start..]
-    )
+    format!("{}\n\n[... truncated ...]\n\n{}", head, tail)
 }

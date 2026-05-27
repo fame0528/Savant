@@ -93,6 +93,19 @@ consolidation_threshold = 50
 enable_blocklist_sync = true
 threat_intel_sync_interval_secs = 600
 
+[privacy]
+enabled = false
+sensitivity_threshold = 0.7
+local_models = ["gemma4"]
+cloud_models = ["openrouter/claude-sonnet-4", "openai/gpt-4o"]
+log_decisions = true
+
+[trajectory]
+enabled = true
+output_dir = "./data/trajectories"
+compress_tool_results = true
+max_file_size_mb = 100
+
 [wasm]
 max_instances = 120
 fuel_limit = 50000000
@@ -108,8 +121,16 @@ agents_path = "./workspaces"
 log_level = "info"
 log_color = true
 enable_tracing = false
+panopticon_enabled = true
 
 [mcp]
+# MCP (Model Context Protocol) server endpoints.
+# Each entry connects on startup and exposes discovered tools to agents.
+# Example:
+#   servers = [
+#     { name = "filesystem", url = "ws://localhost:3001/mcp" },
+#     { name = "github", url = "ws://localhost:3002/mcp", auth_token = "ghp_..." },
+#   ]
 servers = []
 
 # Continuous Awareness Architecture
@@ -187,3 +208,37 @@ vault_path = ""
 sync_interval_secs = 300
 max_files = 15000
 cold_storage_days = 90
+
+# External service provider integrations.
+# Each provider is gated — unconfigured providers are silently skipped.
+# Example:
+#   [integrations.gmail]
+#   access_token = "ya29..."
+#   max_messages = 50
+#   label_filters = ["INBOX", "IMPORTANT"]
+#
+#   [integrations.notion]
+#   integration_token = "secret_..."
+#   database_ids = []
+#   max_pages = 50
+[integrations]
+
+# Local image/video generation
+# Enables zero-cost, cross-platform generation via local models.
+# Phase 1: SVG generation (zero VRAM, always available)
+# Phase 2: Image generation via stable-diffusion.cpp (8GB+ VRAM)
+# Phase 3: Video generation via Wan2.1/LTX-2.3 (8GB+ VRAM)
+[generation]
+enabled = true
+default_backend = "auto"  # auto|svg|diffusion
+default_model = "sd3.5-medium-q5"
+max_concurrent = 1
+cooldown_ms = 5000
+output_dir = ".savant/generated/images"
+cache_enabled = true
+cache_max_size_mb = 1024
+
+[generation.models]
+# Models are downloaded on first use from HuggingFace
+# sd3.5-medium-q5 = { url = "huggingface://stable-diffusion-3.5-medium-gguf", size_mb = 5110 }
+# flux2-klein-4b = { url = "huggingface://FLUX.2-klein-gguf", size_mb = 13000 }

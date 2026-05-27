@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -192,8 +193,8 @@ impl ChannelAdapter for RedditAdapter {
         if event.event_type != "chat.message" {
             return Ok(());
         }
-        let payload: serde_json::Value =
-            serde_json::from_str(&event.payload).map_err(|e| SavantError::Unknown(e.to_string()))?;
+        let payload: serde_json::Value = serde_json::from_str(&event.payload)
+            .map_err(|e| SavantError::Unknown(e.to_string()))?;
         let content = payload["content"].as_str().unwrap_or("");
         let session_id = payload["session_id"].as_str().unwrap_or("");
 
@@ -211,6 +212,7 @@ impl ChannelAdapter for RedditAdapter {
         self.nexus
             .event_bus
             .send(event)
-            .map(|_| ()).map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
+            .map(|_| ())
+            .map_err(|e| SavantError::Unknown(format!("Event bus send failed: {}", e)))
     }
 }

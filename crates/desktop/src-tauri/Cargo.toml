@@ -1,7 +1,8 @@
 [package]
 name = "savant-desktop"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-ico"] }
@@ -28,3 +29,6 @@ custom-protocol = ["tauri/custom-protocol"]
 [dev-dependencies]
 uuid = { version = "1.0", features = ["v4"] }
 serde_json = { workspace = true }
+
+[lints]
+workspace = true

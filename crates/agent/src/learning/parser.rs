@@ -79,8 +79,7 @@ impl LearningsParser {
             .map_err(SavantError::IoError)?;
 
         for entry in &new_entries {
-            let json =
-                serde_json::to_string(entry).map_err(SavantError::SerializationError)?;
+            let json = serde_json::to_string(entry).map_err(SavantError::SerializationError)?;
             use std::io::Write;
             writeln!(file, "{}", json).map_err(SavantError::IoError)?;
         }

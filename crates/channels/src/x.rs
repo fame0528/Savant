@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -67,8 +68,12 @@ impl XAdapter {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(60);
-            warn!("[X] Rate limited. Reset in {}s", reset);
-            tokio::time::sleep(Duration::from_secs(reset)).await;
+            let sleep_secs = reset.min(60);
+            warn!(
+                "[X] Rate limited. Reset in {}s (capped to {}s)",
+                reset, sleep_secs
+            );
+            tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
             return Ok(vec![]);
         }
 
@@ -103,8 +108,12 @@ impl XAdapter {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(60);
-            warn!("[X] Rate limited on DM send. Reset in {}s", reset);
-            tokio::time::sleep(Duration::from_secs(reset)).await;
+            let sleep_secs = reset.min(60);
+            warn!(
+                "[X] Rate limited on DM send. Reset in {}s (capped to {}s)",
+                reset, sleep_secs
+            );
+            tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
             return Err(SavantError::Unknown("X DM send rate limited".to_string()));
         }
 
@@ -132,9 +141,8 @@ impl XAdapter {
                 while let Ok(event) = event_rx.recv().await {
                     if event.event_type == "chat.message" {
                         if let Ok(p) = serde_json::from_str::<serde_json::Value>(&event.payload) {
-                            let is_for = p["recipient"]
-                                .as_str()
-                                .is_some_and(|r| r.starts_with("x:"));
+                            let is_for =
+                                p["recipient"].as_str().is_some_and(|r| r.starts_with("x:"));
                             let is_assistant = p["role"].as_str() == Some("Assistant");
                             if is_assistant || is_for {
                                 let content = p["content"].as_str().unwrap_or("");

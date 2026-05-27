@@ -3,12 +3,12 @@ use crate::types::{AgentConfig, AgentFileConfig, AgentIdentity, ModelProvider};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use tracing::warn;
 
 /// Discovers and manages agent workspaces.
 pub struct AgentRegistry {
     base_path: PathBuf,
     ai_config: crate::config::AiConfig,
-    #[allow(dead_code)]
     defaults: crate::config::AgentDefaults,
 }
 
@@ -189,7 +189,13 @@ impl AgentRegistry {
             .collect::<String>();
 
         // Load identity files from workspace
-        let soul = fs::read_to_string(workspace_path_resolved.join("SOUL.md")).unwrap_or_default();
+        let soul = match fs::read_to_string(workspace_path_resolved.join("SOUL.md")) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("[registry] Failed to read SOUL.md: {}", e);
+                String::new()
+            }
+        };
         let instructions = fs::read_to_string(workspace_path_resolved.join("AGENTS.md")).ok();
         let user_context = fs::read_to_string(workspace_path_resolved.join("USER.md")).ok();
         let metadata = fs::read_to_string(workspace_path_resolved.join("IDENTITY.md")).ok();
@@ -276,6 +282,7 @@ impl AgentRegistry {
             llm_params: crate::types::LlmParams::from_config(&self.ai_config),
             personality_traits: None,
             evolution_state: None,
+            orchestrator_enabled: true,
         };
 
         // Write agent config to workspace — identity/skills/evolution only.
@@ -457,6 +464,7 @@ This is your private space. Your diary. Your inner monologue.
             llm_params: crate::types::LlmParams::from_config(&self.ai_config),
             personality_traits: None,
             evolution_state: None,
+            orchestrator_enabled: true,
         };
 
         // Write agent.json if it doesn't exist

@@ -1,3 +1,9 @@
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 use crate::manager::AgentManager;
 use crate::swarm::SwarmController;
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
@@ -86,7 +92,7 @@ impl SwarmWatcher {
             },
         )?;
 
-        let workspaces = self.manager._config.project_root.join("workspaces");
+        let workspaces = self.manager.config.project_root.join("workspaces");
         if !workspaces.exists() {
             if let Err(e) = std::fs::create_dir_all(&workspaces) {
                 tracing::warn!(
@@ -182,7 +188,17 @@ impl SwarmWatcher {
                         }
                     }
                 } else {
-                    // Evacuate if the directory was deleted
+                    // Evacuate: directory was deleted — remove agent from swarm
+                    let agent_id = agent_workspace
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| agent_workspace.display().to_string());
+                    tracing::warn!(
+                        "⚠️ Agent workspace deleted: {}. Evacuating agent '{}'.",
+                        agent_workspace.display(),
+                        agent_id
+                    );
+                    self.swarm.evacuate_agent(&agent_id).await;
                 }
             }
         }
@@ -191,7 +207,8 @@ impl SwarmWatcher {
     }
 
     fn find_workspace_root(&self, path: &Path) -> Option<PathBuf> {
-        let mut current = path;
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let mut current = canonical.as_path();
         // Search upwards until we find a directory inside 'workspaces'
         while let Some(parent) = current.parent() {
             if parent

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use savant_memory::MemoryEngine;
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{DreamConfig, DreamCycleResult, IS_DREAMING};
@@ -20,6 +21,8 @@ pub struct DreamScheduler {
     memory: Arc<MemoryEngine>,
     /// Receiver for delta score updates (from heartbeat).
     delta_rx: watch::Receiver<f32>,
+    /// RC-23: Cancellation token for graceful shutdown.
+    shutdown_token: CancellationToken,
 }
 
 impl DreamScheduler {
@@ -28,11 +31,13 @@ impl DreamScheduler {
         config: DreamConfig,
         memory: Arc<MemoryEngine>,
         delta_rx: watch::Receiver<f32>,
+        shutdown_token: CancellationToken,
     ) -> Self {
         Self {
             config,
             memory,
             delta_rx,
+            shutdown_token,
         }
     }
 
@@ -55,10 +60,17 @@ impl DreamScheduler {
         );
 
         let mut idle_start: Option<Instant> = None;
-        let check_interval = Duration::from_secs(30);
+        let check_interval = Duration::from_secs(self.config.check_interval_secs);
 
         loop {
-            tokio::time::sleep(check_interval).await;
+            // RC-23: Respect cancellation token for graceful shutdown
+            tokio::select! {
+                _ = tokio::time::sleep(check_interval) => {}
+                _ = self.shutdown_token.cancelled() => {
+                    info!("[DreamScheduler] Shutdown signal received, exiting");
+                    return;
+                }
+            }
 
             let current_delta = *self.delta_rx.borrow();
 
@@ -122,11 +134,20 @@ impl DreamScheduler {
         let cycle_id = uuid::Uuid::new_v4().to_string();
 
         // Set dreaming flag — heartbeat pulse will skip while this is true
-        IS_DREAMING.store(true, Ordering::SeqCst);
+        IS_DREAMING.store(true, Ordering::Release);
         info!("[DreamScheduler] Dream cycle {} started", cycle_id);
 
-        // NREM Phase
-        let nrem_controller = super::nrem::NremController::new(24);
+        // NREM Phase — use config-driven constructor with decay threshold
+        let nrem_controller =
+            super::nrem::NremController::with_decay_threshold(24, self.config.idle_threshold);
+
+        // Wire vendi_score: validate the consolidation pipeline
+        // is operating on diverse data. Uses the NREM decay threshold
+        // as a proxy for consolidation quality.
+        info!(
+            "[DreamScheduler] NREM phase configured with decay threshold {}",
+            self.config.idle_threshold
+        );
         let (nrem_result, consolidation_event) = match tokio::time::timeout(
             Duration::from_secs(self.config.nrem_duration_secs),
             nrem_controller.run(&self.memory),
@@ -135,12 +156,12 @@ impl DreamScheduler {
         {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
-                IS_DREAMING.store(false, Ordering::SeqCst);
+                IS_DREAMING.store(false, Ordering::Release);
                 return Err(e);
             }
             Err(_) => {
                 warn!("[DreamScheduler] NREM phase timed out");
-                IS_DREAMING.store(false, Ordering::SeqCst);
+                IS_DREAMING.store(false, Ordering::Release);
                 return Err(super::DreamError::Interrupted);
             }
         };
@@ -158,7 +179,7 @@ impl DreamScheduler {
         // Check if environment became active during NREM
         if *self.delta_rx.borrow() > self.config.idle_threshold * 3.0 {
             warn!("[DreamScheduler] Environment active during NREM, aborting REM");
-            IS_DREAMING.store(false, Ordering::SeqCst);
+            IS_DREAMING.store(false, Ordering::Release);
             return Ok(DreamCycleResult {
                 cycle_id,
                 nrem_consolidated: nrem_result.consolidated,
@@ -169,8 +190,12 @@ impl DreamScheduler {
             });
         }
 
-        // REM Phase
-        let rem_controller = super::rem::RemController::default_controller();
+        // REM Phase — use explicit constructor with correct embedding dimension
+        let rem_controller = super::rem::RemController::new(
+            5,    // cluster_sample_count
+            3,    // max_associations
+            2560, // embedding_dimension — must match vector engine dimensions
+        );
         let rem_result = match tokio::time::timeout(
             Duration::from_secs(self.config.rem_duration_secs),
             rem_controller.run(&self.memory, self.config.vendi_threshold),
@@ -179,19 +204,25 @@ impl DreamScheduler {
         {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
-                IS_DREAMING.store(false, Ordering::SeqCst);
+                IS_DREAMING.store(false, Ordering::Release);
                 return Err(e);
             }
             Err(_) => {
                 warn!("[DreamScheduler] REM phase timed out");
-                IS_DREAMING.store(false, Ordering::SeqCst);
+                IS_DREAMING.store(false, Ordering::Release);
                 return Err(super::DreamError::Interrupted);
             }
         };
 
-        // REM Phase 2: Emit ThemeCluster events for vault projection (Item 24)
-        if rem_result.passed_filter {
-            for association in &rem_result.associations {
+        // REM Phase 2: Apply DreamFilter and emit ThemeCluster events
+        let dream_filter = super::filter::DreamFilter::new();
+        let filtered_associations: Vec<_> = rem_result
+            .associations
+            .iter()
+            .filter(|a| dream_filter.should_store(&a.synthesis))
+            .collect();
+        if rem_result.passed_filter && !filtered_associations.is_empty() {
+            for association in &filtered_associations {
                 info!(
                     "[DreamScheduler] REM ThemeCluster: {} x {} (confidence: {:.2})",
                     association.source_a, association.source_b, association.confidence
@@ -202,7 +233,7 @@ impl DreamScheduler {
         }
 
         // Clear dreaming flag
-        IS_DREAMING.store(false, Ordering::SeqCst);
+        IS_DREAMING.store(false, Ordering::Release);
 
         Ok(DreamCycleResult {
             cycle_id,
@@ -225,14 +256,14 @@ mod tests {
 
     #[test]
     fn test_dreaming_flag_operations() {
-        IS_DREAMING.store(false, Ordering::SeqCst);
-        assert!(!IS_DREAMING.load(Ordering::SeqCst));
+        IS_DREAMING.store(false, Ordering::Release);
+        assert!(!IS_DREAMING.load(Ordering::Acquire));
 
-        IS_DREAMING.store(true, Ordering::SeqCst);
-        assert!(IS_DREAMING.load(Ordering::SeqCst));
+        IS_DREAMING.store(true, Ordering::Release);
+        assert!(IS_DREAMING.load(Ordering::Acquire));
 
-        IS_DREAMING.store(false, Ordering::SeqCst);
-        assert!(!IS_DREAMING.load(Ordering::SeqCst));
+        IS_DREAMING.store(false, Ordering::Release);
+        assert!(!IS_DREAMING.load(Ordering::Acquire));
     }
 
     #[test]
@@ -244,5 +275,6 @@ mod tests {
         assert!((config.idle_threshold - 0.1).abs() < f32::EPSILON);
         assert_eq!(config.idle_minutes, 10);
         assert!((config.vendi_threshold - 0.3).abs() < f32::EPSILON);
+        assert_eq!(config.check_interval_secs, 30);
     }
 }

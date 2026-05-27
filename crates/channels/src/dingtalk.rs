@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -33,7 +34,7 @@ impl DingTalkAdapter {
     }
 
     /// Gets or refreshes the access_token.
-    async fn _get_token(&self) -> Result<String, SavantError> {
+    async fn get_token(&self) -> Result<String, SavantError> {
         {
             let lock = self._access_token.lock().await;
             if let Some(ref token) = *lock {
@@ -67,9 +68,11 @@ impl DingTalkAdapter {
 
     /// Sends a text message to a group chat.
     async fn send_text(&self, chat_id: &str, text: &str) -> Result<(), SavantError> {
+        let token = self.get_token().await?;
         let resp: serde_json::Value = self
             .http
             .post("https://api.dingtalk.com/v1.0/robot/groupHeaders/send")
+            .bearer_auth(token)
             .json(&serde_json::json!({
                 "robotCode": self.config.robot_code,
                 "openConversationId": chat_id,

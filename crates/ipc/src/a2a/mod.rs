@@ -16,6 +16,14 @@ pub mod result_router;
 
 pub use agent_card::AgentCard;
 pub use context::ContextPackage;
-pub use protocol::{A2AMessageType, A2AEnvelope, Artifact, ArtifactPart, ArtifactPartType, DelegationTask, TaskState};
-pub use queues::{AgentTaskQueue, TaskQueueError, DEFAULT_QUEUE_CAPACITY, MAX_QUEUE_RETRIES, QUEUE_FULL_BACKOFF_MS};
-pub use result_router::{DelegationResult, RejectionReason, ResultRouter, ResultRouterError, TaskStatusUpdate};
+pub use protocol::{
+    A2AEnvelope, A2AMessageType, Artifact, ArtifactPart, ArtifactPartType, DelegationTask,
+    TaskState,
+};
+pub use queues::{
+    AgentTaskQueue, TaskQueueError, DEFAULT_QUEUE_CAPACITY, MAX_QUEUE_RETRIES,
+    QUEUE_FULL_BACKOFF_MS,
+};
+pub use result_router::{
+    DelegationResult, RejectionReason, ResultRouter, ResultRouterError, TaskStatusUpdate,
+};

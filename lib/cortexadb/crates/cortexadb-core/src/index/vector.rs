@@ -331,9 +331,9 @@ impl VectorIndex {
 
         // Also add to HNSW backend if enabled
         if let Some(ref hnsw) = self.hnsw_backend {
-        if let Err(e) = hnsw.add(id, &embedding) {
-            log::debug!("[cortexadb] HNSW add failed (non-critical): {}", e);
-        }
+            if let Err(e) = hnsw.add(id, &embedding) {
+                log::debug!("[cortexadb] HNSW add failed (non-critical): {}", e);
+            }
         }
 
         Ok(())
@@ -369,9 +369,9 @@ impl VectorIndex {
 
             // Also remove from HNSW backend if enabled
             if let Some(ref hnsw) = self.hnsw_backend {
-            if let Err(e) = hnsw.remove(id) {
-                log::debug!("[cortexadb] HNSW remove failed (non-critical): {}", e);
-            }
+                if let Err(e) = hnsw.remove(id) {
+                    log::debug!("[cortexadb] HNSW remove failed (non-critical): {}", e);
+                }
             }
         }
         Ok(())

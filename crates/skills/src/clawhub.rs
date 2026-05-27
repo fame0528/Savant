@@ -270,12 +270,14 @@ impl ClawHubClient {
         scanner: &SecurityScanner,
     ) -> Result<InstallResult, ClawHubError> {
         // Validate slug format
-        let slug_regex = regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
+        use std::sync::LazyLock;
+        static SLUG_REGEX: LazyLock<regex::Regex> =
+            LazyLock::new(|| regex::Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
         let normalized_slug = slug.replace('/', "-");
         if slug.contains("..")
             || slug.starts_with('.')
             || slug.starts_with('-')
-            || !slug_regex.is_match(&normalized_slug)
+            || !SLUG_REGEX.is_match(&normalized_slug)
         {
             return Err(ClawHubError::ParseError(format!(
                 "Invalid slug '{}': must match ^[a-zA-Z0-9_-]+$ (after replacing / with -), \
@@ -350,7 +352,11 @@ impl ClawHubClient {
                 }
             }
             if let Err(e) = tokio::fs::write(&file_path, &file.content).await {
-                warn!("[clawhub] Failed to write file {}: {}", file_path.display(), e);
+                warn!(
+                    "[clawhub] Failed to write file {}: {}",
+                    file_path.display(),
+                    e
+                );
             }
         }
 

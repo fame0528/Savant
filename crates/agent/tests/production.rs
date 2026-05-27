@@ -5,13 +5,14 @@ use pqcrypto_dilithium::dilithium2;
 use savant_agent::manager::AgentManager;
 use savant_agent::swarm::SwarmController;
 use savant_core::bus::NexusBridge;
-use savant_core::config::Config;
+use savant_core::config::{Config, IntegrationsConfig};
 use savant_core::db::Storage;
 use savant_core::error::SavantError;
 use savant_core::traits::LlmProvider;
 use savant_core::types::{
     AgentConfig, AgentIdentity, AgentOutputChannel, ChatChunk, ChatMessage, ModelProvider,
 };
+use savant_panopticon::replay::ReplayRecorder;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ impl LlmProvider for MockLlmProvider {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_production_swarm_initialization_50_agents() {
     // 1. Setup temp environment
     let base_temp = std::env::temp_dir().join(format!("savant_test_{}", uuid::Uuid::new_v4()));
@@ -66,8 +67,9 @@ async fn test_production_swarm_initialization_50_agents() {
 
     // 3. Create dependencies
     let nexus = Arc::new(NexusBridge::new());
-    let storage =
-        Arc::new(Storage::new(base_temp.join("storage"), 100_000).expect("Failed to open test storage"));
+    let storage = Arc::new(
+        Storage::new(base_temp.join("storage"), 100_000).expect("Failed to open test storage"),
+    );
 
     let config = Config::default();
     let manager = Arc::new(AgentManager::new(config));
@@ -94,6 +96,7 @@ async fn test_production_swarm_initialization_50_agents() {
             llm_params: Default::default(),
             personality_traits: None,
             evolution_state: None,
+            orchestrator_enabled: true,
         });
     }
 
@@ -105,6 +108,7 @@ async fn test_production_swarm_initialization_50_agents() {
         blackboard_name: format!("test_blackboard_{}", uuid::Uuid::new_v4()),
         collective_name: format!("test_collective_{}", uuid::Uuid::new_v4()),
         config_file: None,
+        ..Default::default()
     };
 
     let controller = SwarmController::new(
@@ -118,6 +122,10 @@ async fn test_production_swarm_initialization_50_agents() {
         pqc_authority,
         pqc_signing_key,
         vec![], // No MCP servers in test
+        Arc::new(ReplayRecorder::new(1000)),
+        IntegrationsConfig::default(),
+        None, // No SchemaIndex in test
+        None, // No LspManager in test
     )
     .await
     .expect("Failed to create SwarmController");
@@ -159,6 +167,7 @@ async fn test_agent_panic_recovery_logic() {
         blackboard_name: format!("panic_blackboard_{}", uuid::Uuid::new_v4()),
         collective_name: format!("panic_collective_{}", uuid::Uuid::new_v4()),
         config_file: None,
+        ..Default::default()
     };
 
     let controller = SwarmController::new(
@@ -181,9 +190,11 @@ async fn test_agent_panic_recovery_logic() {
             llm_params: Default::default(),
             personality_traits: None,
             evolution_state: None,
+            orchestrator_enabled: true,
         }],
         Arc::new(
-            Storage::new(base_temp.join("panic_storage"), 100_000).expect("Failed to open panic storage"),
+            Storage::new(base_temp.join("panic_storage"), 100_000)
+                .expect("Failed to open panic storage"),
         ),
         Arc::new(AgentManager::new(Config::default())),
         Arc::new(NexusBridge::new()),
@@ -192,6 +203,10 @@ async fn test_agent_panic_recovery_logic() {
         pqc_authority,
         pqc_signing_key,
         vec![], // No MCP servers in test
+        Arc::new(ReplayRecorder::new(1000)),
+        IntegrationsConfig::default(),
+        None, // No SchemaIndex in test
+        None, // No LspManager in test
     )
     .await
     .unwrap();
@@ -208,7 +223,7 @@ async fn test_agent_panic_recovery_logic() {
     assert!(dead.contains(&"unstable_agent".to_string()));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_500_agent_initialization_scaling() {
     // Audit-grade scaling verification
     let base_temp =
@@ -223,7 +238,8 @@ async fn test_500_agent_initialization_scaling() {
     let (pqc_authority, pqc_signing_key) = dilithium2::keypair();
 
     let storage = Arc::new(
-        Storage::new(base_temp.join("scale_storage"), 100_000).expect("Failed to open scale storage"),
+        Storage::new(base_temp.join("scale_storage"), 100_000)
+            .expect("Failed to open scale storage"),
     );
 
     let nexus = Arc::new(NexusBridge::new());
@@ -250,6 +266,7 @@ async fn test_500_agent_initialization_scaling() {
             llm_params: Default::default(),
             personality_traits: None,
             evolution_state: None,
+            orchestrator_enabled: true,
         });
     }
 
@@ -260,6 +277,7 @@ async fn test_500_agent_initialization_scaling() {
         blackboard_name: format!("scale_blackboard_{}", uuid::Uuid::new_v4()),
         collective_name: format!("scale_collective_{}", uuid::Uuid::new_v4()),
         config_file: None,
+        ..Default::default()
     };
 
     let controller = SwarmController::new(
@@ -273,6 +291,10 @@ async fn test_500_agent_initialization_scaling() {
         pqc_authority,
         pqc_signing_key,
         vec![], // No MCP servers in test
+        Arc::new(ReplayRecorder::new(1000)),
+        IntegrationsConfig::default(),
+        None, // No SchemaIndex in test
+        None, // No LspManager in test
     )
     .await
     .expect("Failed to create Scale Controller");

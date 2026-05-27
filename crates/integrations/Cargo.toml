@@ -1,7 +1,8 @@
 [package]
 name = "savant_integrations"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 savant_core = { workspace = true }
@@ -9,13 +10,14 @@ savant_memory = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = { workspace = true }
 async-trait = "0.1"
+base64 = "0.22"
 thiserror = "1.0"
 dashmap = { workspace = true }
 blake3 = "1.5"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+[lints]
+workspace = true

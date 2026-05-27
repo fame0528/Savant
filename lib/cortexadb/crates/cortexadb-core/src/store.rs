@@ -647,7 +647,10 @@ impl CortexaDBStore {
                 }
                 None => {
                     if let Err(e) = writer.indexes.vector_index_mut().remove(effective.id) {
-                        log::debug!("[cortexadb] Vector index remove failed (entry may not exist): {}", e);
+                        log::debug!(
+                            "[cortexadb] Vector index remove failed (entry may not exist): {}",
+                            e
+                        );
                     }
                 }
             }

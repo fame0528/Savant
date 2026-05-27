@@ -6,16 +6,16 @@
 use arc_swap::ArcSwap;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::{info, instrument};
 use wasmtime::component::Component;
 use wasmtime::Engine;
-use tracing::{info, instrument};
 
 /// Represents an executable capability within the Swarm
 pub struct WasmCapability {
     /// Public name of the tool
     pub name: String,
     /// Monotonically increasing version for this specific tool
-    pub version: u32,
+    pub version: u64,
     /// Pre-JIT compiled Wasmtime Component
     pub module: Component,
     /// Raw WASM bytes for persistence and recovery
@@ -68,17 +68,21 @@ impl HotSwappableRegistry {
     /// 3. Injects the new capability.
     /// 4. Performs an atomic pointer swap.
     #[instrument(skip(self, new_tool_bytes))]
-    pub fn hot_load_component(&self, tool_name: &str, new_tool_bytes: Vec<u8>) -> Result<(), String> {
+    pub fn hot_load_component(
+        &self,
+        tool_name: &str,
+        new_tool_bytes: Vec<u8>,
+    ) -> Result<(), String> {
         info!("JIT Compiling new ECHO component: {}", tool_name);
-        
+
         let new_component = Component::new(&self.engine, &new_tool_bytes)
             .map_err(|e| format!("WASM compilation failed: {}", e))?;
 
         let current_guard = self.active_state.load();
-        
+
         let new_capability = Arc::new(WasmCapability {
             name: tool_name.to_string(),
-            version: current_guard.epoch_id as u32 + 1,
+            version: current_guard.epoch_id + 1,
             module: new_component,
             raw_bytes: new_tool_bytes,
         });
@@ -92,11 +96,16 @@ impl HotSwappableRegistry {
         });
 
         // Store for potential rollback
-        self.previous_state.store(Arc::new(Some(current_guard.clone())));
+        self.previous_state
+            .store(Arc::new(Some(current_guard.clone())));
         // The Atomic Swap
         self.active_state.store(new_epoch);
-        
-        info!("Hot-swap complete for '{}'. Swarm Epoch advanced to {}.", tool_name, current_guard.epoch_id + 1);
+
+        info!(
+            "Hot-swap complete for '{}'. Swarm Epoch advanced to {}.",
+            tool_name,
+            current_guard.epoch_id + 1
+        );
         Ok(())
     }
 
@@ -107,7 +116,10 @@ impl HotSwappableRegistry {
             let old_epoch = rollback_state.epoch_id;
             self.active_state.store(rollback_state.clone());
             self.previous_state.store(Arc::new(None));
-            info!("CRITICAL: Circuit breaker triggered. Rolled back to Epoch {}.", old_epoch);
+            info!(
+                "CRITICAL: Circuit breaker triggered. Rolled back to Epoch {}.",
+                old_epoch
+            );
             Ok(())
         } else {
             Err("No previous epoch available for rollback")

@@ -64,8 +64,11 @@ impl CircuitBreaker {
     fn now_secs() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
+            .map(|d| d.as_secs())
+            .unwrap_or_else(|e| {
+                tracing::warn!("System clock before UNIX epoch: {}, using 0", e);
+                0
+            })
     }
 
     /// Returns the current state of the circuit breaker.

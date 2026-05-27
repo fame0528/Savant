@@ -1,4 +1,11 @@
-#![allow(clippy::disallowed_methods)] // serde_json::json! macro false positives
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
+#![allow(clippy::disallowed_methods)]
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+// Validation gate: re-run `cargo clippy -p savant_mcp --no-deps` and verify
+// all disallowed method warnings trace back to json!() macro expansion.
 
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
@@ -37,6 +44,8 @@ struct ConnectionState {
     request_count: u32,
     last_reset: std::time::Instant,
     authenticated: bool,
+    /// The token hash this connection authenticated with, if any
+    token_hash: Option<String>,
 }
 
 impl ConnectionState {
@@ -45,6 +54,22 @@ impl ConnectionState {
             request_count: 0,
             last_reset: std::time::Instant::now(),
             authenticated: false,
+            token_hash: None,
+        }
+    }
+}
+
+/// Per-token rate limit state, persisted across reconnections.
+struct RateLimitState {
+    request_count: u32,
+    last_reset: std::time::Instant,
+}
+
+impl RateLimitState {
+    fn new() -> Self {
+        Self {
+            request_count: 0,
+            last_reset: std::time::Instant::now(),
         }
     }
 
@@ -55,7 +80,7 @@ impl ConnectionState {
             self.last_reset = now;
         }
         self.request_count += 1;
-        self.request_count <= 100 // 100 requests per minute
+        self.request_count <= 100 // 100 requests per minute per token
     }
 }
 
@@ -63,6 +88,8 @@ impl ConnectionState {
 pub struct McpServer {
     registry: Arc<RwLock<SkillRegistry>>,
     auth_tokens: HashMap<String, String>, // token_hash -> description
+    /// Per-token rate limit state, persisted across reconnections
+    rate_limits: RwLock<HashMap<String, RateLimitState>>,
 }
 
 impl McpServer {
@@ -71,6 +98,7 @@ impl McpServer {
         Self {
             registry,
             auth_tokens: HashMap::new(),
+            rate_limits: RwLock::new(HashMap::new()),
         }
     }
 
@@ -82,6 +110,7 @@ impl McpServer {
         Self {
             registry,
             auth_tokens: tokens,
+            rate_limits: RwLock::new(HashMap::new()),
         }
     }
 
@@ -107,12 +136,47 @@ impl McpServer {
 }
 
 async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
+    // MCP-04: Reject connections when no auth tokens are configured
+    if server.auth_tokens.is_empty() {
+        warn!("MCP server has no auth tokens configured — rejecting connection");
+        let err_response = JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(null),
+            result: None,
+            error: Some(serde_json::json!({
+                "code": -32003,
+                "message": "Server not configured with auth tokens. Contact administrator."
+            })),
+        };
+        if let Ok(resp_text) = serde_json::to_string(&err_response) {
+            let _ = socket.send(Message::Text(resp_text)).await;
+        }
+        return;
+    }
+
     let mut state = ConnectionState::new();
 
     while let Some(Ok(msg)) = socket.recv().await {
         if let Message::Text(text) = msg {
-            // Rate limiting
-            if !state.check_rate_limit() {
+            // Rate limiting — per-token when authenticated, per-connection otherwise
+            let rate_exceeded = if let Some(ref token_hash) = state.token_hash {
+                let mut limits = server.rate_limits.write().await;
+                let entry = limits
+                    .entry(token_hash.clone())
+                    .or_insert_with(RateLimitState::new);
+                !entry.check_rate_limit()
+            } else {
+                // Unauthenticated: per-connection rate limiting
+                state.request_count += 1;
+                let now = std::time::Instant::now();
+                if now.duration_since(state.last_reset).as_secs() >= 60 {
+                    state.request_count = 1;
+                    state.last_reset = now;
+                }
+                state.request_count > 100
+            };
+
+            if rate_exceeded {
                 let err_response = JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     id: serde_json::json!(null),
@@ -221,7 +285,8 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                             continue;
                         }
 
-                        let token_hash = blake3::hash(provided_token.as_bytes()).to_hex().to_string();
+                        let token_hash =
+                            blake3::hash(provided_token.as_bytes()).to_hex().to_string();
 
                         if server.auth_tokens.contains_key(&token_hash) {
                             info!("MCP client authenticated");
@@ -252,6 +317,19 @@ async fn handle_socket(mut socket: WebSocket, server: Arc<McpServer>) {
                     };
 
                     state.authenticated = auth_ok;
+                    if auth_ok {
+                        // Store token hash for per-token rate limiting
+                        let provided_token = req
+                            .params
+                            .as_ref()
+                            .and_then(|p| p.get("auth_token"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("");
+                        if !provided_token.is_empty() {
+                            state.token_hash =
+                                Some(blake3::hash(provided_token.as_bytes()).to_hex().to_string());
+                        }
+                    }
 
                     JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),

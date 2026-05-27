@@ -11,6 +11,7 @@
 //! - `Error` — Something went wrong
 
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -67,7 +68,7 @@ impl std::fmt::Display for ReplayEventType {
 
 /// Replay event recorder. Thread-safe, append-only log.
 pub struct ReplayRecorder {
-    events: Arc<Mutex<Vec<ReplayEvent>>>,
+    events: Arc<Mutex<VecDeque<ReplayEvent>>>,
     max_events: usize,
 }
 
@@ -75,7 +76,7 @@ impl ReplayRecorder {
     /// Creates a new recorder with the given max event capacity.
     pub fn new(max_events: usize) -> Self {
         Self {
-            events: Arc::new(Mutex::new(Vec::with_capacity(max_events))),
+            events: Arc::new(Mutex::new(VecDeque::with_capacity(max_events))),
             max_events,
         }
     }
@@ -84,9 +85,9 @@ impl ReplayRecorder {
     pub async fn record(&self, event: ReplayEvent) {
         let mut events = self.events.lock().await;
         if events.len() >= self.max_events {
-            events.remove(0); // FIFO eviction
+            events.pop_front(); // O(1) FIFO eviction
         }
-        events.push(event);
+        events.push_back(event);
     }
 
     /// Returns all events for an agent, optionally filtered by type.
@@ -152,11 +153,11 @@ mod tests {
             metadata: None,
         };
 
-        let json = serde_json::to_string(&event).unwrap();
+        let json = serde_json::to_string(&event).expect("serialization");
         assert!(json.contains("thought"));
         assert!(json.contains("agent-alpha"));
 
-        let deserialized: ReplayEvent = serde_json::from_str(&json).unwrap();
+        let deserialized: ReplayEvent = serde_json::from_str(&json).expect("deserialization");
         assert_eq!(deserialized.content, "Thinking about the problem");
     }
 
@@ -300,5 +301,91 @@ mod tests {
             .await;
 
         assert_eq!(recorder.count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_recorder_fifo_eviction() {
+        let recorder = ReplayRecorder::new(3);
+        for i in 0..5 {
+            recorder
+                .record(ReplayEvent {
+                    id: i.to_string(),
+                    agent_id: "a".to_string(),
+                    timestamp: i,
+                    event_type: ReplayEventType::Thought,
+                    content: format!("event {}", i),
+                    metadata: None,
+                })
+                .await;
+        }
+        // Only last 3 should remain
+        assert_eq!(recorder.count().await, 3);
+        let events = recorder.get_events("a", None, 10).await;
+        assert_eq!(events[0].id, "2");
+        assert_eq!(events[1].id, "3");
+        assert_eq!(events[2].id, "4");
+    }
+
+    #[tokio::test]
+    async fn test_recorder_filter_by_event_type() {
+        let recorder = ReplayRecorder::new(100);
+        recorder
+            .record(ReplayEvent {
+                id: "1".to_string(),
+                agent_id: "a".to_string(),
+                timestamp: 0,
+                event_type: ReplayEventType::Thought,
+                content: "thought".to_string(),
+                metadata: None,
+            })
+            .await;
+        recorder
+            .record(ReplayEvent {
+                id: "2".to_string(),
+                agent_id: "a".to_string(),
+                timestamp: 1,
+                event_type: ReplayEventType::ToolCall,
+                content: "tool call".to_string(),
+                metadata: None,
+            })
+            .await;
+
+        let thoughts = recorder
+            .get_events("a", Some(ReplayEventType::Thought), 10)
+            .await;
+        assert_eq!(thoughts.len(), 1);
+        assert_eq!(thoughts[0].content, "thought");
+
+        let tool_calls = recorder
+            .get_events("a", Some(ReplayEventType::ToolCall), 10)
+            .await;
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].content, "tool call");
+    }
+
+    #[tokio::test]
+    async fn test_recorder_clear() {
+        let recorder = ReplayRecorder::new(100);
+        recorder
+            .record(ReplayEvent {
+                id: "1".to_string(),
+                agent_id: "a".to_string(),
+                timestamp: 0,
+                event_type: ReplayEventType::Thought,
+                content: "test".to_string(),
+                metadata: None,
+            })
+            .await;
+        assert_eq!(recorder.count().await, 1);
+
+        recorder.clear().await;
+        assert_eq!(recorder.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_recorder_empty_get() {
+        let recorder = ReplayRecorder::new(100);
+        let events = recorder.get_events("nonexistent", None, 10).await;
+        assert!(events.is_empty());
     }
 }

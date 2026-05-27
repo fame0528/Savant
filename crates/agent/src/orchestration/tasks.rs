@@ -3,7 +3,9 @@
 //! Manages persistent, externalized work queues for proactive agents.
 
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -43,18 +45,29 @@ impl TaskMatrix {
         let mut tasks = Vec::new();
 
         for line in content.lines() {
-            if line.starts_with("- [ ]") || line.starts_with("- [/]") || line.starts_with("- [x]") {
+            if line.starts_with("- [ ]")
+                || line.starts_with("- [/]")
+                || line.starts_with("- [x]")
+                || line.starts_with("- [!]")
+            {
                 let status = if line.contains("[ ]") {
                     TaskStatus::Pending
                 } else if line.contains("[/]") {
                     TaskStatus::InProgress
+                } else if line.contains("[!]") {
+                    TaskStatus::Failed
                 } else {
                     TaskStatus::Completed
                 };
 
-                let desc = line[6..].trim().to_string();
+                let desc = line.get(6..).unwrap_or("").trim().to_string();
+                // Content-based ID: same description always produces same ID
+                let mut hasher = DefaultHasher::new();
+                desc.hash(&mut hasher);
+                let id = format!("{:016x}", hasher.finish());
+
                 tasks.push(TaskItem {
-                    id: uuid::Uuid::new_v4().to_string(), // Transient ID for session
+                    id,
                     description: desc,
                     status,
                     priority: 1,
@@ -120,7 +133,10 @@ impl TaskMatrix {
             }
         }
 
-        fs::write(&self.path, new_lines.join("\n"))?;
+        // Atomic write: write to temp file then rename
+        let tmp_path = self.path.with_extension("md.tmp");
+        fs::write(&tmp_path, new_lines.join("\n"))?;
+        fs::rename(&tmp_path, &self.path)?;
         Ok(())
     }
 }

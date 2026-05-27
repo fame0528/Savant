@@ -12,7 +12,7 @@
 //! ```ignore
 //! let ensemble = EnsembleRouter::new(vec![
 //!     ("openrouter/hunter-alpha", 0.7),
-//!     ("openrouter/healer-alpha", 0.5),
+//!     ("openrouter/free", 0.5),
 //! ]);
 //! let result = ensemble.query("Explain recursion").await?;
 //! ```
@@ -146,6 +146,21 @@ impl EnsembleRouter {
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
     }
+
+    /// Returns all providers for Consensus strategy — caller runs them in parallel.
+    pub fn all_providers(&self) -> &[EnsembleProvider] {
+        &self.providers
+    }
+
+    /// Selects the best response from multiple provider responses (Consensus strategy).
+    /// Returns the provider index and response with the highest quality score.
+    pub fn select_consensus(responses: &[ProviderResponse]) -> Option<(usize, &ProviderResponse)> {
+        responses.iter().enumerate().max_by(|(_, a), (_, b)| {
+            Self::score_response(a)
+                .partial_cmp(&Self::score_response(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    }
 }
 
 impl Default for EnsembleRouter {
@@ -155,6 +170,7 @@ impl Default for EnsembleRouter {
 }
 
 #[cfg(test)]
+#[expect(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -184,16 +200,10 @@ mod tests {
         assert_eq!(router.strategy(), &EnsembleStrategy::Fallback);
 
         // First provider should be gemma4 (local default)
-        assert_eq!(
-            router.select_model(0).unwrap().model,
-            "gemma4"
-        );
+        assert_eq!(router.select_model(0).unwrap().model, "gemma4");
 
         // Second should be openrouter/free (cloud fallback)
-        assert_eq!(
-            router.select_model(1).unwrap().model,
-            "openrouter/free"
-        );
+        assert_eq!(router.select_model(1).unwrap().model, "openrouter/free");
     }
 
     #[test]

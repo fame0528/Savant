@@ -1,6 +1,6 @@
 use crate::types::{
-    truncate_content, validate_url, BrowserConfig, BrowserError, BrowserEvent, ElementInfo,
-    DownloadInfo, LinkInfo, NetworkRequest, PageContent, ScreenshotResult, TabId, TabInfo,
+    truncate_content, validate_url, BrowserConfig, BrowserError, BrowserEvent, DownloadInfo,
+    ElementInfo, LinkInfo, NetworkRequest, PageContent, ScreenshotResult, TabId, TabInfo,
 };
 use chromiumoxide::browser::{Browser, BrowserConfig as ChromeConfig};
 use chromiumoxide::page::{Page, ScreenshotParams};
@@ -14,6 +14,12 @@ use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 type PageSlot = Option<Arc<Page>>;
+
+/// Escapes a string for safe interpolation into a JavaScript single-quoted string literal.
+/// Replaces `'` with `\'` and `\` with `\\` to prevent injection.
+fn escape_js_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'")
+}
 
 pub struct BrowserEngine {
     browser: Browser,
@@ -134,11 +140,10 @@ impl BrowserEngine {
         match self.get_active_page().await {
             Ok(pair) => Ok(pair),
             Err(_) => {
-                let page = self
-                    .browser
-                    .new_page("about:blank")
-                    .await
-                    .map_err(|e| BrowserError::Internal(format!("Failed to create page: {e}")))?;
+                let page =
+                    self.browser.new_page("about:blank").await.map_err(|e| {
+                        BrowserError::Internal(format!("Failed to create page: {e}"))
+                    })?;
 
                 let page = Arc::new(page);
                 let count = self
@@ -170,22 +175,25 @@ impl BrowserEngine {
         if let Some(entry) = self.tabs.get(tab_id) {
             if entry.is_none() {
                 drop(entry);
-                let page = self
-                    .browser
-                    .new_page("about:blank")
-                    .await
-                    .map_err(|e| BrowserError::Internal(format!("Failed to create page: {e}")))?;
+                let page =
+                    self.browser.new_page("about:blank").await.map_err(|e| {
+                        BrowserError::Internal(format!("Failed to create page: {e}"))
+                    })?;
                 self.tabs.insert(tab_id.clone(), Some(Arc::new(page)));
             }
         }
 
         *self.active_tab.write().await = Some(tab_id.clone());
 
-        let page = self.tabs.get(tab_id)
-            .and_then(|e| e.as_ref().cloned());
+        let page = self.tabs.get(tab_id).and_then(|e| e.as_ref().cloned());
         let (url, title) = match page {
             Some(p) => {
-                let u = p.url().await.ok().flatten().unwrap_or_else(|| String::from("about:blank"));
+                let u = p
+                    .url()
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| String::from("about:blank"));
                 let t = p.get_title().await.ok().flatten().unwrap_or_default();
                 (u, t)
             }
@@ -277,6 +285,28 @@ impl BrowserEngine {
 
     // ── Navigation ─────────────────────────────────────────────────
 
+    /// Waits for the page to reach `complete` readyState, with a timeout.
+    async fn wait_for_load(&self, page: &Page, timeout_ms: u64) -> Result<(), BrowserError> {
+        let result = tokio::time::timeout(Duration::from_millis(timeout_ms), async {
+            loop {
+                let eval_result = page.evaluate("document.readyState === 'complete'").await;
+                if let Ok(r) = eval_result {
+                    let val: serde_json::Value = r.into_value().unwrap_or_default();
+                    if val.as_bool() == Some(true) {
+                        return Ok::<(), BrowserError>(());
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+
+        match result {
+            Ok(inner) => inner,
+            Err(_) => Err(BrowserError::Timeout(timeout_ms)),
+        }
+    }
+
     pub async fn navigate(&self, url_str: &str) -> Result<PageContent, BrowserError> {
         validate_url(url_str)?;
         self.check_alive()?;
@@ -324,7 +354,8 @@ impl BrowserEngine {
         page.evaluate("window.history.back()")
             .await
             .map_err(|e| BrowserError::NavigationFailed(e.to_string()))?;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        self.wait_for_load(&page, self.config.default_timeout_ms)
+            .await?;
         let url = page
             .url()
             .await
@@ -338,7 +369,8 @@ impl BrowserEngine {
         page.evaluate("window.history.forward()")
             .await
             .map_err(|e| BrowserError::NavigationFailed(e.to_string()))?;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        self.wait_for_load(&page, self.config.default_timeout_ms)
+            .await?;
         let url = page
             .url()
             .await
@@ -478,9 +510,10 @@ impl BrowserEngine {
         page: &Page,
         selector: &str,
     ) -> Result<ElementInfo, BrowserError> {
+        let safe = escape_js_string(selector);
         let js = format!(
             "(function() {{ const e = document.querySelector('{}'); if (!e) return null; return {{ tag: e.tagName, text: (e.innerText || e.textContent || '').trim().substring(0, 500), visible: e.offsetWidth > 0 && e.offsetHeight > 0 }}; }})()",
-            selector
+            safe
         );
         let result = page
             .evaluate(js.as_str())
@@ -529,9 +562,10 @@ impl BrowserEngine {
         let (_tab_id, page) = self.ensure_active_page().await?;
         let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
 
+        let safe = escape_js_string(selector);
         let js = format!(
             "(function() {{ const e = document.querySelector('{}'); if (!e) return null; return {{ tag: e.tagName, text: (e.innerText || e.textContent || '').trim().substring(0, 500), visible: e.offsetWidth > 0 && e.offsetHeight > 0 }}; }})()",
-            selector
+            safe
         );
 
         while tokio::time::Instant::now() < deadline {
@@ -574,9 +608,10 @@ impl BrowserEngine {
             ));
         }
         let (_tab_id, page) = self.ensure_active_page().await?;
+        let safe = escape_js_string(selector);
         let js = format!(
             "const el = document.querySelector('{}'); if (!el) 'Element not found'; else {{ el.style.outline = '3px solid rgba(0,213,255,0.9)'; el.style.backgroundColor = 'rgba(0,213,255,0.1)'; el.scrollIntoView({{behavior: 'smooth', block: 'center'}}); el.tagName; }}",
-            selector
+            safe
         );
         let result = page
             .evaluate(js.as_str())
@@ -640,8 +675,9 @@ impl BrowserEngine {
                 'Network monitoring already active';
             }
         "#;
-        page.evaluate(js).await
-            .map_err(|e| BrowserError::Internal(format!("Failed to enable network monitoring: {e}")))?;
+        page.evaluate(js).await.map_err(|e| {
+            BrowserError::Internal(format!("Failed to enable network monitoring: {e}"))
+        })?;
         Ok(String::from("Network monitoring enabled"))
     }
 
@@ -649,45 +685,93 @@ impl BrowserEngine {
         self.check_alive()?;
         let (_tab_id, page) = self.ensure_active_page().await?;
         let js = "JSON.stringify((window.__savant_requests || []).slice(-100))";
-        let result = page.evaluate(js).await
+        let result = page
+            .evaluate(js)
+            .await
             .map_err(|e| BrowserError::Internal(format!("Failed to get network requests: {e}")))?;
         let val: serde_json::Value = result.into_value().unwrap_or_default();
         let raw: Vec<serde_json::Value> = val.as_array().cloned().unwrap_or_default();
-        let requests: Vec<NetworkRequest> = raw.iter().map(|r| NetworkRequest {
-            url: r["url"].as_str().unwrap_or("").to_string(),
-            method: r["method"].as_str().unwrap_or("GET").to_string(),
-            status: r["status"].as_u64().map(|s| s as u16),
-            mime_type: r["type"].as_str().map(|s| s.to_string()),
-            size_bytes: r["size"].as_u64().map(|s| s as usize),
-            timestamp: r["time"].as_i64().unwrap_or(0),
-        }).collect();
+        let requests: Vec<NetworkRequest> = raw
+            .iter()
+            .map(|r| NetworkRequest {
+                url: r["url"].as_str().unwrap_or("").to_string(),
+                method: r["method"].as_str().unwrap_or("GET").to_string(),
+                status: r["status"].as_u64().map(|s| s as u16),
+                mime_type: r["type"].as_str().map(|s| s.to_string()),
+                size_bytes: r["size"].as_u64().map(|s| s as usize),
+                timestamp: r["time"].as_i64().unwrap_or(0),
+            })
+            .collect();
         Ok(requests)
     }
 
-    pub async fn block_urls(&self, _patterns: &[String]) -> Result<String, BrowserError> {
+    pub async fn block_urls(&self, patterns: &[String]) -> Result<String, BrowserError> {
         self.check_alive()?;
-        Ok(String::from(
-            "URL blocking via CDP request interception is not yet implemented. \
-            Use enable_network_monitoring + get_network_requests to observe traffic instead.",
-        ))
+        let (_tab_id, page) = self.ensure_active_page().await?;
+
+        // Use CDP Fetch.enable to intercept and block requests matching patterns.
+        // Fall back to JS-based blocking if CDP method isn't available.
+        let patterns_json = serde_json::to_string(patterns)
+            .map_err(|e| BrowserError::Internal(format!("Failed to serialize patterns: {e}")))?;
+
+        // JavaScript-based URL blocking: override fetch and XMLHttpRequest
+        let js = format!(
+            r#"
+            (function() {{
+                const blockedPatterns = {patterns_json};
+                function isBlocked(url) {{
+                    return blockedPatterns.some(p => url.includes(p) || new RegExp(p).test(url));
+                }}
+                const origFetch = window.fetch;
+                window.fetch = function(input, init) {{
+                    const url = typeof input === 'string' ? input : input.url;
+                    if (isBlocked(url)) {{
+                        return Promise.reject(new Error('Blocked by Savant: ' + url));
+                    }}
+                    return origFetch.call(this, input, init);
+                }};
+                const origOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url) {{
+                    if (isBlocked(url)) {{
+                        throw new Error('Blocked by Savant: ' + url);
+                    }}
+                    return origOpen.apply(this, arguments);
+                }};
+                return 'Blocked ' + blockedPatterns.length + ' URL patterns';
+            }})()
+            "#
+        );
+
+        let result = page
+            .evaluate(js.as_str())
+            .await
+            .map_err(|e| BrowserError::Internal(format!("URL blocking failed: {e}")))?;
+
+        let val: serde_json::Value = result.into_value().unwrap_or_default();
+        Ok(val.as_str().unwrap_or("URL blocking enabled").to_string())
     }
 
     pub async fn get_downloads(&self) -> Result<Vec<DownloadInfo>, BrowserError> {
         self.check_alive()?;
         let (_tab_id, page) = self.ensure_active_page().await?;
         let js = "JSON.stringify((window.__savant_downloads || []))";
-        let result = page.evaluate(js).await
+        let result = page
+            .evaluate(js)
+            .await
             .map_err(|e| BrowserError::Internal(format!("Failed to get downloads: {e}")))?;
         let val: serde_json::Value = result.into_value().unwrap_or_default();
         let raw: Vec<serde_json::Value> = val.as_array().cloned().unwrap_or_default();
-        let downloads: Vec<DownloadInfo> = raw.iter().map(|d| DownloadInfo {
-            url: d["url"].as_str().unwrap_or("").to_string(),
-            filename: d["filename"].as_str().unwrap_or("").to_string(),
-            path: d["path"].as_str().unwrap_or("").to_string(),
-            size_bytes: d["size"].as_u64().unwrap_or(0) as usize,
-            status: d["status"].as_str().unwrap_or("unknown").to_string(),
-            mime_type: d["type"].as_str().map(|s| s.to_string()),
-        }).collect();
+        let downloads: Vec<DownloadInfo> = raw
+            .iter()
+            .map(|d| DownloadInfo {
+                url: d["url"].as_str().unwrap_or("").to_string(),
+                filename: d["filename"].as_str().unwrap_or("").to_string(),
+                path: d["path"].as_str().unwrap_or("").to_string(),
+                size_bytes: d["size"].as_u64().unwrap_or(0) as usize,
+                status: d["status"].as_str().unwrap_or("unknown").to_string(),
+                mime_type: d["type"].as_str().map(|s| s.to_string()),
+            })
+            .collect();
         Ok(downloads)
     }
 
@@ -702,23 +786,29 @@ impl BrowserEngine {
                 'Download tracking already active';
             }
         "#;
-        page.evaluate(js).await
-            .map_err(|e| BrowserError::Internal(format!("Failed to enable download tracking: {e}")))?;
+        page.evaluate(js).await.map_err(|e| {
+            BrowserError::Internal(format!("Failed to enable download tracking: {e}"))
+        })?;
         Ok(String::from("Download tracking enabled"))
     }
 
     pub async fn read_download(&self, filename: &str) -> Result<String, BrowserError> {
         self.check_alive()?;
         let (_tab_id, page) = self.ensure_active_page().await?;
+        let safe = escape_js_string(filename);
         let js = format!(
             "(() => {{ const d = (window.__savant_downloads || []).find(x => x.filename === '{}'); return d ? JSON.stringify(d) : null; }})()",
-            filename
+            safe
         );
-        let result = page.evaluate(js.as_str()).await
+        let result = page
+            .evaluate(js.as_str())
+            .await
             .map_err(|e| BrowserError::Internal(format!("Failed to read download: {e}")))?;
         let val: serde_json::Value = result.into_value().unwrap_or_default();
         if val.is_null() {
-            return Err(BrowserError::Internal(format!("Download not found: {filename}")));
+            return Err(BrowserError::Internal(format!(
+                "Download not found: {filename}"
+            )));
         }
         Ok(serde_json::to_string_pretty(&val).unwrap_or_default())
     }
@@ -726,7 +816,8 @@ impl BrowserEngine {
     // ── Screenshot ─────────────────────────────────────────────────
 
     async fn get_viewport_dimensions(&self, page: &Page) -> (u32, u32) {
-        let js = "(function() { return { w: window.innerWidth || 0, h: window.innerHeight || 0 }; })()";
+        let js =
+            "(function() { return { w: window.innerWidth || 0, h: window.innerHeight || 0 }; })()";
         match page.evaluate(js).await {
             Ok(result) => {
                 let val: serde_json::Value = result.into_value().unwrap_or_default();

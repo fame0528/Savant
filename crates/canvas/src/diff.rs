@@ -549,7 +549,7 @@ mod tests {
         let new = json!({"name": "Alice", "age": 31});
 
         let diff = compute_diff(&old, &new, 1, 2);
-        let result = apply_diff(&old, &diff).unwrap();
+        let result = apply_diff(&old, &diff).expect("diff should apply to test object");
         assert_eq!(result, new);
     }
 

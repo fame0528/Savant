@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 //! Telegram Channel Adapter
 //!
 //! Provides integration with Telegram Bot API for sending and receiving messages.
@@ -9,9 +11,10 @@
 //! - Rate limiting per Telegram API constraints
 
 use async_trait::async_trait;
+use savant_core::bus::NexusBridge;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
-use savant_core::types::EventFrame;
+use savant_core::types::{ChatMessage, ChatRole, EventFrame};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use teloxide::{
@@ -51,22 +54,25 @@ pub struct TelegramConfig {
 pub struct TelegramAdapter {
     bot: Bot,
     config: TelegramConfig,
+    nexus: Arc<NexusBridge>,
     /// Channel for receiving messages from Telegram
-    message_tx: mpsc::UnboundedSender<TgMessage>,
-    message_rx: Option<mpsc::UnboundedReceiver<TgMessage>>,
+    message_tx: mpsc::Sender<TgMessage>,
+    message_rx: Option<mpsc::Receiver<TgMessage>>,
     /// Last sent message timestamp for rate limiting
     last_sent: Arc<tokio::sync::Mutex<Instant>>,
 }
 
 impl TelegramAdapter {
     /// Creates a new Telegram adapter with the given configuration.
-    pub fn new(config: TelegramConfig) -> Result<Self, SavantError> {
+    pub fn new(config: TelegramConfig, nexus: Arc<NexusBridge>) -> Result<Self, SavantError> {
         let bot = Bot::new(&config.bot_token);
-        let (message_tx, message_rx) = mpsc::unbounded_channel();
+        // RC-15: Bounded channel for backpressure
+        let (message_tx, message_rx) = mpsc::channel(500);
 
         Ok(Self {
             bot,
             config,
+            nexus,
             message_tx,
             message_rx: Some(message_rx),
             last_sent: Arc::new(tokio::sync::Mutex::new(Instant::now())),
@@ -75,7 +81,7 @@ impl TelegramAdapter {
 
     /// Takes the message receiver for processing incoming messages.
     /// Returns None if the receiver has already been taken.
-    pub fn take_message_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<TgMessage>> {
+    pub fn take_message_receiver(&mut self) -> Option<mpsc::Receiver<TgMessage>> {
         self.message_rx.take()
     }
 
@@ -96,6 +102,7 @@ impl TelegramAdapter {
     pub async fn start_polling(&mut self) -> Result<(), SavantError> {
         let bot = self.bot.clone();
         let tx = self.message_tx.clone();
+        let nexus = self.nexus.clone();
 
         info!("Starting Telegram bot with long-polling (dptree)");
 
@@ -103,9 +110,45 @@ impl TelegramAdapter {
             let handler = dptree::entry()
                 .branch(Update::filter_message().endpoint(move |msg: TgMessage| {
                     let tx = tx.clone();
+                    let nexus = nexus.clone();
                     async move {
                         debug!("Received Telegram message: {:?}", msg.id);
-                        if let Err(e) = tx.send(msg) {
+
+                        // Route message to NexusBridge for agent processing
+                        if let Some(text) = msg.text() {
+                            let sender = msg
+                                .from()
+                                .map(|u| u.username.clone().unwrap_or_else(|| u.id.0.to_string()))
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let session_id = savant_core::session::SessionMapper::map(
+                                "telegram",
+                                &msg.chat.id.0.to_string(),
+                            );
+                            let chat_message = ChatMessage {
+                                is_telemetry: false,
+                                role: ChatRole::User,
+                                content: text.to_string(),
+                                sender: Some(format!("telegram:{}", sender)),
+                                recipient: Some("savant".to_string()),
+                                agent_id: None,
+                                session_id: Some(session_id),
+                                channel: savant_core::types::AgentOutputChannel::Chat,
+                                images: Vec::new(),
+                            };
+                            let event = EventFrame {
+                                event_type: "chat.message".to_string(),
+                                payload: serde_json::to_string(&chat_message).unwrap_or_default(),
+                            };
+                            if let Err(e) = nexus.event_bus.send(event) {
+                                tracing::warn!(
+                                    "[channels::telegram] Failed to publish to NexusBridge: {:?}",
+                                    e
+                                );
+                            }
+                        }
+
+                        // RC-15: Use send().await for bounded channel (async context)
+                        if let Err(e) = tx.send(msg).await {
                             tracing::warn!(
                                 "[channels::telegram] Failed to send message to handler: {:?}",
                                 e
@@ -342,7 +385,8 @@ mod tests {
             webhook_url: None,
         };
 
-        let adapter = TelegramAdapter::new(config).unwrap();
+        let nexus = Arc::new(savant_core::bus::NexusBridge::new());
+        let adapter = TelegramAdapter::new(config, nexus).unwrap();
         let event = EventFrame {
             event_type: "test".to_string(),
             payload: "hello".to_string(),

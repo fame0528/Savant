@@ -39,6 +39,17 @@ impl OceanScaler {
         adjusted
     }
 
+    /// Evolves personality traits based on interaction deltas and returns
+    /// the distance from the previous state (0.0 = identical, higher = more change).
+    pub fn evolve_and_measure(
+        current: &PersonalityTraits,
+        delta: &savant_core::types::PersonalityDelta,
+    ) -> (PersonalityTraits, f32) {
+        let evolved = current.evolve(delta);
+        let distance = current.distance(&evolved);
+        (evolved, distance)
+    }
+
     /// Returns a compression aggressiveness multiplier based on OCEAN.
     /// 1.0 = normal, <1.0 = less aggressive, >1.0 = more aggressive.
     pub fn aggressiveness_multiplier(ocean: &PersonalityTraits) -> f32 {

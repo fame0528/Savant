@@ -2,6 +2,7 @@
 pub mod attestation;
 pub mod continuous;
 pub mod enclave;
+pub mod pii;
 pub mod prompt_defense;
 #[cfg(kani)]
 pub mod proofs;

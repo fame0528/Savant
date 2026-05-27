@@ -180,7 +180,10 @@ impl LambdaSkillExecutor {
         // Parse structured response when available
         if let Ok(resp) = serde_json::from_str::<LambdaInvokeResponse>(&body) {
             if let Some(func_error) = &resp.function_error {
-                warn!("Lambda function error (status: {}): {}", resp.status_code, func_error);
+                warn!(
+                    "Lambda function error (status: {}): {}",
+                    resp.status_code, func_error
+                );
             }
             if let Some(payload_str) = resp.payload {
                 return Ok(payload_str);

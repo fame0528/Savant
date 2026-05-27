@@ -313,6 +313,11 @@ impl ChatMessage {
         self.images = images;
         self
     }
+
+    /// Migrates a legacy message format to the current ChatMessage format.
+    pub fn from_legacy(legacy: crate::migration::LegacyMessage) -> Self {
+        legacy.into()
+    }
 }
 
 /// Native provider tool call structure
@@ -388,6 +393,7 @@ pub enum ModelProvider {
     Xai,
     Fireworks,
     Novita,
+    OpenGateway,
 }
 
 impl ModelProvider {
@@ -411,6 +417,7 @@ impl ModelProvider {
             ModelProvider::Xai => "xai",
             ModelProvider::Fireworks => "fireworks",
             ModelProvider::Novita => "novita",
+            ModelProvider::OpenGateway => "opengateway",
         }
     }
 }
@@ -437,6 +444,7 @@ impl std::str::FromStr for ModelProvider {
             "xai" => Ok(ModelProvider::Xai),
             "fireworks" => Ok(ModelProvider::Fireworks),
             "novita" => Ok(ModelProvider::Novita),
+            "opengateway" => Ok(ModelProvider::OpenGateway),
             other => Err(format!("Unknown model provider: '{}'", other)),
         }
     }
@@ -562,8 +570,9 @@ pub struct AgentConfig {
     pub agent_name: String,
     pub model_provider: ModelProvider,
     // API key is loaded from .env at runtime and used to create derivative keys.
-    // The master key is never stored — derivative keys are created per-session.
-    // See: OpenRouter key derivation in provider initialization.
+    /// For cloud providers, this is the API key.
+    /// For local providers (Ollama, LMStudio), this is the provider URL.
+    /// Convention: if the value starts with "http", it's a URL, not a key.
     #[serde(skip_serializing)]
     pub api_key: Option<String>,
     pub env_vars: std::collections::HashMap<String, String>,
@@ -584,6 +593,16 @@ pub struct AgentConfig {
     /// Evolution state (mutation count, score, stage, cooldowns)
     #[serde(default)]
     pub evolution_state: Option<EvolutionState>,
+    /// Whether the Orchestrator is enabled for this agent (default: true).
+    /// When true, the agent uses Orchestrator::execute_turn() which adds
+    /// A2A delegation, continuation, handoff validation, and DSP prediction.
+    /// When false, the agent uses raw AgentLoop::run().
+    #[serde(default = "default_orchestrator_enabled")]
+    pub orchestrator_enabled: bool,
+}
+
+fn default_orchestrator_enabled() -> bool {
+    true
 }
 
 /// Delta applied to personality traits when a mutation is approved.
@@ -1013,6 +1032,12 @@ pub enum ExecutionMode {
     LegacyNative(String),
     /// Docker container execution with full isolation
     DockerContainer(String),
+    /// Nix flake execution with reproducible environment
+    NixFlake(String),
+    /// AWS Lambda function execution
+    Lambda(String),
+    /// Standalone WASM execution (fallback when WassetteExecutor unavailable)
+    StandaloneWasm(Vec<u8>),
     /// Loaded as context, not executed
     Reference,
 }
@@ -1042,6 +1067,31 @@ pub struct SkillManifest {
     /// The raw markdown instructions to be injected into the LLM context
     #[serde(skip_deserializing, default)]
     pub instructions: String,
+    /// Skills that must run before this skill (dependency resolution)
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    /// Skills this skill can invoke (chaining)
+    #[serde(default)]
+    pub chain_with: Vec<String>,
+}
+
+/// A chain of skill invocations with conditional execution and data passing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillChain {
+    pub name: String,
+    pub steps: Vec<SkillChainStep>,
+}
+
+/// A single step in a skill chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillChainStep {
+    pub skill_name: String,
+    /// Optional condition for conditional execution (e.g., "podcast-guest-today")
+    #[serde(default)]
+    pub condition: Option<String>,
+    /// How to pass output to the next step (e.g., "meeting-list")
+    #[serde(default)]
+    pub pass_output_as: Option<String>,
 }
 
 #[cfg(test)]

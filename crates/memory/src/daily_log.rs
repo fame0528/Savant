@@ -12,16 +12,21 @@
 //! # Token Budget
 //! Capped at 500 tokens. Loaded as first context element after system prompt.
 
+use chrono::Datelike;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use chrono::Datelike;
 use tracing::debug;
+
+/// Default read cap in bytes.
+const DEFAULT_READ_CAP_BYTES: usize = 2000;
 
 /// Daily operational log for an agent.
 pub struct DailyLog {
     agent_workspace: PathBuf,
     agent_name: String,
+    /// Maximum bytes to return from read operations (MEM-24).
+    read_cap_bytes: usize,
 }
 
 /// An entry in the daily log.
@@ -61,6 +66,20 @@ impl DailyLog {
         Self {
             agent_workspace,
             agent_name,
+            read_cap_bytes: DEFAULT_READ_CAP_BYTES,
+        }
+    }
+
+    /// Creates a new daily log with a custom read cap from MemoryConfig.
+    pub fn with_config(
+        agent_workspace: PathBuf,
+        agent_name: String,
+        read_cap_bytes: usize,
+    ) -> Self {
+        Self {
+            agent_workspace,
+            agent_name,
+            read_cap_bytes,
         }
     }
 
@@ -79,7 +98,10 @@ impl DailyLog {
 
     /// Gets today's date as YYYY-MM-DD.
     pub fn today_date() -> String {
-        let secs = savant_core::utils::time::now_secs();
+        let secs = savant_core::utils::time::now_secs().unwrap_or_else(|e| {
+            tracing::warn!("Failed to get current time: {}, using 0", e);
+            0
+        });
         let days = secs / 86400;
         let (year, month, day) = Self::days_to_ymd(days as i64);
         format!("{:04}-{:02}-{:02}", year, month, day)
@@ -122,9 +144,9 @@ impl DailyLog {
         let path = self.today_path();
         if path.exists() {
             let content = fs::read_to_string(&path)?;
-            // Cap at ~2000 bytes, aligned to char boundary to prevent UTF-8 panics
-            if content.len() > 2000 {
-                let mut start = content.len() - 2000;
+            // Cap at configured bytes, aligned to char boundary to prevent UTF-8 panics
+            if content.len() > self.read_cap_bytes {
+                let mut start = content.len() - self.read_cap_bytes;
                 while start > 0 && !content.is_char_boundary(start) {
                     start -= 1;
                 }
@@ -142,9 +164,9 @@ impl DailyLog {
         let path = self.log_path(date);
         if path.exists() {
             let content = fs::read_to_string(&path)?;
-            // Cap at ~2000 bytes, aligned to char boundary to prevent UTF-8 panics
-            if content.len() > 2000 {
-                let mut start = content.len() - 2000;
+            // Cap at configured bytes, aligned to char boundary to prevent UTF-8 panics
+            if content.len() > self.read_cap_bytes {
+                let mut start = content.len() - self.read_cap_bytes;
                 while start > 0 && !content.is_char_boundary(start) {
                     start -= 1;
                 }
@@ -201,7 +223,10 @@ impl DailyLog {
     }
 
     fn current_time() -> String {
-        let secs = savant_core::utils::time::now_secs() % 86400;
+        let secs = savant_core::utils::time::now_secs().unwrap_or_else(|e| {
+            tracing::warn!("Failed to get current time: {}, using 0", e);
+            0
+        }) % 86400;
         let hours = secs / 3600;
         let mins = (secs % 3600) / 60;
         format!("{:02}:{:02}", hours, mins)

@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+// SAFETY: All clippy::disallowed_methods violations in this file originate from serde_json::json!() macro internals. The json!() macro calls .unwrap() on provably-infallible compile-time-validated JSON literals. grep confirms 0 real .unwrap() calls exist in this file outside macro expansions.
 use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::ChannelAdapter;
@@ -104,7 +105,12 @@ impl FeishuAdapter {
             .map_err(|e| SavantError::Unknown(format!("Feishu response parse failed: {}", e)))?;
 
         if resp["code"].as_i64() != Some(0) {
-            warn!("Feishu send error: {}", resp);
+            let error_msg = resp["msg"].as_str().unwrap_or("Unknown error");
+            return Err(SavantError::Unknown(format!(
+                "Feishu send error: {} (code: {})",
+                error_msg,
+                resp["code"].as_i64().unwrap_or(-1)
+            )));
         }
         Ok(())
     }

@@ -1,10 +1,12 @@
 #![allow(clippy::disallowed_methods)]
 
-use savant_obsidian::VaultError;
-use savant_obsidian::writer::{VaultWriter, VaultStats, slugify, truncate_to_line, count_md_files, atomic_write};
-use savant_obsidian::cold_storage::ColdStorageManager;
 use savant_core::config::ObsidianConfig;
+use savant_obsidian::cold_storage::ColdStorageManager;
 use savant_obsidian::outbox::{CursorState, StateSnapshot};
+use savant_obsidian::writer::{
+    atomic_write, count_md_files, slugify, truncate_to_line, VaultStats, VaultWriter,
+};
+use savant_obsidian::VaultError;
 use std::path::PathBuf;
 
 fn make_temp_vault() -> PathBuf {
@@ -25,44 +27,53 @@ fn default_config() -> ObsidianConfig {
         cold_storage_days: 30,
         tombstone_prune_days: 30,
         db_only_dirs: vec!["Episodic".to_string()],
+        project_procedures: true,
+        project_lessons: true,
+        project_graphs: true,
+        project_retention_tiers: true,
+        project_audit_trail: false,
+        project_multimodal: false,
     }
 }
 
 // ─── VaultError tests ─────────────────────────────────────────────────────
 
-#[test]
-fn test_vault_error_io_display() {
-    let err = VaultError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+#[tokio::test]
+async fn test_vault_error_io_display() {
+    let err = VaultError::Io(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "file not found",
+    ));
     let msg = format!("{}", err);
     assert!(msg.contains("IO error"));
     assert!(msg.contains("file not found"));
 }
 
-#[test]
-fn test_vault_error_injection_display() {
+#[tokio::test]
+async fn test_vault_error_injection_display() {
     let err = VaultError::InjectionDetected("../../../etc/passwd".to_string());
     let msg = format!("{}", err);
     assert!(msg.contains("Injection detected"));
     assert!(msg.contains("../../../etc/passwd"));
 }
 
-#[test]
-fn test_vault_error_config_display() {
+#[tokio::test]
+async fn test_vault_error_config_display() {
     let err = VaultError::Config("missing vault path".to_string());
     let msg = format!("{}", err);
     assert!(msg.contains("Configuration error"));
     assert!(msg.contains("missing vault path"));
 }
 
-#[test]
-fn test_vault_error_vault_path_not_configured() {
+#[tokio::test]
+async fn test_vault_error_vault_path_not_configured() {
     let err = VaultError::VaultPathNotConfigured;
     let msg = format!("{}", err);
     assert_eq!(msg, "Vault path not configured");
 }
 
-#[test]
-fn test_vault_error_serialization() {
+#[tokio::test]
+async fn test_vault_error_serialization() {
     let bad_json = "not json";
     let result: Result<serde_json::Value, _> = serde_json::from_str(bad_json);
     let err = result.unwrap_err();
@@ -73,8 +84,8 @@ fn test_vault_error_serialization() {
 
 // ─── VaultStats tests ─────────────────────────────────────────────────────
 
-#[test]
-fn test_vault_stats_default() {
+#[tokio::test]
+async fn test_vault_stats_default() {
     let stats = VaultStats::default();
     assert_eq!(stats.agent_name, "");
     assert_eq!(stats.session_count, 0);
@@ -86,15 +97,15 @@ fn test_vault_stats_default() {
     assert_eq!(stats.stage, "Seedling");
 }
 
-#[test]
-fn test_vault_stats_clone() {
+#[tokio::test]
+async fn test_vault_stats_clone() {
     let stats = VaultStats::default();
     let cloned = stats.clone();
     assert_eq!(cloned.stage, stats.stage);
 }
 
-#[test]
-fn test_vault_stats_debug() {
+#[tokio::test]
+async fn test_vault_stats_debug() {
     let stats = VaultStats::default();
     let debug = format!("{:?}", stats);
     assert!(debug.contains("VaultStats"));
@@ -102,67 +113,67 @@ fn test_vault_stats_debug() {
 
 // ─── slugify tests ────────────────────────────────────────────────────────
 
-#[test]
-fn test_slugify_lowercase() {
+#[tokio::test]
+async fn test_slugify_lowercase() {
     assert_eq!(slugify("Hello World"), "hello-world");
 }
 
-#[test]
-fn test_slugify_preserves_dashes() {
+#[tokio::test]
+async fn test_slugify_preserves_dashes() {
     assert_eq!(slugify("already-slugified"), "already-slugified");
 }
 
-#[test]
-fn test_slugify_removes_special_chars() {
+#[tokio::test]
+async fn test_slugify_removes_special_chars() {
     assert_eq!(slugify("Hello! @#$ World"), "hello--world");
 }
 
-#[test]
-fn test_slugify_trims_whitespace() {
+#[tokio::test]
+async fn test_slugify_trims_whitespace() {
     assert_eq!(slugify("  spaced out  "), "spaced-out");
 }
 
-#[test]
-fn test_slugify_empty_string() {
+#[tokio::test]
+async fn test_slugify_empty_string() {
     assert_eq!(slugify(""), "");
 }
 
-#[test]
-fn test_slugify_single_word() {
+#[tokio::test]
+async fn test_slugify_single_word() {
     assert_eq!(slugify("Concept"), "concept");
 }
 
-#[test]
-fn test_slugify_multiple_spaces() {
+#[tokio::test]
+async fn test_slugify_multiple_spaces() {
     assert_eq!(slugify("multiple   spaces"), "multiple---spaces");
 }
 
 // ─── truncate_to_line tests ───────────────────────────────────────────────
 
-#[test]
-fn test_truncate_to_line_single() {
+#[tokio::test]
+async fn test_truncate_to_line_single() {
     assert_eq!(truncate_to_line("single line"), "single line");
 }
 
-#[test]
-fn test_truncate_to_line_multi() {
+#[tokio::test]
+async fn test_truncate_to_line_multi() {
     assert_eq!(truncate_to_line("first line\nsecond line"), "first line");
 }
 
-#[test]
-fn test_truncate_to_line_empty() {
+#[tokio::test]
+async fn test_truncate_to_line_empty() {
     assert_eq!(truncate_to_line(""), "");
 }
 
-#[test]
-fn test_truncate_to_line_with_newline_at_end() {
+#[tokio::test]
+async fn test_truncate_to_line_with_newline_at_end() {
     assert_eq!(truncate_to_line("has newline\n"), "has newline");
 }
 
 // ─── count_md_files tests ─────────────────────────────────────────────────
 
-#[test]
-fn test_count_md_files_empty_dir() {
+#[tokio::test]
+async fn test_count_md_files_empty_dir() {
     let dir = make_temp_vault();
     std::fs::create_dir_all(&dir).unwrap();
     let count = count_md_files(&dir);
@@ -170,8 +181,8 @@ fn test_count_md_files_empty_dir() {
     cleanup(&dir);
 }
 
-#[test]
-fn test_count_md_files_single_file() {
+#[tokio::test]
+async fn test_count_md_files_single_file() {
     let dir = make_temp_vault();
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("test.md"), "# Test").unwrap();
@@ -180,8 +191,8 @@ fn test_count_md_files_single_file() {
     cleanup(&dir);
 }
 
-#[test]
-fn test_count_md_files_ignores_non_md() {
+#[tokio::test]
+async fn test_count_md_files_ignores_non_md() {
     let dir = make_temp_vault();
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("test.md"), "# Test").unwrap();
@@ -192,8 +203,8 @@ fn test_count_md_files_ignores_non_md() {
     cleanup(&dir);
 }
 
-#[test]
-fn test_count_md_files_nested() {
+#[tokio::test]
+async fn test_count_md_files_nested() {
     let dir = make_temp_vault();
     let sub = dir.join("subdir");
     std::fs::create_dir_all(&sub).unwrap();
@@ -204,8 +215,8 @@ fn test_count_md_files_nested() {
     cleanup(&dir);
 }
 
-#[test]
-fn test_count_md_files_nonexistent_dir() {
+#[tokio::test]
+async fn test_count_md_files_nonexistent_dir() {
     let dir = std::env::temp_dir().join("nonexistent-dir-12345");
     let count = count_md_files(&dir);
     assert_eq!(count, 0);
@@ -213,35 +224,35 @@ fn test_count_md_files_nonexistent_dir() {
 
 // ─── atomic_write tests ───────────────────────────────────────────────────
 
-#[test]
-fn test_atomic_write_creates_parent_dirs() {
+#[tokio::test]
+async fn test_atomic_write_creates_parent_dirs() {
     let dir = make_temp_vault();
     let nested = dir.join("a").join("b").join("c").join("test.md");
-    atomic_write(&nested, "# Test").unwrap();
+    atomic_write(&nested, "# Test").await.unwrap();
     assert!(nested.exists());
     let content = std::fs::read_to_string(&nested).unwrap();
     assert_eq!(content, "# Test");
     cleanup(&dir);
 }
 
-#[test]
-fn test_atomic_write_overwrites() {
+#[tokio::test]
+async fn test_atomic_write_overwrites() {
     let dir = make_temp_vault();
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("test.md");
-    atomic_write(&file, "first").unwrap();
-    atomic_write(&file, "second").unwrap();
+    atomic_write(&file, "first").await.unwrap();
+    atomic_write(&file, "second").await.unwrap();
     let content = std::fs::read_to_string(&file).unwrap();
     assert_eq!(content, "second");
     cleanup(&dir);
 }
 
-#[test]
-fn test_atomic_write_no_temp_left_behind() {
+#[tokio::test]
+async fn test_atomic_write_no_temp_left_behind() {
     let dir = make_temp_vault();
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("test.md");
-    atomic_write(&file, "content").unwrap();
+    atomic_write(&file, "content").await.unwrap();
     let tmp = file.with_extension("tmp");
     assert!(!tmp.exists());
     cleanup(&dir);
@@ -257,11 +268,11 @@ fn make_writer(vault: PathBuf) -> VaultWriter {
     VaultWriter::new(vault, None, config, "TestAgent".to_string())
 }
 
-#[test]
-fn test_vault_writer_ensure_structure() {
+#[tokio::test]
+async fn test_vault_writer_ensure_structure() {
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    let result = writer.ensure_structure();
+    let result = writer.ensure_structure().await;
     assert!(result.is_ok());
     assert!(vault.join(".obsidian").exists());
     assert!(vault.join("Episodic").exists());
@@ -277,20 +288,20 @@ fn test_vault_writer_ensure_structure() {
     cleanup(&vault);
 }
 
-#[test]
-fn test_vault_writer_ensure_structure_idempotent() {
+#[tokio::test]
+async fn test_vault_writer_ensure_structure_idempotent() {
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    assert!(writer.ensure_structure().is_ok());
-    assert!(writer.ensure_structure().is_ok());
+    assert!(writer.ensure_structure().await.is_ok());
+    assert!(writer.ensure_structure().await.is_ok());
     cleanup(&vault);
 }
 
-#[test]
-fn test_vault_writer_write_index() {
+#[tokio::test]
+async fn test_vault_writer_write_index() {
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
+    writer.ensure_structure().await.unwrap();
     let stats = VaultStats {
         agent_name: "TestAgent".to_string(),
         session_count: 5,
@@ -301,7 +312,7 @@ fn test_vault_writer_write_index() {
         evolution_score: 0.42,
         stage: "Apprentice".to_string(),
     };
-    assert!(writer.write_index(&stats).is_ok());
+    assert!(writer.write_index(&stats).await.is_ok());
     let index = vault.join("INDEX.md");
     assert!(index.exists());
     let content = std::fs::read_to_string(&index).unwrap();
@@ -311,50 +322,54 @@ fn test_vault_writer_write_index() {
     cleanup(&vault);
 }
 
-#[test]
-fn test_vault_writer_write_episodic_empty() {
+#[tokio::test]
+async fn test_vault_writer_write_episodic_empty() {
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
+    writer.ensure_structure().await.unwrap();
     let today = chrono::Utc::now().date_naive();
-    assert!(writer.write_episodic(&today).is_ok());
-    let episodic = vault.join("Episodic").join(format!("{}.md", today.format("%Y-%m-%d")));
+    assert!(writer.write_episodic(&today).await.is_ok());
+    let episodic = vault
+        .join("Episodic")
+        .join(format!("{}.md", today.format("%Y-%m-%d")));
     assert!(episodic.exists());
-    assert!(std::fs::read_to_string(&episodic).unwrap().contains("No sessions recorded"));
+    assert!(std::fs::read_to_string(&episodic)
+        .unwrap()
+        .contains("No sessions recorded"));
     cleanup(&vault);
 }
 
-#[test]
-fn test_vault_writer_write_themes_index() {
+#[tokio::test]
+async fn test_vault_writer_write_themes_index() {
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
-    assert!(writer.write_themes_index().is_ok());
+    writer.ensure_structure().await.unwrap();
+    assert!(writer.write_themes_index().await.is_ok());
     assert!(vault.join("Themes").join("INDEX.md").exists());
     cleanup(&vault);
 }
 
-#[test]
-fn test_vault_writer_clear_working() {
+#[tokio::test]
+async fn test_vault_writer_clear_working() {
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
+    writer.ensure_structure().await.unwrap();
     let working = vault.join("Working");
     std::fs::write(working.join("scratch.md"), "# Scratch").unwrap();
     std::fs::write(working.join("notes.md"), "# Notes").unwrap();
-    assert!(writer.clear_working().is_ok());
+    assert!(writer.clear_working().await.is_ok());
     assert!(!working.join("scratch.md").exists());
     assert!(!working.join("notes.md").exists());
     assert!(working.join("README.md").exists());
     cleanup(&vault);
 }
 
-#[test]
-fn test_vault_writer_write_dashboard_recent() {
+#[tokio::test]
+async fn test_vault_writer_write_dashboard_recent() {
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
-    assert!(writer.write_dashboard_recent().is_ok());
+    writer.ensure_structure().await.unwrap();
+    assert!(writer.write_dashboard_recent().await.is_ok());
     let recent = vault.join("Dashboard").join("Recent.md");
     assert!(recent.exists());
     let content = std::fs::read_to_string(&recent).unwrap();
@@ -362,11 +377,11 @@ fn test_vault_writer_write_dashboard_recent() {
     cleanup(&vault);
 }
 
-#[test]
-fn test_vault_writer_write_dashboard_health() {
+#[tokio::test]
+async fn test_vault_writer_write_dashboard_health() {
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
+    writer.ensure_structure().await.unwrap();
     let stats = VaultStats {
         agent_name: "TestAgent".to_string(),
         session_count: 10,
@@ -377,7 +392,7 @@ fn test_vault_writer_write_dashboard_health() {
         evolution_score: 0.75,
         stage: "Journeyman".to_string(),
     };
-    assert!(writer.write_dashboard_health(&stats).is_ok());
+    assert!(writer.write_dashboard_health(&stats).await.is_ok());
     let health = vault.join("Dashboard").join("Health.md");
     assert!(health.exists());
     let content = std::fs::read_to_string(&health).unwrap();
@@ -386,14 +401,14 @@ fn test_vault_writer_write_dashboard_health() {
     cleanup(&vault);
 }
 
-#[test]
-fn test_vault_writer_write_soul_default() {
+#[tokio::test]
+async fn test_vault_writer_write_soul_default() {
     let vault = make_temp_vault();
     let workspace = make_temp_vault();
     std::fs::create_dir_all(&workspace).unwrap();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
-    assert!(writer.write_soul(&workspace).is_ok());
+    writer.ensure_structure().await.unwrap();
+    assert!(writer.write_soul(&workspace).await.is_ok());
     let soul = vault.join("Identity").join("SOUL.md");
     assert!(soul.exists());
     let content = std::fs::read_to_string(&soul).unwrap();
@@ -403,16 +418,16 @@ fn test_vault_writer_write_soul_default() {
     cleanup(&workspace);
 }
 
-#[test]
-fn test_vault_writer_write_soul_from_workspace() {
+#[tokio::test]
+async fn test_vault_writer_write_soul_from_workspace() {
     let vault = make_temp_vault();
     let workspace = make_temp_vault();
     std::fs::create_dir_all(&workspace).unwrap();
     let soul_content = "# My SOUL\n\nI am a test agent.\n";
     std::fs::write(workspace.join("SOUL.md"), soul_content).unwrap();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
-    assert!(writer.write_soul(&workspace).is_ok());
+    writer.ensure_structure().await.unwrap();
+    assert!(writer.write_soul(&workspace).await.is_ok());
     let soul = vault.join("Identity").join("SOUL.md");
     let content = std::fs::read_to_string(&soul).unwrap();
     assert_eq!(content.trim(), soul_content.trim());
@@ -420,14 +435,14 @@ fn test_vault_writer_write_soul_from_workspace() {
     cleanup(&workspace);
 }
 
-#[test]
-fn test_vault_writer_write_personality_default() {
+#[tokio::test]
+async fn test_vault_writer_write_personality_default() {
     let vault = make_temp_vault();
     let workspace = make_temp_vault();
     std::fs::create_dir_all(&workspace).unwrap();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
-    assert!(writer.write_personality(&workspace).is_ok());
+    writer.ensure_structure().await.unwrap();
+    assert!(writer.write_personality(&workspace).await.is_ok());
     let personality = vault.join("Identity").join("Personality.md");
     assert!(personality.exists());
     let content = std::fs::read_to_string(&personality).unwrap();
@@ -437,8 +452,8 @@ fn test_vault_writer_write_personality_default() {
     cleanup(&workspace);
 }
 
-#[test]
-fn test_vault_writer_write_personality_from_agent_json() {
+#[tokio::test]
+async fn test_vault_writer_write_personality_from_agent_json() {
     let vault = make_temp_vault();
     let workspace = make_temp_vault();
     std::fs::create_dir_all(&workspace).unwrap();
@@ -453,8 +468,8 @@ fn test_vault_writer_write_personality_from_agent_json() {
     });
     std::fs::write(workspace.join("agent.json"), agent_json.to_string()).unwrap();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
-    assert!(writer.write_personality(&workspace).is_ok());
+    writer.ensure_structure().await.unwrap();
+    assert!(writer.write_personality(&workspace).await.is_ok());
     let personality = vault.join("Identity").join("Personality.md");
     let content = std::fs::read_to_string(&personality).unwrap();
     assert!(content.contains("0.85"));
@@ -466,14 +481,14 @@ fn test_vault_writer_write_personality_from_agent_json() {
     cleanup(&workspace);
 }
 
-#[test]
-fn test_vault_writer_write_evolution_index_empty() {
+#[tokio::test]
+async fn test_vault_writer_write_evolution_index_empty() {
     let vault = make_temp_vault();
     let workspace = make_temp_vault();
     std::fs::create_dir_all(&workspace).unwrap();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
-    assert!(writer.write_evolution_index(&workspace).is_ok());
+    writer.ensure_structure().await.unwrap();
+    assert!(writer.write_evolution_index(&workspace).await.is_ok());
     let index = vault.join("Identity").join("Evolution").join("INDEX.md");
     assert!(index.exists());
     let content = std::fs::read_to_string(&index).unwrap();
@@ -483,8 +498,8 @@ fn test_vault_writer_write_evolution_index_empty() {
     cleanup(&workspace);
 }
 
-#[test]
-fn test_vault_writer_write_evolution_index_with_data() {
+#[tokio::test]
+async fn test_vault_writer_write_evolution_index_with_data() {
     let vault = make_temp_vault();
     let workspace = make_temp_vault();
     std::fs::create_dir_all(&workspace).unwrap();
@@ -518,13 +533,17 @@ fn test_vault_writer_write_evolution_index_with_data() {
             "proposed_at": now,
             "reasoning": "Another test",
             "proposed_content": "New trait value"
-        })
+        }),
     ];
-    let jsonl = mutations.iter().map(|m| m.to_string()).collect::<Vec<_>>().join("\n");
+    let jsonl = mutations
+        .iter()
+        .map(|m| m.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
     std::fs::write(workspace.join("EVOLUTION.jsonl"), jsonl).unwrap();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
-    assert!(writer.write_evolution_index(&workspace).is_ok());
+    writer.ensure_structure().await.unwrap();
+    assert!(writer.write_evolution_index(&workspace).await.is_ok());
     let index = vault.join("Identity").join("Evolution").join("INDEX.md");
     let content = std::fs::read_to_string(&index).unwrap();
     assert!(content.contains("Journeyman"));
@@ -532,19 +551,23 @@ fn test_vault_writer_write_evolution_index_with_data() {
     assert!(content.contains("2"));
     assert!(content.contains("approved"));
     assert!(content.contains("pending"));
-    let report = vault.join("Identity").join("Evolution").join("reports").join("mut-001.md");
+    let report = vault
+        .join("Identity")
+        .join("Evolution")
+        .join("reports")
+        .join("mut-001.md");
     assert!(report.exists());
     cleanup(&vault);
     cleanup(&workspace);
 }
 
-#[test]
-fn test_vault_writer_run_full_sync() {
+#[tokio::test]
+async fn test_vault_writer_run_full_sync() {
     let vault = make_temp_vault();
     let workspace = make_temp_vault();
     std::fs::create_dir_all(&workspace).unwrap();
     let writer = make_writer(vault.clone());
-    let result = writer.run_full_sync(&workspace);
+    let result = writer.run_full_sync(&workspace).await;
     assert!(result.is_ok());
     let stats = result.unwrap();
     assert_eq!(stats.agent_name, "TestAgent");
@@ -555,7 +578,11 @@ fn test_vault_writer_run_full_sync() {
     assert!(vault.join("Semantic").join("Entities.md").exists());
     assert!(vault.join("Identity").join("SOUL.md").exists());
     assert!(vault.join("Identity").join("Personality.md").exists());
-    assert!(vault.join("Identity").join("Evolution").join("INDEX.md").exists());
+    assert!(vault
+        .join("Identity")
+        .join("Evolution")
+        .join("INDEX.md")
+        .exists());
     assert!(vault.join("Themes").join("INDEX.md").exists());
     assert!(vault.join("Working").join("README.md").exists());
     assert!(vault.join("Dashboard").join("Recent.md").exists());
@@ -566,8 +593,8 @@ fn test_vault_writer_run_full_sync() {
 
 // ─── ColdStorageManager tests ─────────────────────────────────────────────
 
-#[test]
-fn test_cold_storage_manager_new() {
+#[tokio::test]
+async fn test_cold_storage_manager_new() {
     let vault = make_temp_vault();
     let config = default_config();
     let manager = ColdStorageManager::new(vault.clone(), config);
@@ -575,8 +602,8 @@ fn test_cold_storage_manager_new() {
     cleanup(&vault);
 }
 
-#[test]
-fn test_cold_storage_manager_run_empty_vault() {
+#[tokio::test]
+async fn test_cold_storage_manager_run_empty_vault() {
     let vault = make_temp_vault();
     std::fs::create_dir_all(&vault).unwrap();
     let config = ObsidianConfig {
@@ -587,12 +614,12 @@ fn test_cold_storage_manager_run_empty_vault() {
     };
     let writer = VaultWriter::new(vault.clone(), None, config.clone(), "TestAgent".to_string());
     let manager = ColdStorageManager::new(vault.clone(), config);
-    assert!(manager.run(&writer).is_ok());
+    assert!(manager.run(&writer).await.is_ok());
     cleanup(&vault);
 }
 
-#[test]
-fn test_cold_storage_manager_enforces_min_max() {
+#[tokio::test]
+async fn test_cold_storage_manager_enforces_min_max() {
     let vault = make_temp_vault();
     std::fs::create_dir_all(&vault).unwrap();
     let config = ObsidianConfig {
@@ -603,20 +630,24 @@ fn test_cold_storage_manager_enforces_min_max() {
     };
     let writer = VaultWriter::new(vault.clone(), None, config.clone(), "TestAgent".to_string());
     let manager = ColdStorageManager::new(vault.clone(), config);
-    assert!(manager.run(&writer).is_ok());
+    assert!(manager.run(&writer).await.is_ok());
     cleanup(&vault);
 }
 
-#[test]
-fn test_cold_storage_manager_archives_old_episodic() {
+#[tokio::test]
+async fn test_cold_storage_manager_archives_old_episodic() {
     let vault = make_temp_vault();
     std::fs::create_dir_all(vault.join("Episodic")).unwrap();
     std::fs::create_dir_all(vault.join(".stale")).unwrap();
     let old_date = chrono::Utc::now().date_naive() - chrono::Duration::days(60);
-    let old_file = vault.join("Episodic").join(format!("{}.md", old_date.format("%Y-%m-%d")));
+    let old_file = vault
+        .join("Episodic")
+        .join(format!("{}.md", old_date.format("%Y-%m-%d")));
     std::fs::write(&old_file, "# Old session").unwrap();
     let recent_date = chrono::Utc::now().date_naive() - chrono::Duration::days(5);
-    let recent_file = vault.join("Episodic").join(format!("{}.md", recent_date.format("%Y-%m-%d")));
+    let recent_file = vault
+        .join("Episodic")
+        .join(format!("{}.md", recent_date.format("%Y-%m-%d")));
     std::fs::write(&recent_file, "# Recent session").unwrap();
     let config = ObsidianConfig {
         vault_path: Some(vault.to_string_lossy().into_owned()),
@@ -626,20 +657,22 @@ fn test_cold_storage_manager_archives_old_episodic() {
     };
     let writer = VaultWriter::new(vault.clone(), None, config.clone(), "TestAgent".to_string());
     let manager = ColdStorageManager::new(vault.clone(), config);
-    assert!(manager.run(&writer).is_ok());
+    assert!(manager.run(&writer).await.is_ok());
     assert!(!old_file.exists());
     assert!(recent_file.exists());
     assert!(vault.join(".stale").exists());
     cleanup(&vault);
 }
 
-#[test]
-fn test_cold_storage_manager_file_ceiling_enforcement() {
+#[tokio::test]
+async fn test_cold_storage_manager_file_ceiling_enforcement() {
     let vault = make_temp_vault();
     std::fs::create_dir_all(vault.join("Episodic")).unwrap();
     for i in 0..15 {
         let date = chrono::Utc::now().date_naive() - chrono::Duration::days(60 + i as i64);
-        let file = vault.join("Episodic").join(format!("{}.md", date.format("%Y-%m-%d")));
+        let file = vault
+            .join("Episodic")
+            .join(format!("{}.md", date.format("%Y-%m-%d")));
         std::fs::write(&file, format!("# Session {}", i)).unwrap();
     }
     let config = ObsidianConfig {
@@ -650,7 +683,7 @@ fn test_cold_storage_manager_file_ceiling_enforcement() {
     };
     let writer = VaultWriter::new(vault.clone(), None, config.clone(), "TestAgent".to_string());
     let manager = ColdStorageManager::new(vault.clone(), config);
-    assert!(manager.run(&writer).is_ok());
+    assert!(manager.run(&writer).await.is_ok());
     let remaining = count_md_files(&vault);
     assert!(remaining <= 10);
     cleanup(&vault);
@@ -658,19 +691,19 @@ fn test_cold_storage_manager_file_ceiling_enforcement() {
 
 // ─── Outbox CursorState tests ─────────────────────────────────────────────
 
-#[test]
-fn test_cursor_state_load_nonexistent() {
+#[tokio::test]
+async fn test_cursor_state_load_nonexistent() {
     let vault = make_temp_vault();
     std::fs::create_dir_all(&vault).unwrap();
-    let cursor = CursorState::load(&vault);
+    let cursor = CursorState::load(&vault).await;
     assert_eq!(cursor.session_count, 0);
     assert_eq!(cursor.memory_count, 0);
     assert_eq!(cursor.vector_count, 0);
     cleanup(&vault);
 }
 
-#[test]
-fn test_cursor_state_save_and_load() {
+#[tokio::test]
+async fn test_cursor_state_save_and_load() {
     let vault = make_temp_vault();
     std::fs::create_dir_all(&vault).unwrap();
     let cursor = CursorState {
@@ -680,9 +713,13 @@ fn test_cursor_state_save_and_load() {
         mutation_count: 10,
         vault_file_count: 200,
         timestamp: 1234567890,
+        procedure_count: 0,
+        lesson_count: 0,
+        insight_count: 0,
+        audit_count: 0,
     };
-    cursor.save(&vault);
-    let loaded = CursorState::load(&vault);
+    cursor.save(&vault).await;
+    let loaded = CursorState::load(&vault).await;
     assert_eq!(loaded.session_count, 42);
     assert_eq!(loaded.memory_count, 1000);
     assert_eq!(loaded.vector_count, 500);
@@ -692,8 +729,8 @@ fn test_cursor_state_save_and_load() {
     cleanup(&vault);
 }
 
-#[test]
-fn test_cursor_state_has_changed() {
+#[tokio::test]
+async fn test_cursor_state_has_changed() {
     let cursor = CursorState {
         session_count: 10,
         memory_count: 100,
@@ -701,11 +738,19 @@ fn test_cursor_state_has_changed() {
         mutation_count: 5,
         vault_file_count: 20,
         timestamp: 1234567890,
+        procedure_count: 0,
+        lesson_count: 0,
+        insight_count: 0,
+        audit_count: 0,
     };
     let same_state = StateSnapshot {
         session_count: 10,
         memory_count: 100,
         vector_count: 50,
+        procedure_count: 0,
+        lesson_count: 0,
+        insight_count: 0,
+        audit_count: 0,
     };
     assert!(!cursor.has_changed(&same_state));
 
@@ -713,6 +758,10 @@ fn test_cursor_state_has_changed() {
         session_count: 11,
         memory_count: 100,
         vector_count: 50,
+        procedure_count: 0,
+        lesson_count: 0,
+        insight_count: 0,
+        audit_count: 0,
     };
     assert!(cursor.has_changed(&diff_state));
 
@@ -720,6 +769,10 @@ fn test_cursor_state_has_changed() {
         session_count: 10,
         memory_count: 101,
         vector_count: 50,
+        procedure_count: 0,
+        lesson_count: 0,
+        insight_count: 0,
+        audit_count: 0,
     };
     assert!(cursor.has_changed(&diff_state2));
 
@@ -727,42 +780,63 @@ fn test_cursor_state_has_changed() {
         session_count: 10,
         memory_count: 100,
         vector_count: 51,
+        procedure_count: 0,
+        lesson_count: 0,
+        insight_count: 0,
+        audit_count: 0,
     };
     assert!(cursor.has_changed(&diff_state3));
 }
 
-#[test]
-fn test_cursor_state_load_corrupted_json() {
+#[tokio::test]
+async fn test_cursor_state_load_corrupted_json() {
     let vault = make_temp_vault();
     std::fs::create_dir_all(&vault).unwrap();
     std::fs::write(vault.join(".cursor.json"), "not valid json {{{").unwrap();
-    let cursor = CursorState::load(&vault);
+    let cursor = CursorState::load(&vault).await;
     assert_eq!(cursor.session_count, 0);
     cleanup(&vault);
 }
 
 // ─── Delegation artifact tests ────────────────────────────────────────────
 
-#[test]
-fn test_vault_writer_write_delegation_artifact() {
+#[tokio::test]
+async fn test_vault_writer_write_delegation_artifact() {
     use savant_ipc::a2a::protocol::{Artifact, ArtifactPart, ArtifactPartType, TaskState};
     let vault = make_temp_vault();
     let writer = make_writer(vault.clone());
-    writer.ensure_structure().unwrap();
+    writer.ensure_structure().await.unwrap();
     let artifact = Artifact {
         task_id: [0u8; 16],
         part_count: 2,
         _padding: [0u8; 7],
     };
     let parts = vec![
-        ArtifactPart { part_type: ArtifactPartType::Text, data_offset: 0, data_len: 100 },
-        ArtifactPart { part_type: ArtifactPartType::Json, data_offset: 100, data_len: 200 },
+        ArtifactPart {
+            part_type: ArtifactPartType::Text,
+            data_offset: 0,
+            data_len: 100,
+        },
+        ArtifactPart {
+            part_type: ArtifactPartType::Json,
+            data_offset: 100,
+            data_len: 200,
+        },
     ];
-    assert!(writer.write_delegation_artifact(
-        "task-001", "agent-parent", "agent-child",
-        &artifact, &parts, TaskState::Completed,
-        50000, 1, 1700000000,
-    ).is_ok());
+    assert!(writer
+        .write_delegation_artifact(
+            "task-001",
+            "agent-parent",
+            "agent-child",
+            &artifact,
+            &parts,
+            TaskState::Completed,
+            50000,
+            1,
+            1700000000,
+        )
+        .await
+        .is_ok());
     let artifact_file = vault.join("Delegation").join("task-001.md");
     assert!(artifact_file.exists());
     let content = std::fs::read_to_string(&artifact_file).unwrap();

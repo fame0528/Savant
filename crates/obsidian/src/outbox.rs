@@ -60,7 +60,7 @@ impl OutboxWorker {
         interval.tick().await; // skip first immediate tick
 
         // Load the last-known cursor on startup
-        let cursor = CursorState::load(&self.vault_path);
+        let cursor = CursorState::load(&self.vault_path).await;
 
         info!(
             "[obsidian] Outbox worker started (interval={interval_secs}s, \
@@ -79,14 +79,14 @@ impl OutboxWorker {
             }
 
             // Compare current state against cursor
-            let current = self.snapshot_state();
+            let current = self.snapshot_state().await;
             if !cursor.has_changed(&current) {
                 debug!("[obsidian] No state change since last sync; skipping");
                 continue;
             }
 
             debug!("[obsidian] State change detected; running projection");
-            match self.writer.run_full_sync(&self.workspace_root) {
+            match self.writer.run_full_sync(&self.workspace_root).await {
                 Ok(stats) => {
                     CursorState {
                         session_count: stats.session_count,
@@ -95,11 +95,16 @@ impl OutboxWorker {
                         mutation_count: stats.mutation_count,
                         vault_file_count: stats.vault_file_count as u64,
                         timestamp: Utc::now().timestamp(),
+                        procedure_count: 0,
+                        lesson_count: 0,
+                        insight_count: 0,
+                        audit_count: 0,
                     }
-                    .save(&self.vault_path);
+                    .save(&self.vault_path)
+                    .await;
 
                     // Run cold storage check after successful sync
-                    if let Err(e) = self.cold_storage.run(&self.writer) {
+                    if let Err(e) = self.cold_storage.run(&self.writer).await {
                         warn!("[obsidian] Cold storage check failed: {e}");
                     }
 
@@ -119,7 +124,7 @@ impl OutboxWorker {
         }
     }
 
-    fn snapshot_state(&self) -> StateSnapshot {
+    async fn snapshot_state(&self) -> StateSnapshot {
         let mut snapshot = StateSnapshot::default();
         if let Some(enclave) = &self.enclave {
             let lsm = enclave.lsm();
@@ -128,6 +133,11 @@ impl OutboxWorker {
                 snapshot.memory_count = s.total_messages;
             }
             snapshot.vector_count = enclave.vector_count() as u64;
+            // CP-29: Track derived artifact counts
+            snapshot.procedure_count = enclave.procedures().await.len() as u64;
+            snapshot.lesson_count = enclave.lessons().await.len() as u64;
+            snapshot.insight_count = enclave.insights().await.len() as u64;
+            snapshot.audit_count = enclave.audit().await.entries().len() as u64;
         }
         snapshot
     }
@@ -138,10 +148,14 @@ pub struct StateSnapshot {
     pub session_count: u64,
     pub memory_count: u64,
     pub vector_count: u64,
+    /// CP-29: Derived artifact counts for change detection
+    pub procedure_count: u64,
+    pub lesson_count: u64,
+    pub insight_count: u64,
+    pub audit_count: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct CursorState {
     pub session_count: u64,
     pub memory_count: u64,
@@ -149,13 +163,22 @@ pub struct CursorState {
     pub mutation_count: u64,
     pub vault_file_count: u64,
     pub timestamp: i64,
+    /// CP-29: Derived artifact counts for change detection
+    #[serde(default)]
+    pub procedure_count: u64,
+    #[serde(default)]
+    pub lesson_count: u64,
+    #[serde(default)]
+    pub insight_count: u64,
+    #[serde(default)]
+    pub audit_count: u64,
 }
 
 impl CursorState {
-    pub fn load(vault_path: &Path) -> Self {
+    pub async fn load(vault_path: &Path) -> Self {
         let path = vault_path.join(".cursor.json");
         if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 if let Ok(cursor) = serde_json::from_str::<CursorState>(&content) {
                     return cursor;
                 }
@@ -164,23 +187,16 @@ impl CursorState {
         CursorState::default()
     }
 
-    pub fn save(&self, vault_path: &Path) {
+    pub async fn save(&self, vault_path: &Path) {
         let path = vault_path.join(".cursor.json");
         if let Ok(content) = serde_json::to_string(self) {
             let tmp = path.with_extension("tmp");
-            if let Ok(mut f) = std::fs::File::create(&tmp) {
-                use std::io::Write;
-                if let Err(e) = f.write_all(content.as_bytes()) {
-                    tracing::warn!("[outbox] Failed to write cursor data: {}", e);
-                    return;
-                }
-                if let Err(e) = f.sync_all() {
-                    tracing::warn!("[outbox] Failed to sync cursor data: {}", e);
-                    return;
-                }
-                if let Err(e) = std::fs::rename(&tmp, &path) {
-                    tracing::warn!("[outbox] Failed to rename cursor file: {}", e);
-                }
+            if let Err(e) = tokio::fs::write(&tmp, content.as_bytes()).await {
+                tracing::warn!("[outbox] Failed to write cursor data: {}", e);
+                return;
+            }
+            if let Err(e) = tokio::fs::rename(&tmp, &path).await {
+                tracing::warn!("[outbox] Failed to rename cursor file: {}", e);
             }
         }
     }
@@ -189,6 +205,9 @@ impl CursorState {
         self.session_count != state.session_count
             || self.memory_count != state.memory_count
             || self.vector_count != state.vector_count
+            || self.procedure_count != state.procedure_count
+            || self.lesson_count != state.lesson_count
+            || self.insight_count != state.insight_count
+            || self.audit_count != state.audit_count
     }
 }
-

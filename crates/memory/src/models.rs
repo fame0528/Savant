@@ -11,6 +11,142 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::error;
 
+/// Centralized configuration for all memory subsystem tunables (MEM-17 through MEM-27).
+///
+/// All fields have sensible defaults via `#[serde(default)]`.
+/// Fields are read from the engine's config instead of being hardcoded.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemoryConfig {
+    /// How often the arbiter sweeps for contradictions (seconds). Default: 600.
+    #[serde(default = "default_arbiter_sweep_interval_secs")]
+    pub arbiter_sweep_interval_secs: u64,
+    /// Shannon entropy cap — facts above this are too uncertain. Default: 1.5.
+    #[serde(default = "default_shannon_entropy_cap")]
+    pub shannon_entropy_cap: f32,
+    /// Temporal decay lambda for search result scoring. Default: 0.03.
+    #[serde(default = "default_temporal_decay_lambda")]
+    pub temporal_decay_lambda: f32,
+    /// Number of recent messages to include in context. Default: 20.
+    #[serde(default = "default_recent_message_count")]
+    pub recent_message_count: usize,
+    /// BM25 term frequency saturation parameter. Default: 1.2.
+    #[serde(default = "default_bm25_k1")]
+    pub bm25_k1: f32,
+    /// BM25 document length normalization parameter. Default: 0.75.
+    #[serde(default = "default_bm25_b")]
+    pub bm25_b: f32,
+    /// Maximum documents in the BM25 index. Default: 50,000.
+    #[serde(default = "default_max_bm25_documents")]
+    pub max_bm25_documents: usize,
+    /// Daily log read cap in bytes. Default: 2000.
+    #[serde(default = "default_daily_log_read_cap_bytes")]
+    pub daily_log_read_cap_bytes: usize,
+    /// How often the distillation pipeline sweeps (seconds). Default: 300.
+    #[serde(default = "default_distillation_sweep_interval_secs")]
+    pub distillation_sweep_interval_secs: u64,
+    /// Maximum learned procedures to retain. Default: 1,000.
+    #[serde(default = "default_max_procedures")]
+    pub max_procedures: usize,
+    /// Maximum synthesized lessons to retain. Default: 2,000.
+    #[serde(default = "default_max_lessons")]
+    pub max_lessons: usize,
+    /// Maximum synthesized insights to retain. Default: 1,000.
+    #[serde(default = "default_max_insights")]
+    pub max_insights: usize,
+    /// Default vector dimension for embeddings. Default: 2560.
+    #[serde(default = "default_default_vector_dim")]
+    pub default_vector_dim: usize,
+    /// Maximum results returned from recall/search. Default: 5.
+    #[serde(default = "default_max_recall_results")]
+    pub max_recall_results: usize,
+    /// Minimum similarity threshold for recall results. Default: 0.3.
+    #[serde(default = "default_recall_similarity_threshold")]
+    pub recall_similarity_threshold: f32,
+    /// Maximum tokens for recall context injection. Default: 2000.
+    #[serde(default = "default_recall_max_tokens")]
+    pub recall_max_tokens: usize,
+    /// Maximum vector elements in the HNSW index. Default: 1,000,000.
+    #[serde(default = "default_vector_max_elements")]
+    pub vector_max_elements: usize,
+}
+
+// Default functions for serde
+fn default_arbiter_sweep_interval_secs() -> u64 {
+    600
+}
+fn default_shannon_entropy_cap() -> f32 {
+    1.5
+}
+fn default_temporal_decay_lambda() -> f32 {
+    0.03
+}
+fn default_recent_message_count() -> usize {
+    20
+}
+fn default_bm25_k1() -> f32 {
+    1.2
+}
+fn default_bm25_b() -> f32 {
+    0.75
+}
+fn default_max_bm25_documents() -> usize {
+    50_000
+}
+fn default_daily_log_read_cap_bytes() -> usize {
+    2000
+}
+fn default_distillation_sweep_interval_secs() -> u64 {
+    300
+}
+fn default_max_procedures() -> usize {
+    1_000
+}
+fn default_max_lessons() -> usize {
+    2_000
+}
+fn default_max_insights() -> usize {
+    1_000
+}
+fn default_default_vector_dim() -> usize {
+    2560
+}
+fn default_max_recall_results() -> usize {
+    5
+}
+fn default_recall_similarity_threshold() -> f32 {
+    0.3
+}
+fn default_recall_max_tokens() -> usize {
+    2000
+}
+fn default_vector_max_elements() -> usize {
+    1_000_000
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            arbiter_sweep_interval_secs: default_arbiter_sweep_interval_secs(),
+            shannon_entropy_cap: default_shannon_entropy_cap(),
+            temporal_decay_lambda: default_temporal_decay_lambda(),
+            recent_message_count: default_recent_message_count(),
+            bm25_k1: default_bm25_k1(),
+            bm25_b: default_bm25_b(),
+            max_bm25_documents: default_max_bm25_documents(),
+            daily_log_read_cap_bytes: default_daily_log_read_cap_bytes(),
+            distillation_sweep_interval_secs: default_distillation_sweep_interval_secs(),
+            max_procedures: default_max_procedures(),
+            max_lessons: default_max_lessons(),
+            max_insights: default_max_insights(),
+            default_vector_dim: default_default_vector_dim(),
+            max_recall_results: default_max_recall_results(),
+            recall_similarity_threshold: default_recall_similarity_threshold(),
+            recall_max_tokens: default_recall_max_tokens(),
+            vector_max_elements: default_vector_max_elements(),
+        }
+    }
+}
+
 /// Represents a single message in the conversation history.
 ///
 /// This is the core transcript unit. It is stored using rkyv's zero-copy
@@ -130,7 +266,7 @@ impl AgentMessage {
     /// Converts a core `ChatMessage` into an `AgentMessage`.
     /// The session_id is provided separately; if ChatMessage has an agent_id,
     /// it will be used as the session_id if `session_id` param is empty.
-    pub fn from_chat(msg: &ChatMessage, session_id: &str) -> Self {
+    pub fn from_chat(msg: &ChatMessage, session_id: &str) -> Result<Self, MemoryError> {
         let role = match msg.role {
             ChatRole::User => MessageRole::User,
             ChatRole::Assistant => MessageRole::Assistant,
@@ -145,10 +281,19 @@ impl AgentMessage {
             .map(|s| s.0.clone())
             .unwrap_or_else(|| session_id.to_string());
 
-        // Sanitize to prevent path traversal in LSM partitions
-        let sid = savant_core::session::sanitize_session_id(&sid).unwrap_or_else(|| sid.clone());
+        // Sanitize to prevent path traversal in LSM partitions.
+        // Return error on sanitization failure instead of falling back to unsanitized value.
+        let sid = match savant_core::session::sanitize_session_id(&sid) {
+            Some(sanitized) => sanitized,
+            None => {
+                return Err(MemoryError::SerializationFailed(format!(
+                    "Session ID sanitization failed for '{}': contains invalid characters or path traversal",
+                    sid
+                )));
+            }
+        };
 
-        Self {
+        Ok(Self {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: sid,
             role,
@@ -160,17 +305,16 @@ impl AgentMessage {
             channel: serde_json::to_string(&msg.channel)
                 .unwrap_or_default()
                 .replace('"', ""),
-        }
+        })
     }
 
     /// Converts this `AgentMessage` into a core `ChatMessage`.
-    /// Note: Tool role messages are converted to User role for LLM context.
     pub fn to_chat(&self) -> ChatMessage {
         let role = match self.role {
             MessageRole::User => ChatRole::User,
             MessageRole::Assistant => ChatRole::Assistant,
             MessageRole::System => ChatRole::System,
-            MessageRole::Tool => ChatRole::Assistant,
+            MessageRole::Tool => ChatRole::Tool,
         };
         ChatMessage {
             is_telemetry: false,
@@ -294,7 +438,7 @@ pub struct MemoryEntry {
     pub importance: u8,
     /// Associated tags for filtering
     pub tags: Vec<String>,
-    /// Vector embedding (128-384 dimensions) for semantic search
+    /// Vector embedding (2560 dimensions for gemma4:e4b) for semantic search
     /// Stored as raw f32 array; actual length determined by embedding model
     pub embedding: Vec<f32>,
     /// Creation timestamp
@@ -310,6 +454,19 @@ pub struct MemoryEntry {
     pub hit_count: rend::u32_le,
     /// Relational edges (IDs of related MemoryEntry objects)
     pub related_to: Vec<rend::u64_le>,
+    // --- MEM-03: Access tracking history ---
+    /// Ring buffer of last 20 access timestamps (epoch seconds).
+    /// Used by Ebbinghaus retention scoring (MEM-09).
+    pub access_timestamps: Vec<rend::i64_le>,
+    // --- MEM-08: Versioning & supersession chains ---
+    /// Version number (starts at 1, incremented on update).
+    pub version: rend::u32_le,
+    /// Parent memory ID (the memory this was derived from).
+    pub parent_id: Option<rend::u64_le>,
+    /// IDs of memories this entry supersedes.
+    pub supersedes: Vec<rend::u64_le>,
+    /// Whether this is the latest version of this memory.
+    pub is_latest: bool,
 }
 
 /// Configuration for auto-recall context injection.
@@ -329,6 +486,17 @@ impl Default for AutoRecallConfig {
             max_tokens: 2000,
             similarity_threshold: 0.3,
             max_results: 5,
+        }
+    }
+}
+
+impl AutoRecallConfig {
+    /// Creates an AutoRecallConfig from the centralized MemoryConfig.
+    pub fn from_memory_config(cfg: &MemoryConfig) -> Self {
+        Self {
+            max_tokens: cfg.recall_max_tokens,
+            similarity_threshold: cfg.recall_similarity_threshold,
+            max_results: cfg.max_recall_results,
         }
     }
 }
@@ -394,9 +562,18 @@ pub struct TemporalMetadata {
 }
 
 impl TemporalMetadata {
+    /// Creates a new temporal metadata with default entity fields.
+    /// Used when only the memory_id is known (e.g., contradiction resolution in arbiter).
+    pub fn new(memory_id: u64) -> Self {
+        Self::new_active(memory_id, "", "")
+    }
+
     /// Creates a new temporal metadata for an active fact.
     pub fn new_active(memory_id: u64, entity_type: &str, entity_name: &str) -> Self {
-        let now = savant_core::utils::time::now_millis() as i64;
+        let now = savant_core::utils::time::now_millis().unwrap_or_else(|e| {
+            tracing::warn!("Failed to get current time: {}, using 0", e);
+            0
+        }) as i64;
 
         Self {
             valid_from: now,
@@ -416,7 +593,10 @@ impl TemporalMetadata {
 
     /// Marks this fact as superseded by another memory.
     pub fn invalidate(&mut self, superseded_by_id: u64) {
-        self.valid_to = Some(savant_core::utils::time::now_millis() as i64);
+        self.valid_to = Some(savant_core::utils::time::now_millis().unwrap_or_else(|e| {
+            tracing::warn!("Failed to get current time: {}, using 0", e);
+            0
+        }) as i64);
         self.superseded_by = Some(superseded_by_id);
     }
 }
@@ -424,11 +604,6 @@ impl TemporalMetadata {
 /// Generates a storage key for temporal metadata.
 pub fn temporal_key(memory_id: u64) -> String {
     format!("temporal:{}", memory_id)
-}
-
-/// Generates a storage key for temporal metadata by entity.
-pub fn temporal_entity_key(entity_name: &str) -> String {
-    format!("temporal_entity:{}", entity_name)
 }
 
 /// DAG node for reversible session compaction.
@@ -471,7 +646,10 @@ impl DagNode {
             raw_message_ids: messages.iter().map(|m| m.id.clone()).collect(),
             child_nodes: Vec::new(),
             session_id: session_id.to_string(),
-            created_at: savant_core::utils::time::now_millis() as i64,
+            created_at: savant_core::utils::time::now_millis().unwrap_or_else(|e| {
+                tracing::warn!("Failed to get current time: {}, using 0", e);
+                0
+            }) as i64,
             message_count: messages.len(),
         }
     }

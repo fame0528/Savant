@@ -125,14 +125,14 @@ impl CircuitBreaker {
         let trip_reason = {
             let tasks = self.tasks.read().await;
             if let Some(tracker) = tasks.get(task_id) {
-                let depth = tracker.recursion_depth.load(Ordering::Relaxed);
-                if depth as usize >= tracker.config.max_depth {
+                // SEC-06: Atomic check-and-increment to prevent TOCTOU race
+                let prev = tracker.recursion_depth.fetch_add(1, Ordering::AcqRel);
+                if prev as usize >= tracker.config.max_depth {
                     Some(format!(
                         "Recursion depth {} exceeds limit {}",
-                        depth, tracker.config.max_depth
+                        prev, tracker.config.max_depth
                     ))
                 } else {
-                    tracker.recursion_depth.fetch_add(1, Ordering::Relaxed);
                     None
                 }
             } else {

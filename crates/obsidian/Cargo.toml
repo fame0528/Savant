@@ -1,7 +1,8 @@
 [package]
 name = "savant_obsidian"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 description = "Obsidian Memory Tree — bidirectional vault projection for Savant's memory substrate"
 
 [dependencies]
@@ -16,8 +17,11 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
-notify = "7.0"
+notify = "8.2.0"
 async-trait = { workspace = true }
 
 [dev-dependencies]
 uuid = { version = "1.0", features = ["v4"] }
+
+[lints]
+workspace = true

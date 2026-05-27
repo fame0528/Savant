@@ -1,3 +1,9 @@
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 use crate::proactive::ProactivePartner;
 use crate::react::{AgentEvent, AgentLoop};
 use chrono::Timelike;
@@ -44,7 +50,8 @@ impl savant_core::traits::Tool for HeartbeatTool {
                 return Ok(serde_json::json!({
                     "action": "skip",
                     "reason": format!("Invalid action '{}', defaulted to skip", other)
-                }).to_string());
+                })
+                .to_string());
             }
         };
 
@@ -52,7 +59,8 @@ impl savant_core::traits::Tool for HeartbeatTool {
             return Ok(serde_json::json!({
                 "action": "skip",
                 "reason": "validation failed"
-            }).to_string());
+            })
+            .to_string());
         }
 
         // Return structured decision with reason for downstream logging
@@ -60,7 +68,8 @@ impl savant_core::traits::Tool for HeartbeatTool {
             "action": action,
             "reason": reason,
             "evaluated_at": chrono::Utc::now().to_rfc3339()
-        }).to_string())
+        })
+        .to_string())
     }
 }
 
@@ -82,11 +91,15 @@ impl savant_core::traits::Tool for EvaluateNotificationTool {
 
         // Evaluate urgency flags from the payload
         let is_urgent = payload["urgent"].as_bool().unwrap_or_else(|| {
-            debug!("[heartbeat::evaluate_notification] Missing 'urgent' field, defaulting to false");
+            debug!(
+                "[heartbeat::evaluate_notification] Missing 'urgent' field, defaulting to false"
+            );
             false
         });
         let is_anomaly = payload["anomaly"].as_bool().unwrap_or_else(|| {
-            debug!("[heartbeat::evaluate_notification] Missing 'anomaly' field, defaulting to false");
+            debug!(
+                "[heartbeat::evaluate_notification] Missing 'anomaly' field, defaulting to false"
+            );
             false
         });
 
@@ -112,7 +125,8 @@ impl savant_core::traits::Tool for EvaluateNotificationTool {
             "quiet_hours": in_quiet_hours,
             "anomaly_override": is_anomaly,
             "evaluated_at": chrono::Utc::now().to_rfc3339()
-        }).to_string())
+        })
+        .to_string())
     }
 }
 
@@ -125,6 +139,9 @@ pub struct HeartbeatPulse {
     proactive: ProactivePartner,
     shutdown_token: CancellationToken,
     delta_tx: tokio::sync::watch::Sender<f32>,
+    /// Per-agent message counter for memory lifecycle (promotion, lessons, insights).
+    /// Runs every 10th message per agent, not per-process.
+    message_counter: std::sync::atomic::AtomicU32,
 }
 
 impl HeartbeatPulse {
@@ -145,10 +162,103 @@ impl HeartbeatPulse {
             proactive,
             shutdown_token,
             delta_tx,
+            message_counter: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
     /// Starts the heartbeat loop for this agent.
+    /// Starts the heartbeat with an Orchestrator (default path).
+    /// Uses Orchestrator::execute_turn() for chat messages, which adds
+    /// A2A delegation, continuation, handoff validation, and DSP prediction.
+    /// The Orchestrator owns the AgentLoop internally.
+    pub async fn start_with_orchestrator(
+        self,
+        mut orchestrator: crate::orchestration::Orchestrator,
+    ) {
+        use super::delta::DeltaTracker;
+
+        let mut chat_rx = self.nexus.subscribe().await.0;
+        let mut delta_tracker = DeltaTracker::new();
+        const DELTA_THRESHOLD: f32 = 0.3;
+        const CHECK_INTERVAL_SECS: u64 = 30;
+        use savant_dream::IS_DREAMING;
+        use std::sync::atomic::Ordering;
+        let delta_tx = self.delta_tx.clone();
+
+        info!(
+            "[{}] Heartbeat loop active (orchestrator mode, delta-threshold={}, dream-aware)",
+            self.agent.agent_name, DELTA_THRESHOLD
+        );
+
+        loop {
+            tokio::select! {
+                Ok(chat_event) = chat_rx.recv() => {
+                    if let Ok(message) = serde_json::from_str::<
+                        savant_core::types::ChatMessage,
+                    >(&chat_event.payload)
+                    {
+                        if message.role == savant_core::types::ChatRole::User {
+                            delta_tracker.record_message();
+
+                            let agent_name = self.agent.agent_name.clone();
+                            info!("[{}] Orchestrator processing user message", agent_name);
+
+                            match orchestrator.execute_turn(&message.content).await {
+                                Ok(()) => {
+                                    info!("[{}] Orchestrator turn completed", agent_name);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("[{}] Orchestrator turn failed: {}", agent_name, e);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(CHECK_INTERVAL_SECS)) => {
+                    // Dream awareness
+                    if IS_DREAMING.load(Ordering::Relaxed) {
+                        continue;
+                    }
+
+                    // NA-03: Check orchestrator subagent health and evacuate dead ones
+                    let dead_subagents = orchestrator.check_swarm_health().await;
+                    for dead_id in &dead_subagents {
+                        if let Err(e) = orchestrator.evacuate_subagent(dead_id).await {
+                            tracing::warn!(
+                                agent_id = %orchestrator.agent_id(),
+                                subagent = %dead_id,
+                                error = %e,
+                                "Failed to evacuate dead subagent"
+                            );
+                        } else {
+                            info!(
+                                agent_id = %orchestrator.agent_id(),
+                                subagent = %dead_id,
+                                "Evacuated dead subagent"
+                            );
+                        }
+                    }
+
+                    // Compute and publish delta score for dream scheduler
+                    let git_diff_output = self.get_git_diff_output().await;
+                    let git_hash = xxhash_rust::xxh3::xxh3_64(git_diff_output.as_bytes());
+                    let _git_changed = delta_tracker.update_git_hash(git_hash);
+                    let git_lines = Self::parse_git_lines_changed(&git_diff_output);
+
+                    let fs_snapshot = self.build_fs_snapshot().await;
+                    let files_modified = delta_tracker.update_fs_snapshot(fs_snapshot);
+
+                    let delta = delta_tracker.compute_and_reset(git_lines, files_modified);
+                    let score = delta.score();
+
+                    if let Err(e) = delta_tx.send(score) {
+                        tracing::warn!("[heartbeat:orchestrator] Failed to send delta score: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn start<M: savant_core::traits::MemoryBackend + std::clone::Clone>(
         self,
         mut agent_loop: AgentLoop<M>,
@@ -162,6 +272,15 @@ impl HeartbeatPulse {
         let mut delta_tracker = DeltaTracker::new();
         const DELTA_THRESHOLD: f32 = 0.3;
         const CHECK_INTERVAL_SECS: u64 = 30;
+
+        // Track tool errors from previous agent runs for delta scoring
+        let mut prev_tool_error_count: u32 = 0;
+
+        // Voice pulse: audio event pipeline for voice integration
+        let voice_pulse: Box<dyn super::audio::AudioPipeline> =
+            Box::new(super::audio::NoopAudioPipeline::new());
+        let mut voice_rx = voice_pulse.subscribe();
+        voice_pulse.start();
 
         // Dream engine awareness: check IS_DREAMING flag before pulse
         use savant_dream::IS_DREAMING;
@@ -187,9 +306,13 @@ impl HeartbeatPulse {
                         }
                     } else if chat_event.event_type == "pulse.trigger" {
                         info!("[{}] External PULSE trigger received. Forcing cycle...", self.agent.agent_name);
-                        let forced_lens = serde_json::from_str::<serde_json::Value>(&chat_event.payload)
-                            .ok()
-                            .and_then(|v| v["lens"].as_str().map(|s| s.to_string()));
+                        let forced_lens = match serde_json::from_str::<serde_json::Value>(&chat_event.payload) {
+                            Ok(v) => v["lens"].as_str().map(|s| s.to_string()),
+                            Err(e) => {
+                                debug!("[{}] Malformed pulse trigger payload: {}", self.agent.agent_name, e);
+                                None
+                            }
+                        };
 
                         if let Err(e) = self.pulse_with_lens(&mut agent_loop, forced_lens).await {
                             parsing::log_agent_error(&self.agent.agent_name, "Manual pulse failed", e);
@@ -205,9 +328,24 @@ impl HeartbeatPulse {
                         continue;
                     }
 
-                    // Compute environmental delta
-                    let git_lines = self.compute_git_delta().await;
-                    let files_modified = self.compute_fs_delta().await;
+                    // Record tool errors from the previous agent run (if any)
+                    let current_error_count = agent_loop.tool_error_count.load(std::sync::atomic::Ordering::Relaxed);
+                    let new_errors = current_error_count.saturating_sub(prev_tool_error_count);
+                    for _ in 0..new_errors {
+                        delta_tracker.record_tool_error();
+                    }
+                    prev_tool_error_count = current_error_count;
+
+                    // Compute environmental delta using DeltaTracker methods
+                    // (replaces direct git shell-outs for incremental state tracking)
+                    let git_diff_output = self.get_git_diff_output().await;
+                    let git_hash = xxhash_rust::xxh3::xxh3_64(git_diff_output.as_bytes());
+                    let _git_changed = delta_tracker.update_git_hash(git_hash);
+                    let git_lines = Self::parse_git_lines_changed(&git_diff_output);
+
+                    let fs_snapshot = self.build_fs_snapshot().await;
+                    let files_modified = delta_tracker.update_fs_snapshot(fs_snapshot);
+
                     let delta = delta_tracker.compute_and_reset(git_lines, files_modified);
                     let score = delta.score();
 
@@ -235,7 +373,23 @@ impl HeartbeatPulse {
                     }
                 }
 
-                // 3. Graceful Shutdown
+                // 3. Audio events from VoicePulse
+                Ok(audio_event) = voice_rx.recv() => {
+                    match audio_event {
+                        super::audio::AudioEvent::VoiceReady => {
+                            debug!("[{}] Voice pipeline ready", self.agent.agent_name);
+                        }
+                        super::audio::AudioEvent::TranscriptReceived(transcript) => {
+                            info!("[{}] Voice transcript: {}", self.agent.agent_name, transcript);
+                            delta_tracker.record_message();
+                        }
+                        super::audio::AudioEvent::PlaybackComplete => {
+                            debug!("[{}] Voice playback complete", self.agent.agent_name);
+                        }
+                    }
+                }
+
+                // 4. Graceful Shutdown
                 _ = self.shutdown_token.cancelled() => {
                     info!("[{}] Heartbeat loop received shutdown signal. Evacuating...", self.agent.agent_name);
                     break;
@@ -244,8 +398,8 @@ impl HeartbeatPulse {
         }
     }
 
-    /// Compute git lines changed since last check.
-    async fn compute_git_delta(&self) -> usize {
+    /// Returns raw `git diff --stat HEAD` output for hashing and parsing.
+    async fn get_git_diff_output(&self) -> String {
         let path = &self.agent.workspace_path;
         if let Ok(output) = tokio::process::Command::new("git")
             .args(["diff", "--stat", "HEAD"])
@@ -253,26 +407,32 @@ impl HeartbeatPulse {
             .output()
             .await
         {
-            let text = String::from_utf8_lossy(&output.stdout);
-            // Parse "N files changed, M insertions(+), K deletions(-)"
-            if let Some(line) = text.lines().last() {
-                let mut total = 0;
-                for part in line.split(',') {
-                    let part = part.trim();
-                    if let Some(num) = part.split_whitespace().next() {
-                        if let Ok(n) = num.parse::<usize>() {
-                            total += n;
-                        }
+            String::from_utf8_lossy(&output.stdout).to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Parses git diff --stat output to extract total lines changed.
+    fn parse_git_lines_changed(text: &str) -> usize {
+        if let Some(line) = text.lines().last() {
+            let mut total = 0;
+            for part in line.split(',') {
+                let part = part.trim();
+                if let Some(num) = part.split_whitespace().next() {
+                    if let Ok(n) = num.parse::<usize>() {
+                        total += n;
                     }
                 }
-                return total;
             }
+            return total;
         }
         0
     }
 
-    /// Compute filesystem files modified since last check.
-    async fn compute_fs_delta(&self) -> usize {
+    /// Builds a filesystem snapshot of (path, hash) pairs from git status.
+    /// Used by DeltaTracker::update_fs_snapshot() for incremental change detection.
+    async fn build_fs_snapshot(&self) -> Vec<(String, u64)> {
         let path = &self.agent.workspace_path;
         if let Ok(output) = tokio::process::Command::new("git")
             .args(["status", "--short"])
@@ -281,9 +441,17 @@ impl HeartbeatPulse {
             .await
         {
             let text = String::from_utf8_lossy(&output.stdout);
-            return text.lines().filter(|l| !l.trim().is_empty()).count();
+            text.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| {
+                    let path_str = l.trim().to_string();
+                    let hash = xxhash_rust::xxh3::xxh3_64(path_str.as_bytes());
+                    (path_str, hash)
+                })
+                .collect()
+        } else {
+            Vec::new()
         }
-        0
     }
 
     async fn handle_chat_message<M: savant_core::traits::MemoryBackend + Clone>(
@@ -327,6 +495,15 @@ impl HeartbeatPulse {
                 );
 
                 let response_recipient = sender;
+
+                // NLP: Parse command intent from user message
+                let cmd = crate::nlp::parse_command(&content);
+                if cmd.confidence > 0.5 {
+                    info!(
+                        "[{}] NLP command detected: category={:?}, action={}",
+                        self.agent.agent_name, cmd.category, cmd.action
+                    );
+                }
 
                 // Process the message through Agent loop
                 let mut full_response = String::new();
@@ -579,6 +756,43 @@ impl HeartbeatPulse {
                     "[{}] Chat response sent (Standardized Lane)",
                     self.agent.agent_name
                 );
+
+                // Memory lifecycle: consolidate after each turn
+                if let Err(e) = memory_clone.consolidate(&self.agent.agent_id).await {
+                    tracing::warn!(
+                        "[{}] Memory consolidation failed: {}",
+                        self.agent.agent_name,
+                        e
+                    );
+                }
+
+                // Memory lifecycle: promotion, lessons, insights (every 10th message)
+                let count = self
+                    .message_counter
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if count.is_multiple_of(10) {
+                    if let Err(e) = memory_clone.run_promotion_cycle(&self.agent.agent_id).await {
+                        tracing::warn!("[{}] Promotion cycle failed: {}", self.agent.agent_name, e);
+                    }
+                    if let Err(e) = memory_clone.synthesize_lessons(&self.agent.agent_id).await {
+                        tracing::warn!(
+                            "[{}] Lesson synthesis failed: {}",
+                            self.agent.agent_name,
+                            e
+                        );
+                    }
+                    if let Err(e) = memory_clone.synthesize_insights(&self.agent.agent_id).await {
+                        tracing::warn!(
+                            "[{}] Insight synthesis failed: {}",
+                            self.agent.agent_name,
+                            e
+                        );
+                    }
+                    info!(
+                        "[{}] Memory lifecycle: promotion + lessons + insights completed",
+                        self.agent.agent_name
+                    );
+                }
             }
             Err(e) => {
                 info!(
@@ -676,9 +890,18 @@ impl HeartbeatPulse {
                 } else {
                     let lines: Vec<String> = msgs
                         .iter()
-                        .map(|m| format!("- [{}] {}", m.role, m.content.chars().take(120).collect::<String>()))
+                        .map(|m| {
+                            format!(
+                                "- [{}] {}",
+                                m.role,
+                                m.content.chars().take(120).collect::<String>()
+                            )
+                        })
                         .collect();
-                    format!("\n<RECENT_HISTORY>\n{}\n</RECENT_HISTORY>\n", lines.join("\n"))
+                    format!(
+                        "\n<RECENT_HISTORY>\n{}\n</RECENT_HISTORY>\n",
+                        lines.join("\n")
+                    )
                 }
             })
             .unwrap_or_default();
@@ -711,11 +934,16 @@ impl HeartbeatPulse {
             ""
         };
 
+        // Inject synthesized lessons and insights into agent context
+        let lessons_context = agent_loop.memory.get_lessons_context().await;
+        let insights_context = agent_loop.memory.get_insights_context().await;
+
         // AAA: Restore working buffer
         let mut buffer = self.proactive.restore_state().unwrap_or_else(|e| {
             tracing::warn!(
                 "[{}] Failed to restore proactive state: {}. Starting fresh.",
-                self.agent.agent_name, e
+                self.agent.agent_name,
+                e
             );
             crate::proactive::WorkingBuffer::default()
         });
@@ -748,6 +976,8 @@ impl HeartbeatPulse {
             {context_section}\
             {recent_history}\
             {recent_thoughts}\n\
+            {lessons_context}\
+            {insights_context}\n\
             <GROUNDING_CONSTRAINTS>\n\
             You may only assert FACTUAL CLAIMS that are currently visible inside <ENVIRONMENT_REALTIME> and <SYSTEM_METRICS>.\n\
             Do not claim to have access to systems or information not shown above (GitHub, user conversations, remote APIs).\n\
@@ -768,6 +998,8 @@ impl HeartbeatPulse {
             context_section = context_section,
             recent_history = recent_history,
             recent_thoughts = recent_thoughts_section,
+            lessons_context = lessons_context,
+            insights_context = insights_context,
         );
 
         // --- 🛡️ OMEGA-VIII: Deterministic Pre-filtering (Lane-Perfection) ---
@@ -776,9 +1008,9 @@ impl HeartbeatPulse {
         if let Some(h) = buffer.last_pulse_hash {
             if h == current_hash {
                 let now = chrono::Utc::now().timestamp();
-                let reflection_due = buffer.last_reflection_time.is_none_or(|last| {
-                    (now - last) >= reflection_interval as i64
-                });
+                let reflection_due = buffer
+                    .last_reflection_time
+                    .is_none_or(|last| (now - last) >= reflection_interval as i64);
 
                 if !reflection_due {
                     info!("[{}] Deterministic Stillness: Substrate state identical to last pulse. Skipping inference.", self.agent.agent_name);
@@ -844,7 +1076,10 @@ impl HeartbeatPulse {
                             if name == "heartbeat" {
                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&args) {
                                     let action_str = json["action"].as_str().unwrap_or_else(|| {
-                                        warn!("[{}] heartbeat action missing 'action' field", self.agent.agent_name);
+                                        warn!(
+                                            "[{}] heartbeat action missing 'action' field",
+                                            self.agent.agent_name
+                                        );
                                         ""
                                     });
                                     if action_str == "skip" {
@@ -1012,10 +1247,12 @@ impl HeartbeatPulse {
             let now = chrono::Utc::now().timestamp();
             if has_content {
                 let truncated: String = captured_thought.chars().take(500).collect();
-                buffer.recent_thoughts.push(crate::proactive::RecentThought {
-                    timestamp: now,
-                    content: truncated,
-                });
+                buffer
+                    .recent_thoughts
+                    .push(crate::proactive::RecentThought {
+                        timestamp: now,
+                        content: truncated,
+                    });
                 if buffer.recent_thoughts.len() > MAX_RECENT_THOUGHTS {
                     buffer.recent_thoughts.remove(0);
                 }
@@ -1028,6 +1265,26 @@ impl HeartbeatPulse {
                     e
                 );
             }
+
+            // Distill workspace context after state commit
+            let thoughts: Vec<&str> = buffer
+                .recent_thoughts
+                .iter()
+                .map(|t| t.content.as_str())
+                .collect();
+            let stillness_summary = format!(
+                "Agent in stillness state. Goal: {}. Recent thoughts: {}",
+                buffer.current_goal,
+                thoughts.join("; ")
+            );
+            if let Err(e) = self.proactive.distill_context(&stillness_summary) {
+                tracing::warn!(
+                    "[{}] Failed to distill context after stillness: {}",
+                    self.agent.agent_name,
+                    e
+                );
+            }
+
             return Ok(());
         }
 
@@ -1088,10 +1345,12 @@ impl HeartbeatPulse {
         };
         if !combined_output.is_empty() {
             let truncated: String = combined_output.chars().take(500).collect();
-            buffer.recent_thoughts.push(crate::proactive::RecentThought {
-                timestamp: now,
-                content: truncated,
-            });
+            buffer
+                .recent_thoughts
+                .push(crate::proactive::RecentThought {
+                    timestamp: now,
+                    content: truncated,
+                });
             if buffer.recent_thoughts.len() > MAX_RECENT_THOUGHTS {
                 buffer.recent_thoughts.remove(0);
             }
@@ -1105,24 +1364,47 @@ impl HeartbeatPulse {
             );
         }
 
+        // Distill workspace context after state commit
+        let thoughts: Vec<&str> = buffer
+            .recent_thoughts
+            .iter()
+            .map(|t| t.content.as_str())
+            .collect();
+        let context_summary = format!(
+            "Goal: {}. Pending actions: {}. Recent thoughts: {}",
+            buffer.current_goal,
+            buffer.pending_actions.join(", "),
+            thoughts.join("; ")
+        );
+        if let Err(e) = self.proactive.distill_context(&context_summary) {
+            tracing::warn!(
+                "[{}] Failed to distill context: {}",
+                self.agent.agent_name,
+                e
+            );
+        }
+
         // AAA: Autonomous Lesson Distillation (ALD) (Phase 19: Watermark Model)
         let ald = crate::learning::ald::ALDEngine::new(self.agent.workspace_path.clone());
-        match ald.distill(buffer.ald_watermark) {
+        match ald.distill(buffer.ald_watermark).map_err(|e| e.to_string()) {
             Ok((new_watermark, burst, identity_signals)) => {
                 buffer.ald_watermark = new_watermark;
                 if burst {
                     info!(
                         "[{}] ALD: High-Density Cognitive Burst detected. {} identity signal(s).",
-                        self.agent.agent_name, identity_signals.len()
+                        self.agent.agent_name,
+                        identity_signals.len()
                     );
                 }
                 for signal in &identity_signals {
-                    if let Err(e) = ald.process_identity_signal(
-                        signal,
-                        &self.agent.agent_name,
-                        &self.nexus,
-                    ) {
-                        warn!("[{}] ALD identity signal processing failed: {}", self.agent.agent_name, e);
+                    if let Err(e) = ald
+                        .process_identity_signal(signal, &self.agent.agent_name, &self.nexus)
+                        .await
+                    {
+                        warn!(
+                            "[{}] ALD identity signal processing failed: {}",
+                            self.agent.agent_name, e
+                        );
                     }
                 }
             }
@@ -1142,6 +1424,31 @@ impl HeartbeatPulse {
             Err(e) => {
                 tracing::warn!(
                     "[{}] Failed to sync LEARNINGS.md → JSONL: {}",
+                    self.agent.agent_name,
+                    e
+                );
+            }
+            _ => {}
+        }
+
+        // Detect recurring patterns for mutation candidacy (5+ recurrence threshold)
+        match parser.detect_recurring_patterns(&self.agent.agent_id, 5) {
+            Ok(patterns) if !patterns.is_empty() => {
+                info!(
+                    "[{}] Detected {} recurring learning patterns (mutation candidates)",
+                    self.agent.agent_name,
+                    patterns.len()
+                );
+                for (fingerprint, count) in &patterns {
+                    debug!(
+                        "[{}] Recurring pattern: {} ({} occurrences)",
+                        self.agent.agent_name, fingerprint, count
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[{}] Failed to detect recurring patterns: {}",
                     self.agent.agent_name,
                     e
                 );

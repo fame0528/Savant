@@ -1,15 +1,78 @@
+// SAFETY: All `clippy::disallowed_methods` violations in this file originate from
+// the `serde_json::json!()` macro, which internally uses `.unwrap()` on
+// compile-time-validated JSON literals. A malformed JSON literal would be a
+// compile error, making the panic path statically unreachable.
+#![allow(clippy::disallowed_methods)]
+
 pub mod chain;
+pub mod cost_router;
 pub mod mgmt;
+pub mod privacy_router;
+
+use savant_core::types::{ChatMessage, ChatRole};
+
+/// Format a message with images into OpenAI-compatible content array format.
+/// If the message has no images, returns the content as a plain string.
+/// If images are present, returns a content array with text + image_url blocks.
+#[allow(clippy::disallowed_methods)] // serde_json::json! macro internally uses unwrap
+fn format_message_content_with_images(msg: &ChatMessage) -> serde_json::Value {
+    if msg.images.is_empty() {
+        serde_json::json!(msg.content)
+    } else {
+        let mut parts = vec![serde_json::json!({
+            "type": "text",
+            "text": msg.content
+        })];
+        for img in &msg.images {
+            parts.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:image/jpeg;base64,{}", img)
+                }
+            }));
+        }
+        serde_json::json!(parts)
+    }
+}
+
+/// Format a message with images into Anthropic-compatible content array format.
+/// Anthropic uses `source` instead of `image_url` for image blocks.
+#[allow(clippy::disallowed_methods)] // serde_json::json! macro internally uses unwrap
+fn format_message_content_anthropic(msg: &ChatMessage) -> serde_json::Value {
+    if msg.images.is_empty() {
+        serde_json::json!(msg.content)
+    } else {
+        let mut parts = vec![serde_json::json!({
+            "type": "text",
+            "text": msg.content
+        })];
+        for img in &msg.images {
+            parts.push(serde_json::json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": img
+                }
+            }));
+        }
+        serde_json::json!(parts)
+    }
+}
+
 use async_stream::stream;
 use async_trait::async_trait;
 use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
 use savant_core::error::SavantError;
 use savant_core::traits::LlmProvider;
-use savant_core::types::{ChatChunk, ChatMessage, ChatRole, LlmParams};
+use savant_core::types::{ChatChunk, LlmParams};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::pin::Pin;
+
+/// PB-09: Maximum number of streaming chunks before forcing completion.
+const MAX_STREAM_CHUNKS: u32 = 10_000;
 
 /// Classifies reqwest errors into appropriate SavantError variants.
 /// This enables the provider chain (error classification, cooldown, circuit breaker)
@@ -38,6 +101,35 @@ fn classify_http_error(e: reqwest::Error, provider: &str) -> SavantError {
     } else {
         SavantError::NetworkError(format!("{} request failed: {}", provider, e))
     }
+}
+
+/// PB-15: Extracts the Retry-After header value from an HTTP response.
+/// Returns the number of seconds to wait, or None if not present/parseable.
+pub fn extract_retry_after(response: &reqwest::Response) -> Option<u64> {
+    response
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+}
+
+/// PB-15: Checks an HTTP response for 429 status and extracts Retry-After.
+/// Returns Ok(()) if the response is not rate-limited.
+/// Returns Err(SavantError::RateLimit) with embedded retry-after seconds if rate-limited.
+fn check_response_retry_after(
+    response: &reqwest::Response,
+    provider: &str,
+) -> Result<(), SavantError> {
+    if response.status() == 429 {
+        let retry_secs = extract_retry_after(response);
+        let msg = if let Some(secs) = retry_secs {
+            format!("{} rate limited (429): retry after {}s", provider, secs)
+        } else {
+            format!("{} rate limited (429)", provider)
+        };
+        return Err(SavantError::RateLimit(msg));
+    }
+    Ok(())
 }
 
 /// Parses a single JSON object from the beginning of a buffer.
@@ -89,6 +181,11 @@ where
         let mut tool_calls_map = std::collections::HashMap::<u64, savant_core::types::ProviderToolCall>::new();
 
         while let Some(chunk_res) = stream.next().await {
+            // PB-09: Guard against unbounded streaming
+            if chunk_count >= MAX_STREAM_CHUNKS {
+                tracing::warn!("[{}] Stream exceeded {} chunks, forcing completion", agent_id, MAX_STREAM_CHUNKS);
+                break;
+            }
             match chunk_res {
                 Ok(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
@@ -195,25 +292,13 @@ where
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "[{}] OpenRouter stream interrupted ({}): yielding partial response as complete",
+                        "[{}] OpenRouter stream interrupted ({}): propagating error",
                         agent_id,
                         e
                     );
-                    // Connection dropped mid-stream — this is normal for long-lived SSE.
-                    // Yield the final chunk so the agent loop can continue with
-                    // whatever content was already received.
-                    yield Ok(ChatChunk {
-                        agent_name: agent_name.clone(),
-                        agent_id: agent_id.clone(),
-                        content: String::new(),
-                        is_final: true,
-                        session_id: None,
-                        channel: savant_core::types::AgentOutputChannel::Chat,
-                        logprob: None,
-                        is_telemetry: false,
-                        reasoning: None,
-                        tool_calls: None,
-                    });
+                    yield Err(SavantError::NetworkError(format!(
+                        "[{}] Stream interrupted: {}", agent_id, e
+                    )));
                     return;
                 }
             }
@@ -242,6 +327,7 @@ pub struct OpenAiProvider {
     pub agent_name: String,
     pub llm_params: Option<LlmParams>,
     pub max_completion_tokens: Option<u32>,
+    pub base_url: String,
 }
 
 #[async_trait]
@@ -252,13 +338,28 @@ impl LlmProvider for OpenAiProvider {
         tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
+        let formatted_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|msg| {
+                let role = match msg.role {
+                    ChatRole::System => "system",
+                    ChatRole::User => "user",
+                    ChatRole::Assistant => "assistant",
+                    _ => "user",
+                };
+                let content = format_message_content_with_images(msg);
+                serde_json::json!({ "role": role, "content": content })
+            })
+            .collect();
+
+        let url = format!("{}/chat/completions", self.base_url);
         let response = self
             .client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&json!({
                 "model": self.model,
-                "messages": messages,
+                "messages": formatted_messages,
                 "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
@@ -271,6 +372,9 @@ impl LlmProvider for OpenAiProvider {
             .await
             .map_err(|e| classify_http_error(e, "OpenAI"))?;
 
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "OpenAI")?;
+
         let stream = response
             .bytes_stream()
             .map(|res| res.map_err(|e| SavantError::IoError(std::io::Error::other(e))));
@@ -280,6 +384,10 @@ impl LlmProvider for OpenAiProvider {
             self.agent_id.clone(),
             self.agent_name.clone(),
         ))
+    }
+
+    fn supports_multimodal(&self) -> bool {
+        true
     }
 }
 
@@ -309,12 +417,12 @@ impl ModelInfo {
     pub fn safe_max_tokens(&self) -> u32 {
         if let Some(max_comp) = self.max_completion_tokens {
             if max_comp > 0 {
-                return max_comp as u32;
+                return (max_comp as u64).min(u32::MAX as u64) as u32;
             }
         }
         if let Some(cw) = self.context_length {
             if cw > 0 {
-                return (cw as f64 * 0.85) as u32;
+                return ((cw as f64 * 0.85) as u64).min(u32::MAX as u64) as u32;
             }
         }
         32768
@@ -332,14 +440,34 @@ pub async fn fetch_openrouter_model_info(
         "https://openrouter.ai/api/v1/models/{}",
         model_id.replace('/', "%2F")
     );
-    let response = client
+    let response = match client
         .get(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
         .await
-        .ok()?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                "[fetch_openrouter_model_info] HTTP request failed for {}: {}",
+                model_id,
+                e
+            );
+            return None;
+        }
+    };
 
-    let json: Value = response.json().await.ok()?;
+    let json: Value = match response.json().await {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::warn!(
+                "[fetch_openrouter_model_info] JSON parse failed for {}: {}",
+                model_id,
+                e
+            );
+            return None;
+        }
+    };
     let data = &json["data"];
 
     let id = data["id"].as_str().unwrap_or(model_id).to_string();
@@ -428,7 +556,7 @@ impl LlmProvider for OpenRouterProvider {
         // Auto-calculate max_tokens from the dynamically-fetched model info.
         let max_tokens = self.max_completion_tokens.unwrap_or_else(|| {
             self.context_window
-                .map(|cw| ((cw as f64 * 0.85) as u32).min(16384))
+                .map(|cw| (cw as f64 * 0.85) as u32)
                 .unwrap_or(4096)
         });
 
@@ -452,6 +580,9 @@ impl LlmProvider for OpenRouterProvider {
             .send()
             .await
             .map_err(|e| classify_http_error(e, "OpenRouter"))?;
+
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "OpenRouter")?;
 
         let stream = response
             .bytes_stream()
@@ -484,8 +615,15 @@ where
         let mut current_tool_id = String::new();
         let mut current_tool_name = String::new();
         let mut current_tool_args = String::new();
+        let mut chunk_count = 0u32;
 
         while let Some(chunk_res) = stream.next().await {
+            // PB-09: Guard against unbounded streaming
+            if chunk_count >= MAX_STREAM_CHUNKS {
+                tracing::warn!("[{}] Anthropic stream exceeded {} chunks, forcing completion", agent_id, MAX_STREAM_CHUNKS);
+                break;
+            }
+            chunk_count += 1;
             match chunk_res {
                 Ok(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
@@ -570,22 +708,13 @@ where
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "[{}] Anthropic stream interrupted ({}): yielding partial response as complete",
+                        "[{}] Anthropic stream interrupted ({}): propagating error",
                         agent_id,
                         e
                     );
-                    yield Ok(ChatChunk {
-                        agent_name: agent_name.clone(),
-                        agent_id: agent_id.clone(),
-                        content: String::new(),
-                        is_final: true,
-                        session_id: None,
-                        channel: savant_core::types::AgentOutputChannel::Chat,
-                        logprob: None,
-                        is_telemetry: false,
-                        reasoning: None,
-                        tool_calls: None,
-                    });
+                    yield Err(SavantError::NetworkError(format!(
+                        "[{}] Stream interrupted: {}", agent_id, e
+                    )));
                     return;
                 }
             }
@@ -627,6 +756,7 @@ impl LlmProvider for AnthropicProvider {
             .iter()
             .enumerate()
             .map(|(i, msg)| {
+                let content = format_message_content_anthropic(msg);
                 let mut m = serde_json::json!({
                     "role": match msg.role {
                         ChatRole::System => "system",
@@ -634,7 +764,7 @@ impl LlmProvider for AnthropicProvider {
                         ChatRole::Assistant => "assistant",
                         _ => "user",
                     },
-                    "content": msg.content,
+                    "content": content,
                 });
                 if i == 0 || i >= messages.len().saturating_sub(4) {
                     m["cache_control"] = serde_json::json!({"type": "ephemeral"});
@@ -666,6 +796,9 @@ impl LlmProvider for AnthropicProvider {
             .await
             .map_err(|e| classify_http_error(e, "Anthropic"))?;
 
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Anthropic")?;
+
         let stream = response
             .bytes_stream()
             .map(|res| res.map_err(|e| SavantError::IoError(std::io::Error::other(e))));
@@ -675,6 +808,10 @@ impl LlmProvider for AnthropicProvider {
             self.agent_id.clone(),
             self.agent_name.clone(),
         ))
+    }
+
+    fn supports_multimodal(&self) -> bool {
+        true
     }
 }
 
@@ -694,17 +831,40 @@ impl LlmProvider for OllamaProvider {
         _tools: Vec<serde_json::Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
     {
+        // Ollama expects images as a top-level field on each message object
+        let ollama_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|msg| {
+                let mut m = serde_json::json!({
+                    "role": match msg.role {
+                        ChatRole::System => "system",
+                        ChatRole::User => "user",
+                        ChatRole::Assistant => "assistant",
+                        _ => "user",
+                    },
+                    "content": msg.content,
+                });
+                if !msg.images.is_empty() {
+                    m["images"] = serde_json::json!(msg.images);
+                }
+                m
+            })
+            .collect();
+
         let response = self
             .client
             .post(format!("{}/api/chat", self.url))
             .json(&json!({
                 "model": self.model,
-                "messages": messages,
+                "messages": ollama_messages,
                 "stream": true,
             }))
             .send()
             .await
             .map_err(|e| classify_http_error(e, "Ollama"))?;
+
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Ollama")?;
 
         let stream = response
             .bytes_stream()
@@ -819,6 +979,10 @@ impl LlmProvider for OllamaProvider {
             });
         }))
     }
+
+    fn supports_multimodal(&self) -> bool {
+        true
+    }
 }
 
 pub struct GroqProvider {
@@ -857,6 +1021,9 @@ impl LlmProvider for GroqProvider {
             .send()
             .await
             .map_err(|e| classify_http_error(e, "Groq"))?;
+
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Groq")?;
 
         let stream = response
             .bytes_stream()
@@ -910,9 +1077,10 @@ impl LlmProvider for GoogleProvider {
         let response = self
             .client
             .post(format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}",
-                self.model, self.api_key
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent",
+                self.model
             ))
+            .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&json!({
                 "contents": contents,
@@ -926,6 +1094,9 @@ impl LlmProvider for GoogleProvider {
             .send()
             .await
             .map_err(|e| classify_http_error(e, "Google AI"))?;
+
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Google AI")?;
 
         let stream = response
             .bytes_stream()
@@ -982,6 +1153,27 @@ where
                                                     tool_calls: None,
                                                 });
                                             }
+                                            // Parse Gemini functionCall as tool calls
+                                            if let Some(function_call) = part.get("functionCall") {
+                                                let name = function_call["name"].as_str().unwrap_or("").to_string();
+                                                let args = function_call["args"].to_string();
+                                                yield Ok(ChatChunk {
+                                                    agent_name: agent_name.clone(),
+                                                    agent_id: agent_id.clone(),
+                                                    content: String::new(),
+                                                    is_final: false,
+                                                    session_id: None,
+                                                    channel: savant_core::types::AgentOutputChannel::Chat,
+                                                    logprob: None,
+                                                    is_telemetry: false,
+                                                    reasoning: None,
+                                                    tool_calls: Some(vec![savant_core::types::ProviderToolCall {
+                                                        id: format!("gemini_{}", name),
+                                                        name,
+                                                        arguments: args,
+                                                    }]),
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -991,22 +1183,13 @@ where
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "[{}] Google stream interrupted ({}): yielding partial response as complete",
+                        "[{}] Google stream interrupted ({}): propagating error",
                         agent_id,
                         e
                     );
-                    yield Ok(ChatChunk {
-                        agent_name: agent_name.clone(),
-                        agent_id: agent_id.clone(),
-                        content: String::new(),
-                        is_final: true,
-                        session_id: None,
-                        channel: savant_core::types::AgentOutputChannel::Chat,
-                        logprob: None,
-                        is_telemetry: false,
-                        reasoning: None,
-                        tool_calls: None,
-                    });
+                    yield Err(SavantError::NetworkError(format!(
+                        "[{}] Stream interrupted: {}", agent_id, e
+                    )));
                     return;
                 }
             }
@@ -1063,6 +1246,9 @@ impl LlmProvider for MistralProvider {
             .await
             .map_err(|e| classify_http_error(e, "Mistral"))?;
 
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Mistral")?;
+
         let stream = response
             .bytes_stream()
             .map(|res| res.map_err(|e| SavantError::IoError(std::io::Error::other(e))));
@@ -1111,6 +1297,9 @@ impl LlmProvider for TogetherProvider {
             .await
             .map_err(|e| classify_http_error(e, "Together AI"))?;
 
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Together AI")?;
+
         let stream = response
             .bytes_stream()
             .map(|res| res.map_err(|e| SavantError::IoError(std::io::Error::other(e))));
@@ -1158,6 +1347,9 @@ impl LlmProvider for DeepseekProvider {
             .send()
             .await
             .map_err(|e| classify_http_error(e, "Deepseek"))?;
+
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Deepseek")?;
 
         let stream = response
             .bytes_stream()
@@ -1219,11 +1411,6 @@ impl LlmProvider for CohereProvider {
             })
             .collect();
 
-        let message = messages
-            .last()
-            .map(|m| m.content.clone())
-            .unwrap_or_default();
-
         let response = self
             .client
             .post("https://api.cohere.com/v2/chat") // v2 endpoint
@@ -1231,17 +1418,19 @@ impl LlmProvider for CohereProvider {
             .header("Content-Type", "application/json")
             .json(&json!({
                 "model": self.model,
-                "message": message,
-                "chat_history": chat_history,
+                "messages": chat_history,
                 "tools": tools,
                 "stream": true,
                 "temperature": self.llm_params.as_ref().map(|p| p.temperature).unwrap_or(0.7),
-                "p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
+                "top_p": self.llm_params.as_ref().map(|p| p.top_p).unwrap_or(0.9),
                 "max_tokens": self.max_completion_tokens.unwrap_or_else(|| self.llm_params.as_ref().map(|p| p.max_tokens).unwrap_or(4096)),
             }))
             .send()
             .await
             .map_err(|e| classify_http_error(e, "Cohere"))?;
+
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Cohere")?;
 
         let stream = response
             .bytes_stream()
@@ -1299,22 +1488,13 @@ where
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "[{}] Cohere stream interrupted ({}): yielding partial response as complete",
+                        "[{}] Cohere stream interrupted ({}): propagating error",
                         agent_id,
                         e
                     );
-                    yield Ok(ChatChunk {
-                        agent_name: agent_name.clone(),
-                        agent_id: agent_id.clone(),
-                        content: String::new(),
-                        is_final: true,
-                        session_id: None,
-                        channel: savant_core::types::AgentOutputChannel::Chat,
-                        logprob: None,
-                        is_telemetry: false,
-                        reasoning: None,
-                        tool_calls: None,
-                    });
+                    yield Err(SavantError::NetworkError(format!(
+                        "[{}] Stream interrupted: {}", agent_id, e
+                    )));
                     return;
                 }
             }
@@ -1381,6 +1561,9 @@ impl LlmProvider for AzureProvider {
             .await
             .map_err(|e| classify_http_error(e, "Azure"))?;
 
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Azure")?;
+
         let stream = response
             .bytes_stream()
             .map(|res| res.map_err(|e| SavantError::IoError(std::io::Error::other(e))));
@@ -1431,6 +1614,9 @@ impl LlmProvider for XaiProvider {
             .await
             .map_err(|e| classify_http_error(e, "xAI"))?;
 
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "xAI")?;
+
         let stream = response
             .bytes_stream()
             .map(|res| res.map_err(|e| SavantError::IoError(std::io::Error::other(e))));
@@ -1478,6 +1664,9 @@ impl LlmProvider for FireworksProvider {
             .send()
             .await
             .map_err(|e| classify_http_error(e, "Fireworks"))?;
+
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Fireworks")?;
 
         let stream = response
             .bytes_stream()
@@ -1527,6 +1716,9 @@ impl LlmProvider for NovitaProvider {
             .await
             .map_err(|e| classify_http_error(e, "Novita"))?;
 
+        // PB-15: Check for 429 and extract Retry-After before streaming
+        check_response_retry_after(&response, "Novita")?;
+
         let stream = response
             .bytes_stream()
             .map(|res| res.map_err(|e| SavantError::IoError(std::io::Error::other(e))));
@@ -1536,71 +1728,5 @@ impl LlmProvider for NovitaProvider {
             self.agent_id.clone(),
             self.agent_name.clone(),
         ))
-    }
-}
-
-/// A decorator that adds retry logic to any LlmProvider.
-/// Only retries on server errors (5xx) and rate limits (429).
-pub struct RetryProvider {
-    pub inner: Box<dyn LlmProvider>,
-    pub max_retries: u32,
-}
-
-impl RetryProvider {
-    /// Determines if an error is retryable (server error or rate limit).
-    fn is_retryable(error: &SavantError) -> bool {
-        match error {
-            SavantError::AuthError(msg) => {
-                // Retry on 429 (rate limit) or 5xx (server errors)
-                msg.contains("429")
-                    || msg.contains("500")
-                    || msg.contains("502")
-                    || msg.contains("503")
-                    || msg.contains("504")
-                    || msg.contains("server error")
-            }
-            SavantError::IoError(_) => true, // Network errors are retryable
-            _ => false,
-        }
-    }
-}
-
-#[async_trait]
-impl LlmProvider for RetryProvider {
-    async fn stream_completion(
-        &self,
-        messages: Vec<ChatMessage>,
-        tools: Vec<serde_json::Value>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>, SavantError>
-    {
-        let mut attempts = 0;
-        let mut last_error = SavantError::Unknown("Retry failed".to_string());
-
-        while attempts < self.max_retries {
-            match self
-                .inner
-                .stream_completion(messages.clone(), tools.clone())
-                .await
-            {
-                Ok(stream) => return Ok(stream),
-                Err(e) => {
-                    if !Self::is_retryable(&e) {
-                        // Non-retryable error (e.g., 400, 401, 403) — fail immediately
-                        return Err(e);
-                    }
-                    attempts += 1;
-                    tracing::warn!(
-                        "LLM provider attempt {} failed (retryable): {}. Retrying...",
-                        attempts,
-                        e
-                    );
-                    last_error = e;
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500 * attempts as u64))
-                        .await;
-                }
-            }
-        }
-
-        Err(last_error)
     }
 }

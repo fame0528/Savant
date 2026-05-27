@@ -14,13 +14,27 @@ use tracing::{error, info};
 use crate::compiler::EchoCompiler;
 use crate::registry::HotSwappableRegistry;
 
+/// Default channel capacity for the ECHO watcher.
+pub const DEFAULT_CHANNEL_CAPACITY: usize = 100;
+
 /// Spawns the ECHO watcher pipeline.
 pub async fn spawn_echo_watcher(
     workspace_path: PathBuf,
     registry: Arc<HotSwappableRegistry>,
     compiler: Arc<EchoCompiler>,
 ) -> Result<(), savant_core::error::SavantError> {
-    let (tx, mut rx) = mpsc::channel(100);
+    spawn_echo_watcher_with_capacity(workspace_path, registry, compiler, DEFAULT_CHANNEL_CAPACITY)
+        .await
+}
+
+/// Spawns the ECHO watcher pipeline with a configurable channel capacity.
+pub async fn spawn_echo_watcher_with_capacity(
+    workspace_path: PathBuf,
+    registry: Arc<HotSwappableRegistry>,
+    compiler: Arc<EchoCompiler>,
+    channel_capacity: usize,
+) -> Result<(), savant_core::error::SavantError> {
+    let (tx, mut rx) = mpsc::channel(channel_capacity);
 
     // Run the blocking `notify` watcher in a dedicated thread
     let workspace_path_thread = workspace_path.clone();
@@ -60,7 +74,9 @@ pub async fn spawn_echo_watcher(
         let _debouncer = debouncer;
         // Block indefinitely — debouncer is kept alive as long as this thread runs.
         // The channel receiver blocks without consuming CPU (unlike sleep loops).
-        let _ = keep_alive_rx.recv();
+        if keep_alive_rx.recv().is_err() {
+            tracing::debug!("[echo::watcher] keep-alive channel closed");
+        }
     });
 
     // Async receiver loop handling the actual compilation and hot-swapping

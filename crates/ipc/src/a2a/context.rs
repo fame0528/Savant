@@ -197,8 +197,7 @@ mod tests {
 
     #[test]
     fn test_context_package_collection_keys() {
-        let pkg = ContextPackage::new()
-            .with_session_collection("test.session");
+        let pkg = ContextPackage::new().with_session_collection("test.session");
         assert!(pkg.has_collections());
         assert_eq!(&pkg.session_collection[..12], b"test.session");
     }

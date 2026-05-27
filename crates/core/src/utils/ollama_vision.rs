@@ -60,7 +60,13 @@ impl Default for OllamaVisionService {
             std::env::var("OLLAMA_VISION_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
         let model_is_vision = is_vision_model(&model);
         Self {
-            client: reqwest::Client::new(),
+            client: crate::net::secure_client_fallible().unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to create secure vision client: {}, using default",
+                    e
+                );
+                reqwest::Client::new()
+            }),
             url,
             model,
             model_is_vision,

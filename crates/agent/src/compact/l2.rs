@@ -143,8 +143,14 @@ mod tests {
     fn test_thresholds() {
         let compressor = L2Compressor::new();
         assert_eq!(compressor.check_threshold(0.5), None);
-        assert_eq!(compressor.check_threshold(0.75), Some(L2Stage::ToolEviction));
-        assert_eq!(compressor.check_threshold(0.85), Some(L2Stage::LLMSummarization));
+        assert_eq!(
+            compressor.check_threshold(0.75),
+            Some(L2Stage::ToolEviction)
+        );
+        assert_eq!(
+            compressor.check_threshold(0.85),
+            Some(L2Stage::LLMSummarization)
+        );
         assert_eq!(compressor.check_threshold(0.95), Some(L2Stage::Emergency));
     }
 
@@ -164,7 +170,13 @@ mod tests {
             min_tail_turns: 4,
         };
         let compressor = L2Compressor::with_thresholds(thresholds);
-        assert_eq!(compressor.check_threshold(0.60), Some(L2Stage::ToolEviction));
-        assert_eq!(compressor.check_threshold(0.80), Some(L2Stage::LLMSummarization));
+        assert_eq!(
+            compressor.check_threshold(0.60),
+            Some(L2Stage::ToolEviction)
+        );
+        assert_eq!(
+            compressor.check_threshold(0.80),
+            Some(L2Stage::LLMSummarization)
+        );
     }
 }

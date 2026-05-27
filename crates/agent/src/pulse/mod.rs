@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod delta;
 pub mod heartbeat;
 pub mod prompts;

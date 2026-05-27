@@ -3,7 +3,6 @@
 use crate::error::{IntegrationError, IntegrationResult};
 use crate::provider::{FetchItem, FetchResult, Provider, ProviderConfig, ProviderKind};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{info, warn};
@@ -57,7 +56,10 @@ impl GmailProvider {
         Self {
             config,
             gmail_config,
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -132,10 +134,8 @@ impl GmailProvider {
 
     /// Extracts plain text from a Gmail message payload.
     fn extract_body(payload: &GmailPayload) -> String {
-        if let Some(body) = &payload.body {
-            if !body.data.is_empty() {
-                return Self::decode_base64(&body.data);
-            }
+        if !payload.body.data.is_empty() {
+            return Self::decode_base64(&payload.body.data);
         }
         for part in &payload.parts {
             if part.mime_type == "text/plain" && !part.body.data.is_empty() {
@@ -186,15 +186,18 @@ impl Provider for GmailProvider {
                     let headers = Self::extract_headers(&msg.payload.headers);
                     let subject = headers.get("Subject").cloned().unwrap_or_default();
                     let from = headers.get("From").cloned().unwrap_or_default();
-                    let date = headers.get("Date").cloned().unwrap_or_default();
+                    let _date = headers.get("Date").cloned().unwrap_or_default();
                     let body = Self::extract_body(&msg.payload);
-                    let content_hash = format!("{:x}", blake3::hash(body.as_bytes()));
+                    let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
 
                     items.push(FetchItem {
                         external_id: msg.id.clone(),
                         title: format!("{}: {}", from, subject),
                         content: body,
-                        url: Some(format!("https://mail.google.com/mail/u/0/#inbox/{}", msg.id)),
+                        url: Some(format!(
+                            "https://mail.google.com/mail/u/0/#inbox/{}",
+                            msg.id
+                        )),
                         created_at: None,
                         updated_at: None,
                         metadata: {
@@ -228,7 +231,9 @@ impl Provider for GmailProvider {
         let response = self
             .http_client
             .get(&url)
-            .bearer_auth(self.gmail_config.access_token.as_ref().unwrap())
+            .bearer_auth(self.gmail_config.access_token.as_ref().ok_or_else(|| {
+                IntegrationError::ConfigError("Gmail access token not configured".to_string())
+            })?)
             .send()
             .await?;
         Ok(response.status().is_success())
@@ -255,10 +260,12 @@ struct GmailListResponse {
 struct GmailMessageRef {
     id: String,
     #[serde(default)]
+    #[allow(dead_code)]
     thread_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct GmailMessage {
     id: String,
     #[serde(rename = "threadId")]
@@ -271,6 +278,7 @@ struct GmailMessage {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct GmailPayload {
     #[serde(default)]
     headers: Vec<GmailHeader>,
@@ -289,6 +297,7 @@ struct GmailHeader {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[allow(dead_code)]
 struct GmailBody {
     #[serde(default)]
     data: String,
@@ -297,6 +306,7 @@ struct GmailBody {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 struct GmailPart {
     #[serde(rename = "mimeType")]
     mime_type: String,
@@ -307,14 +317,21 @@ struct GmailPart {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_extract_headers() {
         let headers = vec![
-            GmailHeader { name: "Subject".to_string(), value: "Test".to_string() },
-            GmailHeader { name: "From".to_string(), value: "a@b.com".to_string() },
+            GmailHeader {
+                name: "Subject".to_string(),
+                value: "Test".to_string(),
+            },
+            GmailHeader {
+                name: "From".to_string(),
+                value: "a@b.com".to_string(),
+            },
         ];
         let map = GmailProvider::extract_headers(&headers);
         assert_eq!(map.get("Subject").unwrap(), "Test");

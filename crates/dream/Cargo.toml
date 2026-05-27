@@ -1,12 +1,14 @@
 [package]
 name = "savant_dream"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 savant_core = { path = "../core" }
 savant_memory = { path = "../memory" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -16,6 +18,7 @@ rand = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+[lints]
+workspace = true

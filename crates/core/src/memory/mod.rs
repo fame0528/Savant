@@ -28,7 +28,8 @@ impl FjallMemoryBackend {
 #[async_trait::async_trait]
 impl MemoryBackend for FjallMemoryBackend {
     async fn store(&self, agent_id: &str, message: &ChatMessage) -> Result<(), SavantError> {
-        let agent_msg = savant_memory::AgentMessage::from_chat(message, agent_id);
+        let agent_msg = savant_memory::AgentMessage::from_chat(message, agent_id)
+            .map_err(|e| SavantError::Unknown(e.to_string()))?;
         self.engine
             .append_message(agent_id, &agent_msg)
             .map_err(|e| SavantError::Unknown(e.to_string()))?;

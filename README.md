@@ -9,7 +9,7 @@
 
 A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with mandatory security scanning and real-time substrate observability.
 
-**Zero Warning Build:** `cargo clippy --workspace --no-deps` produces zero warnings. Zero `unwrap()`/`expect()` in non-test code. 1,193 tests pass. Enterprise-grade error handling throughout.
+**Zero Warning Build:** `cargo clippy --workspace --no-deps` produces zero warnings. Zero `unwrap()`/`expect()` in non-test code. 1,197 tests pass. Enterprise-grade error handling throughout.
 
 **Security Hardening (2026-05-25):** REST API authentication middleware with constant-time comparison. Immutable security fields (5 fields blocked at runtime). Canvas WebSocket auth. SoulUpdate/BulkManifest/NLCommand size limits. Environment variable filtering for spawned processes. Mandatory SecurityScanner (no optional bypass).
 

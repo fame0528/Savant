@@ -9,9 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.2] - 2026-05-26
 
-**Complete Implementation Sprint. 27 FIDs closed. 186 items addressed. 1,193 tests pass. Zero open issues. Release ready.**
+**Complete Implementation Sprint. 27 FIDs closed. 186 items addressed. 1,197 tests pass. Zero open issues. Release ready.**
 
-Full security hardening, provider chain resilience, consciousness layer, resource governor, LLM-driven skill synthesis, skill chaining, and comprehensive documentation overhaul.
+Full security hardening, provider chain resilience, consciousness layer, resource governor, LLM-driven skill synthesis, skill chaining, and comprehensive documentation overhaul. Includes post-release hotfix patch for security, concurrency, and functional wiring.
+
+### Hotfix Patch (2026-05-26)
+
+#### Security
+- Fixed constant-time comparison timing leak in auth middleware — removed length-based early exit, always iterates over expected key length with XOR accumulator
+
+#### Concurrency & Stability
+- Resolved non-atomic `AdaptiveSemaphore` permit adjustment race condition — `Mutex<()>` guard serializes read-modify-write cycle
+- Replaced silent `try_lock()` drop in `SwarmGovernor.defer_agent` with `.lock().await` backpressure + `tracing::warn!` observability
+- `ConsciousnessBudget` auto-resets hourly/daily counters via `Instant`-based timing — daemon no longer goes permanently dormant after first budget exhaustion
+- Budget base values stored as fields to prevent multiplier drift
+
+#### Functional Wiring
+- Wired `WonderEngine` exploration loop — LLM routing via `stream_completion()`, temperature sampling, reward threshold evaluation
+- Removed `#[allow(dead_code)]` on `exploration_temperature` and `reward_threshold`
+- Added `ConsciousnessBudget::with_quiet_hours()` and `always_active()` constructors
+- Quiet hours configurable via `[evolution].quiet_hours_start` / `quiet_hours_end` in savant.toml
+- Default quiet hours: 3AM–11AM UTC (11PM–7AM EDT)
+
+#### Accuracy & Safety
+- Improved token estimation — `chars().count()` instead of `len() / 4` for Unicode-safe counting in both `NarrativeSynthesizer` and `ProviderChain`
+- Fixed UTF-8 truncation panic in consciousness daemon — `is_char_boundary()` for safe split point
+- `EntropyCalculator` uses blake3 instead of `DefaultHasher` for collision resistance
+- `AntiEchoChamber` word comparison now case-insensitive with `chars().count()` filter
+- `ResourceMonitor` f64 values clamped to `>= 0.0` with `debug_assert!` on finiteness
+- `Wondering` state naturally reached at entropy 0.10–0.25 (was only set manually)
+- Configurable quiet hours (default 11PM–7AM EDT, was 6PM EDT)
+- Desktop build: self-contained updater script in `src-tauri/scripts/`, fixed fragile relative paths
+
+#### Infrastructure
+- Tauri `beforeBuildCommand` uses local script path (no more `cd ../..` fragile navigation)
+- 4 new consciousness budget tests (custom hours, disabled, overnight window, defaults)
 
 ### Added
 

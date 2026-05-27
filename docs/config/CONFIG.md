@@ -103,6 +103,8 @@ All fields use `#[serde(default)]` — partial config files are valid. Missing s
 | `enabled` | `boolean` | Enable personality evolution | `true` |
 | `cooldown_secs` | `integer` | Cooldown between mutations to same section | `300` |
 | `max_proposals_per_hour` | `integer` | Maximum mutation proposals per hour | `5` |
+| `quiet_hours_start` | `integer` | Quiet hours start (UTC hour, 0-23). Consciousness daemon pauses. | `3` (3AM UTC = 11PM EDT) |
+| `quiet_hours_end` | `integer` | Quiet hours end (UTC hour, 0-23). Consciousness daemon resumes. | `11` (11AM UTC = 7AM EDT) |
 
 ---
 

@@ -1,6 +1,6 @@
 [package]
 name = "savant_cli_gateway"
-version = "0.1.0"
+version = "0.3.2"
 edition = "2021"
 license.workspace = true
 description = "WebSocket client for Savant CLI — connects to Savant Gateway for agent chat, evolution, and swarm telemetry"

@@ -9477,7 +9477,7 @@ dependencies = [
 
 [[package]]
 name = "savant-gui"
-version = "0.1.0"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9680,7 +9680,7 @@ dependencies = [
 
 [[package]]
 name = "savant_cli_core"
-version = "0.1.0"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -9695,7 +9695,7 @@ dependencies = [
 
 [[package]]
 name = "savant_cli_gateway"
-version = "0.1.0"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "backoff",
@@ -9718,7 +9718,7 @@ dependencies = [
 
 [[package]]
 name = "savant_cli_session"
-version = "0.1.0"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -9735,7 +9735,7 @@ dependencies = [
 
 [[package]]
 name = "savant_cli_tui"
-version = "0.1.0"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -10049,7 +10049,7 @@ dependencies = [
 
 [[package]]
 name = "savant_sandbox"
-version = "0.1.0"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "ed25519-dalek",

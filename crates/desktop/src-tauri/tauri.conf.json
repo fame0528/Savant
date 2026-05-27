@@ -4,8 +4,8 @@
   "version": "0.3.2",
   "identifier": "com.savant.app",
   "build": {
-    "beforeDevCommand": "cd ../.. && node scripts/setup-updater-keys.js && npm --prefix dashboard run dev",
-    "beforeBuildCommand": "cd ../.. && node scripts/setup-updater-keys.js",
+    "beforeDevCommand": "node src-tauri/scripts/setup-updater-keys.js && npm --prefix dashboard run dev",
+    "beforeBuildCommand": "node src-tauri/scripts/setup-updater-keys.js",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../../../dashboard/out"
   },

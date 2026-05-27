@@ -53,7 +53,7 @@ impl SwarmGovernor {
                 tokio::select! {
                     _ = gov.shutdown.cancelled() => break,
                     _ = tokio::time::sleep(interval) => {
-                        gov.semaphore.adjust_permits();
+                        gov.semaphore.adjust_permits().await;
                     }
                 }
             }
@@ -68,20 +68,22 @@ impl SwarmGovernor {
     }
 
     /// Queue an agent for deferred spawning.
-    pub fn defer_agent(&self, agent: AgentConfig) {
-        let mut deferred = match self.deferred_agents.try_lock() {
-            Ok(d) => d,
-            Err(_) => return,
-        };
+    /// Uses `.lock().await` for backpressure — never silently drops.
+    pub async fn defer_agent(&self, agent: AgentConfig) {
+        tracing::warn!(
+            "[governor] Deferring agent '{}' — {} pressure, {} permits available",
+            agent.agent_name,
+            self.current_pressure(),
+            self.available_permits()
+        );
+        let mut deferred = self.deferred_agents.lock().await;
         deferred.push((agent, 0));
     }
 
     /// Pop next deferred agent if retries not exhausted.
-    pub fn pop_deferred(&self) -> Option<AgentConfig> {
-        let mut deferred = match self.deferred_agents.try_lock() {
-            Ok(d) => d,
-            Err(_) => return None,
-        };
+    /// Uses `.lock().await` for backpressure — never silently drops.
+    pub async fn pop_deferred(&self) -> Option<AgentConfig> {
+        let mut deferred = self.deferred_agents.lock().await;
         if deferred.is_empty() {
             return None;
         }
@@ -94,7 +96,6 @@ impl SwarmGovernor {
             );
             None
         } else {
-            // Re-queue with incremented retry count
             deferred.push((agent.clone(), retries + 1));
             Some(agent)
         }
@@ -185,8 +186,8 @@ mod tests {
             orchestrator_enabled: true,
         };
 
-        gov.defer_agent(agent);
-        let popped = gov.pop_deferred();
+        gov.defer_agent(agent).await;
+        let popped = gov.pop_deferred().await;
         assert!(popped.is_some());
         assert_eq!(popped.unwrap().agent_name, "test");
     }

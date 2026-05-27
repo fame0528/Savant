@@ -489,7 +489,7 @@ impl SwarmController {
                     agent_name,
                     governor.current_pressure()
                 );
-                governor.defer_agent(agent_cfg);
+                governor.defer_agent(agent_cfg).await;
                 return;
             }
             tracing::debug!(

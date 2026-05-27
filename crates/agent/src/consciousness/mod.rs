@@ -302,7 +302,7 @@ impl ConsciousnessDaemon {
         self.state_handle
             .store(ConsciousnessState::Wondering.as_u8(), Ordering::Relaxed);
 
-        match self.wonder.explore(&self.workspace_path).await {
+        match self.wonder.explore(&self.workspace_path, &self.llm).await {
             Some(insight) => {
                 let reward = self.wonder.evaluate_reward(&insight.content);
                 if reward >= 0.3 {

@@ -1,9 +1,14 @@
 //! Adaptive Semaphore — adjusts agent concurrency based on resource pressure.
+//!
+//! Concurrency invariant: `adjust_permits()` uses a `Mutex` to serialize
+//! the read-modify-write cycle on `current_max` and the semaphore permit
+//! count. Without the lock, concurrent calls could double-add or double-
+//! forget permits because `load()` → modify → `store()` is not atomic
+//! across the two data structures (AtomicUsize and Semaphore).
 
 use savant_core::config::ResourceGovernorConfig;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Semaphore, SemaphorePermit};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, SemaphorePermit};
 
 use super::monitor::ResourceMonitor;
 
@@ -12,20 +17,23 @@ pub struct AdaptiveSemaphore {
     inner: Arc<Semaphore>,
     monitor: Arc<ResourceMonitor>,
     config: ResourceGovernorConfig,
-    current_max: AtomicUsize,
+    /// Tracks the configured maximum. Protected by `adjust_lock` during
+    /// modifications so the load→modify→store on both `current_max` and
+    /// the semaphore permit pool is atomic.
+    current_max: std::sync::atomic::AtomicUsize,
+    /// Serialises `adjust_permits()` to prevent double-add/double-forget.
+    adjust_lock: Mutex<()>,
 }
 
 impl AdaptiveSemaphore {
-    pub fn new(
-        monitor: Arc<ResourceMonitor>,
-        config: ResourceGovernorConfig,
-    ) -> Self {
+    pub fn new(monitor: Arc<ResourceMonitor>, config: ResourceGovernorConfig) -> Self {
         let max = config.max_agents_low;
         Self {
             inner: Arc::new(Semaphore::new(max)),
             monitor,
             config,
-            current_max: AtomicUsize::new(max),
+            current_max: std::sync::atomic::AtomicUsize::new(max),
+            adjust_lock: Mutex::new(()),
         }
     }
 
@@ -36,8 +44,12 @@ impl AdaptiveSemaphore {
 
     /// Acquire a spawn permit (blocking).
     #[allow(clippy::disallowed_methods)]
-    pub async fn acquire(&self) -> SemaphorePermit<'_> {
-        self.inner.acquire().await.expect("semaphore closed")
+    pub async fn acquire(&self) -> OwnedSemaphorePermit {
+        self.inner
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("semaphore closed")
     }
 
     /// Available permits.
@@ -46,10 +58,15 @@ impl AdaptiveSemaphore {
     }
 
     /// Adjust available permits based on current pressure.
-    pub fn adjust_permits(&self) {
+    ///
+    /// Serialized by `adjust_lock` so concurrent calls never double-add
+    /// or double-forget permits.
+    pub async fn adjust_permits(&self) {
+        let _guard = self.adjust_lock.lock().await;
+
         let pressure = self.monitor.current_pressure();
         let target = pressure.max_agents(&self.config);
-        let current = self.current_max.load(Ordering::Relaxed);
+        let current = self.current_max.load(std::sync::atomic::Ordering::SeqCst);
 
         if target == current {
             return;
@@ -59,20 +76,18 @@ impl AdaptiveSemaphore {
             // Need more permits — add them
             let diff = target - current;
             self.inner.add_permits(diff);
-            self.current_max.store(target, Ordering::Relaxed);
+            self.current_max
+                .store(target, std::sync::atomic::Ordering::SeqCst);
             tracing::debug!("[governor] Increased permits: {} → {}", current, target);
         } else {
-            // Need fewer permits — forget excess (but don't panic)
+            // Need fewer permits — forget excess
             let current_available = self.inner.available_permits();
             if current_available > target {
                 let to_forget = current_available - target;
-                // Safety: only forget up to what's available minus target
-                let safe_forget = to_forget.min(current_available.saturating_sub(target));
-                if safe_forget > 0 {
-                    self.inner.forget_permits(safe_forget);
-                }
+                self.inner.forget_permits(to_forget);
             }
-            self.current_max.store(target, Ordering::Relaxed);
+            self.current_max
+                .store(target, std::sync::atomic::Ordering::SeqCst);
             tracing::debug!("[governor] Decreased permits: {} → {}", current, target);
         }
     }

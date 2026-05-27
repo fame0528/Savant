@@ -56,8 +56,10 @@ impl NarrativeSynthesizer {
         while let Some(item) = pinned.next().await {
             if let Ok(chunk) = item {
                 response.push_str(&chunk.content);
-                // Budget enforcement: stop if over max tokens (approx 4 chars per token)
-                if response.len() > self.max_tokens * 4 {
+                // Budget enforcement: stop if over max tokens.
+                // Uses char count (not byte length) for accurate Unicode handling.
+                // CJK/emoji characters are 1 token each, not 4 bytes.
+                if response.chars().count() > self.max_tokens {
                     break;
                 }
             }

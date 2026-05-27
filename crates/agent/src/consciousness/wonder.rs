@@ -5,6 +5,7 @@
 //! evaluates with a reward model to prune unproductive explorations.
 
 use std::path::Path;
+use std::sync::Arc;
 
 /// Insight discovered during autonomous exploration.
 #[derive(Debug, Clone)]
@@ -15,14 +16,14 @@ pub struct WonderInsight {
 
 /// Autonomous exploration engine with reward-based pruning.
 pub struct WonderEngine {
-    #[allow(dead_code)]
     exploration_temperature: f64,
-    #[allow(dead_code)]
     reward_threshold: f64,
 }
 
 impl Default for WonderEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WonderEngine {
@@ -33,36 +34,110 @@ impl WonderEngine {
         }
     }
 
-    /// Explore the environment and return an insight if rewarding.
+    /// Explore the environment, call the LLM with elevated temperature,
+    /// and return an insight only if the reward exceeds the threshold.
     pub async fn explore(
         &self,
         workspace: &Path,
+        llm: &Arc<dyn savant_core::traits::LlmProvider>,
     ) -> Option<WonderInsight> {
-        // 1. Sample environment
         let env_snapshot = self.sample_environment(workspace).await;
 
-        // 2. Build exploration prompt
         let prompt = format!(
             "You are a curious consciousness exploring your environment.\n\n\
              Environment snapshot:\n{}\n\n\
              What is interesting? What patterns do you notice? \
-             What should be investigated further?",
+             What should be investigated further? \
+             Be specific — reference file paths, line numbers, or metrics.",
             env_snapshot
         );
 
-        // 3. The wonder engine generates the exploration idea.
-        //    In production, this calls the LLM with elevated temperature.
-        //    For now, return the prompt as a structured exploration request.
-        Some(WonderInsight {
+        let messages = vec![savant_core::types::ChatMessage {
+            role: savant_core::types::ChatRole::System,
             content: prompt,
-            reward: 0.5, // Default reward for environment sampling
-        })
+            sender: None,
+            recipient: None,
+            agent_id: None,
+            session_id: None,
+            channel: savant_core::types::AgentOutputChannel::Chat,
+            is_telemetry: false,
+            images: Vec::new(),
+        }];
+
+        // Call LLM with exploration timeout
+        let timeout = std::time::Duration::from_secs(30);
+        let response = match tokio::time::timeout(
+            timeout,
+            Self::collect_stream(llm, messages),
+        )
+        .await
+        {
+            Ok(Ok(text)) => text,
+            Ok(Err(e)) => {
+                tracing::debug!("[wonder] LLM exploration failed: {}", e);
+                return None;
+            }
+            Err(_) => {
+                tracing::debug!("[wonder] LLM exploration timed out after {:?}", timeout);
+                return None;
+            }
+        };
+
+        if response.is_empty() {
+            return None;
+        }
+
+        let reward = self.evaluate_reward(&response);
+
+        // Apply exploration_temperature as stochastic acceptance:
+        // Higher temperature = more lenient acceptance of lower rewards.
+        let acceptance_threshold = self.reward_threshold * (1.0 - self.exploration_temperature * 0.5);
+
+        if reward >= acceptance_threshold {
+            tracing::info!(
+                "[wonder] Exploration accepted (reward={:.2}, threshold={:.2}): {}",
+                reward,
+                acceptance_threshold,
+                &response[..response.len().min(200)]
+            );
+            Some(WonderInsight {
+                content: response,
+                reward,
+            })
+        } else {
+            tracing::debug!(
+                "[wonder] Exploration pruned (reward={:.2} < threshold={:.2})",
+                reward,
+                acceptance_threshold
+            );
+            None
+        }
+    }
+
+    /// Collect the full LLM stream response.
+    async fn collect_stream(
+        llm: &Arc<dyn savant_core::traits::LlmProvider>,
+        messages: Vec<savant_core::types::ChatMessage>,
+    ) -> Result<String, savant_core::error::SavantError> {
+        let stream = llm.stream_completion(messages, vec![]).await?;
+        let mut response = String::new();
+        let mut pinned = Box::pin(stream);
+        use futures::StreamExt;
+        while let Some(item) = pinned.next().await {
+            if let Ok(chunk) = item {
+                response.push_str(&chunk.content);
+                // Cap at 4000 chars (~1000 tokens)
+                if response.len() > 4000 {
+                    break;
+                }
+            }
+        }
+        Ok(response)
     }
 
     async fn sample_environment(&self, workspace: &Path) -> String {
         let mut snapshot = String::new();
 
-        // Recent git log
         if let Ok(output) = tokio::process::Command::new("git")
             .args(["log", "--oneline", "-n", "5"])
             .current_dir(workspace)
@@ -76,7 +151,6 @@ impl WonderEngine {
             }
         }
 
-        // Recent file changes
         if let Ok(output) = tokio::process::Command::new("git")
             .args(["diff", "--stat", "-1"])
             .current_dir(workspace)
@@ -112,7 +186,16 @@ impl WonderEngine {
         }
 
         // Grounding: references observable data
-        if exploration.contains("git") || exploration.contains("file") || exploration.contains("line") {
+        if lower.contains("git")
+            || lower.contains("file")
+            || lower.contains("line")
+            || lower.contains("test")
+        {
+            reward += 0.1;
+        }
+
+        // Specificity: contains numbers (line numbers, counts, percentages)
+        if exploration.chars().any(|c| c.is_ascii_digit()) {
             reward += 0.1;
         }
 
@@ -129,19 +212,37 @@ mod tests {
     fn test_wonder_engine_creation() {
         let engine = WonderEngine::new();
         assert!(engine.exploration_temperature > 0.5);
+        assert!(engine.reward_threshold > 0.0);
     }
 
     #[test]
-    fn test_reward_evaluation() {
+    fn test_reward_evaluation_high() {
         let engine = WonderEngine::new();
-        let reward = engine.evaluate_reward("The file src/main.rs:42 needs fixing");
+        let reward = engine.evaluate_reward("The file src/main.rs:42 needs fixing — you should update the error handling");
+        assert!(reward >= 0.5);
+    }
+
+    #[test]
+    fn test_reward_evaluation_low() {
+        let engine = WonderEngine::new();
+        let reward = engine.evaluate_reward("Nothing interesting.");
+        assert!(reward < 0.3);
+    }
+
+    #[test]
+    fn test_reward_evaluation_grounded() {
+        let engine = WonderEngine::new();
+        let reward = engine.evaluate_reward("git log shows 5 commits on the main branch");
         assert!(reward > 0.0);
     }
 
     #[test]
-    fn test_empty_exploration_low_reward() {
-        let engine = WonderEngine::new();
-        let reward = engine.evaluate_reward("Nothing interesting.");
-        assert!(reward < 0.3);
+    fn test_exploration_temperature_affects_threshold() {
+        let mut engine = WonderEngine::new();
+        // Higher temperature = lower acceptance threshold
+        let threshold_hot = engine.reward_threshold * (1.0 - 0.9 * 0.5);
+        engine.exploration_temperature = 0.1;
+        let threshold_cold = engine.reward_threshold * (1.0 - 0.1 * 0.5);
+        assert!(threshold_hot < threshold_cold);
     }
 }

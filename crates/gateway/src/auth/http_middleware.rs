@@ -19,14 +19,26 @@ use axum::response::{IntoResponse, Response};
 const PUBLIC_PATHS: &[&str] = &["/health", "/live", "/ready", "/ws", "/ws/canvas"];
 
 /// Constant-time byte comparison to prevent timing attacks.
+///
+/// Always iterates over the full length of the expected key (`b`).
+/// If the provided key (`a`) is shorter, missing bytes are XORed with 0
+/// (which produces a mismatch). If longer, excess bytes are ignored but
+/// the function still processes all of `b`. This ensures the comparison
+/// time depends only on the expected key length, never the provided one.
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
+    let expected_len = b.len();
     let mut result = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
+
+    // Always iterate over the expected key length.
+    // For indices beyond `a`, XOR with 0 (which is a mismatch if b[i] != 0).
+    for i in 0..expected_len {
+        let a_byte = if i < a.len() { a[i] } else { 0u8 };
+        result |= a_byte ^ b[i];
     }
+
+    // Also OR in the length difference so that extra bytes in `a` cause rejection.
+    result |= (a.len() != expected_len) as u8;
+
     result == 0
 }
 

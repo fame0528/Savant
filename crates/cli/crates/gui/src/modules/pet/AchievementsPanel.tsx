@@ -47,7 +47,7 @@ export function AchievementsPanel() {
                   </div>
                 )}
               </div>
-              {unlocked && <span className="text-success text-xs">\u{2714}\u{fe0f}</span>}
+              {unlocked && <span className="text-success text-xs">{'\u2714\uFE0F'}</span>}
             </div>
           );
         })}

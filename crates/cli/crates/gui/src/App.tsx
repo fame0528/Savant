@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Sidebar } from "./modules/sidebar/Sidebar";
@@ -13,7 +13,7 @@ import { Header } from "./modules/header/Header";
 import { SettingsWindow } from "./modules/settings/SettingsWindow";
 import { PetDisplay } from "./modules/pet/PetDisplay";
 import { AchievementsPanel } from "./modules/pet/AchievementsPanel";
-import { useAppStore, type ActivePanel } from "./lib/store";
+import { useAppStore } from "./lib/store";
 
 interface Command {
   id: string;
@@ -32,7 +32,7 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
     { id: "files", label: "Open File Explorer", shortcut: "Ctrl+E", action: () => { useAppStore.getState().setActivePanel("files"); onClose(); } },
     { id: "search", label: "Search", shortcut: "Ctrl+Shift+F", action: () => { useAppStore.getState().setActivePanel("search"); onClose(); } },
     { id: "git", label: "Git Panel", shortcut: "Ctrl+G", action: () => { useAppStore.getState().setActivePanel("git"); onClose(); } },
-    { id: "chat", label: "Toggle AI Chat", action: () => { useAppStore.getState().toggleAiChat(); onClose(); } },
+    { id: "chat", label: "Toggle AI Chat", action: () => { useAppStore.getState().setChatOpen(!useAppStore.getState().chatOpen); onClose(); } },
     { id: "settings", label: "Open Settings", shortcut: "Ctrl+Shift+P", action: () => { onClose(); /* settings handled externally */ } },
     { id: "sidebar", label: "Toggle Sidebar", shortcut: "Ctrl+B", action: () => { useAppStore.getState().setSidebarOpen(!useAppStore.getState().sidebarOpen); onClose(); } },
   ];
@@ -156,7 +156,7 @@ function SearchPanel() {
 }
 
 export default function App() {
-  const { activePanel, setActivePanel, setGatewayStatus } = useAppStore();
+  const { activePanel } = useAppStore();
   const [initialized, setInitialized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [petSubTab, setPetSubTab] = useState<"care" | "achievements">("care");

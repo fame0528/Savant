@@ -84,9 +84,9 @@ export function GitPanel() {
       }
       setCommits(gitCommits);
 
-      const branchOutput = await runGit("git branch -a --format='%(refname:short)|%(HEAD)'");
+      const allBranchesOutput = await runGit("git branch -a --format='%(refname:short)|%(HEAD)'");
       const gitBranches: GitBranch[] = [];
-      for (const line of branchOutput.split("\n")) {
+      for (const line of allBranchesOutput.split("\n")) {
         if (!line.trim()) continue;
         const parts = line.split("|");
         if (parts.length >= 2) {

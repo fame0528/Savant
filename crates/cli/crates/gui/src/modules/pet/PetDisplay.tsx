@@ -74,12 +74,12 @@ export function PetDisplay() {
         <StatRow label="\u{1f4aa} Discipline" value={discPct} bar={bar(discPct, "bg-purple-500")} />
         <div className="flex justify-between text-primary/50 pt-1">
           <span>Weight: {p.weight.toFixed(1)}x</span>
-          {p.poop_count > 0 && <span className="text-warning">{p.poop_count}x \u{1f4a9}</span>}
+          {p.poop_count > 0 && <span className="text-warning">{p.poop_count}x {'\u{1f4a9}'}</span>}
           <span>Mistakes: {p.care_mistakes}</span>
         </div>
         <div className="flex justify-between text-primary/50">
           <span>XP: {game.xp}</span>
-          <span>Streak: {game.current_streak}\u{1f525}</span>
+          <span>Streak: {game.current_streak}{'\u{1f525}'}</span>
           <span>Achievements: {game.unlocked_achievements}/{game.total_achievements}</span>
         </div>
       </div>
@@ -109,7 +109,7 @@ export function PetDisplay() {
             onClick={() => act("gamification_reset_egg")}
             className="flex-1 px-3 py-2 rounded bg-warning/20 hover:bg-warning/30 text-warning text-xs transition-colors"
           >
-            \u{1f95a} New Egg
+            {'\u{1f95a}'} New Egg
           </button>
         )}
       </div>

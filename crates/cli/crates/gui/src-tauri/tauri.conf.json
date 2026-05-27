@@ -1,6 +1,6 @@
 {
   "productName": "Savant CLI Companion",
-  "version": "0.1.0",
+  "version": "0.3.2",
   "identifier": "com.savant.cli-companion",
   "build": {
     "beforeBuildCommand": "pnpm run build",
@@ -26,8 +26,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": []
+    "targets": ["nsis", "msi"],
+    "icon": [
+      "icons/icon.ico"
+    ]
   },
   "plugins": {
     "updater": {

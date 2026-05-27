@@ -24,13 +24,13 @@ export function StatusBar() {
           <span className="text-primary/40">
             {game.current_streak > 0 && `\u{1f525}${game.current_streak}`}
           </span>
-          {game.pet.is_sick && <span className="text-warning">\u{1f912}</span>}
-          {game.pet.poop_count > 0 && game.pet.poop_count >= 3 && <span className="text-warning">\u{1f4a9}</span>}
+          {game.pet.is_sick && <span className="text-warning">{'\u{1f912}'}</span>}
+          {game.pet.poop_count > 0 && game.pet.poop_count >= 3 && <span className="text-warning">{'\u{1f4a9}'}</span>}
         </button>
       )}
       {game?.pet.is_dead && (
         <button onClick={() => setActivePanel("pet")} className="text-warning hover:text-success transition-colors" title="Pet has passed away">
-          \u{1f480} Restart
+          {'\u{1f480}'} Restart
         </button>
       )}
       <span className="ml-auto text-primary/30">

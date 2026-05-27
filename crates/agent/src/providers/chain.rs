@@ -614,7 +614,7 @@ impl LlmProvider for ProviderChain {
         if let Some(ref limiter) = self.rate_limiter {
             let estimated_tokens: u32 = messages
                 .iter()
-                .map(|m| (m.content.len() / 4) as u32)
+                .map(|m| (m.content.chars().count() / 4) as u32)
                 .sum();
             if let Err(wait_ms) = limiter.check(estimated_tokens).await {
                 return Err(SavantError::RateLimit(format!(

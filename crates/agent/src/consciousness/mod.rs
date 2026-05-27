@@ -212,8 +212,10 @@ impl ConsciousnessDaemon {
         // Determine state from entropy
         let new_state = if entropy_val > 0.85 {
             ConsciousnessState::Thinking
-        } else if entropy_val > 0.10 {
+        } else if entropy_val > 0.25 {
             ConsciousnessState::Idle
+        } else if entropy_val > 0.10 {
+            ConsciousnessState::Wondering
         } else {
             ConsciousnessState::Dormant
         };
@@ -276,9 +278,13 @@ impl ConsciousnessDaemon {
         .await
         {
             Ok(Ok(new_narrative)) => {
-                // Truncate to max length
+                // Truncate to max length (safe on UTF-8 boundaries)
                 if new_narrative.len() > 8000 {
-                    self.current_narrative = new_narrative[..8000].to_string();
+                    let mut truncate_at = 8000;
+                    while !new_narrative.is_char_boundary(truncate_at) {
+                        truncate_at -= 1;
+                    }
+                    self.current_narrative = new_narrative[..truncate_at].to_string();
                 } else {
                     self.current_narrative = new_narrative;
                 }

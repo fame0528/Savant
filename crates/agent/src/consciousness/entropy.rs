@@ -1,7 +1,6 @@
 //! Entropy Calculator — computes Shannon entropy of the hivemind's global state.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 /// Tracks hivemind state changes and computes entropy score.
 pub struct EntropyCalculator {
@@ -27,10 +26,11 @@ impl EntropyCalculator {
 
     /// Compute entropy from current hivemind state.
     /// Returns a value between 0.0 (dormant) and 1.0 (hyper-active).
-    pub fn calculate<T: Hash>(&mut self, current_state: &T) -> f64 {
-        let mut hasher = DefaultHasher::new();
-        current_state.hash(&mut hasher);
-        let current_hash = hasher.finish();
+    pub fn calculate<T: Hash + std::fmt::Debug>(&mut self, current_state: &T) -> f64 {
+        // Use blake3 for collision-resistant state hashing
+        let state_bytes = format!("{:?}", current_state);
+        let hash = blake3::hash(state_bytes.as_bytes());
+        let current_hash = u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap_or([0u8; 8]));
 
         // State change detection
         if current_hash != self.previous_state_hash {

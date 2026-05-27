@@ -90,7 +90,9 @@ impl ResourceMonitor {
     pub fn current_metrics(&self) -> (f64, f64) {
         let cpu = f64::from_bits(self.cpu_pct.load(Ordering::Relaxed));
         let mem = f64::from_bits(self.mem_pct.load(Ordering::Relaxed));
-        (cpu, mem)
+        debug_assert!(cpu.is_finite(), "cpu_pct is not finite: {}", cpu);
+        debug_assert!(mem.is_finite(), "mem_pct is not finite: {}", mem);
+        (cpu.max(0.0), mem.max(0.0))
     }
 }
 

@@ -75,10 +75,19 @@ impl AntiEchoChamber {
     }
 
     /// Simple word-overlap similarity (Jaccard index).
+    /// Case-insensitive, uses char count for word length filter.
     fn simple_similarity(&self, a: &str, b: &str) -> f64 {
         use std::collections::HashSet;
-        let words_a: HashSet<&str> = a.split_whitespace().filter(|w| w.len() > 3).collect();
-        let words_b: HashSet<&str> = b.split_whitespace().filter(|w| w.len() > 3).collect();
+        let words_a: HashSet<String> = a
+            .split_whitespace()
+            .filter(|w| w.chars().count() > 3)
+            .map(|w| w.to_lowercase())
+            .collect();
+        let words_b: HashSet<String> = b
+            .split_whitespace()
+            .filter(|w| w.chars().count() > 3)
+            .map(|w| w.to_lowercase())
+            .collect();
 
         if words_a.is_empty() || words_b.is_empty() {
             return 0.0;

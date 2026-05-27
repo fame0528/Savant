@@ -13,7 +13,8 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, State,
 };
-use tauri_plugin_updater::UpdaterExt;
+// Auto-updater disabled — UpdaterExt import not needed until endpoint is configured
+// use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex;
 use tracing::{error, field::Visit, info, warn, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
@@ -554,42 +555,10 @@ fn main() {
                 info!("Desktop v{} initialized", version);
             });
 
-            // Check for auto-updates (non-blocking)
-            let update_handle = handle.clone();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                info!("[updater] Checking for updates...");
-                match update_handle.updater() {
-                    Ok(updater) => match updater.check().await {
-                        Ok(Some(update)) => {
-                            info!("[updater] Update available: {}", update.version);
-                            if let Err(e) = update_handle.emit(
-                                "system-log-event",
-                                format!("Update available: v{}", update.version),
-                            ) {
-                                tracing::debug!("[desktop] Failed to emit system-log-event: {}", e);
-                            }
-                            match update.download_and_install(|_, _| {}, || {}).await {
-                                Ok(_) => {
-                                    info!("[updater] Update installed successfully");
-                                }
-                                Err(e) => {
-                                    warn!("[updater] Failed to install update: {}", e);
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            info!("[updater] No update available");
-                        }
-                        Err(e) => {
-                            info!("[updater] Update check failed: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        info!("[updater] Updater not available: {}", e);
-                    }
-                }
-            });
+            // Auto-updates disabled — endpoint not configured (no latest.json asset).
+            // Re-enable when a proper update server is set up.
+            // let update_handle = handle.clone();
+            // tauri::async_runtime::spawn(async move { ... });
 
             // System tray
             let show_item = MenuItemBuilder::with_id("show", "Show Dashboard").build(app)?;

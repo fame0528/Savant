@@ -275,19 +275,24 @@ impl ConsciousnessDaemon {
             lens
         );
 
-        // Synthesize narrative (LLM call with timeout)
+        // Synthesize narrative (LLM call with timeout + cancellation)
         let timeout = std::time::Duration::from_secs(30);
-        match tokio::time::timeout(
-            timeout,
-            self.synthesizer.synthesize(
-                &self.current_narrative,
-                &state_desc,
-                lens,
-                &self.llm,
-            ),
-        )
-        .await
-        {
+        let result = tokio::select! {
+            _ = self.shutdown.cancelled() => {
+                tracing::debug!("[consciousness] think() cancelled during LLM call");
+                return;
+            }
+            r = tokio::time::timeout(
+                timeout,
+                self.synthesizer.synthesize(
+                    &self.current_narrative,
+                    &state_desc,
+                    lens,
+                    &self.llm,
+                ),
+            ) => r,
+        };
+        match result {
             Ok(Ok(new_narrative)) => {
                 // Truncate to max length (safe on UTF-8 boundaries)
                 if new_narrative.len() > 8000 {

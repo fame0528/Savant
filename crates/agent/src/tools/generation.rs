@@ -40,6 +40,9 @@ impl Tool for GenerateImageTool {
 
     fn parameters_schema(&self) -> serde_json::Value {
         savant_generation::tools::generate_image_schema()
+            .get("input_schema")
+            .cloned()
+            .unwrap_or_default()
     }
 
     async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
@@ -130,6 +133,9 @@ impl Tool for GenerateSvgTool {
 
     fn parameters_schema(&self) -> serde_json::Value {
         savant_generation::tools::generate_svg_schema()
+            .get("input_schema")
+            .cloned()
+            .unwrap_or_default()
     }
 
     async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {

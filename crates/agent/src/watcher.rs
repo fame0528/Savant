@@ -21,11 +21,20 @@ const AGENT_INTERNAL_FILES: &[&str] = &[
     "LEARNINGS.md",
     "DEV-SESSION-STATE.md",
     "CONTEXT.md",
+    "file_index.db",
+];
+
+/// Directories whose contents should never trigger hot-reload.
+const IGNORED_DIRECTORIES: &[&str] = &[
+    "memory-vault",
+    ".obsidian",
+    ".stale",
 ];
 
 /// Minimum cooldown between hot-reload triggers (seconds).
-/// Prevents boot-reboot loops when the agent writes files during startup.
-const HOT_RELOAD_COOLDOWN_SECS: u64 = 15;
+/// Must be longer than a full boot cycle (boot → index → ignite → first heartbeat ≈ 60-90s)
+/// to prevent the agent's own file writes from triggering a restart loop.
+const HOT_RELOAD_COOLDOWN_SECS: u64 = 120;
 
 pub struct SwarmWatcher {
     swarm: Arc<SwarmController>,
@@ -48,7 +57,7 @@ impl SwarmWatcher {
 
     /// Returns true if the file change should be ignored (agent-internal file).
     fn should_ignore(path: &Path) -> bool {
-        // Ignore WAL directory (hidden directories starting with '.')
+        // Ignore hidden directories (e.g., .wal/, .obsidian/, .stale/)
         if let Some(parent) = path.parent() {
             let parent_name = parent.file_name().map(|n| n.to_string_lossy());
             if parent_name
@@ -60,7 +69,7 @@ impl SwarmWatcher {
             }
         }
 
-        // Ignore agent-internal files (SOUL.md, AGENTS.md, etc.)
+        // Ignore agent-internal files (SOUL.md, AGENTS.md, file_index.db, etc.)
         if let Some(file_name) = path.file_name() {
             let name = file_name.to_string_lossy();
             if AGENT_INTERNAL_FILES.iter().any(|f| name == *f) {
@@ -71,6 +80,16 @@ impl SwarmWatcher {
         // Ignore agent.json (already handled, but explicit for clarity)
         if path.ends_with("agent.json") {
             return true;
+        }
+
+        // Ignore changes inside known agent-managed directories (memory-vault, etc.)
+        for component in path.components() {
+            if let std::path::Component::Normal(name) = component {
+                let name_str = name.to_string_lossy();
+                if IGNORED_DIRECTORIES.iter().any(|d| name_str == *d) {
+                    return true;
+                }
+            }
         }
 
         false

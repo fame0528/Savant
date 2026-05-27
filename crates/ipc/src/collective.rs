@@ -104,6 +104,15 @@ impl CollectiveBlackboard {
             .create::<ipc::Service>()
             .map_err(|e| SwarmIpcError::NodeCreation(e.to_string()))?;
 
+        // Clean up stale shared memory from dead processes before creating.
+        let cleanup = Node::<ipc::Service>::cleanup_dead_nodes(Config::global_config());
+        if cleanup.cleanups > 0 || cleanup.failed_cleanups > 0 {
+            info!(
+                "CollectiveBlackboard: stale node cleanup — {} removed, {} failed",
+                cleanup.cleanups, cleanup.failed_cleanups
+            );
+        }
+
         // Retry-with-suffix on collision. Stale shared memory from a prior
         // crashed process can cause create() to fail on Windows.
         let base_name = service_name.to_string();

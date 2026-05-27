@@ -160,7 +160,11 @@ pub async fn sync_threat_intelligence() -> ThreatIntelSyncResult {
             tracing::info!("MalwareBazaar: synced {} hashes", count);
         }
         Err(e) => {
-            tracing::warn!("MalwareBazaar sync failed: {}", e);
+            if e.contains("401") {
+                tracing::debug!("MalwareBazaar sync skipped (API key not configured)");
+            } else {
+                tracing::warn!("MalwareBazaar sync failed: {}", e);
+            }
             errors.push(format!("MalwareBazaar: {}", e));
         }
     }

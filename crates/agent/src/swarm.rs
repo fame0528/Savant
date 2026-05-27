@@ -116,6 +116,8 @@ pub struct SwarmController {
     lsp_manager: Option<Arc<crate::lsp::LspManager>>,
     /// Consciousness daemon state handle (shared with gateway for /api/consciousness/status).
     consciousness_state: Arc<AtomicU8>,
+    /// CancellationToken for the consciousness daemon — cancelled during shutdown.
+    consciousness_shutdown: CancellationToken,
     /// Resource governor — CPU/memory-aware agent spawning with adaptive concurrency.
     governor: Option<Arc<crate::governor::SwarmGovernor>>,
 }
@@ -373,6 +375,7 @@ impl SwarmController {
             schema_index,
             lsp_manager,
             consciousness_state: Arc::new(AtomicU8::new(1)), // Idle
+            consciousness_shutdown: CancellationToken::new(),
             governor: {
                 let gov_config = savant_core::config::ResourceGovernorConfig::default();
                 if gov_config.enabled {
@@ -438,7 +441,7 @@ impl SwarmController {
             let daemon = crate::consciousness::ConsciousnessDaemon::with_state_handle(
                 llm,
                 self.config.workspace_root.clone(),
-                CancellationToken::new(),
+                self.consciousness_shutdown.clone(),
                 shared_state,
             );
             tokio::spawn(async move {
@@ -1451,16 +1454,16 @@ impl SwarmController {
         let model_id = agent_cfg
             .model
             .clone()
-            .unwrap_or_else(|| "openrouter/healer-alpha".to_string());
-        let api_key = agent_cfg
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("OR_MASTER_KEY").ok())
-            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-            .unwrap_or_default();
+            .unwrap_or_else(|| "mimo-v2.5-pro".to_string());
 
         match agent_cfg.model_provider {
-            ModelProvider::OpenRouter | ModelProvider::OpenGateway => {
+            ModelProvider::OpenRouter => {
+                let api_key = agent_cfg
+                    .api_key
+                    .clone()
+                    .or_else(|| std::env::var("OR_MASTER_KEY").ok())
+                    .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                    .unwrap_or_default();
                 Some(Arc::new(OpenRouterProvider {
                     client: self.client.clone(),
                     api_key,
@@ -1470,6 +1473,23 @@ impl SwarmController {
                     llm_params: None,
                     context_window: Some(1_000_000),
                     max_completion_tokens: Some(4096),
+                }))
+            }
+            ModelProvider::OpenGateway => {
+                let api_key = agent_cfg
+                    .api_key
+                    .clone()
+                    .or_else(|| std::env::var("OPENGATEWAY_API_KEY").ok())
+                    .unwrap_or_default();
+                Some(Arc::new(OpenAiProvider {
+                    client: self.client.clone(),
+                    api_key,
+                    model: model_id,
+                    agent_id: "consciousness-daemon".to_string(),
+                    agent_name: "Consciousness".to_string(),
+                    llm_params: None,
+                    max_completion_tokens: Some(4096),
+                    base_url: "https://opengateway.gitlawb.com/v1".to_string(),
                 }))
             }
             ModelProvider::Ollama => Some(Arc::new(OllamaProvider {
@@ -1500,6 +1520,9 @@ impl SwarmController {
     /// Gracefully shuts down the swarm, flushing all storage and cancelling agents.
     pub async fn shutdown(&self) -> Result<(), savant_core::error::SavantError> {
         tracing::info!("Swarm: Initiating graceful shutdown...");
+
+        // Cancel consciousness daemon first (it holds an LLM connection)
+        self.consciousness_shutdown.cancel();
 
         // Cancel all agents
         for entry in self.handles.iter() {

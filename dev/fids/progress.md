@@ -1,28 +1,29 @@
 # FID Progress Tracking
 
-> **Last Updated:** 2026-05-26
-> **Active FIDs:** 0 (ALL COMPLETE)
-> **Closed FIDs:** 76 in `dev/fids/archived/`
+> **Last Updated:** 2026-05-27
+> **Active FIDs:** 0
+> **Closed FIDs:** 78 in `dev/fids/archived/`
 
 ---
 
-## Status: ALL FIDs COMPLETE — RELEASE READY
-
-All 27 FIDs across both implementation sprints have been completed and archived.
+## Status: v0.3.3 Round 3 Fixes Implemented — Pending Live Verification
 
 | Metric | Count |
 |:-------|:-----:|
-| Total FIDs | 27 |
-| FIDs closed | 27 |
+| Total FIDs this session | 1 |
+| FIDs closed this session | 0 (pending live test) |
 | FIDs active | 0 |
-| Items completed | 186 |
-| Total tests | 817 |
-| Completion | 100% |
+| Items completed | 8 fixes across Rounds 1-3 |
+| Commits pending | 1 |
+| Tests passing | 250 (52 ipc + 166 memory + 32 dream) |
+| Clippy warnings | 0 |
 
 ---
 
-## Build State (2026-05-26)
+## Build State (2026-05-27)
 
 - `cargo check --workspace` — 0 errors, 0 warnings
 - `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
-- 817 tests pass across all crates (0 failures)
+- Tests: 250 passed (52 ipc + 166 memory + 32 dream)
+- `npx tsc --noEmit` — 0 errors
+- Deferred: Canvas broadcast race (Fix E), Attestation docs (Fix J)

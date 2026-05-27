@@ -358,7 +358,7 @@ For each fix item, execute the Perfection Loop:
 #### Execution Rules During Loop
 
 - One feature at a time. Complete → verify → document → next
-- Anti-Loop: Never re-read a file you already read in this session. One edit per file per feature. Decide, act, move on.
+- Anti-Loop: Never re-read a file you already read in this session (Perfection Loop Step 4→1 re-audit is exempt). One edit per file per feature. Decide, act, move on.
 
 ### Phase 4: Test Repair & Quality Verification
 
@@ -513,7 +513,7 @@ AUTONOMOUS WORKFLOW
 
 ## Anti-Loop Protocol (Loop Guard)
 
-- Never re-read a file you already read in this session
+- Never re-read a file you already read in this session (Perfection Loop Step 4→1 re-audit exempt; 5-iteration cap still applies)
 - Never re-check what you already know is true
 - If you find yourself reading the same file twice → **MOVE TO NEXT FEATURE**
 - One edit per file per feature. If it compiles, move on

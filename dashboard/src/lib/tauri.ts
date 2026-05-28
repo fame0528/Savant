@@ -37,8 +37,10 @@ export const getDashboardConfig = async (): Promise<{ apiKey: string; port: numb
   if (isTauri()) {
     try {
       const result = await invoke<{ dashboard_api_key: string; gateway_port: number }>("ignite_swarm");
-      return { apiKey: result.dashboard_api_key || "", port: result.gateway_port || 8080 };
-    } catch {
+      const apiKey = (result as any).dashboard_api_key || "";
+      const port = (result as any).gateway_port || 8080;
+      return { apiKey, port };
+    } catch (e) {
       return { apiKey: "", port: 8080 };
     }
   }

@@ -561,7 +561,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     if (isConnectingRef.current || socketRef.current) return;
     isConnectingRef.current = true;
 
-    const socket = new WebSocket(getWsUrl());
+    const wsUrl = getWsUrl();
+    logger.info('WS', `Connecting to ${wsUrl} (apiKey=${dashboardApiKeyRef.current ? "(set)" : "(empty)"})`);
+    const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
 
     socket.onopen = () => {
@@ -605,7 +607,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    socket.onclose = () => {
+    socket.onclose = (e) => {
+      logger.warn('WS', `WebSocket closed: code=${e.code} reason=${e.reason || "(none)"}`);
       setConnectionStatus('OFFLINE');
       setIsReady(false);
       socketRef.current = null;
@@ -618,7 +621,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       reconnectTimerRef.current = setTimeout(() => connectWebSocket(), delay);
     };
 
-    socket.onerror = () => {
+    socket.onerror = (e) => {
+      logger.error('WS', 'WebSocket error', e);
       setConnectionStatus('OFFLINE');
     };
 
@@ -678,7 +682,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     const initTauri = async () => {
       try {
+        logger.info('Init', `isTauri=${isTauri()}, __TAURI_INTERNALS__=${!!(window as any).__TAURI_INTERNALS__}`);
         const config = await getDashboardConfig();
+        logger.info('Init', `getDashboardConfig returned: apiKey=${config.apiKey ? "(set)" : "(empty)"}, port=${config.port}`);
         dashboardApiKeyRef.current = config.apiKey;
         gatewayPortRef.current = config.port;
         _dynamicGatewayPort = config.port;

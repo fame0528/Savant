@@ -189,7 +189,7 @@ where
             match chunk_res {
                 Ok(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
-                    tracing::debug!("[{}] OpenRouter stream chunk ({} bytes): {}", agent_id, bytes.len(), text.chars().take(200).collect::<String>());
+                    tracing::debug!("[{}] LLM stream chunk ({} bytes): {}", agent_id, bytes.len(), text.chars().take(200).collect::<String>());
                     for line in text.lines() {
                         let line = line.trim();
                         if line.is_empty() { continue; }
@@ -303,7 +303,7 @@ where
                 }
             }
         }
-        tracing::info!("[{}] OpenRouter stream complete, yielded {} chunks", agent_id, chunk_count);
+        tracing::info!("[{}] LLM stream complete, yielded {} chunks", agent_id, chunk_count);
         yield Ok(ChatChunk {
             agent_name: agent_name.clone(),
             agent_id: agent_id.clone(),

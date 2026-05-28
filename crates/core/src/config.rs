@@ -1182,6 +1182,39 @@ impl Config {
 }
 
 // ============================================================================
+// OpenGateway built-in key rotation
+// ============================================================================
+
+/// Built-in OpenGateway API keys for out-of-box experience.
+/// Rotated at startup to spread load across keys. Users can override via
+/// keyring (`keyring set savant OPENGATEWAY_API_KEY`) or environment variable.
+/// To add more keys, append to this array — no other changes needed.
+pub const OPENGATEWAY_DEFAULT_KEYS: &[&str] = &[
+    "ogw_live_09c8d401bbe0568f7a52dace813c6b36",
+    "ogw_live_a254091ee395b180466a38c990cc4bf2",
+    "ogw_live_4b6f742a69e072e1ef2d5dd4382a3026",
+    "ogw_live_300d7c8df0ab61a08b6b024096dba558",
+    "ogw_live_783292cb9cf41658c26f3c19648646bf",
+    "ogw_live_c17123da060e6e2312f31be719d619e4",
+    "ogw_live_4ec4495f6aeb7c6de54a878e4de07757",
+    "ogw_live_7d0abe8984a614fe690273d82ecf13e8",
+    "ogw_live_7a887232e921b436a4fe9030fdfe51eb",
+    "ogw_live_1831009cfff427d0fbace39d3df2acb7",
+    "ogw_live_9b9d5220301ac1278279ede23f833547",
+];
+
+static KEY_ROTATION_INDEX: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Returns the next built-in OpenGateway API key (round-robin).
+/// Call once at startup; repeated calls within the same process advance the index.
+pub fn next_default_opengateway_key() -> &'static str {
+    let idx =
+        KEY_ROTATION_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % OPENGATEWAY_DEFAULT_KEYS.len();
+    OPENGATEWAY_DEFAULT_KEYS[idx]
+}
+
+// ============================================================================
 // Keyring integration for secure secret storage
 // ============================================================================
 

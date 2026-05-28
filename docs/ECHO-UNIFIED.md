@@ -520,6 +520,7 @@ AUTONOMOUS WORKFLOW
 - If you find yourself reading the same file twice → **MOVE TO NEXT FEATURE**
 - One edit per file per feature. If it compiles, move on
 - Never think more than once. Decide, act, move on
+- **NEVER silently defer, skip, or deprioritize any work item.** If something cannot be done now, it must be presented to the user as a decision — not buried in a todo list as "deferred" or "flag for later." There is no autonomous deferral. (Law 2)
 
 ---
 
@@ -739,6 +740,7 @@ When starting a new session:
 - [ ] Execute fixes through the Perfection Loop
 - [ ] Run full test suite
 - [ ] Update FID status and changelog
+- [ ] **Account for ALL approved items — present any deferred/cancelled items to user BEFORE commit (Guardian #15)**
 - [ ] Commit (do NOT push)
 - [ ] Create session summary
 - [ ] Prompt user at Push Gate

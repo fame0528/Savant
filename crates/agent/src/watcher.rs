@@ -134,8 +134,10 @@ impl SwarmWatcher {
         // Keep debouncer alive
         let _debouncer = debouncer;
 
-        // Cooldown timer: prevents rapid hot-reload cycles
-        let mut last_reload: Option<Instant> = None;
+        // Cooldown timer: prevents rapid hot-reload cycles.
+        // Initialized to now so the initial boot window is covered — agent file
+        // writes during boot won't trigger a reload.
+        let mut last_reload: Option<Instant> = Some(Instant::now());
 
         while let Some(path) = rx.recv().await {
             // Identify which agent was touched

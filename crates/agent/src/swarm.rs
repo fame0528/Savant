@@ -635,37 +635,49 @@ impl SwarmController {
             };
 
             // 2. Fetch model info from OpenRouter (universal model database)
-            let model_id_for_info = agent_cfg
-                .model
-                .clone()
-                .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
+            //    Only fetch when provider is OpenRouter — other providers don't have
+            //    their models listed on OpenRouter, so the fetch always returns empty.
+            let model_info = if agent_cfg.model_provider == ModelProvider::OpenRouter {
+                let model_id_for_info = agent_cfg
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "anthropic/claude-3-sonnet".to_string());
 
-            let or_master_key = std::env::var("OR_MASTER_KEY")
-                .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
-                .unwrap_or_default();
+                let or_master_key = std::env::var("OR_MASTER_KEY")
+                    .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
+                    .unwrap_or_default();
 
-            let model_info = crate::providers::fetch_openrouter_model_info(
-                &client,
-                &or_master_key,
-                &model_id_for_info,
-            )
-            .await;
+                let info = crate::providers::fetch_openrouter_model_info(
+                    &client,
+                    &or_master_key,
+                    &model_id_for_info,
+                )
+                .await;
 
-            if let Some(ref info) = model_info {
-                tracing::info!(
-                    "[{}] Model info loaded: context={}, max_completion={}, safe_max_tokens={}",
-                    agent_name,
-                    info.context_length.unwrap_or(0),
-                    info.max_completion_tokens.unwrap_or(0),
-                    info.safe_max_tokens()
-                );
+                if let Some(ref i) = info {
+                    tracing::info!(
+                        "[{}] Model info loaded: context={}, max_completion={}, safe_max_tokens={}",
+                        agent_name,
+                        i.context_length.unwrap_or(0),
+                        i.max_completion_tokens.unwrap_or(0),
+                        i.safe_max_tokens()
+                    );
+                } else {
+                    tracing::warn!(
+                        "[{}] Could not fetch model info for '{}' — using defaults",
+                        agent_name,
+                        agent_cfg.model.as_deref().unwrap_or("unknown")
+                    );
+                }
+                info
             } else {
-                tracing::warn!(
-                    "[{}] Could not fetch model info for '{}' — using defaults",
+                tracing::info!(
+                    "[{}] Skipping OpenRouter model info fetch (provider: {:?})",
                     agent_name,
-                    model_id_for_info
+                    agent_cfg.model_provider
                 );
-            }
+                None
+            };
 
             // 3. Select LLM Provider
             let base_provider: Arc<dyn LlmProvider> = match agent_cfg.model_provider {
@@ -704,7 +716,10 @@ impl SwarmController {
                         .api_key
                         .clone()
                         .or_else(|| std::env::var("OPENGATEWAY_API_KEY").ok())
-                        .unwrap_or_default();
+                        .filter(|k| !k.is_empty())
+                        .unwrap_or_else(|| {
+                            savant_core::config::next_default_opengateway_key().to_string()
+                        });
                     Arc::new(OpenAiProvider {
                         client: client.clone(),
                         api_key: gw_key,
@@ -1480,7 +1495,10 @@ impl SwarmController {
                     .api_key
                     .clone()
                     .or_else(|| std::env::var("OPENGATEWAY_API_KEY").ok())
-                    .unwrap_or_default();
+                    .filter(|k| !k.is_empty())
+                    .unwrap_or_else(|| {
+                        savant_core::config::next_default_opengateway_key().to_string()
+                    });
                 Some(Arc::new(OpenAiProvider {
                     client: self.client.clone(),
                     api_key,

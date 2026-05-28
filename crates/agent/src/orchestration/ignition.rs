@@ -128,6 +128,15 @@ fn inject_keyring_secrets() {
         info!("🔑 OpenGateway API key loaded from keyring");
         // SAFETY: Called once during ignite() before provider init. No concurrent readers.
         std::env::set_var("OPENGATEWAY_API_KEY", &opengateway_key);
+    } else if std::env::var("OPENGATEWAY_API_KEY")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_none()
+    {
+        let key = savant_core::config::next_default_opengateway_key();
+        info!("🔑 OpenGateway API key using built-in default (rotated)");
+        // SAFETY: Called once during ignite() before provider init. No concurrent readers.
+        std::env::set_var("OPENGATEWAY_API_KEY", key);
     }
 }
 
@@ -199,7 +208,11 @@ impl IgnitionService {
                     intel_result.domains_synced
                 );
             } else if let Some(err) = &intel_result.error {
-                tracing::warn!("Threat intelligence sync failed: {}", err);
+                if err.contains("401") || err.contains("Unauthorized") {
+                    tracing::debug!("Threat intelligence sync skipped (auth not configured): {}", err);
+                } else {
+                    tracing::warn!("Threat intelligence sync failed: {}", err);
+                }
             }
         });
 

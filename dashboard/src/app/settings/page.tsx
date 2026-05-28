@@ -1,6 +1,6 @@
-import { authFetch } from "@/lib/tauri";
 "use client";
 
+import { authFetch } from "@/lib/tauri";
 import { useState, useEffect, useCallback } from "react";
 import { useDashboard } from "@/context/DashboardContext";
 

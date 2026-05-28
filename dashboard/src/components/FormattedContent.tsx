@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "../app/page.module.css";
+import { copyToClipboard } from "@/lib/tauri";
 
 const CollapsibleThoughts = React.memo(({ thoughts }: { thoughts: string }) => {
   const [collapsed, setCollapsed] = React.useState(true);
@@ -59,6 +60,22 @@ const cleanMessage = (content: string) => {
     .trim();
 };
 
+function CodeCopyButton({ codeString }: { codeString: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(codeString);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+  return (
+    <div className={styles.codeCopyButton} onClick={handleCopy}>
+      {copied ? "✓ COPIED" : "COPY"}
+    </div>
+  );
+}
+
 export default function FormattedContent({ content, msgId, thoughts }: { content: string, msgId?: string, thoughts?: string }) {
   const cleaned = cleanMessage(content);
   if (!cleaned && !thoughts) return null;
@@ -80,11 +97,7 @@ export default function FormattedContent({ content, msgId, thoughts }: { content
               <div className={styles.codeBlockContainer}>
                 <div className={styles.codeBlockHeader}>
                   <span>{lang || 'code'}</span>
-                  <div className={styles.codeCopyButton} onClick={() => {
-                    navigator.clipboard.writeText(codeString);
-                  }}>
-                    COPY
-                  </div>
+                  <CodeCopyButton codeString={codeString} />
                 </div>
                 <pre style={{ margin: 0, padding: '16px', background: 'transparent', overflowX: 'auto' }}>
                   <code className={className} {...props}>{children}</code>

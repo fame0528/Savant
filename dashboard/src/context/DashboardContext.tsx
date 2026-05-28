@@ -1,13 +1,9 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode, memo } from "react";
-import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useRouter } from "next/navigation";
-import { isTauri, igniteSwarm, getDashboardConfig, setDashboardApiKey, authFetch } from "@/lib/tauri";
+import { isTauri, igniteSwarm, getDashboardConfig, setDashboardApiKey, authFetch, copyToClipboard, getGatewayHost, getGatewayPort, getHttpUrl, getWsUrl, setGatewayPort } from "@/lib/tauri";
 import { logger } from "@/lib/logger";
-import dayjs from "dayjs";
-import localizedFormat from "dayjs/plugin/localizedFormat";
-dayjs.extend(localizedFormat);
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -116,11 +112,10 @@ export interface DashboardState {
   // Helpers
    handleLaneSwitch: (laneId: string | null, isManifest?: boolean) => void;
    getAgentMeta: (agentId: string | undefined, role: string) => { name: string; image?: string | null; isUser?: boolean; isAgent?: boolean; isSystem?: boolean; isUnknown?: boolean };
-  handleCopy: (text: string, id: string) => void;
-  toggleInsightCollapse: (id: string) => void;
-  scrollInsightsToTop: () => void;
-  formatEst: (utcTimestamp: string) => string;
-  sendControlFrame: (type: string, data: Record<string, unknown>) => void;
+   handleCopy: (text: string, id: string) => void;
+   toggleInsightCollapse: (id: string) => void;
+   scrollInsightsToTop: () => void;
+   sendControlFrame: (type: string, data: Record<string, unknown>) => void;
   sendChatMessage: (role: string, content: string, recipient: string | null, broadcast?: boolean) => void;
   requestLaneHistory: (laneId: string, limit?: number) => void;
   handleManifestSubmit: () => void;
@@ -138,58 +133,11 @@ export function useDashboard() {
 
 // ─── Helper Functions ────────────────────────────────────────────────────
 
-const getGatewayHost = () => {
-  if (typeof window === "undefined") return "127.0.0.1";
-  const host = window.location.hostname;
-  if (!host || host === "localhost" || host.includes("tauri")) return "127.0.0.1";
-  return host || "127.0.0.1";
-};
 
-// Dynamic gateway port — set from ignite_swarm response, falls back to env var or 8080
-let _dynamicGatewayPort: number | null = null;
-const getGatewayPort = () => {
-  if (_dynamicGatewayPort) return _dynamicGatewayPort;
-  if (typeof window !== "undefined") {
-    const envPort = process.env.NEXT_PUBLIC_GATEWAY_PORT;
-    if (envPort) return parseInt(envPort, 10);
-  }
-  return 8080;
-};
-
-const getWsUrl = () => `ws://${getGatewayHost()}:${getGatewayPort()}/ws`;
-const getHttpUrl = () => `http://${getGatewayHost()}:${getGatewayPort()}`;
 
 const WS_RECONNECT_MAX_DELAY = 30000;
 const WS_RECONNECT_BASE_DELAY = 1000;
 
-const cleanMessage = (content: string) => {
-  if (!content) return "";
-  let cleaned = content;
-  cleaned = cleaned.replace(/(\[?\s*OPENROUTER PROCESSING\s*\]?\s*)+/gi, '');
-  cleaned = cleaned.replace(/<environment_details>[\s\S]*?<\/environment_details>/gi, '');
-  cleaned = cleaned.replace(/<function=[^>]*>[\s\S]*?<\/function>/gi, '');
-  cleaned = cleaned.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '');
-  cleaned = cleaned.replace(/<use_mcp_tool[\s\S]*?<\/use_mcp_tool>/gi, '');
-  cleaned = cleaned.replace(/<read_file[\s\S]*?<\/read_file>/gi, '');
-  cleaned = cleaned.replace(/<write_to_file[\s\S]*?<\/write_to_file>/gi, '');
-  cleaned = cleaned.replace(/<execute_command[\s\S]*?<\/execute_command>/gi, '');
-  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
-  cleaned = cleaned.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
-  cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
-  if (cleaned.includes('"choices"') || cleaned.includes('"delta"')) {
-    try {
-      const match = cleaned.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-      if (match && match[1]) {
-        cleaned = match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-      }
-    } catch (e) { }
-  }
-  return cleaned
-    .replace(/\\n/g, '\n')
-    .replace(/^[:\s\n]+/, '')
-    .trim();
-};
 
 const CollapsibleThoughts = memo(({ thoughts }: { thoughts: string }) => {
   const [collapsed, setCollapsed] = useState(true);
@@ -247,7 +195,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [traitSnapshots, setTraitSnapshots] = useState<unknown[]>([]);
   
   // Data state
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([{ id: '.savant', name: '.savant', status: 'online', role: 'core' }]);
   const [laneMessages, setLaneMessages] = useState<Record<string, Message[]>>({ global: [] });
   const [cognitiveInsights, setCognitiveInsights] = useState<Insight[]>([]);
   const [debugLogs, setDebugLogs] = useState<{timestamp: string, message: string}[]>([]);
@@ -298,31 +246,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [agents]);
 
   const handleCopy = useCallback(async (text: string, id: string) => {
-    try {
-      await writeText(text);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
-    } catch {
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopiedId(id);
-        setTimeout(() => setCopiedId(null), 2000);
-      } catch {
-        try {
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          document.body.removeChild(ta);
-          setCopiedId(id);
-          setTimeout(() => setCopiedId(null), 2000);
-        } catch {
-          logger.error('Clipboard', 'All copy methods failed');
-        }
-      }
+    } else {
+      logger.error('Clipboard', 'All copy methods failed');
     }
   }, []);
 
@@ -341,20 +270,6 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const formatEst = (utcTimestamp: string) => {
-    try {
-      const date = new Date(utcTimestamp);
-      if (isNaN(date.getTime())) return "--:--";
-      return new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/New_York',
-        hour: 'numeric',
-        minute: 'numeric',
-        hour12: true
-      }).format(date);
-    } catch (e) {
-      return "--:--";
-    }
-  };
 
   // Removed renderFormattedContent; use FormattedContent component instead.
 
@@ -395,6 +310,18 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         return [id, { ...a, id }];
       })).values());
       setAgents(uniqueAgents as Agent[]);
+      // Set activeAgent from first discovered agent if not already set
+      if (!activeAgent && uniqueAgents.length > 0) {
+        const firstId = (uniqueAgents[0] as Agent).id;
+        setActiveAgent(firstId);
+        if (socketRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
+          socketRef.current.send(JSON.stringify({
+            session_id: sessionIdRef.current,
+            payload: { type: "HistoryRequest", data: { lane_id: firstId, limit: 100 } }
+          }));
+        }
+        logger.info('Agents', `Auto-selected agent: ${firstId}`);
+      }
     } else if (type === "history") {
       const { lane_id, history } = evData;
       if (Array.isArray(history)) {
@@ -480,16 +407,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setTypingAgents(prev => { const next = new Set(prev); next.add(agentId); return next; });
       setStreamingContent(prev => { const next = new Map(prev); next.set(agentId, (next.get(agentId) || '') + (chunk.content || "")); return next; });
     } else if (type === "heartbeat") { /* ignore */ }
-    else if (type === "agents.discovered") {
-      const agentsList = evData.agents || [];
-      if (Array.isArray(agentsList) && agentsList.length > 0) {
-        setAgents(agentsList);
-        logger.info('Agents', `Discovered ${agentsList.length} agents`);
-        if (!activeAgent && agentsList[0]?.id) {
-          setActiveAgent(agentsList[0].id);
-        }
-      }
-    } else if (type === "swarm_insight_history") {
+    else if (type === "swarm_insight_history") {
       const { history } = evData;
       if (Array.isArray(history)) {
         setCognitiveInsights(history.map((h: any) => ({ 
@@ -700,7 +618,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         dashboardApiKeyRef.current = config.apiKey;
         setDashboardApiKey(config.apiKey);
         gatewayPortRef.current = config.port;
-        _dynamicGatewayPort = config.port;
+        setGatewayPort(config.port);
         const result = await igniteSwarm();
         diag(`igniteSwarm: ${result}`);
         setConnectionStatus('NOMINAL');
@@ -894,7 +812,6 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     handleCopy,
     toggleInsightCollapse,
     scrollInsightsToTop,
-    formatEst,
     sendControlFrame,
     sendChatMessage,
     requestLaneHistory,

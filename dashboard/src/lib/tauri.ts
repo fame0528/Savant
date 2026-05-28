@@ -2,9 +2,38 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 /**
- * 🛰️ Savant Tauri Bridge
+ * Savant Tauri Bridge
  * Unifies communication between the Next.js frontend and the Rust substrate.
  */
+
+let _dynamicGatewayPort: number | null = null;
+
+export const getGatewayHost = (): string => {
+  if (isTauri()) return "127.0.0.1";
+  if (typeof window !== "undefined") return window.location.hostname;
+  return "127.0.0.1";
+};
+
+export const getGatewayPort = (): number => {
+  if (_dynamicGatewayPort !== null) return _dynamicGatewayPort;
+  if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_GATEWAY_PORT) {
+    return parseInt(process.env.NEXT_PUBLIC_GATEWAY_PORT, 10);
+  }
+  return 8080;
+};
+
+export const setGatewayPort = (port: number): void => {
+  _dynamicGatewayPort = port;
+};
+
+export const getHttpUrl = (): string => {
+  return `http://${getGatewayHost()}:${getGatewayPort()}`;
+};
+
+export const getWsUrl = (): string => {
+  return `ws://${getGatewayHost()}:${getGatewayPort()}/ws`;
+};
+
 /**
  * Get the app version from Tauri (reads tauri.conf.json at runtime).
  * Falls back to /api/status endpoint in non-Tauri mode, then hardcoded fallback.
@@ -82,8 +111,43 @@ export const getStatus = async (): Promise<any> => {
   return { status: "EXTERNAL" };
 };
 
+/**
+ * Copy text to clipboard with 3-tier fallback:
+ * 1. Tauri plugin-clipboard-manager writeText
+ * 2. navigator.clipboard.writeText
+ * 3. document.execCommand('copy')
+ */
+export const copyToClipboard = async (text: string): Promise<boolean> => {
+  if (isTauri()) {
+    try {
+      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+      await writeText(text);
+      return true;
+    } catch {}
+  }
+  if (typeof navigator !== "undefined" && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+  }
+  if (typeof document !== "undefined") {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return ok;
+    } catch {}
+  }
+  return false;
+};
 
-// ─── Authenticated Fetch ──────────────────────────────────────────────
+// --- Authenticated Fetch ---
 // Module-level API key cache. Set by DashboardContext on init.
 let _dashboardApiKey = "";
 
@@ -100,9 +164,9 @@ export const getDashboardApiKeySync = () => _dashboardApiKey;
  */
 export const authFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
   const headers: Record<string, string> = { ...(options.headers as Record<string, string> || {}) };
-  const apiKey = _dashboardApiKey || (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_DASHBOARD_API_KEY || '' : '');
-  if (apiKey && !headers['Authorization'] && !headers['x-api-key']) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
+  const apiKey = _dashboardApiKey || (typeof process !== "undefined" ? process.env.NEXT_PUBLIC_DASHBOARD_API_KEY || "" : "");
+  if (apiKey && !headers["Authorization"] && !headers["x-api-key"]) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
   }
   return fetch(url, { ...options, headers });
 };

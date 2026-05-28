@@ -36,7 +36,6 @@ export default function ChatPage() {
     getAgentMeta,
     sendControlFrame,
     requestLaneHistory,
-    formatEst,
     showDebug,
     setShowDebug,
     copiedId,
@@ -83,35 +82,6 @@ export default function ChatPage() {
   const handleBulkManifest = (agents: Record<string, unknown>[]) => {
     if (!agents || !agents.length) return;
     sendControlFrame("BulkManifest", { agents });
-  };
-
-  const cleanMessage = (content: string) => {
-    if (!content) return "";
-    let cleaned = content;
-    cleaned = cleaned.replace(/(\[?\s*OPENROUTER PROCESSING\s*\]?\s*)+/gi, '');
-    cleaned = cleaned.replace(/<environment_details>[\s\S]*?<\/environment_details>/gi, '');
-    cleaned = cleaned.replace(/<function=[^>]*>[\s\S]*?<\/function>/gi, '');
-    cleaned = cleaned.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '');
-    cleaned = cleaned.replace(/<use_mcp_tool[\s\S]*?<\/use_mcp_tool>/gi, '');
-    cleaned = cleaned.replace(/<read_file[\s\S]*?<\/read_file>/gi, '');
-    cleaned = cleaned.replace(/<write_to_file[\s\S]*?<\/write_to_file>/gi, '');
-    cleaned = cleaned.replace(/<execute_command[\s\S]*?<\/execute_command>/gi, '');
-    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
-    cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
-    cleaned = cleaned.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
-    cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
-    if (cleaned.includes('"choices"') || cleaned.includes('"delta"')) {
-      try {
-        const match = cleaned.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        if (match && match[1]) {
-          cleaned = match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-        }
-      } catch (e) { }
-    }
-    return cleaned
-      .replace(/\\n/g, '\n')
-      .replace(/^[:\s\n]+/, '')
-      .trim();
   };
 
   if (isManifestMode) {

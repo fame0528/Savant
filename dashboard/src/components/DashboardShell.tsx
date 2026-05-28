@@ -6,8 +6,7 @@ import { usePathname } from "next/navigation";
 import { useDashboard } from "@/context/DashboardContext";
 import styles from "../app/page.module.css";
 import SplashScreen from "@/components/SplashScreen";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { getAppVersion } from "@/lib/tauri";
+import { getAppVersion, getHttpUrl } from "@/lib/tauri";
 import FormattedContent from "@/components/FormattedContent";
 
 // AuthImage — fetches images with auth headers, displays as blob URL.
@@ -59,22 +58,7 @@ class DashboardErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundary
   }
 }
 
-const getGatewayHost = () => {
-  if (typeof window === "undefined") return "127.0.0.1";
-  const host = window.location.hostname;
-  if (!host || host === "localhost" || host.includes("tauri")) return "127.0.0.1";
-  return host || "127.0.0.1";
-};
 
-const getGatewayPort = () => {
-  if (typeof window !== "undefined") {
-    const envPort = process.env.NEXT_PUBLIC_GATEWAY_PORT;
-    if (envPort) return parseInt(envPort, 10);
-  }
-  return 8080;
-};
-
-const getHttpUrl = () => `http://${getGatewayHost()}:${getGatewayPort()}`;
 
 // Page header configuration
 const PAGE_HEADERS: Record<string, { sub: string; title: string }> = {
@@ -605,33 +589,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               🛠️ DEBUG CONSOLE ({debugLogs.length} entries) {debugPaused ? '⏸ PAUSED' : ''}
             </span>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={async () => {
-                const text = debugLogs.map(l => `[${l.timestamp.substr(11, 12)}] ${l.message}`).join('\n');
-                try {
-                  await writeText(text);
-                  setCopiedId('debug');
-                  setTimeout(() => setCopiedId(null), 2000);
-                } catch {
-                  try {
-                    await navigator.clipboard.writeText(text);
-                    setCopiedId('debug');
-                    setTimeout(() => setCopiedId(null), 2000);
-                  } catch {
-                    try {
-                      const ta = document.createElement('textarea');
-                      ta.value = text;
-                      ta.style.position = 'fixed';
-                      ta.style.opacity = '0';
-                      document.body.appendChild(ta);
-                      ta.select();
-                      document.execCommand('copy');
-                      document.body.removeChild(ta);
-                      setCopiedId('debug');
-                      setTimeout(() => setCopiedId(null), 2000);
-                    } catch { /* silent */ }
-                  }
-                }
-              }} style={{ background: copiedId === 'debug' ? '#00ff00' : 'var(--accent)', color: '#000', border: 'none', padding: '4px 12px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' }}>{copiedId === 'debug' ? '✓ COPIED' : 'COPY'}</button>
+              <button onClick={() => handleCopy(debugLogs.map(l => `[${l.timestamp.substr(11, 12)}] ${l.message}`).join("\n"), "debug")} style={{ background: copiedId === 'debug' ? '#00ff00' : 'var(--accent)', color: '#000', border: 'none', padding: '4px 12px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' }}>{copiedId === 'debug' ? '✓ COPIED' : 'COPY'}</button>
               <button onClick={() => setDebugExpanded(!debugExpanded)} style={{ background: '#333', color: '#fff', border: 'none', padding: '4px 12px', cursor: 'pointer' }}>{debugExpanded ? 'COLLAPSE' : 'EXPAND'}</button>
               <button onClick={() => { setShowDebug(false); setDebugExpanded(false); }} style={{ background: '#333', color: '#fff', border: 'none', padding: '4px 12px', cursor: 'pointer' }}>CLOSE</button>
             </div>

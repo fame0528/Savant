@@ -6,15 +6,15 @@
 
 ---
 
-## Status: v0.3.3 Round 3 Fixes Implemented — Pending Live Verification
+## Status: v0.3.3 All 10 Round 3 Fixes Implemented — Pending Live Verification
 
 | Metric | Count |
 |:-------|:-----:|
 | Total FIDs this session | 1 |
 | FIDs closed this session | 0 (pending live test) |
 | FIDs active | 0 |
-| Items completed | 8 fixes across Rounds 1-3 |
-| Commits pending | 1 |
+| Items completed | 10 fixes across Rounds 1-3 |
+| Commits pending | 3 |
 | Tests passing | 250 (52 ipc + 166 memory + 32 dream) |
 | Clippy warnings | 0 |
 

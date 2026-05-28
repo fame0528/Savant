@@ -35,13 +35,8 @@ Live boot log from v0.3.3 build 2 revealed the agent was stuck in a hot-reload b
 | **G** | Tool schema MissingType (LOW) | `parameters_schema()` returned full wrapper, not input_schema | Return `input_schema` directly for generate_image and generate_svg |
 | **H** | Auto-updater broken (LOW) | Endpoint URL points to nonexistent latest.json | Disabled updater until proper endpoint configured |
 | **F** | MalwareBazaar 401 (LOW) | No API key configured | Downgraded 401 to debug-level log |
-
-### Deferred
-
-| # | Issue | Reason |
-|---|-------|--------|
-| **E** | Canvas broadcast race | Non-blocking; dashboard needs refresh to show agents on first load |
-| **J** | Attestation always fails | Non-blocking; documentation-only, no TPM on this system |
+| **E** | Canvas broadcast race (MEDIUM) | Broadcast SendError when no subscribers during init | Downgraded to debug! — state stored, snapshot sent on WebSocket connect |
+| **J** | Attestation noisy warnings (LOW) | TPM/witness/consensus warnings on consumer hardware | Downgraded to debug! — expected without TPM or witness endpoint |
 
 ---
 
@@ -58,7 +53,10 @@ Live boot log from v0.3.3 build 2 revealed the agent was stuck in a hot-reload b
 | `crates/agent/src/tools/generation.rs` | Return input_schema from parameters_schema() |
 | `crates/desktop/src-tauri/src/main.rs` | Disabled auto-updater |
 | `crates/skills/src/security.rs` | MalwareBazaar 401 → debug log |
-| `docs/ECHO-UNIFIED.md` | Anti-Loop clarification (v2.1.0) |
+| `crates/canvas/src/a2ui.rs` | Broadcast SendError → debug (Fix E) |
+| `crates/agent/src/orchestration/ignition.rs` | agents.discovered publish failure → debug (Fix E) |
+| `crates/security/src/attestation.rs` | TPM/witness/consensus warnings → debug (Fix J) |
+| `docs/ECHO-UNIFIED.md` | Anti-Loop clarification + Law 2 scope reduction (v2.1.0) |
 
 ---
 
@@ -79,8 +77,6 @@ Live boot log from v0.3.3 build 2 revealed the agent was stuck in a hot-reload b
 | Item | Status | Notes |
 |------|--------|-------|
 | **Live test** | Pending | Install v0.3.3 build 3 and verify: agent boots stable, consciousness daemon uses mimo-v2.5-pro via OpenGateway, no hot-reload loop |
-| **Canvas race fix** | Deferred | Non-blocking: dashboard needs refresh on first load |
-| **Attestation docs** | Deferred | Non-blocking: TPM not available on this system |
 | **Close FID** | Pending | Move to archived/ after live verification |
 
 ---

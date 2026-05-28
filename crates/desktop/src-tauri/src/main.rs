@@ -133,12 +133,26 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
     let resolver = match app_handle.try_state::<SavantPathResolver>() {
         Some(r) => r,
         None => {
-            let msg = "CRITICAL: SavantPathResolver not initialized".to_string();
-            error!("{}", msg);
-            if let Err(e) = app_handle.emit("system-log-event", &msg) {
-                eprintln!("[desktop] Failed to emit system-log-event: {}", e);
+            // Fallback: create a new resolver if managed state isn't available.
+            // This handles edge cases where Tauri state lookup fails despite
+            // setup hook completing successfully.
+            warn!("SavantPathResolver not in managed state — creating inline fallback");
+            match SavantPathResolver::new(&app_handle) {
+                Ok(r) => {
+                    app_handle.manage(r);
+                    app_handle.try_state::<SavantPathResolver>().ok_or_else(|| {
+                        "Failed to register SavantPathResolver even after inline creation".to_string()
+                    })?
+                }
+                Err(e) => {
+                    let msg = format!("CRITICAL: SavantPathResolver creation failed: {}", e);
+                    error!("{}", msg);
+                    if let Err(emit_err) = app_handle.emit("system-log-event", &msg) {
+                        eprintln!("[desktop] Failed to emit system-log-event: {}", emit_err);
+                    }
+                    return Err(msg);
+                }
             }
-            return Err(msg);
         }
     };
 

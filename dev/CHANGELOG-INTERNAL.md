@@ -8,6 +8,25 @@
 
 ## [Unreleased]
 
+### 2026-05-28: Dashboard Auto-Select + Display Name Fixes
+
+**Problem:** After Build 7 copy/unification fixes, dashboard main area still showed "Loading conversation..." with empty sidebar. Root cause: `agents.discovered` handler set agents but never set `activeAgent` — auto-select logic was removed too aggressively during dead code cleanup. Sidebar, header, and input placeholder displayed raw `.savant` id instead of "SAVANT" display name.
+
+**Root Cause:**
+1. **CRITICAL — No auto-select on discovery:** The `agents.discovered` handler (line 307) set `setAgents()` but never called `setActiveAgent()`. Without `activeAgent`, the dashboard enters "Swarm Broadcast" mode with empty global lane → "Loading conversation..."
+2. **HIGH — Sidebar raw id:** Sidebar agent list (line 430) used `agent.name` directly from gateway, which sends `.savant` as the id. No `getAgentMeta()` mapping applied.
+3. **MEDIUM — Header/placeholder raw id:** Header title and input placeholder also used raw `agent.name` instead of `getAgentMeta()` display name.
+
+**Fix:**
+- `dashboard/src/context/DashboardContext.tsx` (+12/-0): Re-added auto-select in `agents.discovered` — when `activeAgent` is null and no saved preference exists, auto-selects first agent and requests lane history via `HistoryRequest`
+- `dashboard/src/components/DashboardShell.tsx` (+9/-9): Sidebar agent list now uses `ctx.getAgentMeta(agent.id, 'assistant').name` for display names; header title uses `getAgentMeta(activeAgent, 'assistant').name`; input placeholder uses `getAgentMeta` for "Message SAVANT..." text
+
+**Verification:**
+- `npx tsc --noEmit` — 0 errors
+- Committed `8b709a5`, pushed to origin/main
+
+**Status:** FIXED. Awaiting live test.
+
 ### 2026-05-28: Build 7 Regressions — Agent Discovery + Copy Unification
 
 **FID:** `FID-20260528-v034-BUILD7-REGRESSIONS.md`

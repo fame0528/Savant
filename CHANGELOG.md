@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Agent Discovery & Copy Unification (Build 7)
 - **Agent discovery dead code fix** — merged `activeAgent` logic into first `agents.discovered` handler, deleted unreachable second handler in `DashboardContext.tsx`
+- **Auto-select first agent on discovery** — when no agent is active and no saved preference, auto-selects first discovered agent and requests lane history
+- **Agent display names** — sidebar, header, and input placeholder now use `getAgentMeta()` for proper display names (`.savant` → `SAVANT`)
 - **`.savant` default agent** — sidebar always shows the core `.savant` agent even before gateway discovery
 - **Unified `copyToClipboard()`** in `dashboard/src/lib/tauri.ts` — 3-tier fallback (Tauri plugin, navigator.clipboard, execCommand), used by all copy buttons
 - **Code block copy** now has Tauri fallback + visual feedback via `CodeCopyButton` component in `FormattedContent.tsx`

@@ -1,6 +1,6 @@
 # FID Progress Tracking
 
-> **Last Updated:** 2026-05-28 (v0.3.4 Build 7)
+> **Last Updated:** 2026-05-28 16:11 EDT (v0.3.4 Build 7)
 > **Active FIDs:** 1 (FID-20260528-v034-BUILD7-REGRESSIONS — FIXED, awaiting live test)
 > **Closed FIDs:** 86 in `dev/fids/archived/`
 
@@ -10,30 +10,32 @@
 
 | Metric | Count |
 |:-------|:-----:|
-| Total FIDs this session | 6 |
+| Total FIDs this session | 7 |
 | FIDs closed this session | 6 (ONBOARDING, BUILD3, BUILD4, SETUP-WIZARD, DASHBOARD-CONN, BUILD6) |
-| FIDs active | 0 |
-| Issues fixed | 5 |
-| Commits on main (not pushed) | 11 |
+| FIDs active | 1 (BUILD7-REGRESSIONS — FIXED) |
+| Issues fixed | 9 |
+| Commits on main (pushed) | 13 |
 | Clippy warnings | 0 |
 
 ---
 
-## Build State (2026-05-28 Build 6)
+## Build State (2026-05-28 Build 7)
 
 - Version: 0.3.4 across all 28 crates
 - `cargo check --workspace` — 0 errors
 - `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
 - `npx tsc --noEmit` — 0 errors
 - `npx tsc --noEmit` (dashboard) — 0 errors
-- Version: 0.3.3 across all 28 crates
 
 ---
 
-## Commits (not pushed)
+## Commits (pushed to origin/main)
 
 | Hash | Summary |
 |------|---------|
+| `8b709a5` | fix: auto-select first agent on discovery, use getAgentMeta for display names |
+| `205ec69` | fix: agent discovery, .savant default, unified copyToClipboard, remove duplicate helpers |
+| `f8246c0` | fix: use client directive must be first line |
 | `b9f0ffa` | fix: bypass middleware for WS routes, CLI updater removal, Copy All via Tauri IPC |
 | `d3aea9f` | fix: SWARM_OFFLINE root cause (CORS), logs window position, Copy All |
 | `9ded629` | docs: update CHANGELOG.md for v0.3.3 |
@@ -46,15 +48,16 @@
 
 ---
 
-## Open Items (FID-20260528-v033-BUILD6-LOG-ANALYSIS)
+## Open Items (FID-20260528-v034-BUILD7-REGRESSIONS)
 
 | # | Sev | Issue | Root Cause | Status |
 |---|-----|-------|-----------|--------|
-| 1 | CRITICAL | Vector DB lock kills 2nd launch | UNC path fallback + lock file deletion | FIXED |
-| 2 | HIGH | Auth log spam (~500+ WARN) | Rate-limited WARN + authenticated image fetch | FIXED |
-| 3 | MEDIUM | SSE parse failures | Downgraded to debug level | FIXED |
-| 4 | MEDIUM | Input button hidden on load | Always visible, disabled when offline | FIXED |
-| 5 | LOW | First launch froze | UNC fix deployed, awaiting live test | FIXED |
+| 1 | CRITICAL | Dashboard "Loading conversation..." forever | agents.discovered didn't set activeAgent | FIXED (8b709a5) |
+| 2 | HIGH | Sidebar shows ".savant" not "SAVANT" | getAgentMeta not used in sidebar/header/placeholder | FIXED (8b709a5) |
+| 3 | HIGH | Copy All button broken | Dead code removal killed working copy | FIXED (205ec69) |
+| 4 | HIGH | No default agent before discovery | agents state initialized empty | FIXED (205ec69) |
+| 5 | MEDIUM | Code block copy no Tauri fallback | navigator-only, no visual feedback | FIXED (205ec69) |
+| 6 | MEDIUM | Duplicate helpers (3-5 files) | cleanMessage, formatEst, URL helpers | FIXED (205ec69) |
 
 ---
 

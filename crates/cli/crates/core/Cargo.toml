@@ -1,6 +1,6 @@
 [package]
 name = "savant_cli_core"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 license.workspace = true
 description = "Core utilities for Savant CLI — diff parser, RTK compression, context engine, tool sandbox"

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.4] - 2026-05-28
+
+**v0.3.4 Hotfix: vector DB lock, auth log spam, SSE parse noise, dashboard UX. 5 issues fixed.**
+
+### Fixed
+
+#### Vector Database Lock (Critical)
+- **UNC path fallback** in `crates/memory/src/engine.rs` — `strip_unc_prefix()` converts `\\?\\` extended-length paths to canonical form
+- Backup and remove operations now use canonical paths to avoid Windows os error 267
+- Falls back to lock-file-only deletion (`enclave/vector/lock`) if full directory removal fails
+- Resolves persistent ignition failure on second launch (BUILD3, BUILD4, BUILD6)
+
+#### Auth Log Spam
+- **Rate-limited WARN logging** in `crates/gateway/src/auth/http_middleware.rs` — max 1 WARN per 10s via `AtomicI64` timestamp tracking
+- **Authenticated image loading** — `fetchAuthImage()` utility in DashboardContext fetches with `Authorization: Bearer` header, caches blob URLs
+- **AuthImage component** in DashboardShell — replaces raw `<img src>` that triggered 401s on every render
+- Eliminates ~500+ WARN lines per session
+
+#### SSE Parse Failures
+- **Downgraded to debug** in `crates/agent/src/providers/mod.rs` — partial/malformed SSE chunks from OpenRouter no longer generate WARN noise
+
+#### Dashboard Input Button
+- **Always visible** on home page — uses opacity + pointerEvents + disabled attribute when offline instead of hiding entirely
+
+#### Build Hygiene
+- Fixed UTF-8 BOM in 30 files (28 Cargo.toml + 2 tauri.conf.json) caused by PowerShell Set-Content
+- Fixed pre-existing clippy `useless_conversion` in `crates/gateway/src/server.rs`
+
+---
+
 ## [0.3.3] - 2026-05-28
 
 **v0.3.3 Release Hardening. 24 issues fixed across 5 live test rounds. OpenGateway key rotation, MalwareBazaar integration, dashboard connectivity, CLI resilience, version sync.**

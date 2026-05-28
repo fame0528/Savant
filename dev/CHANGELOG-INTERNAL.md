@@ -8,6 +8,51 @@
 
 ## [Unreleased]
 
+### 2026-05-28: Build 6 Log Analysis — 5 Issues Identified
+
+**FID:** `FID-20260528-v033-BUILD6-LOG-ANALYSIS.md`
+
+**Problem:** v0.3.3 post-build-5 live test. Run 1 froze (no logs). Run 2 succeeded at ignition but exposed 5 issues: vector DB lock kills second launch, auth log spam floods ~500+ WARN lines, OpenRouter SSE parse failures, input button hidden on dashboard load, first launch freeze.
+
+**Root Cause:**
+1. **CRITICAL — Vector DB lock:** `\\?\` UNC path prefix breaks `std::fs::rename`/`fs::remove_dir_all` on Windows (os error 267). Stale lock from Run 1 cannot be cleared by Run 2. Same root cause as BUILD4 Issue 4 — previous fix was insufficient.
+2. **HIGH — Auth spam:** Frontend polls `/api/agents/.savant/image` without auth token. Auth middleware logs every rejection at WARN. No backoff.
+3. **MEDIUM — SSE parse:** consciousness-daemon SSE parser doesn't buffer partial JSON frames. Chunks split mid-JSON from OpenRouter fail to parse.
+4. **MEDIUM — Hidden input:** UI race condition — send button visibility gated on async agent connection state.
+5. **LOW — First launch freeze:** Insufficient data. Likely same vector DB lock or hang during memory engine init.
+
+**Fix Plan:** Not yet implemented. Awaiting approval. See FID for detailed fix matrix.
+
+**Status:** All 5 issues fixed. Code changes implemented, verification passed (cargo check 0 errors, clippy 0 warnings, tsc 0 errors).
+
+**Fix (continued):**
+- `dashboard/src/context/DashboardContext.tsx` (+20/-0): Added `fetchAuthImage()` — authenticated image fetch with `Authorization: Bearer` header. Blob URL cache via `useRef<Map>`. Exposed through context.
+- `dashboard/src/components/DashboardShell.tsx` (+15/-1): Added `AuthImage` component — fetches with auth headers, displays blob URL. Replaced raw `<img src>` for agent avatars.
+- `dashboard/src/components/DashboardShell.tsx` (+4/-2): Chat input always visible on home page. Uses opacity/pointerEvents/disabled when offline.
+
+### 2026-05-28: v0.3.4 Release
+
+**Version bump:** 0.3.3 → 0.3.4 across all 28 crates, 2 tauri.conf.json, README.md, CHANGELOG.md.
+**BOM cleanup:** Removed UTF-8 BOM from 30 files injected by PowerShell Set-Content.
+**Docs:** README updated to v0.3.4, stale doc links fixed (ECHO-UNIFIED.md replaces old dev/ docs).
+
+**Fix:**
+- `crates/memory/src/engine.rs` (+45/-29): Added `strip_unc_prefix()` helper to convert `\?\` UNC paths to canonical paths. Backup and remove operations now use canonical paths to avoid os error 267. Falls back to lock-file-only deletion if full directory removal fails.
+- `crates/gateway/src/auth/http_middleware.rs` (+19/-7): Added `AUTH_WARN_INTERVAL_MS` (10s) rate-limit on WARN logging for repeated 401s. Uses `AtomicI64` for lock-free timestamp tracking.
+- `crates/agent/src/providers/mod.rs` (+3/-1): Downgraded SSE parse failure log from `warn!` to `debug!` with descriptive message about partial frame buffering.
+- `dashboard/src/components/DashboardShell.tsx` (+4/-2): Chat input now always visible on home page (was gated on `isSystemReady`). Uses `opacity` + `pointerEvents` + `disabled` to indicate offline state instead of hiding.
+- `crates/gateway/src/server.rs` (+1/-1): Fixed pre-existing clippy `useless_conversion` error (`vec![].into()` -> `vec![]`).
+
+### 2026-05-28: FID Housekeeping — 6 FIDs Archived
+
+Archived completed FIDs to `dev/fids/archived/`:
+- `FID-20260526-AUDIT-FINDINGS-V2` (CLOSED)
+- `FID-20260527-EMBEDDING-IGNITION-FIX` (FIXED)
+- `FID-20260527-ONBOARDING-BOOT-FAILURES` (FIXED)
+- `FID-20260527-SETUP-WIZARD-AUTOHEALING` (CLOSED)
+- `FID-20260527-v033-BUILD3-REGRESSIONS` (CLOSED)
+- `FID-20260528-v033-BUILD4-REGRESSIONS` (CLOSED)
+
 ### 2026-05-27: Onboarding Boot Failures Round 3 — 8 Fixes
 
 **FID:** `FID-20260527-ONBOARDING-BOOT-FAILURES.md`

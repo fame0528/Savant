@@ -154,8 +154,37 @@ fn print_phase(num: u8, desc: &str) {
     );
 }
 
+#[cfg(target_os = "windows")]
+fn main() {
+    // On Windows, attach to parent console or allocate a new one
+    // so error messages are visible when launched from Explorer.
+    extern "system" {
+        fn AttachConsole(dw_process_id: u32) -> i32;
+        fn AllocConsole() -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            AllocConsole();
+        }
+    }
+
+    if let Err(e) = async_main() {
+        eprintln!("Error: {}", e);
+        eprintln!("Press Enter to exit...");
+        let mut input = String::new();
+        let _ = std::io::stdin().read_line(&mut input);
+        std::process::exit(1);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn main() -> anyhow::Result<()> {
+    async_main()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn async_main() -> Result<()> {
     let args = Args::parse();
 
     if args.keygen {

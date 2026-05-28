@@ -9,6 +9,22 @@ import SplashScreen from "@/components/SplashScreen";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getAppVersion } from "@/lib/tauri";
 import FormattedContent from "@/components/FormattedContent";
+
+// AuthImage — fetches images with auth headers, displays as blob URL.
+// Avoids 401 spam from <img src> which can't send custom headers.
+function AuthImage({ src, alt, onError, style }: { src: string; alt: string; onError?: (e: React.SyntheticEvent<HTMLImageElement>) => void; style?: React.CSSProperties }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const ctx = useDashboard();
+  useEffect(() => {
+    let revoked = false;
+    ctx.fetchAuthImage(src).then(url => {
+      if (!revoked && url) setBlobUrl(url);
+    });
+    return () => { revoked = true; };
+  }, [src, ctx.fetchAuthImage]);
+  if (!blobUrl) return null;
+  return <img src={blobUrl} alt={alt} onError={onError} style={style} />;
+}
 import SetupWizard from "@/components/SetupWizard";
 
 // ─── Error Boundary ───────────────────────────────────────────────────
@@ -425,7 +441,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
                     fontSize: '10px', fontWeight: 900, color: 'var(--accent)'
                   }}>
                     <span style={{ position: 'absolute' }}>{agent.name.charAt(0).toUpperCase()}</span>
-                    <img src={`${getHttpUrl()}/api/agents/${agent.id}/image?t=${Date.now()}`} alt={agent.name} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                    <AuthImage src={`${getHttpUrl()}/api/agents/${agent.id}/image`} alt={agent.name} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                   </div>
                   {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.5px' }}>{agent.name}</span>}
                 </div>
@@ -468,20 +484,21 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
             {children}
           </div>
 
-          {/* CHAT INPUT — inside <main>, below scrollable content. Only interactive when system is ready. */}
-          {showChatInput && isSystemReady && (
-            <div className={styles.inputArea}>
+          {/* CHAT INPUT — inside <main>, below scrollable content. Always visible when showChatInput, disabled when not ready. */}
+          {showChatInput && (
+            <div className={styles.inputArea} style={{ opacity: isSystemReady ? 1 : 0.5, pointerEvents: isSystemReady ? 'auto' : 'none' }}>
               <div style={{ flex: 1, display: 'flex', gap: '8px', alignItems: 'center', background: 'var(--glass-bg)', borderRadius: '12px', padding: '4px 12px', border: '1px solid var(--border)' }}>
                 <input 
                   type="text" 
-                  placeholder={activeAgent ? `Message ${ctx.agents.find(a => a.id === activeAgent)?.name || 'Agent'}...` : "Broadcast directive to active swarm..."} 
+                  placeholder={isSystemReady ? (activeAgent ? `Message ${ctx.agents.find(a => a.id === activeAgent)?.name || 'Agent'}...` : "Broadcast directive to active swarm...") : "Waiting for swarm..."}
                   className={styles.chatInput} 
                   value={inputValue} 
                   onChange={(e) => setInputValue(e.target.value)} 
                   onKeyDown={(e) => e.key === 'Enter' && handleIgnite()} 
-                  style={{ border: 'none', background: 'transparent' }} 
+                  style={{ border: 'none', background: 'transparent' }}
+                  disabled={!isSystemReady}
                 />
-                <button className={styles.sendButton} onClick={handleIgnite} onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}>Generate</button>
+                <button className={styles.sendButton} onClick={handleIgnite} onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'} onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'} disabled={!isSystemReady}>Generate</button>
               </div>
             </div>
           )}

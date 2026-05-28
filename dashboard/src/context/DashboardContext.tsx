@@ -125,6 +125,7 @@ export interface DashboardState {
   requestLaneHistory: (laneId: string, limit?: number) => void;
   handleManifestSubmit: () => void;
   handleManifestCommit: () => void;
+  fetchAuthImage: (url: string) => Promise<string | null>;
 }
 
 const DashboardContext = createContext<DashboardState | null>(null);
@@ -825,6 +826,29 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     sendControlFrame("SoulUpdate", { agent_id: agentName, content: manifestDraft });
   }, [manifestDraft, sendControlFrame]);
 
+
+  // Authenticated image fetch — returns blob URL or null on failure.
+  // Caches results to avoid re-fetching on every render.
+  const authImageCache = useRef<Map<string, string>>(new Map());
+  const fetchAuthImage = useCallback(async (url: string): Promise<string | null> => {
+    // Return cached blob URL if available
+    const cached = authImageCache.current.get(url);
+    if (cached) return cached;
+    try {
+      const apiKey = dashboardApiKeyRef.current || process.env.NEXT_PUBLIC_DASHBOARD_API_KEY || '';
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      const resp = await fetch(url, { headers });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      authImageCache.current.set(url, blobUrl);
+      return blobUrl;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const value: DashboardState = {
     activeAgent, setActiveAgent,
     isManifestMode, setIsManifestMode,
@@ -872,6 +896,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     requestLaneHistory,
     handleManifestSubmit,
     handleManifestCommit,
+    fetchAuthImage,
   };
 
   return (

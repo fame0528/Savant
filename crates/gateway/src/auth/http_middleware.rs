@@ -14,6 +14,15 @@ use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use std::sync::atomic::{AtomicI64, Ordering};
+
+/// Minimum interval (ms) between WARN log messages for repeated 401s.
+/// Prevents log spam from polling endpoints without auth tokens.
+const AUTH_WARN_INTERVAL_MS: i64 = 10_000;
+
+/// Last timestamp (millis since epoch) a WARN was emitted for unauthorized requests.
+/// Atomic to avoid requiring a Mutex in the hot path.
+static LAST_AUTH_WARN_MS: AtomicI64 = AtomicI64::new(0);
 
 /// Paths that do not require authentication.
 const PUBLIC_PATHS: &[&str] = &[
@@ -106,14 +115,24 @@ pub async fn auth_middleware(
             next.run(req).await
         }
         _ => {
-            tracing::warn!(
-                "[auth] Unauthorized request to {} from {}",
-                path,
-                req.headers()
-                    .get("x-forwarded-for")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("unknown")
-            );
+            // Rate-limit WARN logging to prevent log spam from polling endpoints
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
+            let last = LAST_AUTH_WARN_MS.load(Ordering::Relaxed);
+            if now_ms - last > AUTH_WARN_INTERVAL_MS {
+                LAST_AUTH_WARN_MS.store(now_ms, Ordering::Relaxed);
+                tracing::warn!(
+                    "[auth] Unauthorized request to {} from {} (suppressing further warnings for {}s)",
+                    path,
+                    req.headers()
+                        .get("x-forwarded-for")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("unknown"),
+                    AUTH_WARN_INTERVAL_MS / 1000
+                );
+            }
             (
                 StatusCode::UNAUTHORIZED,
                 axum::Json(serde_json::json!({

@@ -296,9 +296,6 @@ pub async fn start_gateway(
         // Trajectory endpoints
         .route("/api/trajectories", get(trajectories_list_handler))
         .route("/api/trajectories/stats", get(trajectories_stats_handler))
-        .route("/ws", get(websocket_handler))
-        // Canvas A2UI WebSocket route — real-time agent state visualization
-        .route("/ws/canvas", get(canvas_ws_handler))
         .route("/api/agents", get(agents_list_handler))
         .route("/api/agents/:name/image", get(agent_image_handler))
         .route(
@@ -779,15 +776,33 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         }
     });
 
-    // 6. Task 3: Central WebSocket Sender
+    // 6. Task 3: Central WebSocket Sender (with periodic keepalive ping)
     let mut send_task = tokio::spawn(async move {
-        while let Some(msg) = outgoing_rx.recv().await {
-            if let Err(e) = sender.send(msg).await {
-                tracing::error!("WS send failure: {}", e);
-                break;
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                msg = outgoing_rx.recv() => {
+                    match msg {
+                        Some(m) => {
+                            if let Err(e) = sender.send(m).await {
+                                tracing::error!("WS send failure: {}", e);
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                _ = ping_interval.tick() => {
+                    if let Err(e) = sender.send(Message::Ping(vec![])).await {
+                        tracing::debug!("WS ping failed (client likely disconnected): {}", e);
+                        break;
+                    }
+                }
             }
         }
     });
+
 
     // 7. Task 4: WebSocket Receiver
     let storage = state.storage.clone();

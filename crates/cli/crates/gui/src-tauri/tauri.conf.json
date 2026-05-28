@@ -1,6 +1,6 @@
 {
   "productName": "Savant CLI Companion",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "identifier": "com.savant.cli-companion",
   "build": {
     "beforeBuildCommand": "pnpm run build",

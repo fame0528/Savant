@@ -3,15 +3,15 @@
 
 <img src="img/savant.png" alt="Savant Logo" width="180" />
 
-# SAVANT v0.3.2
+# SAVANT v0.3.4
 
 **One Mind. A Thousand Faces.**
 
 A production-grade, Rust-native framework for building, deploying, and coordinating swarms of autonomous AI agents with mandatory security scanning and real-time substrate observability.
 
-**Zero Warning Build:** `cargo clippy --workspace --no-deps` produces zero warnings. Zero `unwrap()`/`expect()` in non-test code. 1,197 tests pass. Enterprise-grade error handling throughout.
+**Zero Warning Build:** `cargo clippy --workspace --all-targets -- -D warnings` produces zero warnings. Zero `unwrap()`/`expect()` in non-test code. Enterprise-grade error handling throughout.
 
-**Security Hardening (2026-05-25):** REST API authentication middleware with constant-time comparison. Immutable security fields (5 fields blocked at runtime). Canvas WebSocket auth. SoulUpdate/BulkManifest/NLCommand size limits. Environment variable filtering for spawned processes. Mandatory SecurityScanner (no optional bypass).
+**Security Hardening (2026-05-28):** Authenticated image loading via blob URLs. REST API auth middleware with rate-limited logging. REST API authentication middleware with constant-time comparison. Immutable security fields (5 fields blocked at runtime). Canvas WebSocket auth. SoulUpdate/BulkManifest/NLCommand size limits. Environment variable filtering for spawned processes. Mandatory SecurityScanner (no optional bypass).
 
 **Consciousness Layer (2026-05-25):** Continuously thinking daemon that observes the hivemind via zero-copy shared memory. Entropy-based cadence (0ms–300s). Reconstructive narrative synthesis (Markov chain). Wonder engine for autonomous exploration. Anti-echo-chamber for diversity enforcement. Consciousness budget with quiet hours.
 
@@ -85,7 +85,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 ## Architecture
 
-<img src="img/architecture.png" alt="Savant Architecture v0.3.2" width="850" />
+<img src="img/architecture.png" alt="Savant Architecture v0.3.4" width="850" />
 
 </div>
 
@@ -196,7 +196,7 @@ The launcher polls the `/live` health endpoint until the gateway is ready (max 3
 
 ```bash
 # Start the Gateway and Swarm
-cargo run --release --bin savant_cli
+cargo run --release --bin savant
 
 # In another terminal, start the Dashboard
 cd dashboard
@@ -204,7 +204,7 @@ npm install  # first time only
 npm run dev
 ```
 
-The gateway starts on `ws://127.0.0.1:3000/ws` and the dashboard at `http://localhost:3000`.
+The gateway starts on `ws://127.0.0.1:8080/ws` (configurable in `config/savant.toml`). The desktop app is a native Tauri window — or use `cd dashboard && npm run dev` for the standalone web dashboard.
 
 ### 3. Configuration
 
@@ -228,8 +228,8 @@ temperature = 0.4
 max_tokens = 262144
 
 [server]
-port = 3000
-host = "0.0.0.0"
+port = 8080
+host = "127.0.0.1"
 
 [system]
 db_path = "./data/savant"          # Sovereign substrate storage
@@ -311,7 +311,7 @@ Instructions and implementation details...
 | `savant_canvas` | A2UI rendering and LCS-based diff |
 | `savant_channels` | 25 channel integrations (Discord, Slack, Signal, etc.) |
 | `savant_mcp` | MCP server with auth + circuit breaker |
-| `savant_cli` | CLI entry point with --config and --keygen |
+| `savant_cli` | CLI binaries: `savant` (TUI chat companion), `savant-cli` (swarm orchestrator) |
 | `savant_security` | CCT token verification, PQC signatures, prompt defense |
 | `savant_panopticon` | Monitoring and telemetry |
 | `savant_desktop` | Tauri-based desktop companion |
@@ -337,10 +337,7 @@ Savant/
 ├── CHANGELOG.md            # Release changelog
 ├── AGENTS.md               # Agent behavior engineering rules
 ├── dev/                    # Development process & tracking
-│   ├── DEVELOPMENT-WORKFLOW.md
-│   ├── ECHO.md             # Sovereign coding system
-│   ├── SAVANT-CODING-SYSTEM.md
-│   ├── AUTONOMOUS-WORKFLOW.md
+│   ├── ECHO-UNIFIED.md          # Consolidated coding standards & workflow
 │   ├── IMPLEMENTATION-TRACKER.md
 │   ├── CHANGELOG-INTERNAL.md
 │   ├── SESSION-SUMMARY.md
@@ -364,7 +361,7 @@ Savant/
 │   ├── panopticon/         # Telemetry and monitoring
 │   ├── obsidian/           # Glass House bidirectional Obsidian sync
 │   ├── dream/              # NREM/REM sleep cycles
-│   └── int/                # Integrations (Gmail, Notion, etc.)
+│   └── integrations/       # External service integrations (Gmail, Notion, etc.)
 ├── dashboard/              # Next.js 16 observability dashboard
 ├── workspaces/
 │   ├── substrate/          # Savant's own files
@@ -396,7 +393,7 @@ Savant/
 
 ## Documentation
 
-- [Autonomous Workflow](docs/AUTONOMOUS-WORKFLOW.md) — The overnight automation protocol
+- [ECHO Unified Protocol](docs/ECHO-UNIFIED.md) — Consolidated coding standards, workflow, and quality requirements
 - [Architecture Overview](docs/architecture/) — System design and data flow
 - [Hivemind Architecture](docs/swarm.md) — Collective intelligence system
 - [Memory System](docs/memory.md) — Forever memory with Glass House Obsidian sync
@@ -404,7 +401,7 @@ Savant/
 - [API Reference](docs/api/) — Control frame schemas and WebSocket protocol
 - [Security Model](docs/security/) — Authentication, sandboxing, and threat detection
 - [Changelog](CHANGELOG.md) — Release history and changes
-- [ECHO Protocol](dev/ECHO.md) — Sovereign coding system reference
+- [ECHO Protocol](docs/ECHO-UNIFIED.md) — Sovereign coding system reference
 
 ---
 

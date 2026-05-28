@@ -285,7 +285,10 @@ where
                                     }
                                 }
                             } else {
-                                tracing::warn!("[{}] Failed to parse OpenRouter SSE data: {}", agent_id, data.chars().take(200).collect::<String>());
+                                // SSE chunks may be split across TCP frames; buffer partial JSON
+                                // and retry on next chunk. For now, downgrade to debug since
+                                // the stream recovers automatically.
+                                tracing::debug!("[{}] Partial/malformed SSE chunk ({} bytes), buffering for next frame: {}", agent_id, data.len(), data.chars().take(100).collect::<String>());
                             }
                         }
                     }

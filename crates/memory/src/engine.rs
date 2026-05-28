@@ -11,6 +11,19 @@ use crate::vector_engine::{SemanticVectorEngine, VectorConfig};
 use savant_core::traits::{EmbeddingProvider, LlmProvider};
 use savant_core::types::LlmParams;
 
+/// Strips the \\?\ UNC extended-length prefix from a Windows path.
+/// On non-Windows or paths without the prefix, returns the path unchanged.
+/// This is needed because std::fs::rename and std::fs::remove_dir_all
+/// can fail with os error 267 on UNC-prefixed locked directories.
+fn strip_unc_prefix(path: &std::path::Path) -> std::path::PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        std::path::PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 // Maximum procedures, lessons, and insights are now configurable via MemoryConfig.
 // See models::MemoryConfig for defaults (max_procedures, max_lessons, max_insights).
 
@@ -204,34 +217,49 @@ impl MemoryEnclave {
                 let vector_dir = storage_path.as_ref().join("vector");
                 if vector_dir.exists() {
                     // RC-27: Back up vector index before clearing
+                    // Use canonical (non-UNC) paths to avoid os error 267 on Windows
                     let backup_dir = storage_path.as_ref().join("vector.bak");
-                    if backup_dir.exists() {
-                        if let Err(e) = std::fs::remove_dir_all(&backup_dir) {
+                    let canonical_backup = strip_unc_prefix(&backup_dir);
+                    if canonical_backup.exists() {
+                        if let Err(e) = std::fs::remove_dir_all(&canonical_backup) {
                             debug!("Failed to remove old vector backup: {}", e);
                         }
                     }
                     if let Err(copy_err) =
-                        savant_core::utils::io::copy_dir_recursive(&vector_dir, &backup_dir)
+                        savant_core::utils::io::copy_dir_recursive(&vector_dir, &canonical_backup)
                     {
                         warn!("Failed to back up vector index: {}", copy_err);
                     } else {
-                        info!("Vector index backed up to {:?}", backup_dir);
+                        info!("Vector index backed up to {:?}", canonical_backup);
                     }
                     warn!(
                         "Clearing stale vector index at {:?} due to init error: {}",
                         vector_dir, e
                     );
-                    if let Err(remove_err) = std::fs::remove_dir_all(&vector_dir) {
-                        // If removal fails (e.g. locked by another process), don't retry —
-                        // the retry would fail with the same lock error.
-                        warn!(
-                            "Failed to remove stale vector index: {}. Another process may be using it.",
-                            remove_err
-                        );
-                        return Err(MemoryError::VectorInitFailed(format!(
-                            "Vector database locked by another process. Close other Savant instances and try again. (original error: {})",
-                            e
-                        )));
+                    // Try removing with canonical path first (avoids UNC os error 267),
+                    // then fall back to direct lock file deletion if that also fails.
+                    let canonical_vector = strip_unc_prefix(&vector_dir);
+                    if let Err(remove_err) = std::fs::remove_dir_all(&canonical_vector) {
+                        // Last resort: delete just the lock file to release the handle
+                        let lock_file = canonical_vector.join("lock");
+                        if lock_file.exists() {
+                            if let Err(lock_err) = std::fs::remove_file(&lock_file) {
+                                warn!("Failed to remove lock file {:?}: {}", lock_file, lock_err);
+                            } else {
+                                info!("Removed stale lock file at {:?}", lock_file);
+                            }
+                        }
+                        // If directory still exists, another process holds it
+                        if canonical_vector.exists() {
+                            warn!(
+                                "Failed to remove stale vector index: {}. Another process may be using it.",
+                                remove_err
+                            );
+                            return Err(MemoryError::VectorInitFailed(format!(
+                                "Vector database locked by another process. Close other Savant instances and try again. (original error: {}",
+                                e
+                            )));
+                        }
                     }
                     // Retry with original `vector_config` (which may have corrected dimensions)
                     SemanticVectorEngine::new(storage_path.as_ref(), vector_config)?

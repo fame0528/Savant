@@ -443,11 +443,31 @@ async fn run_event_loop(
     gateway_connected: bool,
     gateway: &GatewayClient,
 ) -> Result<()> {
-    enable_raw_mode()?;
+    // On Windows, ensure a console is attached before TUI init.
+    // If launched from Explorer without a terminal, enable_raw_mode() would fail.
+    #[cfg(target_os = "windows")]
+    {
+        extern "system" {
+            fn AttachConsole(dw_process_id: u32) -> i32;
+            fn AllocConsole() -> i32;
+        }
+        const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
+        unsafe {
+            if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+                AllocConsole();
+            }
+        }
+    }
+    enable_raw_mode().map_err(|e| {
+        eprintln!("Failed to initialize terminal (enable_raw_mode): {}", e);
+        eprintln!("If running from Explorer, try running from a terminal instead.");
+        e
+    })?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
 
     let events = EventHandler::new(250);
 

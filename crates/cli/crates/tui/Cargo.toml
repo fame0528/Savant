@@ -1,6 +1,6 @@
 [package]
 name = "savant_cli_tui"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 license.workspace = true
 description = "Terminal UI for Savant CLI — ratatui + tui-realm based AI coding companion"

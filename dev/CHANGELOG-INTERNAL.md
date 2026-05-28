@@ -8,6 +8,29 @@
 
 ## [Unreleased]
 
+### 2026-05-28: Dashboard History Not Loading — Partition Key Mismatch (Root Cause Found)
+
+**Problem:** Dashboard shows "Loading conversation..." even though agent has 14KB of stored memory in enclave. User has been building for months — past conversations should be visible.
+
+**Root Cause:** `GatewayPersistence::persist_chat()` in `persistence.rs` used UCH (Unified Context Harmony) precedence: `session_id > agent_id > sender > recipient`. Agent responses had BOTH a `session_id` (UUID like `dash-acf841e0-...`) and an `agent_id` (`.savant`). Since `session_id` was checked FIRST, agent responses were stored in `chat.dash-acf841e0-...` (UUID-keyed collection). But `get_history()` queries `chat..savant` (agent-name-keyed collection). The two paths wrote to different collections — dashboard could never see agent responses.
+
+| Path | Partition Key | Collection | Example |
+|------|--------------|------------|---------|
+| Write (user msg) | `recipient` | `chat.{agent_name}` | `chat.savant` |
+| Write (agent response) | `session_id` (UUID) | `chat.{session_uuid}` | `chat.dash-acf841e0-...` |
+| Read (get_history) | `lane_id` | `chat.{agent_name}` | `chat.savant` |
+
+**Fix:**
+- `crates/gateway/src/persistence.rs` (+6/-6): Flipped UCH precedence from `session_id > agent_id > sender > recipient` to `agent_id > sender > recipient > session_id`. Agent responses now stored in `chat.{agent_name}` matching `get_history` query path. `session_id` (UUID) is now last resort — UUID-keyed collections were invisible to dashboard.
+
+**Note:** Existing stored messages from previous sessions remain in UUID-keyed collections (`chat.dash-...`) and won't be retroactively moved. New messages will be correctly stored and retrievable.
+
+**Verification:**
+- `cargo check --workspace` — 0 errors
+- Partition logic verified: agent responses with `agent_id=".savant"` now go to `chat.savant`
+
+**Status:** FIXED. Awaiting live test.
+
 ### 2026-05-28: Agent Logs Copy All Fix + Dashboard README Alignment
 
 **Problem:** Copy All button in Savant Agent Logs window (`logs.html`) still failed after Build 7 fix. Root cause: `document.execCommand('copy')` with offscreen textarea (`position:fixed;left:-9999px;top:-9999px`) does not work reliably in Tauri WebView. Also, dashboard README had broken HTML (`<div align="center>` missing closing quote).

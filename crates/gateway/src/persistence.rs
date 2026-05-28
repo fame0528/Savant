@@ -8,20 +8,24 @@ pub struct GatewayPersistence;
 
 impl GatewayPersistence {
     /// Determines the correct partition for a ChatMessage and persists it.
-    /// AAA: Unified Context Harmony ensures that session_id always takes precedence.
+    /// Partition precedence: agent_id > sender > recipient > session_id > "global"
+    /// Agent responses must go to `chat.{agent_name}` so get_history can find them.
+    /// session_id (UUID) is a fallback only — it's invisible to the dashboard's
+    /// HistoryRequest which queries by agent name.
     pub async fn persist_chat(
         storage: &Arc<Storage>,
         msg: &ChatMessage,
     ) -> Result<(), savant_core::error::SavantError> {
-        // 🛡️ UCH Precedence: session_id > agent_id > sender > recipient
-        let partition = if let Some(sid) = &msg.session_id {
-            sid.0.clone()
-        } else if let Some(aid) = &msg.agent_id {
+        // Partition: agent_id first (matches get_history lane_id), then sender/recipient,
+        // session_id as last resort (UUID-only collections are invisible to dashboard)
+        let partition = if let Some(aid) = &msg.agent_id {
             aid.clone()
         } else if let Some(sender) = &msg.sender {
             sender.clone()
         } else if let Some(recipient) = &msg.recipient {
             recipient.clone()
+        } else if let Some(sid) = &msg.session_id {
+            sid.0.clone()
         } else {
             "global".to_string()
         };

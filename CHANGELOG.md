@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Code block copy** now has Tauri fallback + visual feedback via `CodeCopyButton` component in `FormattedContent.tsx`
 - **Removed duplicate helpers** — `cleanMessage()` (3 to 1), `formatEst()` (2 to 1), `getGatewayHost/Port/HttpUrl` (2 to 1 centralized in tauri.ts)
 - **Agent Logs Copy All fix** — rewrote `copyAllLogs()` in `logs.html` with 3-tier clipboard fallback: Tauri clipboard plugin (`plugin:clipboard|write_text`) → `navigator.clipboard` → `execCommand` with in-viewport textarea. Fixes silent failure in Tauri WebView where offscreen textarea selection was not recognized.
+- **Dashboard history partition key fix** — `GatewayPersistence::persist_chat()` in `persistence.rs` was storing agent responses in `chat.{session_uuid}` collections (UUID-keyed) while `get_history()` queried `chat.{agent_name}`. Flipped partition precedence to `agent_id > sender > recipient > session_id` so responses are stored in the same collection the dashboard reads from. Fixes "Loading conversation..." on dashboard when agent has stored memory.
 
 ---
 

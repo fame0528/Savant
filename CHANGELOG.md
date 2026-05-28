@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.3] - 2026-05-28
 
-**v0.3.3 Release Hardening. 21 issues fixed across 4 live test rounds. OpenGateway key rotation, MalwareBazaar integration, dashboard connectivity, CLI resilience, version sync.**
+**v0.3.3 Release Hardening. 24 issues fixed across 5 live test rounds. OpenGateway key rotation, MalwareBazaar integration, dashboard connectivity, CLI resilience, version sync.**
 
 ### Added
 
@@ -83,9 +83,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cargo.toml version drift** — all crates reported 0.3.2. Fix: bumped to 0.3.3.
 - **Bundle identifier** — `com.savant.app` conflicted with macOS `.app`. Fix: `com.savant.desktop`.
 - **Vector DB lock** — second launch crashed with unclear error. Fix: clear error message, no retry.
-- **Logs window** — launched off-screen at x: -2560. Fix: maximized, removed offset.
+- **Logs window** — launched off-screen at x: -2560. Fix: maximized, restored x:-2560 for left-screen placement.
 - **CLI blank screen** — unhandled render error. Fix: Error Boundary + Tauri API check.
 - **Dashboard diagnostics** — `logger.info()` invisible in debug panel. Fix: push to `debugLogs` state directly.
+- **Dashboard SWARM_OFFLINE** — tower-http CorsLayer rejects WS upgrades with non-matching Origin header before they reach the handler. Fix: WS routes in separate Router without CORS/auth/rate-limit middleware. WS has own auth (first-message auth frame) + connection limit.
+- **CLI Companion fails to launch** — updater plugin with empty pubkey/endpoints causes Tauri v2 auto-init failure. Fix: removed updater plugin config.
+- **Agent Logs Copy All** — `navigator.clipboard` unavailable in Tauri WebView, `document.execCommand` fails for off-screen elements. Fix: try Tauri clipboard plugin first (`plugin:clipboard|write_text`), then `navigator.clipboard`, then `execCommand` fallback with visible textarea.
 
 ### Verification
 
@@ -96,9 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Pending (requires live test)
 
-- Dashboard SWARM_OFFLINE — diagnostic logs added, awaiting rebuild + test results
-- Copy All button — rewritten, awaiting verification
+- Dashboard SWARM_OFFLINE — WS routes bypass middleware, awaiting rebuild + test
+- Copy All button — Tauri clipboard plugin tried first, awaiting verification
 - MalwareBazaar sync — key embedded, awaiting verification
+- CLI Companion launch — updater plugin removed, awaiting rebuild + test
 
 ---
 

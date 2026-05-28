@@ -102,7 +102,7 @@
         }
         setupEventListener();
 
-        // ── Copy All — use document.execCommand (works in all webviews) ──
+        // ── Copy All — use navigator.clipboard (WebView2 compatible) ──
         function copyAllLogs() {
             const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
             if (!lines) {
@@ -110,17 +110,28 @@
                 statusEl.style.color = '#f9e2af';
                 return;
             }
-            // Create offscreen textarea, select, copy, remove
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(lines).then(() => {
+                    showCopied();
+                }).catch((e) => {
+                    fallbackCopy(lines);
+                });
+            } else {
+                fallbackCopy(lines);
+            }
+        }
+
+        function fallbackCopy(text) {
             const ta = document.createElement('textarea');
-            ta.value = lines;
+            ta.value = text;
             ta.setAttribute('readonly', '');
-            ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+            ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01';
             document.body.appendChild(ta);
             ta.focus();
             ta.select();
-            ta.setSelectionRange(0, ta.value.length);
             try {
                 const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
                 if (ok) {
                     showCopied();
                 } else {
@@ -128,10 +139,10 @@
                     statusEl.style.color = '#f38ba8';
                 }
             } catch (e) {
+                document.body.removeChild(ta);
                 statusEl.textContent = 'Copy failed: ' + e.message;
                 statusEl.style.color = '#f38ba8';
             }
-            document.body.removeChild(ta);
         }
 
         function showCopied() {

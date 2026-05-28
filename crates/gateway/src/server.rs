@@ -233,10 +233,11 @@ pub async fn start_gateway(
         governor_permits: Arc::new(std::sync::atomic::AtomicUsize::new(16)),
     });
 
-    // Load CORS origins from config or environment
+    // Load CORS origins from config or environment.
+    // Always include Tauri desktop origins so the WebSocket upgrade
+    // from the Tauri webview is never blocked by CORS.
     let cors_origins: Vec<axum::http::HeaderValue> = {
-        let origins = if config.server.cors_origins.is_empty() {
-            // Fall back to env var if config is empty
+        let mut origins: Vec<String> = if config.server.cors_origins.is_empty() {
             std::env::var("SAVANT_CORS_ORIGINS")
                 .ok()
                 .map(|s| s.split(',').map(|o| o.trim().to_string()).collect())
@@ -244,13 +245,17 @@ pub async fn start_gateway(
                     vec![
                         "http://localhost:3000".to_string(),
                         "http://127.0.0.1:3000".to_string(),
-                        "tauri://localhost".to_string(),
-                        "https://tauri.localhost".to_string(),
                     ]
                 })
         } else {
             config.server.cors_origins.clone()
         };
+        // Always include Tauri desktop origins for WebSocket + REST
+        for origin in &["tauri://localhost", "https://tauri.localhost"] {
+            if !origins.iter().any(|o| o == origin) {
+                origins.push(origin.to_string());
+            }
+        }
         origins.iter().filter_map(|o| o.parse().ok()).collect()
     };
 

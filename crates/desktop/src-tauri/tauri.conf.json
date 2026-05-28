@@ -28,6 +28,8 @@
         "url": "logs.html",
         "width": 1280,
         "height": 800,
+        "x": -2560,
+        "y": 0,
         "maximized": true,
         "resizable": true,
         "fullscreen": false

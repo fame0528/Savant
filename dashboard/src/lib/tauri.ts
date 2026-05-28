@@ -30,20 +30,25 @@ export const getAppVersion = async (): Promise<string> => {
 };
 
 /**
- * Get the dashboard API key from Tauri's ignite_swarm response.
- * In non-Tauri mode, returns empty string (gateway accepts empty keys by default).
+ * Get the dashboard API key and gateway port from Tauri's ignite_swarm response.
+ * In non-Tauri mode, returns defaults (empty key, port 8080).
  */
-export const getDashboardApiKey = async (): Promise<string> => {
+export const getDashboardConfig = async (): Promise<{ apiKey: string; port: number }> => {
   if (isTauri()) {
     try {
-      // ignite_swarm now returns a JSON object with dashboard_api_key
-      const result = await invoke<{ dashboard_api_key: string }>("ignite_swarm");
-      return result.dashboard_api_key || "";
+      const result = await invoke<{ dashboard_api_key: string; gateway_port: number }>("ignite_swarm");
+      return { apiKey: result.dashboard_api_key || "", port: result.gateway_port || 8080 };
     } catch {
-      return "";
+      return { apiKey: "", port: 8080 };
     }
   }
-  return "";
+  return { apiKey: "", port: 8080 };
+};
+
+/** @deprecated Use getDashboardConfig() instead */
+export const getDashboardApiKey = async (): Promise<string> => {
+  const config = await getDashboardConfig();
+  return config.apiKey;
 };
 
 export const isTauri = (): boolean => {

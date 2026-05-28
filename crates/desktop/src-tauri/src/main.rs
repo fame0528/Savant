@@ -122,11 +122,14 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
         if let Err(e) = app_handle.emit("system-log-event", msg) {
             eprintln!("[desktop] Failed to emit system-log-event: {}", e);
         }
-        // Return the dashboard API key from the already-stored ignition config
+        // Return the dashboard API key + gateway port from the already-stored ignition config
         let dashboard_key = lock.as_ref()
             .and_then(|ig| ig.config.server.dashboard_api_key.clone())
             .unwrap_or_default();
-        return Ok(serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key }));
+        let gateway_port = lock.as_ref()
+            .map(|ig| ig.config.server.port)
+            .unwrap_or(8080);
+        return Ok(serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key, "gateway_port": gateway_port }));
     }
 
     // Step 1: Resolve paths using SavantPathResolver (set up in main.rs setup hook)
@@ -248,6 +251,13 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
     match IgnitionService::ignite(config_path_str.as_deref()).await {
         Ok(ignition) => {
             info!("[3/5] IgnitionService returned OK");
+            // Report key source in release mode (bootstrap_log writes to file, survives sink suppression)
+            let key_source = if std::env::var("OPENGATEWAY_API_KEY").ok().filter(|k| !k.is_empty()).is_some() {
+                "loaded"
+            } else {
+                "MISSING"
+            };
+            bootstrap_log(&format!("[3/5] IgnitionService OK — OpenGateway key: {}", key_source));
 
             // Step 4: Store state
             info!("[4/5] Storing ignition state...");
@@ -274,9 +284,10 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
             if let Err(e) = app_handle.emit("system-log-event", msg) {
                 eprintln!("[desktop] Failed to emit system-log-event: {}", e);
             }
-            // Return dashboard API key so frontend can use it for WS auth
+            // Return dashboard API key + gateway port so frontend can connect
             let dashboard_key = ignition_arc.config.server.dashboard_api_key.clone().unwrap_or_default();
-            Ok(serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key }))
+            let gateway_port = ignition_arc.config.server.port;
+            Ok(serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key, "gateway_port": gateway_port }))
         }
         Err(e) => {
             let msg = format!("IGNITION FAILED: {}", e);
@@ -467,7 +478,8 @@ fn main() {
     // .env loaded in setup hook via SavantPathResolver (not from CWD)
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Auto-updater disabled — no valid endpoint configured, no latest.json asset
+        // .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())

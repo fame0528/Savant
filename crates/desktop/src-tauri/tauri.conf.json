@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri-schema/v2/schema.json",
   "productName": "Savant",
   "version": "0.3.3",
-  "identifier": "com.savant.app",
+  "identifier": "com.savant.desktop",
   "build": {
     "beforeDevCommand": "node src-tauri/scripts/setup-updater-keys.js && npm --prefix dashboard run dev",
     "beforeBuildCommand": "npm --prefix ../../dashboard run build && node src-tauri/scripts/setup-updater-keys.js",

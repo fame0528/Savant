@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode, memo } from "react";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useRouter } from "next/navigation";
-import { isTauri, igniteSwarm, getDashboardApiKey } from "@/lib/tauri";
+import { isTauri, igniteSwarm, getDashboardConfig } from "@/lib/tauri";
 import { logger } from "@/lib/logger";
 import dayjs from "dayjs";
 import localizedFormat from "dayjs/plugin/localizedFormat";
@@ -144,7 +144,10 @@ const getGatewayHost = () => {
   return host || "127.0.0.1";
 };
 
+// Dynamic gateway port — set from ignite_swarm response, falls back to env var or 8080
+let _dynamicGatewayPort: number | null = null;
 const getGatewayPort = () => {
+  if (_dynamicGatewayPort) return _dynamicGatewayPort;
   if (typeof window !== "undefined") {
     const envPort = process.env.NEXT_PUBLIC_GATEWAY_PORT;
     if (envPort) return parseInt(envPort, 10);
@@ -268,6 +271,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const dashboardApiKeyRef = useRef<string>("");
+  const gatewayPortRef = useRef<number>(8080);
 
   // Keep ref in sync with state
   const setStreamingThoughtsSynced = useCallback((updater: (prev: Map<string, string>) => Map<string, string>) => {
@@ -674,10 +678,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     const initTauri = async () => {
       try {
-        const apiKey = await getDashboardApiKey();
-        dashboardApiKeyRef.current = apiKey;
-        if (apiKey) {
+        const config = await getDashboardConfig();
+        dashboardApiKeyRef.current = config.apiKey;
+        gatewayPortRef.current = config.port;
+        _dynamicGatewayPort = config.port;
+        if (config.apiKey) {
           logger.info('Auth', 'Dashboard API key loaded from gateway config');
+        }
+        if (config.port !== 8080) {
+          logger.info('Gateway', `Gateway port: ${config.port}`);
         }
         const result = await igniteSwarm();
         logger.info('Ignition', 'Swarm Ignition:', result);

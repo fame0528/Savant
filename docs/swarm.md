@@ -1,6 +1,6 @@
 # Hivemind Architecture: Savant's Collective Intelligence System
 
-> **Status:** Production (v0.3.1)
+> **Status:** Production (v0.3.4)
 > **Crates:** `savant_agent` (SwarmController), `savant_ipc` (CollectiveBlackboard, SwarmBlackboard), `savant_cognitive` (ExecutiveMonitor), `savant_memory` (MemoryEngine)
 
 ---

@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 
 ---
 

@@ -780,4 +780,4 @@ Hive-mind broadcast channel for high-importance events:
 
 ---
 
-*Documentation updated: 2026-05-25. Reflects v0.3.1 codebase with all subsystems.*
+*Documentation updated: 2026-05-25. Reflects v0.3.4 codebase with all subsystems.*

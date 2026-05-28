@@ -1,6 +1,6 @@
 # Evolution System — User Guide
 
-> **Status:** Production (v0.3.1)
+> **Status:** Production (v0.3.4)
 > **Purpose:** How agents evolve their identity, personality, and behavior through interaction with their user.
 > **Crate:** `crates/agent/src/learning/` (ALDEngine, parser, filter, emitter, facets)
 

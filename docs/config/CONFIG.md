@@ -1,6 +1,6 @@
 # Savant Configuration Guide
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 > **Reference:** `config/savant.toml`
 
 Configuration uses [Figment](https://docs.rs/figment) for layered loading:
@@ -247,4 +247,4 @@ SAVANT_DEV_MODE=1
 
 ---
 
-*Documentation updated: 2026-05-25. Reflects v0.3.2 codebase.*
+*Documentation updated: 2026-05-25. Reflects v0.3.4 codebase.*

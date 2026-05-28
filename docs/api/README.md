@@ -1,6 +1,6 @@
 # API Reference
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 
 ---
 
@@ -62,7 +62,7 @@
 |:---------|:-------|:-----|:------------|
 | `/api/changelog` | GET | Yes | Public changelog |
 
-### Dashboard Feature APIs (v0.3.2)
+### Dashboard Feature APIs (v0.3.4)
 
 | Endpoint | Method | Auth | Description |
 |:---------|:-------|:-----|:------------|
@@ -70,7 +70,7 @@
 | `/api/governor/status` | GET | Yes | Resource governor status: pressure level, CPU%, memory%, permits |
 | `/api/consciousness/status` | GET | Yes | Consciousness daemon state: Thinking/Idle/Dormant/Wondering, entropy |
 
-### Config Mutation (v0.3.2 — Immutable Fields)
+### Config Mutation (v0.3.4 — Immutable Fields)
 
 The `ConfigSet` WebSocket frame and `POST /api/settings` endpoint block changes to security-critical fields at runtime:
 
@@ -86,7 +86,7 @@ All communication between the dashboard and gateway occurs over a single WebSock
 
 Canvas A2UI visualization at `ws://localhost:3000/ws/canvas` (requires API key authentication).
 
-### Authentication (v0.3.2)
+### Authentication (v0.3.4)
 
 REST and WebSocket endpoints (except `/live`, `/ready`, `/health`, `/ws`) require authentication when `dashboard_api_key` is configured:
 
@@ -160,7 +160,7 @@ Request AI-powered soul generation from a natural language prompt.
 }
 ```
 
-### SoulUpdate (v0.3.2 — 100KB limit)
+### SoulUpdate (v0.3.4 — 100KB limit)
 
 Update an agent's SOUL.md file on disk. **Max 100KB per field** (content and reasoning).
 
@@ -177,7 +177,7 @@ Update an agent's SOUL.md file on disk. **Max 100KB per field** (content and rea
 }
 ```
 
-### BulkManifest (v0.3.2 — 10 agent limit)
+### BulkManifest (v0.3.4 — 10 agent limit)
 
 Deploy multiple agents from an expansion plan. **Max 10 agents per request.**
 
@@ -196,7 +196,7 @@ Deploy multiple agents from an expansion plan. **Max 10 agents per request.**
 }
 ```
 
-### NLCommand (v0.3.2 — 10KB limit)
+### NLCommand (v0.3.4 — 10KB limit)
 
 Natural language command. **Max 10,000 characters.**
 
@@ -204,7 +204,7 @@ Natural language command. **Max 10,000 characters.**
 
 Retrieve the current gateway configuration from `savant.toml`.
 
-### ConfigSet (v0.3.2 — Immutable field protection)
+### ConfigSet (v0.3.4 — Immutable field protection)
 
 Update a configuration value. Security-critical fields are blocked (see Immutable Fields above).
 
@@ -224,7 +224,7 @@ Retrieve the swarm's cognitive insight history.
 
 Sent on WebSocket open to request full state synchronization.
 
-### SoulMutationPropose (v0.3.2 — 100KB limit)
+### SoulMutationPropose (v0.3.4 — 100KB limit)
 
 Propose a SOUL.md mutation. Max 100KB per field.
 
@@ -317,7 +317,7 @@ Debug log entry from the gateway.
 
 ## Error Responses
 
-### 401 Unauthorized (v0.3.2)
+### 401 Unauthorized (v0.3.4)
 
 Returned when API key is missing or invalid:
 
@@ -328,7 +328,7 @@ Returned when API key is missing or invalid:
 }
 ```
 
-### 403 Forbidden (v0.3.2)
+### 403 Forbidden (v0.3.4)
 
 Returned when attempting to modify immutable config fields:
 
@@ -370,4 +370,4 @@ The master key is never used directly for completions.
 
 ---
 
-*Documentation updated: 2026-05-25. Reflects v0.3.2 codebase.*
+*Documentation updated: 2026-05-25. Reflects v0.3.4 codebase.*

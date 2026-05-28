@@ -1,6 +1,6 @@
 # Savant Tool Trait Specification
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 
 ## Overview
 
@@ -46,7 +46,7 @@ pub trait Tool: Send + Sync {
 }
 ```
 
-## Tool Heuristics (v0.3.2)
+## Tool Heuristics (v0.3.4)
 
 Every tool can declare `when_to_use()` and `when_not_to_use()` to guide LLM tool selection:
 
@@ -66,7 +66,7 @@ impl Tool for SovereignShell {
 
 These heuristics are injected into the LLM context to reduce wrong tool selection.
 
-## Tool Output Governance (v0.3.2)
+## Tool Output Governance (v0.3.4)
 
 Tool output is capped at 50,000 characters (~12.5K tokens). Outputs exceeding the limit are truncated with a notice:
 
@@ -76,7 +76,7 @@ Tool output is capped at 50,000 characters (~12.5K tokens). Outputs exceeding th
 
 Applied after L1 compaction in the stream handler.
 
-## Tool Panic Isolation (v0.3.2)
+## Tool Panic Isolation (v0.3.4)
 
 Side-effect tool execution is wrapped in `tokio::spawn` to isolate panics:
 
@@ -103,4 +103,4 @@ A tool panic no longer crashes the agent session.
 
 ---
 
-*Documentation updated: 2026-05-25. Reflects v0.3.2 codebase.*
+*Documentation updated: 2026-05-25. Reflects v0.3.4 codebase.*

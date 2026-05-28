@@ -1,6 +1,6 @@
 # Savant Production Deployment Checklist
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 
 ---
 
@@ -46,7 +46,7 @@
 
 ---
 
-## Resource Governor (v0.3.2)
+## Resource Governor (v0.3.4)
 
 - [ ] Review `[resource_governor]` thresholds for your hardware:
   - 8GB RAM: lower `memory_high_pct` to 70.0, `max_agents_high` to 2

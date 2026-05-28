@@ -1,6 +1,6 @@
 # Collective Intelligence: Multi-Agent Consensus & State Sharing
 
-> **Status:** Production (v0.3.1)
+> **Status:** Production (v0.3.4)
 > **Crate:** `savant_ipc` (CollectiveBlackboard, SwarmBlackboard)
 > **Technology:** iceoryx2 zero-copy shared memory with `#[repr(C)]` structs
 

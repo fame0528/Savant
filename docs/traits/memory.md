@@ -1,6 +1,6 @@
 # Savant Memory Trait Specification
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 
 ## Overview
 
@@ -29,7 +29,7 @@ pub trait MemoryBackend: Send + Sync {
 }
 ```
 
-## Memory Architecture (v0.3.2)
+## Memory Architecture (v0.3.4)
 
 ### Three-Layer Storage
 
@@ -70,7 +70,7 @@ Memory projected to Obsidian vault with bidirectional sync:
 
 All inbound edits pass through `scan_prompt()` injection defense.
 
-## Learning Safety (v0.3.2 — Phase 1)
+## Learning Safety (v0.3.4 — Phase 1)
 
 ### Content-Hash Dedup
 
@@ -102,4 +102,4 @@ Rejected entries logged to `FILTERED.jsonl` for human review with rejection reas
 
 ---
 
-*Documentation updated: 2026-05-25. Reflects v0.3.2 codebase.*
+*Documentation updated: 2026-05-25. Reflects v0.3.4 codebase.*

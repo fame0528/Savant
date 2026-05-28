@@ -1,6 +1,6 @@
 # Savant Security Model: CCT & Sandboxing
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 
 Savant introduces a bulletproof security model designed to prevent data exfiltration and malicious tool execution in high-scale swarms.
 
@@ -27,7 +27,7 @@ Agents do not run as native processes. They execute as **OCI-compliant WebAssemb
 - **Punctured Capability Model**: No FS/Net access unless explicitly punctured via CCT.
 - **Deterministic Execution**: Prevents side-channel attacks by normalizing instruction timing.
 
-## 3. REST API Security (v0.3.2)
+## 3. REST API Security (v0.3.4)
 
 ### Authentication Middleware
 
@@ -52,7 +52,7 @@ Security-critical fields blocked from runtime mutation (returns 403):
 | WebSocket message | 1MB |
 | Tool output | 50,000 chars |
 
-## 4. Tool Execution Security (v0.3.2)
+## 4. Tool Execution Security (v0.3.4)
 
 ### Panic Isolation
 
@@ -90,4 +90,4 @@ All cryptographic operations use `ed25519-dalek` with formal verification. Zero-
 
 ---
 
-*Documentation updated: 2026-05-25. Reflects v0.3.2 codebase.*
+*Documentation updated: 2026-05-25. Reflects v0.3.4 codebase.*

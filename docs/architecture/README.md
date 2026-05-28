@@ -1,6 +1,6 @@
 # Architecture Overview
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 
 ---
 
@@ -61,7 +61,7 @@ The gateway is built on **Axum** and provides:
 4. Handler publishes results to Nexus event bus topics
 5. Gateway forwards events back to subscribed WebSocket sessions
 
-### Security Controls (v0.3.2)
+### Security Controls (v0.3.4)
 
 | Control | Description |
 |:--------|:------------|
@@ -110,7 +110,7 @@ The ECHO (Embedded Cognitive Handoff Orchestrator) protocol enables speculative 
 
 ---
 
-## Consciousness Layer (v0.3.2)
+## Consciousness Layer (v0.3.4)
 
 The consciousness layer is a continuously thinking daemon that observes the hivemind via zero-copy shared memory.
 
@@ -145,7 +145,7 @@ Each cognitive tick regenerates understanding as a compressed narrative. Output 
 
 ---
 
-## Resource Governor (v0.3.2)
+## Resource Governor (v0.3.4)
 
 CPU/memory-aware agent spawning with adaptive concurrency.
 
@@ -185,7 +185,7 @@ The cognitive engine (`crates/cognitive/`) provides:
 
 ---
 
-## Agent Intelligence (v0.3.2)
+## Agent Intelligence (v0.3.4)
 
 ### Cost-Aware Model Routing
 
@@ -263,7 +263,7 @@ All inbound edits pass through `scan_prompt()` injection defense. Vault treated 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Skill Synthesis (v0.3.2)
+### Skill Synthesis (v0.3.4)
 
 LLM-driven code generation with self-healing:
 
@@ -273,7 +273,7 @@ LLM-driven code generation with self-healing:
 4. Fallback to template-based generation if LLM unavailable
 5. All dependencies pinned (no wildcards)
 
-### Skill Chaining (v0.3.2)
+### Skill Chaining (v0.3.4)
 
 Skills can declare dependencies and chains:
 
@@ -378,4 +378,4 @@ Performance: sub-microsecond read/write, 1024 concurrent readers, 128 writers.
 
 ---
 
-*Documentation updated: 2026-05-25. Reflects v0.3.2 codebase.*
+*Documentation updated: 2026-05-25. Reflects v0.3.4 codebase.*

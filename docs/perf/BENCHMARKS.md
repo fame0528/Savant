@@ -1,6 +1,6 @@
 # Savant Performance Benchmarks
 
-> **Last Updated:** 2026-05-25 (v0.3.2)
+> **Last Updated:** 2026-05-25 (v0.3.4)
 > **Hardware:** AMD Ryzen 9 7950X, 64GB DDR5, NVMe Gen5
 
 Factual, reproducible metrics of the Savant framework.
@@ -41,7 +41,7 @@ Factual, reproducible metrics of the Savant framework.
 
 ---
 
-## 4. Provider Chain (v0.3.2)
+## 4. Provider Chain (v0.3.4)
 
 | Operation | Latency | Notes |
 |:----------|:--------|:------|
@@ -53,7 +53,7 @@ Factual, reproducible metrics of the Savant framework.
 
 ---
 
-## 5. Consciousness Layer (v0.3.2)
+## 5. Consciousness Layer (v0.3.4)
 
 | Operation | Latency | Notes |
 |:----------|:--------|:------|
@@ -65,7 +65,7 @@ Factual, reproducible metrics of the Savant framework.
 
 ---
 
-## 6. Resource Governor (v0.3.2)
+## 6. Resource Governor (v0.3.4)
 
 | Operation | Latency | Notes |
 |:----------|:--------|:------|
@@ -114,4 +114,4 @@ cargo test --workspace --lib -- --test-threads=1
 
 ---
 
-*Benchmarks updated: 2026-05-25. Reflects v0.3.2 codebase.*
+*Benchmarks updated: 2026-05-25. Reflects v0.3.4 codebase.*

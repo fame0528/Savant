@@ -41,6 +41,7 @@ export const getDashboardConfig = async (): Promise<{ apiKey: string; port: numb
       const port = (result as any).gateway_port || 8080;
       return { apiKey, port };
     } catch (e) {
+      console.error("[tauri] getDashboardConfig invoke failed:", e);
       return { apiKey: "", port: 8080 };
     }
   }

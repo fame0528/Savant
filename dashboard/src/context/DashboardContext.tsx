@@ -558,11 +558,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   const connectWebSocket = useCallback(() => {
-    if (isConnectingRef.current || socketRef.current) return;
+    const diagWs = (msg: string) => setDebugLogs(prev => [{ timestamp: new Date().toISOString(), message: `[WS] ${msg}` }, ...prev]);
+    if (isConnectingRef.current || socketRef.current) {
+      diagWs(`BLOCKED: isConnecting=${isConnectingRef.current}, socketExists=${!!socketRef.current}`);
+      return;
+    }
     isConnectingRef.current = true;
 
     const wsUrl = getWsUrl();
-    const diagWs = (msg: string) => setDebugLogs(prev => [{ timestamp: new Date().toISOString(), message: `[WS] ${msg}` }, ...prev]);
     diagWs(`Connecting to ${wsUrl} (apiKey=${dashboardApiKeyRef.current ? "(set)" : "(empty)"})`);
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;

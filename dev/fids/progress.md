@@ -1,19 +1,19 @@
 # FID Progress Tracking
 
-> **Last Updated:** 2026-05-28 17:23 EDT (v0.3.5)
-> **Active FIDs:** 1 (FID-20260528-v034-BUILD7-REGRESSIONS — FIXED, awaiting live test)
-> **Closed FIDs:** 86 in `dev/fids/archived/`
+> **Last Updated:** 2026-05-28 18:19 EDT (v0.3.5)
+> **Active FIDs:** 0
+> **Closed FIDs:** 87 in `dev/fids/archived/`
 
 ---
 
-## Status: v0.3.5 — Partition Key Fix + Version Bump Pushed, Tracking Docs Updated
+## Status: v0.3.5 — Dashboard UI Fixes V2 Complete
 
 | Metric | Count |
 |:-------|:-----:|
-| Total FIDs this session | 7 |
-| FIDs closed this session | 6 (ONBOARDING, BUILD3, BUILD4, SETUP-WIZARD, DASHBOARD-CONN, BUILD6) |
-| FIDs active | 1 (BUILD7-REGRESSIONS — FIXED) |
-| Issues fixed | 11 (9 Build 7 + partition key + Copy All rewrite) |
+| Total FIDs this session | 8 |
+| FIDs closed this session | 7 (ONBOARDING, BUILD3, BUILD4, SETUP-WIZARD, DASHBOARD-CONN, BUILD6, DASHBOARD-UI-FIXES-V2) |
+| FIDs active | 0 |
+| Issues fixed | 17 (9 Build 7 + partition key + Copy All rewrite + 6 dashboard UI regressions) |
 | Commits on main (pushed) | 16 |
 | Clippy warnings | 0 |
 
@@ -50,6 +50,21 @@
 | `3b833bc` | fix: complete remaining issues — tracing, port, updater, test runner, bundle ID |
 | `a9ce436` | fix: v0.3.3 version sync, dashboard auth, CLI resilience, log noise reduction |
 | `7356fdf` | fix: OpenGateway key rotation, boot-time hot-reload suppression, model info, log noise |
+
+---
+
+## Closed: FID-20260528-DASHBOARD-UI-FIXES-V2 (2026-05-28)
+
+6 dashboard UI regressions from live test — all fixed:
+
+| # | Issue | Root Cause | Fix | Status |
+|---|-------|-----------|-----|--------|
+| 1 | Message doubling | Backend double-persist + frontend dedup gaps | Backend: skip user messages in telemetry_task. Frontend: dedupedMessagesRef with 15s TTL | FIXED |
+| 2 | Sidebar empty | agents.discovered could overwrite with empty array | Always ensure .savant agent present; HTTP fallback preserves defaults | FIXED |
+| 3 | Input box too small | Input wrapper padding too tight | Increased wrapper gap, padding, borderRadius, minHeight | FIXED |
+| 4 | No typing indicator | typingAgents tracked but no visual component | Added typing indicator with animated dots | FIXED |
+| 5 | Reflections panel empty | Consciousness daemon doesn't publish to event bus | Seed "system online" insight; surface reflective messages as insights | FIXED |
+| 6 | Copy All fails in logs | Tauri clipboard plugin not registered | Reordered fallback: navigator → execCommand → Tauri plugin | FIXED |
 
 ---
 
@@ -100,3 +115,4 @@
 - `FID-20260527-DASHBOARD-CONNECTIVITY-VERSION.md` — dashboard connectivity (CLOSED → archived)
 - `FID-20260528-v033-BUILD6-LOG-ANALYSIS.md` — 5 issues from build 6 (CLOSED → archived)
 - `FID-20260528-v034-BUILD7-REGRESSIONS.md` — 9 issues from build 7 (FIXED, awaiting live test)
+- `FID-20260528-DASHBOARD-UI-FIXES-V2.md` — 6 dashboard UI regressions (CLOSED)

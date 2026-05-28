@@ -102,7 +102,7 @@
         }
         setupEventListener();
 
-        // ── Copy All — Tauri clipboard plugin → navigator → execCommand ──
+        // ── Copy All — navigator.clipboard → execCommand → Tauri plugin ──
         async function copyAllLogs() {
             const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
             if (!lines) {
@@ -110,15 +110,7 @@
                 statusEl.style.color = '#f9e2af';
                 return;
             }
-            // Tier 1: Tauri clipboard plugin (most reliable in Tauri WebView)
-            try {
-                if (window.__TAURI__ && window.__TAURI__.core) {
-                    await window.__TAURI__.core.invoke('plugin:clipboard|write_text', { text: lines });
-                    showCopied();
-                    return;
-                }
-            } catch (e) { /* fall through */ }
-            // Tier 2: navigator.clipboard (requires secure context + focus)
+            // Tier 1: navigator.clipboard (works in modern Tauri WebView with secure context)
             try {
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     await navigator.clipboard.writeText(lines);
@@ -126,27 +118,32 @@
                     return;
                 }
             } catch (e) { /* fall through */ }
-            // Tier 3: execCommand fallback (legacy, last resort)
-            const ta = document.createElement('textarea');
-            ta.value = lines;
-            ta.setAttribute('readonly', '');
-            ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01';
-            document.body.appendChild(ta);
-            ta.focus();
-            ta.select();
+            // Tier 2: execCommand fallback (most reliable across all WebViews)
             try {
+                const ta = document.createElement('textarea');
+                ta.value = lines;
+                ta.setAttribute('readonly', '');
+                ta.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0.01';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
                 const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
                 if (ok) {
                     showCopied();
-                } else {
-                    statusEl.textContent = 'Copy failed — no method available';
-                    statusEl.style.color = '#f38ba8';
+                    return;
                 }
-            } catch (e) {
-                statusEl.textContent = 'Copy failed: ' + e.message;
-                statusEl.style.color = '#f38ba8';
-            }
-            document.body.removeChild(ta);
+            } catch (e) { /* fall through */ }
+            // Tier 3: Tauri clipboard plugin (requires plugin registered in tauri.conf.json)
+            try {
+                if (window.__TAURI__ && window.__TAURI__.core) {
+                    await window.__TAURI__.core.invoke('plugin:clipboard|write_text', { text: lines });
+                    showCopied();
+                    return;
+                }
+            } catch (e) { /* fall through */ }
+            statusEl.textContent = 'Copy failed — no method available';
+            statusEl.style.color = '#f38ba8';
         }
 
         function showCopied() {

@@ -326,6 +326,37 @@ export default function ChatPage() {
                 </div>
               );
             })}
+
+            {/* Typing indicator — shows when agent is thinking but hasn't started streaming */}
+            {Array.from(typingAgents).filter(agentId => !streamingContent.has(agentId) || !streamingContent.get(agentId)).map(agentId => {
+              if (streamingContent.has(agentId) && streamingContent.get(agentId)) return null;
+              const meta = getAgentMeta(agentId, 'assistant');
+              return (
+                <div key={`typing-${agentId}`} style={{
+                  display: 'flex', alignItems: 'center', gap: '12px',
+                  padding: '12px 16px', marginBottom: '8px',
+                  background: 'rgba(0, 213, 255, 0.04)',
+                  borderRadius: '12px', border: '1px solid rgba(0, 213, 255, 0.15)',
+                }}>
+                  <div style={{
+                    width: '24px', height: '24px', borderRadius: '50%', background: 'var(--glass-bg)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: '1px solid var(--accent)', flexShrink: 0,
+                    fontSize: '10px', fontWeight: 900, color: 'var(--accent)',
+                  }}>
+                    {meta.image ? <img src={`${meta.image}?t=cachebust`} alt={meta.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : meta.name.charAt(0)}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '10px', color: 'var(--accent)', fontWeight: 700, letterSpacing: '1px' }}>{meta.name}</span>
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      {[0, 1, 2].map(i => (
+                        <div key={i} className={styles.dot} style={{ animationDelay: `${i * 0.15}s` }} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </>
         );
       })()}

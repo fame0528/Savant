@@ -222,6 +222,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const dashboardApiKeyRef = useRef<string>("");
   const gatewayPortRef = useRef<number>(8080);
   const pendingUserMessagesRef = useRef<Set<string>>(new Set());
+  const dedupedMessagesRef = useRef<Set<string>>(new Set());
 
   // Keep ref in sync with state
   const setStreamingThoughtsSynced = useCallback((updater: (prev: Map<string, string>) => Map<string, string>) => {
@@ -311,20 +312,23 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         const id = a.id || `agent-${i}`;
         return [id, { ...a, id }];
       })).values());
-      if (uniqueAgents.length > 0) {
-        setAgents(uniqueAgents as Agent[]);
-        logger.info('Agents', `Discovered ${uniqueAgents.length} agents`);
-        // Auto-select first agent if no agent is currently active and no saved preference
-        if (!activeAgent && !localStorage.getItem('activeAgent')) {
-          const firstId = (uniqueAgents[0] as Agent).id;
-          setActiveAgent(firstId);
-          logger.info('Agents', `Auto-selected agent: ${firstId}`);
-          if (socketRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
-            socketRef.current.send(JSON.stringify({
-              session_id: sessionIdRef.current,
-              payload: { type: "HistoryRequest", data: { lane_id: firstId, limit: 100 } }
-            }));
-          }
+      // Always ensure .savant is in the list
+      const hasSavant = uniqueAgents.some((a: any) => a.id === '.savant' || a.id === 'savant');
+      if (!hasSavant) {
+        uniqueAgents.unshift({ id: '.savant', name: 'Savant', status: 'online', role: 'core' });
+      }
+      setAgents(uniqueAgents as Agent[]);
+      logger.info('Agents', `Discovered ${uniqueAgents.length} agents`);
+      // Auto-select first agent if no agent is currently active and no saved preference
+      if (!activeAgent && !localStorage.getItem('activeAgent')) {
+        const firstId = (uniqueAgents[0] as Agent).id;
+        setActiveAgent(firstId);
+        logger.info('Agents', `Auto-selected agent: ${firstId}`);
+        if (socketRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
+          socketRef.current.send(JSON.stringify({
+            session_id: sessionIdRef.current,
+            payload: { type: "HistoryRequest", data: { lane_id: firstId, limit: 100 } }
+          }));
         }
       }
     } else if (type === "history") {
@@ -355,9 +359,18 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const agentThoughts = streamingThoughtsRef.current.get(agentId);
       setStreamingThoughtsSynced(prev => { const next = new Map(prev); next.delete(agentId); return next; });
       // Dedup: skip user messages that were already added optimistically by sendChatMessage
-      if (msg.role === 'user' && pendingUserMessagesRef.current.has(content.trim())) {
-        pendingUserMessagesRef.current.delete(content.trim());
-        return;
+      if (msg.role === 'user') {
+        const trimmed = content.trim();
+        if (pendingUserMessagesRef.current.has(trimmed)) {
+          pendingUserMessagesRef.current.delete(trimmed);
+          return;
+        }
+        // Belt-and-suspenders: also catch duplicate echoes after the first dedup
+        if (dedupedMessagesRef.current.has(trimmed)) {
+          return;
+        }
+        dedupedMessagesRef.current.add(trimmed);
+        setTimeout(() => { dedupedMessagesRef.current.delete(trimmed); }, 15000);
       }
       if (msg.is_telemetry) {
         setCognitiveInsights(prev => [{
@@ -367,6 +380,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           timestamp: new Date().toISOString()
         }, ...prev].slice(0, 100));
         return;
+      }
+      if (msg.role === 'assistant' && content.length > 200 && !msg.is_telemetry) {
+        const reflective = /reflect|learn|understand|realize|insight|discover|observe|notice|pattern|improve|evolve|grow/i.test(content);
+        if (reflective) {
+          setCognitiveInsights(prev => [{
+            agent_id: agentId,
+            content: content.substring(0, 500) + (content.length > 500 ? '...' : ''),
+            category: 'reflection',
+            timestamp: new Date().toISOString()
+          }, ...prev].slice(0, 100));
+        }
       }
       const isTechnical = content.toUpperCase().includes('HEARTBEAT_OK') || content.toUpperCase().includes('[PROACTIVE HEARTBEAT]');
       if (isTechnical) {
@@ -419,13 +443,20 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } else if (type === "heartbeat") { /* ignore */ }
     else if (type === "swarm_insight_history") {
       const { history } = evData;
-      if (Array.isArray(history)) {
+      if (Array.isArray(history) && history.length > 0) {
         setCognitiveInsights(history.map((h: any) => ({ 
           agent_id: h.agent_id, 
           content: h.content, 
           category: h.category, 
           timestamp: h.timestamp 
         })));
+      } else if (Array.isArray(history) && history.length === 0) {
+        setCognitiveInsights([{
+          agent_id: 'system',
+          content: 'Savant swarm online. Consciousness daemon active. Diary entries will appear during heartbeat cycles.',
+          category: 'system',
+          timestamp: new Date().toISOString()
+        }]);
       }
     } else if (type === "debug.log") {
       const logMsg = typeof evData === 'string' ? evData : (evData.message || JSON.stringify(evData));
@@ -530,6 +561,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             if (data.agents && data.agents.length > 0) {
               logger.info('Agents', `HTTP fallback: found ${data.agents.length} agents`);
               setAgents(data.agents);
+            } else {
+              logger.info('Agents', 'HTTP fallback: no agents returned, keeping defaults');
             }
           }
         } catch (e) {

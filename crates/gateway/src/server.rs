@@ -25,7 +25,7 @@ use savant_core::bus::NexusBridge;
 use savant_core::config::Config;
 use savant_core::db::Storage;
 use savant_core::error::SavantError;
-use savant_core::types::{RequestFrame, SessionId};
+use savant_core::types::{ChatRole, RequestFrame, SessionId};
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -708,7 +708,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                 if let Ok(msg) =
                     serde_json::from_str::<savant_core::types::ChatMessage>(&outbound_event.payload)
                 {
-                    if msg.channel == savant_core::types::AgentOutputChannel::Chat {
+                    // Skip user messages — already persisted by handle_message() to avoid double-write
+                    if msg.role != ChatRole::User
+                        && msg.channel == savant_core::types::AgentOutputChannel::Chat
+                    {
                         if let Err(e) = crate::persistence::GatewayPersistence::persist_chat(
                             &storage_clone,
                             &msg,

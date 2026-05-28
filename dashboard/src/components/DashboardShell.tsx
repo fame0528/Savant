@@ -474,7 +474,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
           {/* CHAT INPUT — inside <main>, below scrollable content. Always visible when showChatInput, disabled when not ready. */}
           {showChatInput && (
             <div className={styles.inputArea} style={{ opacity: isSystemReady ? 1 : 0.5, pointerEvents: isSystemReady ? 'auto' : 'none' }}>
-              <div style={{ flex: 1, display: 'flex', gap: '8px', alignItems: 'center', background: 'var(--glass-bg)', borderRadius: '12px', padding: '4px 12px', border: '1px solid var(--border)' }}>
+              <div style={{ flex: 1, display: 'flex', gap: '12px', alignItems: 'center', background: 'var(--glass-bg)', borderRadius: '14px', padding: '8px 16px', border: '1px solid var(--border)', minHeight: '48px' }}>
                 <input 
                   type="text" 
                   placeholder={isSystemReady ? (activeAgent ? `Message ${ctx.getAgentMeta(activeAgent, 'assistant').name}...` : "Broadcast directive to active swarm...") : "Waiting for swarm..."}

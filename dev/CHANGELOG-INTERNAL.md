@@ -8,6 +8,34 @@
 
 ## [Unreleased]
 
+### 2026-05-28: Dashboard UI Fixes V2 — 6 Regressions from Live Test
+
+**FID:** `FID-20260528-DASHBOARD-UI-FIXES-V2.md`
+
+**Problem:** Live test of v0.3.5 revealed 6 UI regressions: messages doubling in chat, sidebar going empty, input box too small, no typing indicator visible, reflections panel empty, Copy All failing in agent logs.
+
+**Root Cause:**
+1. **Message doubling:** Backend double-persist — both `handle_message` and `telemetry_task` persisted user messages. Frontend dedup only caught first echo via `lastMessageId` ref.
+2. **Sidebar empty:** `agents.discovered` handler could overwrite populated state with empty array from gateway. HTTP fallback could clear defaults when server returned empty.
+3. **Input box too small:** Input wrapper had tight padding, no min-height, insufficient gap.
+4. **No typing indicator:** `typingAgents` state was tracked in context but no visual component rendered it.
+5. **Reflections panel empty:** Consciousness daemon doesn't publish to event bus; empty history returned nothing to display.
+6. **Copy All fails in logs:** Tauri clipboard plugin not registered in `tauri.conf.json`; `logs.html` tried plugin first which threw.
+
+**Fix:**
+- `crates/gateway/src/server.rs`: Skip user messages in `telemetry_task` persistence; added `ChatRole` import.
+- `dashboard/src/context/DashboardContext.tsx`: Added `dedupedMessagesRef` with 15s TTL for belt-and-suspenders dedup. Fixed `agents.discovered` handler to always ensure `.savant` agent present. Added reflective insight surfacing (>200 chars + reflective keywords). Seeded "system online" insight when history is empty.
+- `dashboard/src/components/DashboardShell.tsx`: Input wrapper — increased gap, padding, borderRadius, minHeight.
+- `dashboard/src/app/page.tsx`: Added typing indicator component with animated dots between user message and streaming content.
+- `dashboard/src/app/page.module.css`: `.chatInput` — added padding and `height:100%`.
+- `dashboard/public/logs.html`: Reordered clipboard fallback tiers — `navigator.clipboard` → `execCommand` → Tauri plugin.
+
+**Verification:**
+- `cargo check -p savant-gateway` — 0 errors
+- `npx tsc --noEmit` — 0 errors
+
+**Status:** CLOSED.
+
 ### 2026-05-28: LEARNINGS Pipeline Audit — Grounding Filter Over-Blocking (Root Cause Found)
 
 **Problem:** LEARNINGS.md hasn't been updated since March 28, 2026 (2 months). LEARNINGS.jsonl last updated May 2. The Savant agent's consciousness/heartbeat system has been writing learnings autonomously since v0.1.0, but the pipeline went silent.

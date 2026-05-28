@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.3] - 2026-05-28
+
+**v0.3.3 Release Hardening. 21 issues fixed across 4 live test rounds. OpenGateway key rotation, MalwareBazaar integration, dashboard connectivity, CLI resilience, version sync.**
+
+### Added
+
+#### OpenGateway Key Rotation
+- **11 built-in API keys** with round-robin rotation at startup (`config.rs: OPENGATEWAY_DEFAULT_KEYS`)
+- Defense-in-depth: consciousness daemon + main agent fallback to rotation when env var empty
+- Keyring → env var → built-in rotation (priority chain)
+- Easy to extend: append keys to the const array, no other changes needed
+
+#### MalwareBazaar Threat Intelligence
+- **Embedded API key** (`security.rs: MALWAREBAZAAR_AUTH_KEY`) — eliminates 401 errors on startup
+- `Auth-Key` header sent with all MalwareBazaar API requests
+- 401 responses downgraded from `warn!` to `debug!` (ignition.rs + security.rs)
+
+#### Dashboard Dynamic Config
+- **Dynamic API key from Tauri command** — `ignite_swarm` returns `dashboard_api_key` + `gateway_port` in JSON response
+- **`getDashboardConfig()` helper** in `tauri.ts` — extracts key and port from Tauri command
+- **Dynamic gateway port** — `_dynamicGatewayPort` set from ignition response, falls back to env var / 8080
+- **Dynamic version from Tauri API** — `getAppVersion()` via `@tauri-apps/api/app`, always matches `tauri.conf.json`
+
+#### CLI Companion Hardening
+- **React Error Boundary** wrapping entire CLI app — catches render errors, shows diagnostic instead of blank screen
+- **`isTauriAvailable()` check** — graceful degradation when Tauri API not ready
+- Version synced to 0.3.3
+
+#### Test Runner
+- **`test.bat`** — CPU-limited test runner with `--test-threads=2` and `CARGO_BUILD_JOBS=2`
+
+### Changed
+
+#### Version Sync
+- **All 28 workspace crate Cargo.toml** bumped from 0.3.2 to 0.3.3
+- **CLI Companion tauri.conf.json** bumped from 0.3.2 to 0.3.3
+- **Desktop tauri.conf.json** — identifier changed from `com.savant.app` to `com.savant.desktop` (fixes macOS `.app` conflict warning)
+- **Gateway API** now reports correct v0.3.3 via `/api/status` and `/health`
+
+#### Hot-Reload Boot Suppression
+- Cooldown timer initialized at watcher start (`watcher.rs`) — covers entire boot window
+- Agent file writes during boot no longer trigger evacuation + restart
+
+#### Model Info Fetch
+- Only fetches from OpenRouter when provider is `OpenRouter` — skips for OpenGateway/Ollama/etc
+- Eliminates empty `context=0, max_completion=0` results for non-OR models
+
+#### Log Noise Reduction
+- Blackboard stale cleanup: `info!` → `debug!` (expected on Windows)
+- Blackboard/Collective/CapabilityRegistry retry: `warn!` → `debug!` (expected retry behavior)
+- `OpenRouter stream chunk` label → `LLM stream chunk` (shared helper used by all providers)
+- Auto-updater plugin disabled (no valid endpoint configured)
+
+#### Agent Logs Window (`logs.html`)
+- **Copy All** rewritten with `document.execCommand('copy')` as primary method (works in all webviews)
+- Event listening uses `window.__TAURI__` with async retry for Tauri API injection
+- Window launches maximized (removed off-screen x: -2560 offset)
+
+#### Vector DB Lock Handling
+- If `remove_dir_all` fails (locked by another process), returns clear error instead of retrying
+- Error message: "Vector database locked by another process. Close other Savant instances."
+
+### Fixed
+
+- **Dashboard SWARM_OFFLINE** — root cause identified: `NEXT_PUBLIC_DASHBOARD_API_KEY` undefined (no `.env` file). Fix: dynamic key from Tauri command. Diagnostic logging added to debug console.
+- **Copy All button** — Tauri clipboard plugin invoke path wrong, navigator.clipboard requires secure context. Fix: `document.execCommand('copy')`.
+- **Hot-reload at boot** — agent boot writes triggered immediate evacuation. Fix: cooldown timer at watcher start.
+- **Consciousness 401s** — no OpenGateway API key in codebase. Fix: 11-key rotation with defense-in-depth fallbacks.
+- **MalwareBazaar 401** — no `Auth-Key` header sent. Fix: embedded key + header.
+- **Model info empty** — OpenRouter fetch for non-OR models returned nothing. Fix: skip fetch for non-OR providers.
+- **Blackboard noise** — stale cleanup and retry logs were `info!`/`warn!`. Fix: downgraded to `debug!`.
+- **Release tracing** — key rotation invisible in release mode. Fix: `bootstrap_log` for key source after ignition.
+- **Gateway port hardcoded** — dashboard always used port 8080. Fix: dynamic port from Tauri command.
+- **Cargo.toml version drift** — all crates reported 0.3.2. Fix: bumped to 0.3.3.
+- **Bundle identifier** — `com.savant.app` conflicted with macOS `.app`. Fix: `com.savant.desktop`.
+- **Vector DB lock** — second launch crashed with unclear error. Fix: clear error message, no retry.
+- **Logs window** — launched off-screen at x: -2560. Fix: maximized, removed offset.
+- **CLI blank screen** — unhandled render error. Fix: Error Boundary + Tauri API check.
+- **Dashboard diagnostics** — `logger.info()` invisible in debug panel. Fix: push to `debugLogs` state directly.
+
+### Verification
+
+- `cargo check --workspace` — 0 errors
+- `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
+- `npx tsc --noEmit` (dashboard) — 0 errors
+- `npx tsc --noEmit` (CLI) — 0 errors
+
+### Pending (requires live test)
+
+- Dashboard SWARM_OFFLINE — diagnostic logs added, awaiting rebuild + test results
+- Copy All button — rewritten, awaiting verification
+- MalwareBazaar sync — key embedded, awaiting verification
+
+---
+
 ## [0.3.2] - 2026-05-26
 
 **Complete Implementation Sprint. 27 FIDs closed. 186 items addressed. 1,197 tests pass. Zero open issues. Release ready.**

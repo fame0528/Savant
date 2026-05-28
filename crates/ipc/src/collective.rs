@@ -2,7 +2,7 @@ use crate::error::SwarmIpcError;
 use iceoryx2::prelude::*;
 use iceoryx2::service::port_factory::blackboard::PortFactory;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{debug, info};
 
 /// Individual Agent Entry in the Collective Blackboard.
 ///
@@ -107,7 +107,7 @@ impl CollectiveBlackboard {
         // Clean up stale shared memory from dead processes before creating.
         let cleanup = Node::<ipc::Service>::cleanup_dead_nodes(Config::global_config());
         if cleanup.cleanups > 0 || cleanup.failed_cleanups > 0 {
-            info!(
+            debug!(
                 "CollectiveBlackboard: stale node cleanup — {} removed, {} failed",
                 cleanup.cleanups, cleanup.failed_cleanups
             );
@@ -147,7 +147,7 @@ impl CollectiveBlackboard {
                 Ok(svc) => break svc,
                 Err(e) if attempt < max_attempts => {
                     attempt += 1;
-                    warn!(
+                    debug!(
                         "Collective Blackboard '{}' creation failed (attempt {}/{}), retrying as '{}': {}",
                         base_name, attempt, max_attempts, candidate, e
                     );

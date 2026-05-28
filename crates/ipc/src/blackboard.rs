@@ -3,7 +3,7 @@ use iceoryx2::prelude::*;
 use iceoryx2::service::port_factory::blackboard::PortFactory;
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::error::SwarmIpcError;
 use xxhash_rust::xxh3::xxh3_64;
@@ -178,7 +178,7 @@ impl SwarmBlackboard {
         // Clean up stale shared memory from dead processes before creating.
         let cleanup = Node::<ipc::Service>::cleanup_dead_nodes(Config::global_config());
         if cleanup.cleanups > 0 || cleanup.failed_cleanups > 0 {
-            info!(
+            debug!(
                 "SwarmBlackboard: stale node cleanup — {} removed, {} failed",
                 cleanup.cleanups, cleanup.failed_cleanups
             );
@@ -215,7 +215,7 @@ impl SwarmBlackboard {
                 Ok(svc) => break (svc, candidate),
                 Err(e) if attempt < max_attempts => {
                     attempt += 1;
-                    warn!(
+                    debug!(
                         "Zero-Copy Blackboard '{}' creation failed (attempt {}/{}), retrying as '{}': {}",
                         base_name, attempt, max_attempts, candidate, e
                     );
@@ -460,7 +460,7 @@ impl CapabilityRegistry {
         // Clean up stale shared memory from dead processes before creating.
         let cleanup = Node::<ipc::Service>::cleanup_dead_nodes(Config::global_config());
         if cleanup.cleanups > 0 || cleanup.failed_cleanups > 0 {
-            info!(
+            debug!(
                 "CapabilityRegistry: stale node cleanup — {} removed, {} failed",
                 cleanup.cleanups, cleanup.failed_cleanups
             );
@@ -494,7 +494,7 @@ impl CapabilityRegistry {
                 Ok(svc) => break svc,
                 Err(e) if attempt < max_attempts => {
                     attempt += 1;
-                    warn!(
+                    debug!(
                         "CapabilityRegistry '{}' creation failed (attempt {}/{}), retrying as '{}': {}",
                         base_name, attempt, max_attempts, candidate, e
                     );

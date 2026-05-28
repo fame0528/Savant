@@ -103,13 +103,27 @@
         statusEl.style.color = '#a6e3a1';
 
         // Use Tauri event system to receive system logs
-        window.__TAURI__.event.listen('system-log-event', (event) => {
-            const logMsg = event.payload;
-            addLine(logMsg);
-        }).catch((e) => {
-            statusEl.textContent = 'Tauri event error: ' + e;
+        const tauriInternals = window.__TAURI_INTERNALS__;
+        if (tauriInternals && typeof tauriInternals.listen === 'function') {
+            tauriInternals.listen('system-log-event', (event) => {
+                const logMsg = event.payload;
+                addLine(logMsg);
+            }).catch((e) => {
+                statusEl.textContent = 'Tauri event error: ' + e;
+                statusEl.style.color = '#f38ba8';
+            });
+        } else if (window.__TAURI__ && window.__TAURI__.event) {
+            window.__TAURI__.event.listen('system-log-event', (event) => {
+                const logMsg = event.payload;
+                addLine(logMsg);
+            }).catch((e) => {
+                statusEl.textContent = 'Tauri event error: ' + e;
+                statusEl.style.color = '#f38ba8';
+            });
+        } else {
+            statusEl.textContent = 'Tauri API not available';
             statusEl.style.color = '#f38ba8';
-        });
+        }
 
         function copyAllLogs() {
             const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
@@ -118,9 +132,10 @@
                 statusEl.style.color = '#f9e2af';
                 return;
             }
-            // Tauri v2 clipboard plugin
-            if (window.__TAURI__ && window.__TAURI__.core) {
-                window.__TAURI__.core.invoke('plugin:clipboard-manager|write_text', { text: lines }).then(() => {
+            // Tauri v2 clipboard plugin — try internals first, then fallback
+            const tauriInternals = window.__TAURI_INTERNALS__;
+            if (tauriInternals && typeof tauriInternals.invoke === 'function') {
+                tauriInternals.invoke('plugin:clipboard-manager|write_text', { text: lines }).then(() => {
                     showCopied();
                 }).catch((e) => {
                     console.error('[logs] Tauri clipboard invoke failed:', e);

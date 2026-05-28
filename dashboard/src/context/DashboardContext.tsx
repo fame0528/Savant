@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode, memo } from "react";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useRouter } from "next/navigation";
-import { isTauri, igniteSwarm } from "@/lib/tauri";
+import { isTauri, igniteSwarm, getDashboardApiKey } from "@/lib/tauri";
 import { logger } from "@/lib/logger";
 import dayjs from "dayjs";
 import localizedFormat from "dayjs/plugin/localizedFormat";
@@ -267,6 +267,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const isConnectingRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const dashboardApiKeyRef = useRef<string>("");
 
   // Keep ref in sync with state
   const setStreamingThoughtsSynced = useCallback((updater: (prev: Map<string, string>) => Map<string, string>) => {
@@ -564,13 +565,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       isConnectingRef.current = false;
       
       // Send authentication frame first — session handshake begins
-      const apiKey = process.env.NEXT_PUBLIC_DASHBOARD_API_KEY;
-      if (!apiKey) {
-        logger.error('Auth', 'NEXT_PUBLIC_DASHBOARD_API_KEY is not set. Dashboard auth will fail.');
-      }
+      const apiKey = dashboardApiKeyRef.current || process.env.NEXT_PUBLIC_DASHBOARD_API_KEY || '';
       socket.send(JSON.stringify({
         session_id: "",
-        payload: `DASHBOARD_API_KEY:${apiKey || ''}`,
+        payload: `DASHBOARD_API_KEY:${apiKey}`,
         signature: null
       }));
 
@@ -676,6 +674,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     const initTauri = async () => {
       try {
+        const apiKey = await getDashboardApiKey();
+        dashboardApiKeyRef.current = apiKey;
+        if (apiKey) {
+          logger.info('Auth', 'Dashboard API key loaded from gateway config');
+        }
         const result = await igniteSwarm();
         logger.info('Ignition', 'Swarm Ignition:', result);
         setConnectionStatus('NOMINAL');

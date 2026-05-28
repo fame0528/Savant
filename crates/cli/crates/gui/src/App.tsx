@@ -1,6 +1,29 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Component, type ReactNode, type ErrorInfo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+
+// ─── Error Boundary ────────────────────────────────────────────────────
+interface ErrorBoundaryState { hasError: boolean; error: Error | null }
+class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, error: null };
+  static getDerivedStateFromError(error: Error) { return { hasError: true, error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error("[ErrorBoundary]", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", background: "#000e1a", color: "#ff0000", fontFamily: "monospace", padding: "2rem", flexDirection: "column", gap: "1rem" }}>
+          <h2 style={{ color: "#ff0000", fontSize: "16px" }}>Savant CLI Companion — Render Error</h2>
+          <pre style={{ color: "#ff6666", fontSize: "12px", whiteSpace: "pre-wrap", maxWidth: "80vw" }}>{this.state.error?.message}</pre>
+          <button onClick={() => window.location.reload()} style={{ padding: "8px 20px", background: "transparent", color: "#0088ff", border: "1px solid #0088ff", borderRadius: "6px", cursor: "pointer", fontFamily: "monospace" }}>Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const isTauriAvailable = (): boolean =>
+  typeof window !== "undefined" && (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__);
 import { Sidebar } from "./modules/sidebar/Sidebar";
 import { TerminalTabs } from "./modules/terminal/TerminalTabs";
 import { EditorPane } from "./modules/editor/EditorPane";
@@ -156,6 +179,14 @@ function SearchPanel() {
 }
 
 export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
+  );
+}
+
+function AppContent() {
   const { activePanel } = useAppStore();
   const [initialized, setInitialized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -164,6 +195,11 @@ export default function App() {
 
   useEffect(() => {
     const init = async () => {
+      if (!isTauriAvailable()) {
+        console.warn("[CLI] Tauri API not available — running in standalone mode");
+        setInitialized(true);
+        return;
+      }
       try {
         const home = await invoke<string>("get_home_dir");
         useAppStore.getState().setHomeDir(home);

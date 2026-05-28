@@ -7,6 +7,7 @@ import { useDashboard } from "@/context/DashboardContext";
 import styles from "../app/page.module.css";
 import SplashScreen from "@/components/SplashScreen";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getAppVersion } from "@/lib/tauri";
 import FormattedContent from "@/components/FormattedContent";
 import SetupWizard from "@/components/SetupWizard";
 
@@ -118,6 +119,12 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
   // Auto-dismiss after 15s or allow manual skip
   const [forceSkip, setForceSkip] = useState(false);
   const showSystemLoading = !showSplash && !isSystemReady && !forceSkip;
+
+  // Dynamic version from Tauri (reads tauri.conf.json at runtime — no env var needed)
+  const [appVersion, setAppVersion] = useState<string>("0.0.0");
+  useEffect(() => {
+    getAppVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!showSystemLoading) return;
@@ -251,7 +258,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               <img src="/img/logo.png" alt="Savant Logo" style={{ maxHeight: '80%', maxWidth: '80%', objectFit: 'contain' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
             </div>
             {!isCollapsed && <h2 className="neon-text" style={{ fontSize: '1.2rem', margin: '4px 0 0 0', textAlign: 'center', letterSpacing: '4px', color: 'var(--accent)' }}>SAVANT</h2>}
-            {!isCollapsed && <span style={{ fontSize: '9px', color: '#666', letterSpacing: '1px', fontFamily: 'monospace' }}>{`v${process.env.NEXT_PUBLIC_VERSION || '0.3.2'}`}</span>}
+            {!isCollapsed && <span style={{ fontSize: '9px', color: '#666', letterSpacing: '1px', fontFamily: 'monospace' }}>{`v${appVersion}`}</span>}
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', width: '100%', paddingRight: isCollapsed ? '0' : '4px' }}>

@@ -111,7 +111,8 @@ struct AppState {
 }
 
 #[tauri::command]
-async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Result<String, String> {
+#[allow(clippy::disallowed_methods)] // serde_json::json! macro uses .unwrap() on compile-time-validated literals
+async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Result<serde_json::Value, String> {
     info!("=== SWARM IGNITION STARTED ===");
 
     let mut lock = state.ignition.lock().await;
@@ -121,7 +122,11 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
         if let Err(e) = app_handle.emit("system-log-event", msg) {
             eprintln!("[desktop] Failed to emit system-log-event: {}", e);
         }
-        return Ok(msg.into());
+        // Return the dashboard API key from the already-stored ignition config
+        let dashboard_key = lock.as_ref()
+            .and_then(|ig| ig.config.server.dashboard_api_key.clone())
+            .unwrap_or_default();
+        return Ok(serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key }));
     }
 
     // Step 1: Resolve paths using SavantPathResolver (set up in main.rs setup hook)
@@ -269,7 +274,9 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
             if let Err(e) = app_handle.emit("system-log-event", msg) {
                 eprintln!("[desktop] Failed to emit system-log-event: {}", e);
             }
-            Ok(msg.into())
+            // Return dashboard API key so frontend can use it for WS auth
+            let dashboard_key = ignition_arc.config.server.dashboard_api_key.clone().unwrap_or_default();
+            Ok(serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key }))
         }
         Err(e) => {
             let msg = format!("IGNITION FAILED: {}", e);

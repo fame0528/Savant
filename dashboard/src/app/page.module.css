@@ -134,6 +134,8 @@
    border-right: 1px solid var(--border);
    height: 100%;
    min-height: 0;
+   width: 100%;
+   overflow: hidden;
  }
 
   .header {
@@ -169,6 +171,8 @@
   align-items: center;
   border-top: 1px solid var(--border);
   background: rgba(0,0,0,0.1);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .chatInput {

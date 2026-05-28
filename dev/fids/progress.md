@@ -33,6 +33,7 @@
 
 | Hash | Summary |
 |------|---------|
+| `01f79e1` | fix: message doubling dedup guard + input box sizing in dashboard |
 | `2e8cc5a` | fix: add engineering grounding patterns to LEARNINGS filter — 10 patterns + 26 tests |
 | `4d4392d` | docs: update all tracking docs to v0.3.5 — progress, tracker, session summary, internal changelog |
 | `4a2c712` | chore: version bump 0.3.4 → 0.3.5 across all 30 files |

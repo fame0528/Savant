@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.5] - 2026-05-28
+
+**v0.3.5: Dashboard history partition key fix, Agent Logs Copy All fix, version bump. 2 critical bugs fixed.**
+
+### Fixed
+
+#### Dashboard History Partition Key (Critical)
+- **`GatewayPersistence::persist_chat()`** in `crates/gateway/src/persistence.rs` was storing agent responses in `chat.{session_uuid}` collections (UUID-keyed, invisible to dashboard) while `get_history()` queried `chat.{agent_name}`. Agent responses from months of development were stored but never retrievable.
+- Flipped partition precedence from `session_id > agent_id > sender > recipient` to `agent_id > sender > recipient > session_id`. Agent responses now stored in `chat.{agent_name}` matching the dashboard's `get_history()` query path.
+- Fixes "Loading conversation..." on dashboard when agent has stored memory.
+
+#### Agent Logs Copy All
+- Rewrote `copyAllLogs()` in `dashboard/public/logs.html` with 3-tier clipboard fallback: Tauri clipboard plugin (`plugin:clipboard|write_text`) → `navigator.clipboard` → `execCommand` with in-viewport textarea. Fixes silent failure in Tauri WebView where offscreen textarea selection was not recognized.
+
+### Changed
+
+#### Version Bump
+- **All 28 Cargo.toml** bumped from 0.3.4 to 0.3.5
+- **Both tauri.conf.json** bumped from 0.3.4 to 0.3.5
+- **dashboard/package.json** bumped from 0.1.0 to 0.3.5 (was never synced from scaffold default)
+- **README.md + docs READMEs** updated to v0.3.5
+
+---
+
 ## [0.3.4] - 2026-05-28
 
 **v0.3.4 Hotfix: vector DB lock, auth log spam, SSE parse noise, dashboard UX. 5 issues fixed.**

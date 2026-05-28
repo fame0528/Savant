@@ -1,6 +1,6 @@
 [package]
 name = "savant-gui"
-version = "0.3.4"
+version = "0.3.5"
 description = "Savant CLI GUI — Tauri 2 desktop application"
 edition = "2021"
 license.workspace = true

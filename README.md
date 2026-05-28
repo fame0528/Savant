@@ -3,7 +3,7 @@
 
 <img src="img/savant.png" alt="Savant Logo" width="180" />
 
-# SAVANT v0.3.4
+# SAVANT v0.3.5
 
 **One Mind. A Thousand Faces.**
 
@@ -85,7 +85,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 ## Architecture
 
-<img src="img/architecture.png" alt="Savant Architecture v0.3.4" width="850" />
+<img src="img/architecture.png" alt="Savant Architecture v0.3.5" width="850" />
 
 </div>
 

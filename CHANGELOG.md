@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed UTF-8 BOM in 30 files (28 Cargo.toml + 2 tauri.conf.json) caused by PowerShell Set-Content
 - Fixed pre-existing clippy `useless_conversion` in `crates/gateway/src/server.rs`
 
+#### Agent Discovery & Copy Unification (Build 7)
+- **Agent discovery dead code fix** — merged `activeAgent` logic into first `agents.discovered` handler, deleted unreachable second handler in `DashboardContext.tsx`
+- **`.savant` default agent** — sidebar always shows the core `.savant` agent even before gateway discovery
+- **Unified `copyToClipboard()`** in `dashboard/src/lib/tauri.ts` — 3-tier fallback (Tauri plugin, navigator.clipboard, execCommand), used by all copy buttons
+- **Code block copy** now has Tauri fallback + visual feedback via `CodeCopyButton` component in `FormattedContent.tsx`
+- **Removed duplicate helpers** — `cleanMessage()` (3 to 1), `formatEst()` (2 to 1), `getGatewayHost/Port/HttpUrl` (2 to 1 centralized in tauri.ts)
+
 ---
 
 ## [0.3.3] - 2026-05-28

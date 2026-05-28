@@ -1,7 +1,7 @@
 # FID Progress Tracking
 
-> **Last Updated:** 2026-05-28 (v0.3.4)
-> **Active FIDs:** 0 (all closed)
+> **Last Updated:** 2026-05-28 (v0.3.4 Build 7)
+> **Active FIDs:** 1 (FID-20260528-v034-BUILD7-REGRESSIONS — FIXED, awaiting live test)
 > **Closed FIDs:** 86 in `dev/fids/archived/`
 
 ---

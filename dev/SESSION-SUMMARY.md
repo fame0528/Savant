@@ -1,35 +1,33 @@
-# Savant Session Summary -- 2026-05-28
+# Savant Session Summary -- 2026-05-28 (Build 7)
 
 ## Mission
-Fix 5 issues from Build 6 live test logs. Bump version to 0.3.4. Clean up all docs.
+Fix Build 7 live test regressions: agent discovery dead code, missing .savant default, inconsistent copy implementations, duplicate helper functions.
 
-## Status: COMPLETE
+## Status: FIXED (awaiting live test)
 
 ## What Was Done
 | Item | Status | Details |
 |------|--------|---------|
-| Vector DB lock (CRITICAL) | Fixed | UNC path fallback + lock file deletion in engine.rs |
-| Auth log spam (HIGH) | Fixed | Rate-limited WARN + authenticated image fetch (fetchAuthImage + AuthImage) |
-| SSE parse failures (MEDIUM) | Fixed | Downgraded to debug level in providers/mod.rs |
-| Hidden input button (MEDIUM) | Fixed | Always visible, disabled when offline |
-| Version bump | Complete | 0.3.3 -> 0.3.4 across 28 crates, 2 tauri.conf.json |
-| BOM cleanup | Complete | Removed UTF-8 BOM from 30 files |
-| README.md | Updated | Version, doc links, stale data |
-| CHANGELOG.md | Updated | v0.3.4 entry added |
-| CHANGELOG-INTERNAL.md | Updated | Fix details + release notes |
-| progress.md | Updated | All FIDs closed and archived |
+| Agent discovery dead code (CRITICAL) | Fixed | Merged activeAgent logic into first handler, deleted unreachable second handler |
+| .savant default agent (HIGH) | Fixed | Agents state pre-seeded with .savant, sidebar always shows core agent |
+| Unified copyToClipboard (HIGH) | Fixed | 3-tier fallback in tauri.ts, used by all copy buttons |
+| Code block copy feedback (MEDIUM) | Fixed | CodeCopyButton component with Tauri fallback + visual feedback |
+| Duplicate helpers (MEDIUM) | Fixed | cleanMessage (3 to 1), formatEst (2 to 1), URL helpers (2 to 1) |
+| use client directive | Fixed | 5 dashboard pages had authFetch import before "use client" |
+| CHANGELOG.md | Updated | Build 7 section added |
+| CHANGELOG-INTERNAL.md | Updated | Build 7 entry with full fix details |
+| progress.md | Updated | FID-20260528-v034-BUILD7-REGRESSIONS marked FIXED |
 
 ## Verification
-- `cargo check --workspace` -- 0 errors
-- `cargo clippy --workspace --all-targets -- -D warnings` -- 0 warnings
-- `npx tsc --noEmit` -- 0 errors
+- 
+px tsc --noEmit -- 0 errors
+- 22/22 automated checks passed (imports, helpers, agents, copy)
 
-## FIDs Closed
-- FID-20260527-DASHBOARD-CONNECTIVITY-VERSION (superseded by BUILD5/BUILD6)
-- FID-20260528-v033-BUILD6-LOG-ANALYSIS (all 5 issues fixed)
+## FIDs
+- FID-20260528-v034-BUILD7-REGRESSIONS -- FIXED (awaiting live test)
 
 ## Git & Push
-- Commit: 283d00e
+- Commit 8246c0: fix: use client directive must be first line
+- Commit 205ec69: fix: agent discovery, .savant default, unified copyToClipboard, remove duplicate helpers
 - Pushed: Yes (origin/main)
-- Push gate: REMOVED — autonomous push authorized by user
 - Operating mode: Level 3 (full autonomy, push at will)

@@ -8,6 +8,28 @@
 
 ## [Unreleased]
 
+### 2026-05-28: Build 7 Regressions — Agent Discovery + Copy Unification
+
+**FID:** `FID-20260528-v034-BUILD7-REGRESSIONS.md`
+
+**Problem:** v0.3.4 Build 7 live test. Dashboard showed "SWARM_NOMINAL" but agents never populated, "Loading conversation..." persisted forever. Copy buttons inconsistent — code block copy lacked Tauri fallback, no visual feedback. Helper functions duplicated across 3-5 files.
+
+**Root Cause:**
+1. **CRITICAL — Agent discovery dead code:** Two `agents.discovered` handlers in `processEvent()`. First (line 391) set agents but NOT `activeAgent`. Second (line 483) which DID set `activeAgent` was dead code — unreachable in the `else if` chain. Without `activeAgent`, no lane history loads.
+2. **HIGH — No default agent:** `agents` state initialized as `[]`. If gateway sends no `agents.discovered`, sidebar shows zero agents. User requires `.savant` always present.
+3. **HIGH — HTTP fallback omission:** HTTP fallback at line 594 fetched agents but never set `activeAgent` — same bug pattern.
+4. **MEDIUM — Copy fragmentation:** Three separate copy implementations (context handleCopy, Debug Console inline, FormattedContent navigator-only). Code block copy had no Tauri fallback, no visual feedback.
+5. **MEDIUM — Duplicate helpers:** `cleanMessage()` in 3 files, `formatEst()` in 2 files, `getGatewayHost/Port/HttpUrl` in 2 files.
+
+**Fix:**
+- `dashboard/src/lib/tauri.ts` (+64/-0): Added `copyToClipboard()` (3-tier fallback), centralized `getGatewayHost()`, `getGatewayPort()`, `setGatewayPort()`, `getHttpUrl()`, `getWsUrl()`
+- `dashboard/src/context/DashboardContext.tsx` (+15/-118): Merged `activeAgent` logic into first `agents.discovered` handler, deleted dead code second handler, added `.savant` default agent, refactored `handleCopy` to use `copyToClipboard()`, removed duplicate `cleanMessage`/`formatEst`/`getGatewayHost/Port/HttpUrl`
+- `dashboard/src/components/DashboardShell.tsx` (+1/-42): Debug Console copy now uses `handleCopy` from context, removed inline 3-tier fallback, removed `writeText` import, removed duplicate `getGatewayHost/Port/HttpUrl`
+- `dashboard/src/components/FormattedContent.tsx` (+15/-4): Code block copy now uses `copyToClipboard()` with `CodeCopyButton` component providing visual feedback
+- `dashboard/src/app/page.tsx` (+0/-28): Removed unused `cleanMessage` function
+
+**Status:** FIXED. `npx tsc --noEmit` — 0 errors. Committed `205ec69`, pushed to origin/main.
+
 ### 2026-05-28: Build 6 Log Analysis — 5 Issues Identified
 
 **FID:** `FID-20260528-v033-BUILD6-LOG-ANALYSIS.md`

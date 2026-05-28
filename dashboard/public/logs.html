@@ -102,7 +102,7 @@
         }
         setupEventListener();
 
-        // ── Copy All — use navigator.clipboard (WebView2 compatible) ──
+        // ── Copy All — try Tauri clipboard → navigator.clipboard → execCommand ──
         function copyAllLogs() {
             const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
             if (!lines) {
@@ -110,34 +110,38 @@
                 statusEl.style.color = '#f9e2af';
                 return;
             }
+            // Try Tauri clipboard plugin first (withGlobalTauri: true)
+            if (window.__TAURI__ && window.__TAURI__.core) {
+                window.__TAURI__.core.invoke('plugin:clipboard|write_text', { text: lines })
+                    .then(() => showCopied())
+                    .catch(() => tryNavigatorClipboard(lines));
+                return;
+            }
+            tryNavigatorClipboard(lines);
+        }
+
+        function tryNavigatorClipboard(text) {
             if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(lines).then(() => {
-                    showCopied();
-                }).catch((e) => {
-                    fallbackCopy(lines);
-                });
+                navigator.clipboard.writeText(text)
+                    .then(() => showCopied())
+                    .catch(() => fallbackCopy(text));
             } else {
-                fallbackCopy(lines);
+                fallbackCopy(text);
             }
         }
 
         function fallbackCopy(text) {
             const ta = document.createElement('textarea');
             ta.value = text;
-            ta.setAttribute('readonly', '');
-            ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01';
+            ta.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;z-index:99999';
             document.body.appendChild(ta);
             ta.focus();
             ta.select();
             try {
                 const ok = document.execCommand('copy');
                 document.body.removeChild(ta);
-                if (ok) {
-                    showCopied();
-                } else {
-                    statusEl.textContent = 'Copy failed';
-                    statusEl.style.color = '#f38ba8';
-                }
+                if (ok) { showCopied(); }
+                else { statusEl.textContent = 'Copy failed'; statusEl.style.color = '#f38ba8'; }
             } catch (e) {
                 document.body.removeChild(ta);
                 statusEl.textContent = 'Copy failed: ' + e.message;

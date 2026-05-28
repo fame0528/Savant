@@ -279,7 +279,17 @@ pub async fn start_gateway(
 
     let dashboard_api_key = state.config.read().await.server.dashboard_api_key.clone();
 
-    let app = Router::new()
+    // WebSocket routes — separated from CORS/auth/rate-limit middleware.
+    // The WS handler performs its own auth via the first message (auth frame),
+    // and has its own connection limit (MAX_WS_CONNECTIONS=100).
+    // CORS middleware blocks WS upgrades because tower-http rejects GET requests
+    // with non-matching Origin headers, killing the upgrade before it reaches the handler.
+    let ws_routes = Router::new()
+        .route("/ws", get(websocket_handler))
+        .route("/ws/canvas", get(canvas_ws_handler));
+
+    // API routes — full middleware stack
+    let api_routes = Router::new()
         // PB-21: Health check endpoint
         .route("/health", get(health_handler))
         .route("/api/echo/metrics", get(echo_metrics_handler))
@@ -401,7 +411,11 @@ pub async fn start_gateway(
             dashboard_api_key,
             crate::auth::http_middleware::auth_middleware,
         ))
-        .layer(cors)
+        .layer(cors);
+
+    let app = Router::new()
+        .merge(ws_routes)
+        .merge(api_routes)
         .with_state(state);
 
     tracing::info!("Gateway server listening on {}", addr);

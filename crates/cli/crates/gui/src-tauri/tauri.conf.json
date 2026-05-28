@@ -32,10 +32,6 @@
     ]
   },
   "plugins": {
-    "updater": {
-      "pubkey": "",
-      "endpoints": []
-    },
     "opener": {
       "alwaysOpenExternal": true
     }

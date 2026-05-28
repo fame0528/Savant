@@ -221,6 +221,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const reconnectAttemptsRef = useRef(0);
   const dashboardApiKeyRef = useRef<string>("");
   const gatewayPortRef = useRef<number>(8080);
+  const pendingUserMessagesRef = useRef<Set<string>>(new Set());
 
   // Keep ref in sync with state
   const setStreamingThoughtsSynced = useCallback((updater: (prev: Map<string, string>) => Map<string, string>) => {
@@ -353,6 +354,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setStreamingContent(prev => { const next = new Map(prev); next.delete(agentId); return next; });
       const agentThoughts = streamingThoughtsRef.current.get(agentId);
       setStreamingThoughtsSynced(prev => { const next = new Map(prev); next.delete(agentId); return next; });
+      // Dedup: skip user messages that were already added optimistically by sendChatMessage
+      if (msg.role === 'user' && pendingUserMessagesRef.current.has(content.trim())) {
+        pendingUserMessagesRef.current.delete(content.trim());
+        return;
+      }
       if (msg.is_telemetry) {
         setCognitiveInsights(prev => [{
           agent_id: msg.agent_id || msg.sender || 'system',
@@ -713,8 +719,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const payload = { role: role === 'user' ? 'user' : 'assistant', content, recipient, broadcast };
       logger.debug("Dashboard", `Sending chat message (session: ${sessionIdRef.current}, recipient: ${recipient || 'global/broadcast'})`);
 
-      // Add user message to local lane messages immediately
+      // Add user message to local lane messages immediately (optimistic add).
+      // Store a dedup key so processEvent skips the server echo of this same message.
       const laneKey = recipient ? recipient.toLowerCase() : "global";
+      const dedupKey = `${role}:${content.trim().substring(0, 100)}:${Date.now()}`;
       setLaneMessages(prev => ({
         ...prev,
         [laneKey]: [...(prev[laneKey] || []), {
@@ -724,6 +732,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           timestamp: new Date().toISOString(),
         }]
       }));
+      // Track the dedup key — processEvent will skip matching user messages
+      pendingUserMessagesRef.current.add(content.trim());
+      setTimeout(() => { pendingUserMessagesRef.current.delete(content.trim()); }, 10000);
 
       socketRef.current.send(JSON.stringify({
         session_id: sessionIdRef.current,

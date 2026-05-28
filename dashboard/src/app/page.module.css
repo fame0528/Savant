@@ -173,11 +173,13 @@
   background: rgba(0,0,0,0.1);
   width: 100%;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .chatInput {
   flex: 1;
-  padding: 12px 0;
+  min-width: 0;
+  padding: 12px 4px;
   color: #fff;
   outline: none;
   font-size: 15px;

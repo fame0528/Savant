@@ -313,6 +313,18 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (uniqueAgents.length > 0) {
         setAgents(uniqueAgents as Agent[]);
         logger.info('Agents', `Discovered ${uniqueAgents.length} agents`);
+        // Auto-select first agent if no agent is currently active and no saved preference
+        if (!activeAgent && !localStorage.getItem('activeAgent')) {
+          const firstId = (uniqueAgents[0] as Agent).id;
+          setActiveAgent(firstId);
+          logger.info('Agents', `Auto-selected agent: ${firstId}`);
+          if (socketRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
+            socketRef.current.send(JSON.stringify({
+              session_id: sessionIdRef.current,
+              payload: { type: "HistoryRequest", data: { lane_id: firstId, limit: 100 } }
+            }));
+          }
+        }
       }
     } else if (type === "history") {
       const { lane_id, history } = evData;

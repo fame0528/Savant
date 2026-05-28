@@ -203,7 +203,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
     ? pageHeader.title
     : isManifestMode
       ? (ctx.manifestName || 'SOUL MANIFESTATION')
-      : (ctx.agents.find(a => a.id === activeAgent)?.name || (activeAgent === null ? 'SAVANT' : activeAgent?.toUpperCase() || 'SAVANT'));
+      : (activeAgent ? ctx.getAgentMeta(activeAgent, 'assistant').name : 'SAVANT');
 
   return (
     <>
@@ -410,26 +410,29 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               {ctx.agents.length > 0 && !isCollapsed && <div style={{ fontSize: '11px', fontWeight: 800, letterSpacing: '2px', color: 'var(--accent)', opacity: 0.5, padding: '16px 16px 4px', textTransform: 'uppercase' }}>Agents</div>}
               {ctx.agents.length > 0 && isCollapsed && <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />}
 
-              {Array.isArray(ctx.agents) && ctx.agents.map((agent) => (
+              {Array.isArray(ctx.agents) && ctx.agents.map((agent) => {
+                const agentMeta = ctx.getAgentMeta(agent.id, 'assistant');
+                return (
                 <div key={agent.id} className={`${styles.agentTab} ${activeAgent === agent.id ? styles.agentTabActive : ''}`}
                   onClick={() => ctx.handleLaneSwitch(agent.id)}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ctx.handleLaneSwitch(agent.id); }}}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Agent: ${agent.name}`}
-                  title={agent.name}
+                  aria-label={`Agent: ${agentMeta.name}`}
+                  title={agentMeta.name}
                   style={{ display: 'flex', flexDirection: isCollapsed ? 'column' : 'row', alignItems: 'center', gap: '12px', padding: isCollapsed ? '12px 0' : '10px 16px' }}>
                   <div className={styles.agentAvatar} style={{
                     width: isCollapsed ? '32px' : '24px', height: isCollapsed ? '32px' : '24px',
                     border: activeAgent === agent.id ? '2px solid var(--accent)' : 'none', flexShrink: 0,
                     fontSize: '10px', fontWeight: 900, color: 'var(--accent)'
                   }}>
-                    <span style={{ position: 'absolute' }}>{agent.name.charAt(0).toUpperCase()}</span>
-                    <AuthImage src={`${getHttpUrl()}/api/agents/${agent.id}/image`} alt={agent.name} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                    <span style={{ position: 'absolute' }}>{agentMeta.name.charAt(0)}</span>
+                    <AuthImage src={`${getHttpUrl()}/api/agents/${agent.id}/image`} alt={agentMeta.name} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                   </div>
-                  {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.5px' }}>{agent.name}</span>}
+                  {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.5px' }}>{agentMeta.name}</span>}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -474,7 +477,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               <div style={{ flex: 1, display: 'flex', gap: '8px', alignItems: 'center', background: 'var(--glass-bg)', borderRadius: '12px', padding: '4px 12px', border: '1px solid var(--border)' }}>
                 <input 
                   type="text" 
-                  placeholder={isSystemReady ? (activeAgent ? `Message ${ctx.agents.find(a => a.id === activeAgent)?.name || 'Agent'}...` : "Broadcast directive to active swarm...") : "Waiting for swarm..."}
+                  placeholder={isSystemReady ? (activeAgent ? `Message ${ctx.getAgentMeta(activeAgent, 'assistant').name}...` : "Broadcast directive to active swarm...") : "Waiting for swarm..."}
                   className={styles.chatInput} 
                   value={inputValue} 
                   onChange={(e) => setInputValue(e.target.value)} 

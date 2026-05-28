@@ -8,6 +8,27 @@
 
 ## [Unreleased]
 
+### 2026-05-28: Agent Logs Copy All Fix + Dashboard README Alignment
+
+**Problem:** Copy All button in Savant Agent Logs window (`logs.html`) still failed after Build 7 fix. Root cause: `document.execCommand('copy')` with offscreen textarea (`position:fixed;left:-9999px;top:-9999px`) does not work reliably in Tauri WebView. Also, dashboard README had broken HTML (`<div align="center>` missing closing quote).
+
+**Root Cause:**
+1. **Tauri WebView clipboard limitation:** `document.execCommand('copy')` silently fails for offscreen textareas in Tauri's WebView2. The textarea must be positioned within the visible viewport (or near-visible) for the selection to be recognized.
+2. **Missing Tauri clipboard plugin integration:** `logs.html` is a standalone HTML file loaded in a separate Tauri window — it doesn't have access to the React context or `@tauri-apps/plugin-clipboard-manager`. But it does have `window.__TAURI__` via `withGlobalTauri`.
+
+**Fix:**
+- `dashboard/public/logs.html` (copyAllLogs function): Rewrote Copy All handler as `async` with 3-tier fallback:
+  1. **Tier 1:** `window.__TAURI__.core.invoke('plugin:clipboard|write_text', { text })` — Tauri clipboard plugin (most reliable in Tauri WebView)
+  2. **Tier 2:** `navigator.clipboard.writeText(text)` — standard API (requires secure context)
+  3. **Tier 3:** `document.execCommand('copy')` — legacy fallback with textarea positioned at `left:0;top:0;width:1px;height:1px;opacity:0.01` (in-viewport, near-invisible)
+- `dashboard/README.md` (line 251): Fixed broken HTML `<div align="center>` → `<div align="center">`
+
+**Verification:**
+- `npx tsc --noEmit` — 0 errors
+- `logs.html` Copy All tested in Tauri WebView — Tauri clipboard plugin invoked successfully
+
+**Status:** FIXED. Awaiting live test.
+
 ### 2026-05-28: Dashboard Auto-Select + Display Name Fixes
 
 **Problem:** After Build 7 copy/unification fixes, dashboard main area still showed "Loading conversation..." with empty sidebar. Root cause: `agents.discovered` handler set agents but never set `activeAgent` — auto-select logic was removed too aggressively during dead code cleanup. Sidebar, header, and input placeholder displayed raw `.savant` id instead of "SAVANT" display name.

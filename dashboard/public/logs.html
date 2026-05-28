@@ -102,29 +102,44 @@
         }
         setupEventListener();
 
-        // ── Copy All — use document.execCommand (works in all webviews) ──
-        function copyAllLogs() {
+        // ── Copy All — Tauri clipboard plugin → navigator → execCommand ──
+        async function copyAllLogs() {
             const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
             if (!lines) {
                 statusEl.textContent = 'No logs to copy';
                 statusEl.style.color = '#f9e2af';
                 return;
             }
-            // Create offscreen textarea, select, copy, remove
+            // Tier 1: Tauri clipboard plugin (most reliable in Tauri WebView)
+            try {
+                if (window.__TAURI__ && window.__TAURI__.core) {
+                    await window.__TAURI__.core.invoke('plugin:clipboard|write_text', { text: lines });
+                    showCopied();
+                    return;
+                }
+            } catch (e) { /* fall through */ }
+            // Tier 2: navigator.clipboard (requires secure context + focus)
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(lines);
+                    showCopied();
+                    return;
+                }
+            } catch (e) { /* fall through */ }
+            // Tier 3: execCommand fallback (legacy, last resort)
             const ta = document.createElement('textarea');
             ta.value = lines;
             ta.setAttribute('readonly', '');
-            ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+            ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01';
             document.body.appendChild(ta);
             ta.focus();
             ta.select();
-            ta.setSelectionRange(0, ta.value.length);
             try {
                 const ok = document.execCommand('copy');
                 if (ok) {
                     showCopied();
                 } else {
-                    statusEl.textContent = 'Copy failed';
+                    statusEl.textContent = 'Copy failed — no method available';
                     statusEl.style.color = '#f38ba8';
                 }
             } catch (e) {

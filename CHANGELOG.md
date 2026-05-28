@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unified `copyToClipboard()`** in `dashboard/src/lib/tauri.ts` — 3-tier fallback (Tauri plugin, navigator.clipboard, execCommand), used by all copy buttons
 - **Code block copy** now has Tauri fallback + visual feedback via `CodeCopyButton` component in `FormattedContent.tsx`
 - **Removed duplicate helpers** — `cleanMessage()` (3 to 1), `formatEst()` (2 to 1), `getGatewayHost/Port/HttpUrl` (2 to 1 centralized in tauri.ts)
+- **Agent Logs Copy All fix** — rewrote `copyAllLogs()` in `logs.html` with 3-tier clipboard fallback: Tauri clipboard plugin (`plugin:clipboard|write_text`) → `navigator.clipboard` → `execCommand` with in-viewport textarea. Fixes silent failure in Tauri WebView where offscreen textarea selection was not recognized.
 
 ---
 

@@ -248,7 +248,7 @@ All styles are in `page.module.css` and component-specific `.module.css` files. 
 
 ---
 
-<div align="center>
+<div align="center">
 
 **Savant Dashboard** &bull; Part of the [Savant](../README.md) ecosystem
 

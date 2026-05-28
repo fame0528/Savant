@@ -8,6 +8,48 @@
 
 ## [Unreleased]
 
+### 2026-05-28: LEARNINGS Pipeline Audit — Grounding Filter Over-Blocking (Root Cause Found)
+
+**Problem:** LEARNINGS.md hasn't been updated since March 28, 2026 (2 months). LEARNINGS.jsonl last updated May 2. The Savant agent's consciousness/heartbeat system has been writing learnings autonomously since v0.1.0, but the pipeline went silent.
+
+**Root Cause (Two Compounding Issues):**
+
+1. **Agent backend offline since May 13:** The desktop shell (Tauri) is running, but the agent backend — heartbeat pulse, consciousness daemon, learnings pipeline — hasn't executed since May 13 23:47. CortexaDB WAL is clean (0 bytes = graceful shutdown). The agent has been dormant for 15 days while development continued via direct code edits.
+
+2. **Grounding filter over-blocking (the silent killer):** Even when the agent WAS running (March 28 → May 13), the `OutputFilter::is_grounded()` in `crates/agent/src/learning/filter.rs` was silently dropping learnings. The filter only recognizes two narrow vocabularies:
+   - **Environmental (15 patterns):** git, commit, modified, files modified/added/deleted, error/warning, build/test, port, github, push, pull
+   - **Introspective (11 patterns):** I feel/wonder/notice/think, substrate, stillness/quiet/idle, no tasks/directives
+
+   **Missing entirely:** Architectural insights, design decisions, debugging strategies, code patterns, root cause analysis, performance findings. A learning like "Dashboard history broken because partition key precedence flipped" scores 0.0 → silently dropped to FILTERED.jsonl → never reaches LEARNINGS.md.
+
+**Pipeline Architecture (for reference):**
+```
+Heartbeat pulse → Agent LLM reflection → LearningEmitter.emit_emergent()
+  → significance filter (>2) → grounding filter (is_grounded)
+  → MemoryBackend.store(channel=Memory) → FileLoggingMemoryBackend.record_learning()
+  → grounding filter (again, defense in depth) → content-hash dedup → append to LEARNINGS.md
+  → LearningsParser.parse_and_convert() → LEARNINGS.jsonl
+```
+
+**Double filter:** `is_grounded()` called at emitter (line 52) AND memory backend (line 131). Both reject same content. Defense in depth — keep both.
+
+**FILTERED.jsonl:** Does NOT exist on disk — confirming agent hasn't run recently (no entries to filter). The `log_filtered()` function in `memory/mod.rs:61-78` writes to it when the agent is active.
+
+**Planned Fix:**
+- `crates/agent/src/learning/filter.rs`: Add `ENGINEERING_GROUNDING` patterns (weight 0.8) for development/architectural vocabulary
+- Add unit tests for all three grounding categories
+- Backfill key learnings from v0.3.2→v0.3.5 development cycle
+
+**Status:** OPEN. Filter fix planned. Agent backend restart needed.
+
+### 2026-05-28: Version Bump 0.3.4 → 0.3.5
+
+**Version bump:** 0.3.4 → 0.3.5 across all 28 Cargo.toml, 2 tauri.conf.json, dashboard/package.json (was 0.1.0 — never synced from scaffold), README.md, docs READMEs.
+
+**CHANGELOG.md:** Added v0.3.5 section with partition key fix + version bump details.
+
+**Commit:** `4a2c712` — 40 files changed, 141 insertions, 117 deletions.
+
 ### 2026-05-28: Dashboard History Not Loading — Partition Key Mismatch (Root Cause Found)
 
 **Problem:** Dashboard shows "Loading conversation..." even though agent has 14KB of stored memory in enclave. User has been building for months — past conversations should be visible.

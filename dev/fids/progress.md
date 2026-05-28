@@ -1,27 +1,27 @@
 # FID Progress Tracking
 
-> **Last Updated:** 2026-05-28 16:11 EDT (v0.3.4 Build 7)
+> **Last Updated:** 2026-05-28 17:23 EDT (v0.3.5)
 > **Active FIDs:** 1 (FID-20260528-v034-BUILD7-REGRESSIONS — FIXED, awaiting live test)
 > **Closed FIDs:** 86 in `dev/fids/archived/`
 
 ---
 
-## Status: v0.3.4 — All Issues Fixed, Ready for Live Test
+## Status: v0.3.5 — Partition Key Fix + Version Bump Pushed, Tracking Docs Updated
 
 | Metric | Count |
 |:-------|:-----:|
 | Total FIDs this session | 7 |
 | FIDs closed this session | 6 (ONBOARDING, BUILD3, BUILD4, SETUP-WIZARD, DASHBOARD-CONN, BUILD6) |
 | FIDs active | 1 (BUILD7-REGRESSIONS — FIXED) |
-| Issues fixed | 9 |
-| Commits on main (pushed) | 13 |
+| Issues fixed | 11 (9 Build 7 + partition key + Copy All rewrite) |
+| Commits on main (pushed) | 16 |
 | Clippy warnings | 0 |
 
 ---
 
-## Build State (2026-05-28 Build 7)
+## Build State (2026-05-28 v0.3.5)
 
-- Version: 0.3.4 across all 28 crates
+- Version: 0.3.5 across all 28 crates + 2 tauri.conf.json + dashboard/package.json
 - `cargo check --workspace` — 0 errors
 - `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
 - `npx tsc --noEmit` — 0 errors
@@ -33,6 +33,8 @@
 
 | Hash | Summary |
 |------|---------|
+| `4a2c712` | chore: version bump 0.3.4 → 0.3.5 across all 30 files |
+| `aac6862` | fix: dashboard history partition key — flip precedence to agent_id > session_id |
 | `8b709a5` | fix: auto-select first agent on discovery, use getAgentMeta for display names |
 | `205ec69` | fix: agent discovery, .savant default, unified copyToClipboard, remove duplicate helpers |
 | `f8246c0` | fix: use client directive must be first line |
@@ -52,12 +54,23 @@
 
 | # | Sev | Issue | Root Cause | Status |
 |---|-----|-------|-----------|--------|
-| 1 | CRITICAL | Dashboard "Loading conversation..." forever | agents.discovered didn't set activeAgent | FIXED (8b709a5) |
+| 1 | CRITICAL | Dashboard "Loading conversation..." forever | partition key mismatch — persist_chat wrote to UUID-keyed collection, get_history queried agent-name-keyed | FIXED (`aac6862`) |
 | 2 | HIGH | Sidebar shows ".savant" not "SAVANT" | getAgentMeta not used in sidebar/header/placeholder | FIXED (8b709a5) |
 | 3 | HIGH | Copy All button broken | Dead code removal killed working copy | FIXED (205ec69) |
 | 4 | HIGH | No default agent before discovery | agents state initialized empty | FIXED (205ec69) |
 | 5 | MEDIUM | Code block copy no Tauri fallback | navigator-only, no visual feedback | FIXED (205ec69) |
 | 6 | MEDIUM | Duplicate helpers (3-5 files) | cleanMessage, formatEst, URL helpers | FIXED (205ec69) |
+| 7 | HIGH | Agent Logs Copy All rewrite | execCommand with offscreen textarea fails in Tauri WebView | FIXED (`aac6862`) |
+
+---
+
+## New Issues Discovered (2026-05-28)
+
+| # | Sev | Issue | Root Cause | Status |
+|---|-----|-------|-----------|--------|
+| 1 | CRITICAL | LEARNINGS.md not updated since March 28 | Agent backend offline since May 13; grounding filter over-blocking engineering content | OPEN — filter fix planned |
+| 2 | HIGH | Grounding filter only recognizes git/CI + introspective vocabulary | `filter.rs` ENVIRONMENTAL_GROUNDING and INTROSPECTIVE_GROUNDING patterns miss architectural/design content | OPEN — engineering patterns to be added |
+| 3 | MEDIUM | Tracking docs stale at v0.3.4 after v0.3.5 bump | progress.md, IMPLEMENTATION-TRACKER.md, SESSION-SUMMARY.md not updated | FIXING NOW |
 
 ---
 
@@ -83,3 +96,4 @@
 - `FID-20260528-v033-BUILD5-REGRESSIONS.md` — 3 issues from build 5 (CLOSED, merged into BUILD4)
 - `FID-20260527-DASHBOARD-CONNECTIVITY-VERSION.md` — dashboard connectivity (CLOSED → archived)
 - `FID-20260528-v033-BUILD6-LOG-ANALYSIS.md` — 5 issues from build 6 (CLOSED → archived)
+- `FID-20260528-v034-BUILD7-REGRESSIONS.md` — 9 issues from build 7 (FIXED, awaiting live test)

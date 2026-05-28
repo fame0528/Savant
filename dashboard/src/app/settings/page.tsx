@@ -1,3 +1,4 @@
+import { authFetch } from "@/lib/tauri";
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -33,7 +34,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const gatewayUrl = getGatewayUrl();
-    fetch(`${gatewayUrl}/api/settings`)
+    authFetch(`${gatewayUrl}/api/settings`)
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -63,7 +64,7 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/settings`, {
+      const resp = await authFetch(`${gatewayUrl}/api/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode, memo } from "react";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useRouter } from "next/navigation";
-import { isTauri, igniteSwarm, getDashboardConfig } from "@/lib/tauri";
+import { isTauri, igniteSwarm, getDashboardConfig, setDashboardApiKey, authFetch } from "@/lib/tauri";
 import { logger } from "@/lib/logger";
 import dayjs from "dayjs";
 import localizedFormat from "dayjs/plugin/localizedFormat";
@@ -593,7 +593,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
       setTimeout(async () => {
         try {
-          const resp = await fetch(`${getHttpUrl()}/api/agents`);
+          const headers: Record<string, string> = {};
+          const _apiKey = dashboardApiKeyRef.current || process.env.NEXT_PUBLIC_DASHBOARD_API_KEY || '';
+          if (_apiKey) headers['Authorization'] = `Bearer ${_apiKey}`;
+          const resp = await fetch(`${getHttpUrl()}/api/agents`, { headers });
           if (resp.ok) {
             const data = await resp.json();
             if (data.agents && data.agents.length > 0) {
@@ -695,6 +698,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         const config = await getDashboardConfig();
         diag(`getDashboardConfig: apiKey=${config.apiKey ? "(set)" : "(empty)"}, port=${config.port}`);
         dashboardApiKeyRef.current = config.apiKey;
+        setDashboardApiKey(config.apiKey);
         gatewayPortRef.current = config.port;
         _dynamicGatewayPort = config.port;
         const result = await igniteSwarm();

@@ -1,3 +1,4 @@
+import { authFetch } from "@/lib/tauri";
 "use client";
 
 import { useState, useEffect } from "react";
@@ -50,7 +51,7 @@ export default function McpPage() {
     setError(null);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/mcp/servers`);
+      const resp = await authFetch(`${gatewayUrl}/api/mcp/servers`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data: ServersResponse = await resp.json();
       setServers(data.servers);
@@ -70,7 +71,7 @@ export default function McpPage() {
     setError(null);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/mcp/servers/add`, {
+      const resp = await authFetch(`${gatewayUrl}/api/mcp/servers/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -105,7 +106,7 @@ export default function McpPage() {
     setError(null);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/mcp/servers/install`, {
+      const resp = await authFetch(`${gatewayUrl}/api/mcp/servers/install`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server_name: smitheryName }),
@@ -130,7 +131,7 @@ export default function McpPage() {
     setError(null);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/mcp/servers/remove`, {
+      const resp = await authFetch(`${gatewayUrl}/api/mcp/servers/remove`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -152,7 +153,7 @@ export default function McpPage() {
     setError(null);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/mcp/servers/uninstall`, {
+      const resp = await authFetch(`${gatewayUrl}/api/mcp/servers/uninstall`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server_name: serverName }),

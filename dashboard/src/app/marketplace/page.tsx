@@ -1,3 +1,4 @@
+import { authFetch } from "@/lib/tauri";
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -32,7 +33,7 @@ export default function MarketplacePage() {
     try {
       setLoading(true);
       setUnavailable(false);
-      const resp = await fetch(`${getGatewayUrl()}/api/skills`);
+      const resp = await authFetch(`${getGatewayUrl()}/api/skills`);
       if (resp.status === 404) {
         setUnavailable(true);
         setSkills([]);
@@ -62,7 +63,7 @@ export default function MarketplacePage() {
   const installSkill = async (slug: string) => {
     setInstalling(slug);
     try {
-      const resp = await fetch(`${getGatewayUrl()}/api/skills/install`, {
+      const resp = await authFetch(`${getGatewayUrl()}/api/skills/install`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source: slug }),

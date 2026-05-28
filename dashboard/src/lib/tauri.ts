@@ -81,3 +81,28 @@ export const getStatus = async (): Promise<any> => {
   }
   return { status: "EXTERNAL" };
 };
+
+
+// ─── Authenticated Fetch ──────────────────────────────────────────────
+// Module-level API key cache. Set by DashboardContext on init.
+let _dashboardApiKey = "";
+
+/** Set the dashboard API key for authenticated fetches. Called by DashboardContext. */
+export const setDashboardApiKey = (key: string) => { _dashboardApiKey = key; };
+
+/** Get the current dashboard API key. */
+export const getDashboardApiKeySync = () => _dashboardApiKey;
+
+/**
+ * Authenticated fetch wrapper. Automatically includes Authorization header
+ * for all /api/* endpoints (except public ones like /api/setup/ and /api/config/).
+ * Falls back to unauthenticated fetch for non-API URLs.
+ */
+export const authFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  const headers: Record<string, string> = { ...(options.headers as Record<string, string> || {}) };
+  const apiKey = _dashboardApiKey || (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_DASHBOARD_API_KEY || '' : '');
+  if (apiKey && !headers['Authorization'] && !headers['x-api-key']) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+  return fetch(url, { ...options, headers });
+};

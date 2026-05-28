@@ -1,3 +1,4 @@
+import { authFetch } from "@/lib/tauri";
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -64,8 +65,8 @@ export default function TunePage() {
     
     // Fetch settings and descriptors in parallel
     Promise.all([
-      fetch(`${gatewayUrl}/api/settings`).then(r => r.json()),
-      fetch(`${gatewayUrl}/api/models`).then(r => r.json())
+      authFetch(`${gatewayUrl}/api/settings`).then(r => r.json()),
+      authFetch(`${gatewayUrl}/api/models`).then(r => r.json())
     ])
     .then(([data, modelData]) => {
       if (data.status === "error") throw new Error(data.message);
@@ -100,7 +101,7 @@ export default function TunePage() {
     setValidationNotes([]);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/settings`, {
+      const resp = await authFetch(`${gatewayUrl}/api/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newSettings),
@@ -134,7 +135,7 @@ export default function TunePage() {
     setValidationNotes([]);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/settings`, {
+      const resp = await authFetch(`${gatewayUrl}/api/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [key]: value }),
@@ -164,7 +165,7 @@ export default function TunePage() {
     setSaving(true);
     try {
       const gatewayUrl = getGatewayUrl();
-      const resp = await fetch(`${gatewayUrl}/api/settings/reset`, { method: "POST" });
+      const resp = await authFetch(`${gatewayUrl}/api/settings/reset`, { method: "POST" });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.message || `HTTP ${resp.status}`);
       

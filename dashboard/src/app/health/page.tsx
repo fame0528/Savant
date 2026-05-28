@@ -1,3 +1,4 @@
+import { authFetch } from "@/lib/tauri";
 "use client";
 
 import { useState, useEffect } from "react";
@@ -25,7 +26,7 @@ export default function HealthPage() {
     const fetchHealth = async () => {
       try {
         const start = Date.now();
-        const resp = await fetch(`http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:${process.env.NEXT_PUBLIC_GATEWAY_PORT || 8080}/api/agents`);
+        const resp = await authFetch(`http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:${process.env.NEXT_PUBLIC_GATEWAY_PORT || 8080}/api/agents`);
         setGatewayLatency(Date.now() - start);
         if (resp.ok) {
           const data = await resp.json();

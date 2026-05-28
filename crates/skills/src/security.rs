@@ -111,6 +111,7 @@ pub fn is_blocked_domain(domain: &str) -> bool {
 /// Multi-source threat intelligence feeds.
 /// Combines MalwareBazaar (malware hashes) + URLhaus (malicious URLs/domains).
 const MALWARE_BAZAAR_URL: &str = "https://mb-api.abuse.ch/api/v1/";
+const MALWARE_BAZAAR_AUTH_KEY: &str = "15028f6d34d47ae92a6e0583559c89991a9afbf6ad574d8c";
 const URLHAUS_URL: &str = "https://urlhaus.abuse.ch/downloads/json_recent/";
 
 /// Result of a threat intelligence sync
@@ -214,6 +215,7 @@ async fn sync_malwarebazaar(client: &reqwest::Client) -> Result<usize, String> {
 
     let response = client
         .post(MALWARE_BAZAAR_URL)
+        .header("Auth-Key", MALWARE_BAZAAR_AUTH_KEY)
         .form(&[("query", "get_recent"), ("selector", "100")])
         .send()
         .await

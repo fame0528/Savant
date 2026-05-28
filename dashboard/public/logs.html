@@ -24,49 +24,27 @@
             align-items: center;
             flex-shrink: 0;
         }
-        #header h3 {
-            color: #00d5ff;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        #status {
-            font-size: 10px;
-            color: #888;
-        }
+        #header h3 { color: #00d5ff; font-size: 12px; font-weight: 600; }
+        #status { font-size: 10px; color: #888; }
         #copy-btn {
-            background: #2a3140;
-            color: #00d5ff;
-            border: 1px solid #3a4150;
-            padding: 3px 10px;
-            font-family: inherit;
-            font-size: 10px;
-            cursor: pointer;
-            border-radius: 3px;
-            transition: background 0.15s;
+            background: #2a3140; color: #00d5ff; border: 1px solid #3a4150;
+            padding: 3px 10px; font-family: inherit; font-size: 10px;
+            cursor: pointer; border-radius: 3px; transition: background 0.15s;
         }
         #copy-btn:hover { background: #3a4150; }
         #copy-btn:active { background: #00d5ff; color: #0a0e14; }
         #log {
-            flex: 1;
-            overflow-y: auto;
-            padding: 4px 8px;
-            font-size: 11px;
-            line-height: 1.4;
+            flex: 1; overflow-y: auto; padding: 4px 8px;
+            font-size: 11px; line-height: 1.4;
         }
         #log::-webkit-scrollbar { width: 6px; }
         #log::-webkit-scrollbar-track { background: #0a0e14; }
         #log::-webkit-scrollbar-thumb { background: #2a3140; border-radius: 3px; }
-        .log-line {
-            white-space: pre-wrap;
-            word-break: break-all;
-            padding: 1px 0;
-            border-bottom: 1px solid #141a22;
-        }
+        .log-line { white-space: pre-wrap; word-break: break-all; padding: 1px 0; border-bottom: 1px solid #141a22; }
         .log-line.info { color: #a6e3a1; }
         .log-line.warn { color: #f9e2af; }
         .log-line.error { color: #f38ba8; }
         .log-line.debug { color: #6c7086; }
-        .log-line.timestamp { color: #585b70; }
     </style>
 </head>
 <body>
@@ -86,7 +64,6 @@
 
         function addLine(text) {
             const div = document.createElement('div');
-            div.className = 'log-line';
             let cls = '';
             if (text.includes('[ERROR]')) cls = 'error';
             else if (text.includes('[WARN]')) cls = 'warn';
@@ -99,32 +76,33 @@
             logEl.scrollTop = logEl.scrollHeight;
         }
 
-        statusEl.textContent = 'Listening (Tauri)';
-        statusEl.style.color = '#a6e3a1';
-
-        // Use Tauri event system to receive system logs
-        const tauriInternals = window.__TAURI_INTERNALS__;
-        if (tauriInternals && typeof tauriInternals.listen === 'function') {
-            tauriInternals.listen('system-log-event', (event) => {
-                const logMsg = event.payload;
-                addLine(logMsg);
-            }).catch((e) => {
-                statusEl.textContent = 'Tauri event error: ' + e;
-                statusEl.style.color = '#f38ba8';
-            });
-        } else if (window.__TAURI__ && window.__TAURI__.event) {
-            window.__TAURI__.event.listen('system-log-event', (event) => {
-                const logMsg = event.payload;
-                addLine(logMsg);
-            }).catch((e) => {
-                statusEl.textContent = 'Tauri event error: ' + e;
-                statusEl.style.color = '#f38ba8';
-            });
-        } else {
-            statusEl.textContent = 'Tauri API not available';
-            statusEl.style.color = '#f38ba8';
+        // ── Tauri event listener (withGlobalTauri exposes window.__TAURI__) ──
+        function setupEventListener() {
+            if (window.__TAURI__ && window.__TAURI__.event) {
+                window.__TAURI__.event.listen('system-log-event', (event) => {
+                    addLine(event.payload);
+                }).then(() => {
+                    statusEl.textContent = 'Listening (Tauri)';
+                    statusEl.style.color = '#a6e3a1';
+                }).catch((e) => {
+                    statusEl.textContent = 'Event error: ' + e;
+                    statusEl.style.color = '#f38ba8';
+                });
+            } else {
+                // Retry once after 500ms — Tauri internals may inject asynchronously
+                setTimeout(() => {
+                    if (window.__TAURI__ && window.__TAURI__.event) {
+                        setupEventListener();
+                    } else {
+                        statusEl.textContent = 'Tauri API not available';
+                        statusEl.style.color = '#f38ba8';
+                    }
+                }, 500);
+            }
         }
+        setupEventListener();
 
+        // ── Copy All — use document.execCommand (works in all webviews) ──
         function copyAllLogs() {
             const lines = Array.from(logEl.children).map(el => el.textContent).join('\n');
             if (!lines) {
@@ -132,39 +110,28 @@
                 statusEl.style.color = '#f9e2af';
                 return;
             }
-            // Tauri v2 clipboard plugin — try internals first, then fallback
-            const tauriInternals = window.__TAURI_INTERNALS__;
-            if (tauriInternals && typeof tauriInternals.invoke === 'function') {
-                tauriInternals.invoke('plugin:clipboard-manager|write_text', { text: lines }).then(() => {
-                    showCopied();
-                }).catch((e) => {
-                    console.error('[logs] Tauri clipboard invoke failed:', e);
-                    fallbackCopy(lines);
-                });
-            } else {
-                fallbackCopy(lines);
-            }
-        }
-
-        function fallbackCopy(text) {
+            // Create offscreen textarea, select, copy, remove
+            const ta = document.createElement('textarea');
+            ta.value = lines;
+            ta.setAttribute('readonly', '');
+            ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            ta.setSelectionRange(0, ta.value.length);
             try {
-                navigator.clipboard.writeText(text).then(() => {
+                const ok = document.execCommand('copy');
+                if (ok) {
                     showCopied();
-                }).catch(() => {
-                    const ta = document.createElement('textarea');
-                    ta.value = text;
-                    ta.style.position = 'fixed';
-                    ta.style.opacity = '0';
-                    document.body.appendChild(ta);
-                    ta.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(ta);
-                    showCopied();
-                });
-            } catch {
-                statusEl.textContent = 'Copy failed';
+                } else {
+                    statusEl.textContent = 'Copy failed';
+                    statusEl.style.color = '#f38ba8';
+                }
+            } catch (e) {
+                statusEl.textContent = 'Copy failed: ' + e.message;
                 statusEl.style.color = '#f38ba8';
             }
+            document.body.removeChild(ta);
         }
 
         function showCopied() {

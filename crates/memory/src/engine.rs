@@ -221,8 +221,17 @@ impl MemoryEnclave {
                         "Clearing stale vector index at {:?} due to init error: {}",
                         vector_dir, e
                     );
-                    if let Err(e) = std::fs::remove_dir_all(&vector_dir) {
-                        debug!("Failed to remove stale vector index: {}", e);
+                    if let Err(remove_err) = std::fs::remove_dir_all(&vector_dir) {
+                        // If removal fails (e.g. locked by another process), don't retry —
+                        // the retry would fail with the same lock error.
+                        warn!(
+                            "Failed to remove stale vector index: {}. Another process may be using it.",
+                            remove_err
+                        );
+                        return Err(MemoryError::VectorInitFailed(format!(
+                            "Vector database locked by another process. Close other Savant instances and try again. (original error: {})",
+                            e
+                        )));
                     }
                     // Retry with original `vector_config` (which may have corrected dimensions)
                     SemanticVectorEngine::new(storage_path.as_ref(), vector_config)?

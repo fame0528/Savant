@@ -562,7 +562,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     isConnectingRef.current = true;
 
     const wsUrl = getWsUrl();
-    logger.info('WS', `Connecting to ${wsUrl} (apiKey=${dashboardApiKeyRef.current ? "(set)" : "(empty)"})`);
+    const diagWs = (msg: string) => setDebugLogs(prev => [{ timestamp: new Date().toISOString(), message: `[WS] ${msg}` }, ...prev]);
+    diagWs(`Connecting to ${wsUrl} (apiKey=${dashboardApiKeyRef.current ? "(set)" : "(empty)"})`);
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
 
@@ -572,6 +573,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       
       // Send authentication frame first — session handshake begins
       const apiKey = dashboardApiKeyRef.current || process.env.NEXT_PUBLIC_DASHBOARD_API_KEY || '';
+      diagWs(`Open. Sending auth (apiKey=${apiKey ? "(set)" : "(empty)"})`);
       socket.send(JSON.stringify({
         session_id: "",
         payload: `DASHBOARD_API_KEY:${apiKey}`,
@@ -608,7 +610,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     };
 
     socket.onclose = (e) => {
-      logger.warn('WS', `WebSocket closed: code=${e.code} reason=${e.reason || "(none)"}`);
+      diagWs(`Closed: code=${e.code} reason=${e.reason || "(none)"}`);
       setConnectionStatus('OFFLINE');
       setIsReady(false);
       socketRef.current = null;
@@ -622,7 +624,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     };
 
     socket.onerror = (e) => {
-      logger.error('WS', 'WebSocket error', e);
+      diagWs(`Error: ${JSON.stringify(e)}`);
       setConnectionStatus('OFFLINE');
     };
 
@@ -680,27 +682,25 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
     logger.info('Tauri', 'Running in Tauri mode');
 
+    // Push diagnostic to visible debug console (logger.info only goes to console.log)
+    const diag = (msg: string) => setDebugLogs(prev => [{ timestamp: new Date().toISOString(), message: `[DASHBOARD] ${msg}` }, ...prev]);
+
     const initTauri = async () => {
       try {
-        logger.info('Init', `isTauri=${isTauri()}, __TAURI_INTERNALS__=${!!(window as any).__TAURI_INTERNALS__}`);
+        diag(`isTauri=${isTauri()}, __TAURI_INTERNALS__=${!!(window as any).__TAURI_INTERNALS__}`);
         const config = await getDashboardConfig();
-        logger.info('Init', `getDashboardConfig returned: apiKey=${config.apiKey ? "(set)" : "(empty)"}, port=${config.port}`);
+        diag(`getDashboardConfig: apiKey=${config.apiKey ? "(set)" : "(empty)"}, port=${config.port}`);
         dashboardApiKeyRef.current = config.apiKey;
         gatewayPortRef.current = config.port;
         _dynamicGatewayPort = config.port;
-        if (config.apiKey) {
-          logger.info('Auth', 'Dashboard API key loaded from gateway config');
-        }
-        if (config.port !== 8080) {
-          logger.info('Gateway', `Gateway port: ${config.port}`);
-        }
         const result = await igniteSwarm();
-        logger.info('Ignition', 'Swarm Ignition:', result);
+        diag(`igniteSwarm: ${result}`);
         setConnectionStatus('NOMINAL');
         setIsMounted(true);
+        diag(`Scheduling WebSocket connect in 2s...`);
         setTimeout(() => { connectWebSocket(); }, 2000);
       } catch (e) {
-        logger.error('Ignition', 'Ignition Failure:', e);
+        diag(`IGNITION FAILURE: ${e instanceof Error ? e.message : String(e)}`);
         setConnectionStatus('OFFLINE');
         setIsMounted(true);
         setIgnitionError(e instanceof Error ? e.message : String(e));

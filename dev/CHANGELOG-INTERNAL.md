@@ -42,6 +42,20 @@ Heartbeat pulse → Agent LLM reflection → LearningEmitter.emit_emergent()
 
 **Status:** OPEN. Filter fix planned. Agent backend restart needed.
 
+**UPDATE (2026-05-28 17:27 EDT):** Filter fix implemented and pushed.
+
+**Fix:**
+- `crates/agent/src/learning/filter.rs` (+130/-5): Added `ENGINEERING_GROUNDING` regex set (10 patterns, weight 0.8) covering code/function/module, refactor, debug/root cause, fix/fixed, issue/bug/regression, performance/latency, design/pattern/architecture, dashboard/gateway/agent/heartbeat, test/verify/validation, config/version. Added `engineering` field to `GroundingScore`. Fixed refactor pattern to match "refactored" via `(ed|ing|s)?` suffix. Added 26 unit tests covering all grounding categories, previously-dropped content, edge cases, and weight verification.
+
+**Verification:**
+- `cargo check --workspace` — 0 errors
+- `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
+- `cargo test -p savant-agent --lib learning::filter` — 26 passed, 0 failed
+
+**Commit:** `2e8cc5a` — pushed to origin/main
+
+**Status:** FIXED. Agent backend restart still needed to resume LEARNINGS pipeline.
+
 ### 2026-05-28: Version Bump 0.3.4 → 0.3.5
 
 **Version bump:** 0.3.4 → 0.3.5 across all 28 Cargo.toml, 2 tauri.conf.json, dashboard/package.json (was 0.1.0 — never synced from scaffold), README.md, docs READMEs.

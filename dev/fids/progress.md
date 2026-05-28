@@ -33,6 +33,8 @@
 
 | Hash | Summary |
 |------|---------|
+| `2e8cc5a` | fix: add engineering grounding patterns to LEARNINGS filter — 10 patterns + 26 tests |
+| `4d4392d` | docs: update all tracking docs to v0.3.5 — progress, tracker, session summary, internal changelog |
 | `4a2c712` | chore: version bump 0.3.4 → 0.3.5 across all 30 files |
 | `aac6862` | fix: dashboard history partition key — flip precedence to agent_id > session_id |
 | `8b709a5` | fix: auto-select first agent on discovery, use getAgentMeta for display names |
@@ -68,9 +70,9 @@
 
 | # | Sev | Issue | Root Cause | Status |
 |---|-----|-------|-----------|--------|
-| 1 | CRITICAL | LEARNINGS.md not updated since March 28 | Agent backend offline since May 13; grounding filter over-blocking engineering content | OPEN — filter fix planned |
-| 2 | HIGH | Grounding filter only recognizes git/CI + introspective vocabulary | `filter.rs` ENVIRONMENTAL_GROUNDING and INTROSPECTIVE_GROUNDING patterns miss architectural/design content | OPEN — engineering patterns to be added |
-| 3 | MEDIUM | Tracking docs stale at v0.3.4 after v0.3.5 bump | progress.md, IMPLEMENTATION-TRACKER.md, SESSION-SUMMARY.md not updated | FIXING NOW |
+| 1 | CRITICAL | LEARNINGS.md not updated since March 28 | Agent backend offline since May 13; grounding filter over-blocking engineering content | FIXED (`2e8cc5a`) — engineering patterns added |
+| 2 | HIGH | Grounding filter only recognizes git/CI + introspective vocabulary | `filter.rs` ENVIRONMENTAL_GROUNDING and INTROSPECTIVE_GROUNDING patterns miss architectural/design content | FIXED (`2e8cc5a`) — ENGINEERING_GROUNDING added (10 patterns) |
+| 3 | MEDIUM | Tracking docs stale at v0.3.4 after v0.3.5 bump | progress.md, IMPLEMENTATION-TRACKER.md, SESSION-SUMMARY.md not updated | FIXED (`4d4392d`) |
 
 ---
 

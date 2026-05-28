@@ -195,7 +195,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [traitSnapshots, setTraitSnapshots] = useState<unknown[]>([]);
   
   // Data state
-  const [agents, setAgents] = useState<Agent[]>([{ id: '.savant', name: '.savant', status: 'online', role: 'core' }]);
+  const [agents, setAgents] = useState<Agent[]>([{ id: '.savant', name: 'Savant', status: 'online', role: 'core' }]);
   const [laneMessages, setLaneMessages] = useState<Record<string, Message[]>>({ global: [] });
   const [cognitiveInsights, setCognitiveInsights] = useState<Insight[]>([]);
   const [debugLogs, setDebugLogs] = useState<{timestamp: string, message: string}[]>([]);
@@ -234,7 +234,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const getAgentMeta = useCallback((agentId: string | undefined, role: string) => {
     if (role === 'user') return { name: 'YOU', image: null, isUser: true };
     const id = agentId?.toLowerCase() || 'unknown';
-    if (id === 'savant' || id === 'sav' || id === 'system') {
+    if (id === 'savant' || id === '.savant' || id === 'sav' || id === 'system') {
       return { name: 'SAVANT', image: `${getHttpUrl()}/api/agents/savant/image`, isSystem: true };
     }
     const agent = agents.find(a => a.id.toLowerCase() === id || a.name.toLowerCase() === id);
@@ -312,18 +312,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       })).values());
       if (uniqueAgents.length > 0) {
         setAgents(uniqueAgents as Agent[]);
-      }
-      // Set activeAgent from first discovered agent if not already set
-      if (!activeAgent && uniqueAgents.length > 0) {
-        const firstId = (uniqueAgents[0] as Agent).id;
-        setActiveAgent(firstId);
-        if (socketRef.current?.readyState === WebSocket.OPEN && sessionIdRef.current) {
-          socketRef.current.send(JSON.stringify({
-            session_id: sessionIdRef.current,
-            payload: { type: "HistoryRequest", data: { lane_id: firstId, limit: 100 } }
-          }));
-        }
-        logger.info('Agents', `Auto-selected agent: ${firstId}`);
+        logger.info('Agents', `Discovered ${uniqueAgents.length} agents`);
       }
     } else if (type === "history") {
       const { lane_id, history } = evData;

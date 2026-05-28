@@ -299,6 +299,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [syncedLanes, router]);
 
   const processEvent = (type: string, evData: any) => {
+    type = (type || "").toLowerCase();
     if (type === "session.assigned") {
       sessionIdRef.current = evData.session_id;
       setIsSessionReady(true);
@@ -309,7 +310,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         const id = a.id || `agent-${i}`;
         return [id, { ...a, id }];
       })).values());
-      setAgents(uniqueAgents as Agent[]);
+      if (uniqueAgents.length > 0) {
+        setAgents(uniqueAgents as Agent[]);
+      }
       // Set activeAgent from first discovered agent if not already set
       if (!activeAgent && uniqueAgents.length > 0) {
         const firstId = (uniqueAgents[0] as Agent).id;
@@ -561,7 +564,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         const rawJson = data.substring(data.indexOf(':') + 1);
         const payload = JSON.parse(rawJson);
         if (prefix === "EVENT") {
-          const eventType = payload.event_type;
+          const eventType = (payload.event_type || "").toLowerCase();
           const evData = typeof payload.payload === 'string' ? JSON.parse(payload.payload) : payload.payload;
 
           // Session handshake: capture assigned session ID and trigger sync sequence

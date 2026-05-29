@@ -269,7 +269,7 @@ where
                                 }
 
                                 if let Some(content) = choice["delta"]["content"].as_str() {
-                                    if !(provider_name == "openrouter" && content.contains("OPENROUTER PROCESSING")) {
+                                    if !content.contains("OPENROUTER PROCESSING") {
                                         chunk_count += 1;
                                         yield Ok(ChatChunk {
                                             agent_name: agent_name.clone(),

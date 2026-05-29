@@ -285,6 +285,15 @@ export default function ChatPage() {
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.3)', fontFamily: 'monospace' }}>{(typeof msg.timestamp === 'string' ? new Date(msg.timestamp) : new Date()).toLocaleTimeString()}</div>
+                        {msg.role === 'user' && msg.status && (
+                          <div title={msg.status} style={{
+                            width: '8px', height: '8px', borderRadius: '50%',
+                            background: msg.status === 'complete' ? '#00ff88' : msg.status === 'processing' ? 'var(--accent)' : msg.status === 'sent' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)',
+                            boxShadow: msg.status === 'processing' ? '0 0 8px var(--accent)' : msg.status === 'complete' ? '0 0 6px #00ff88' : 'none',
+                            animation: msg.status === 'processing' ? 'pulse 1.5s ease-in-out infinite' : 'none',
+                            transition: 'all 0.3s ease'
+                          }} />
+                        )}
                         {msg.role === 'assistant' && (
                           <button onClick={() => handleCopy(msg.content, `msg-${i}`)} className={styles.copyButton}>
                             {copiedId === `msg-${i}` ? '✓ COPIED' : 'COPY'}

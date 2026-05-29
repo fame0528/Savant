@@ -13,6 +13,7 @@ interface Message {
   agent?: string;
   timestamp: string;
   thoughts?: string;
+  status?: 'sending' | 'sent' | 'read' | 'processing' | 'complete';
 }
 
 interface Agent {
@@ -414,12 +415,19 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         const next = { ...prev };
         targetLanes.forEach(lane => {
           const laneId = lane.toLowerCase();
-          next[laneId] = [...(next[laneId] || []), { 
-            role: msg.role || 'assistant', 
-            content: content, 
-            agent: agentId, 
-            timestamp: new Date().toISOString(), 
-            thoughts: agentThoughts 
+          // Mark last pending user message as complete
+          const existing = next[laneId] || [];
+          const updated = existing.map(m =>
+            m.role === 'user' && (m.status === 'sent' || m.status === 'processing')
+              ? { ...m, status: 'complete' as const }
+              : m
+          );
+          next[laneId] = [...updated, {
+            role: msg.role || 'assistant',
+            content: content,
+            agent: agentId,
+            timestamp: new Date().toISOString(),
+            thoughts: agentThoughts,
           }];
         });
         return next;
@@ -440,6 +448,20 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         return;
       }
       setTypingAgents(prev => { const next = new Set(prev); next.add(agentId); return next; });
+      // Mark last user message as 'processing' when agent starts streaming
+      setLaneMessages(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(lane => {
+          const msgs = next[lane];
+          if (msgs && msgs.length > 0) {
+            const last = msgs[msgs.length - 1];
+            if (last.role === 'user' && last.status === 'sent') {
+              msgs[msgs.length - 1] = { ...last, status: 'processing' as const };
+            }
+          }
+        });
+        return next;
+      });
       setStreamingContent(prev => { const next = new Map(prev); next.set(agentId, (next.get(agentId) || '') + (chunk.content || "")); return next; });
     } else if (type === "heartbeat") { /* ignore */ }
     else if (type === "swarm_insight_history") {
@@ -765,6 +787,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           content,
           agent: 'user',
           timestamp: new Date().toISOString(),
+          status: 'sent' as const,
         }]
       }));
       // Track the dedup key — processEvent will skip matching user messages

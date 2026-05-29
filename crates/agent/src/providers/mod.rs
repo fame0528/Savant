@@ -171,6 +171,7 @@ fn openai_stream_to_chunks<S>(
     stream: S,
     agent_id: String,
     agent_name: String,
+    provider_name: String,
 ) -> Pin<Box<dyn Stream<Item = Result<ChatChunk, SavantError>> + Send>>
 where
     S: Stream<Item = Result<bytes::Bytes, SavantError>> + Send + 'static + std::marker::Unpin,
@@ -268,7 +269,7 @@ where
                                 }
 
                                 if let Some(content) = choice["delta"]["content"].as_str() {
-                                    if !content.contains("OPENROUTER PROCESSING") {
+                                    if !(provider_name == "openrouter" && content.contains("OPENROUTER PROCESSING")) {
                                         chunk_count += 1;
                                         yield Ok(ChatChunk {
                                             agent_name: agent_name.clone(),
@@ -295,8 +296,9 @@ where
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "[{}] OpenRouter stream interrupted ({}): propagating error",
+                        "[{}] {} stream interrupted ({}): propagating error",
                         agent_id,
+                        provider_name,
                         e
                     );
                     yield Err(SavantError::NetworkError(format!(
@@ -386,6 +388,7 @@ impl LlmProvider for OpenAiProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "openai".to_string(),
         ))
     }
 
@@ -595,6 +598,7 @@ impl LlmProvider for OpenRouterProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "openrouter".to_string(),
         ))
     }
 
@@ -1036,6 +1040,7 @@ impl LlmProvider for GroqProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "groq".to_string(),
         ))
     }
 }
@@ -1260,6 +1265,7 @@ impl LlmProvider for MistralProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "mistral".to_string(),
         ))
     }
 }
@@ -1311,6 +1317,7 @@ impl LlmProvider for TogetherProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "together".to_string(),
         ))
     }
 }
@@ -1362,6 +1369,7 @@ impl LlmProvider for DeepseekProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "deepseek".to_string(),
         ))
     }
 }
@@ -1575,6 +1583,7 @@ impl LlmProvider for AzureProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "azure".to_string(),
         ))
     }
 }
@@ -1628,6 +1637,7 @@ impl LlmProvider for XaiProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "xai".to_string(),
         ))
     }
 }
@@ -1679,6 +1689,7 @@ impl LlmProvider for FireworksProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "fireworks".to_string(),
         ))
     }
 }
@@ -1730,6 +1741,7 @@ impl LlmProvider for NovitaProvider {
             stream,
             self.agent_id.clone(),
             self.agent_name.clone(),
+            "novita".to_string(),
         ))
     }
 }

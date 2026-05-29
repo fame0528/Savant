@@ -427,7 +427,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
                     fontSize: '10px', fontWeight: 900, color: 'var(--accent)'
                   }}>
                     <span style={{ position: 'absolute' }}>{agentMeta.name.charAt(0)}</span>
-                    <AuthImage src={`${getHttpUrl()}/api/agents/${agent.id}/image`} alt={agentMeta.name} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                    <AuthImage src={agentMeta.image || `${getHttpUrl()}/api/agents/${agent.id}/image`} alt={agentMeta.name} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                   </div>
                   {!isCollapsed && <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.5px' }}>{agentMeta.name}</span>}
                 </div>
@@ -533,7 +533,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
                               aria-label={`${meta.name} insight: ${insight.category}`}>
                               <div className={styles.insightIdentity}>
                                 {meta.image ? (
-                                  <img src={`${meta.image}?t=cachebust`} alt={meta.name} className={styles.insightAvatar} />
+                                  <AuthImage src={meta.image} alt={meta.name} style={{ width: '20px', height: '20px', borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--accent)', boxShadow: '0 0 5px var(--accent)' }} />
                                 ) : (
                                   <div className={styles.insightAvatar} style={{ background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#000', fontWeight: 900 }}>
                                     {meta.name.substring(0, 1)}

@@ -46,7 +46,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws://localhost:* http://localhost:* wss://localhost:* ws://127.0.0.1:* http://127.0.0.1:* wss://127.0.0.1:*; img-src 'self' http://127.0.0.1:* http://localhost:* data:"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* http://localhost:* wss://localhost:* ws://127.0.0.1:* http://127.0.0.1:* wss://127.0.0.1:*; img-src 'self' http://127.0.0.1:* http://localhost:* data:"
     },
     "trayIcon": {
       "iconPath": "icons/icon.ico",

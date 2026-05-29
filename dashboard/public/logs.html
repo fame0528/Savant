@@ -117,7 +117,7 @@
                     showCopied();
                     return;
                 }
-            } catch (e) { /* fall through */ }
+            } catch (e) { console.warn('[CopyAll] Tier 1 (navigator.clipboard) failed:', e); }
             // Tier 2: execCommand fallback (most reliable across all WebViews)
             try {
                 const ta = document.createElement('textarea');
@@ -133,15 +133,17 @@
                     showCopied();
                     return;
                 }
-            } catch (e) { /* fall through */ }
+                console.warn('[CopyAll] Tier 2 (execCommand) returned false');
+            } catch (e) { console.warn('[CopyAll] Tier 2 (execCommand) failed:', e); }
             // Tier 3: Tauri clipboard plugin (requires plugin registered in tauri.conf.json)
             try {
                 if (window.__TAURI__ && window.__TAURI__.core) {
-                    await window.__TAURI__.core.invoke('plugin:clipboard|write_text', { text: lines });
+                    await window.__TAURI__.core.invoke('plugin:clipboard-manager|write_text', { text: lines });
                     showCopied();
                     return;
                 }
-            } catch (e) { /* fall through */ }
+                console.warn('[CopyAll] Tier 3: window.__TAURI__.core not available');
+            } catch (e) { console.warn('[CopyAll] Tier 3 (Tauri plugin) failed:', e); }
             statusEl.textContent = 'Copy failed — no method available';
             statusEl.style.color = '#f38ba8';
         }

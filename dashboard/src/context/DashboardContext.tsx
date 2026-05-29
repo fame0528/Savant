@@ -193,7 +193,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [mutationHistory, setMutationHistory] = useState<unknown[]>([]);
   const [evolutionScore, setEvolutionScore] = useState<unknown | null>(null);
   const [traitSnapshots, setTraitSnapshots] = useState<unknown[]>([]);
-  
+  const [dashboardApiKeyReady, setDashboardApiKeyReady] = useState(false);
+
   // Data state
   const [agents, setAgents] = useState<Agent[]>([{ id: '.savant', name: 'Savant', status: 'online', role: 'core' }]);
   const [laneMessages, setLaneMessages] = useState<Record<string, Message[]>>({ global: [] });
@@ -660,6 +661,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         diag(`getDashboardConfig: apiKey=${config.apiKey ? "(set)" : "(empty)"}, port=${config.port}`);
         dashboardApiKeyRef.current = config.apiKey;
         setDashboardApiKey(config.apiKey);
+        setDashboardApiKeyReady(true);
         gatewayPortRef.current = config.port;
         setGatewayPort(config.port);
         const result = await igniteSwarm();
@@ -817,7 +819,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } catch {
       return null;
     }
-  }, []);
+  }, [dashboardApiKeyReady]);
 
   const value: DashboardState = {
     activeAgent, setActiveAgent,

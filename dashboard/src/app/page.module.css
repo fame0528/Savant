@@ -61,6 +61,7 @@
 }
 
 .agentAvatar {
+  position: relative;
   border-radius: 50%;
   background: var(--glass-bg);
   display: flex;
@@ -166,7 +167,7 @@
   }
 
 .inputArea {
-  padding: 16px 24px;
+  padding: 12px 16px;
   display: flex;
   align-items: center;
   border-top: 1px solid var(--border);

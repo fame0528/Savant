@@ -901,12 +901,12 @@ async fn agent_image_handler(
     State(state): State<Arc<GatewayState>>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    // Validate name to prevent path traversal - only allow alphanumeric + hyphens + underscores
+    // Validate name to prevent path traversal - allow alphanumeric + hyphens + underscores + dots
     if name.is_empty()
         || name.len() > 128
         || !name
             .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
     {
         return Response::builder()
             .status(400)

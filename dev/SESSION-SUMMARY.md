@@ -1,8 +1,8 @@
-# Savant Session Summary — 2026-05-29
+# Savant Session Summary — 2026-05-30
 
 ## Mission
 
-Complete FID-20260529-MESSAGING-AND-SCALING (messaging pipeline hardening + message status UX), wire memory enclave, set up version infrastructure, bump to v0.4.0.
+Complete FID-20260530-AGENT-TIER-REDESIGN (two-tier agent system), FID-20260530-SESSION-STATE-WAL-ENTERPRISE (WAL frontmatter), FID-20260529-MARKDOWN-ZERO-DEFECT (8,501 violations). Full repo audit and push.
 
 ## Status: COMPLETE
 
@@ -10,44 +10,54 @@ Complete FID-20260529-MESSAGING-AND-SCALING (messaging pipeline hardening + mess
 
 | Item | Status | Details |
 |------|--------|---------|
-| FID-20260529-MESSAGING-AND-SCALING | CLOSED (26/26) | 9 silent-drop fixes, 10-state message status UX, gateway ACK, task supervisor, agent presence, diagnostics |
-| FID-20260529-MEMORY-ENCLAVE-WIRING | CLOSED (2/2) | Extract `engine.enclave()` before move, wire into Orchestrator |
-| Version Infrastructure | COMPLETE | `VERSION` file + workspace inheritance + bump scripts |
-| Version Bump | COMPLETE | 0.3.5 → 0.4.0 across all files |
-| Project Audit | COMPLETE | All stale version refs fixed, docs updated |
-| compaction.rs bugfix | COMPLETE | Fixed `}..Default::default()` Range type error |
+| FID-20260530-AGENT-TIER-REDESIGN | CLOSED (37/37) | Two-tier agent system, DelegationEngine, 10 bug fixes, 19 architectural gaps, 6 profiles |
+| FID-20260530-SESSION-STATE-WAL-ENTERPRISE | CLOSED (7/7) | YAML frontmatter WAL, CLI state display, 6 tests |
+| FID-20260529-MARKDOWN-ZERO-DEFECT | CLOSED | 8,501 markdownlint violations eliminated (0 remaining) |
+| SOUL.md Rewrite | COMPLETE | Enterprise persona specification, removed corrupted entries |
+| Profile SOUL.md Files | COMPLETE | 6 profiles rewritten to enterprise quality |
+| Repo Audit | COMPLETE | Bloat removed, version consistent, docs updated |
+
+## Bug Fixes (10 pre-existing bugs)
+
+| # | Bug | Fix |
+|---|-----|-----|
+| 1 | `pop_deferred()` duplicate spawn | Remove re-push, add drain loop |
+| 2 | Blackboard clobbering | Task-specific hashes |
+| 3 | CCT minting ×3 | Consolidated `mint_subagent_cct()` |
+| 4 | No subagent count limit | `max_subagents_per_agent` check |
+| 5 | `handle.abort()` only | 10s drain timeout |
+| 6 | Errors swallowed | `JoinHandle<Result<(), String>>` |
+| 7 | Speculative delegation sequential | `join_all` for parallel branches |
+| 8 | Agent index race condition | `compare_exchange` loop |
+| 9 | Per-agent registry | Shared at Swarm level |
+| 10 | Naive DELEGATE: parser | Structured JSON blocks + legacy fallback |
+
+## New Modules (9 files, 25 tests)
+
+| Module | Tests | Purpose |
+|--------|-------|---------|
+| `subagent_registry.rs` | 4 | DashMap-based tracking, IterationBudget |
+| `file_lock.rs` | 3 | Reader-writer locks |
+| `loop_detector.rs` | 4 | Multi-layered loop detection |
+| `delegation/mod.rs` | 3 | DelegationEngine with routing, hooks, caching |
+| `delegation/profiles.rs` | 4 | TOML-based profile loader |
+| `delegation/router.rs` | 0 | Module shell |
+| `tools/tool_filter.rs` | 3 | Per-profile tool restrictions |
+| `workspace_guard.rs` | 4 | Path validation |
+| `tests/delegation_pipeline.rs` | 5 | Integration tests |
 
 ## Tests
 
 - `cargo check --workspace` — 0 errors
-- `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
-- `cargo fmt --check` — 0 violations
-- `npx tsc --noEmit` — 0 errors
-
-## Version Infrastructure
-
-- **Before:** 31 files manually edited per version bump
-- **After:** 1 file (`VERSION`) + 1 command (`./scripts/bump-version.ps1 0.5.0`)
-- All 28 Rust crates use `version.workspace = true` (inherit from root `Cargo.toml`)
-
-## Key Files Changed
-
-- `crates/agent/src/pulse/heartbeat.rs` — A1, B1, D1 (error responses, diagnostics)
-- `crates/gateway/src/server.rs` — A3, A4, B2, B3, D2 (task supervisor, mismatch events)
-- `crates/gateway/src/handlers/mod.rs` — C2, D3, E-3 (agent presence, ACK)
-- `crates/gateway/src/lanes.rs` — A2 (lane timeout error response)
-- `crates/agent/src/swarm.rs` — C1, memory enclave wiring
-- `crates/core/src/types/mod.rs` — `is_error` field on ChatMessage
-- `dashboard/src/context/DashboardContext.tsx` — E-1 through E-7 (10-state status machine)
-- `dashboard/src/app/page.tsx` — E-8, E-10, E-11 (status dot, recovery buttons, typing indicator)
-- `dashboard/src/app/page.module.css` — E-9 (7 CSS animations)
-- `dashboard/src/app/globals.css` — E-8 (theme variables)
-- `Cargo.toml` — `[workspace.package] version = "0.4.0"`
-- `VERSION` — single source of truth
-- `scripts/bump-version.ps1` + `scripts/bump-version.sh` — version bump automation
+- `cargo clippy --lib` — 0 warnings
+- `cargo test --lib` — 335/335 pass
+- `cargo test --test delegation_pipeline` — 5/5 pass
+- `markdownlint` — 0 violations (entire repo)
+- Version: v0.4.0 consistent across all 5 targets
 
 ## Git
 
 - Branch: main
-- Files changed: ~113
-- Ready for push: YES
+- Commits: `3f6403d` (main push), `6b12a0f` (cleanup)
+- Files changed: 246
+- Ready for push: PUSHED

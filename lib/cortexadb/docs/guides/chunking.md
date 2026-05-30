@@ -5,6 +5,7 @@ CortexaDB provides built-in text chunking for breaking documents into smaller pi
 ## Overview
 
 When ingesting long documents, you need to split them into chunks that:
+
 - Fit within embedding model token limits
 - Preserve semantic coherence
 - Maintain context via overlap
@@ -38,12 +39,13 @@ chunks = chunk(text, strategy="recursive", chunk_size=512, overlap=50)
 ```
 
 Split order:
+
 1. Triple newlines (`\n\n\n`)
-2. Double newlines (`\n\n`) — paragraph breaks
-3. Single newlines (`\n`)
-4. Sentence endings (`.`, `!`, `?`)
-5. Clause separators (`,`, `;`, `:`, ` `)
-6. Individual spaces
+1. Double newlines (`\n\n`) — paragraph breaks
+1. Single newlines (`\n`)
+1. Sentence endings (`.`, `!`, `?`)
+1. Clause separators (`,`, `;`, `:`, ` `)
+1. Individual spaces
 
 Falls back to fixed chunking if no separator works.
 

@@ -723,7 +723,9 @@ mod tests {
 
     #[test]
     fn test_vector_engine_creation() {
-        let engine = SemanticVectorEngine::new("./ruvector_test_create.db", VectorConfig::test_config()).unwrap();
+        let engine =
+            SemanticVectorEngine::new("./ruvector_test_create.db", VectorConfig::test_config())
+                .unwrap();
         assert_eq!(engine.config().dimensions, 64);
         std::fs::remove_file("./ruvector_test_create.db").ok();
     }
@@ -743,7 +745,9 @@ mod tests {
 
     #[test]
     fn test_dimension_mismatch_error() {
-        let engine = SemanticVectorEngine::new("./ruvector_test_mismatch.db", VectorConfig::test_config()).unwrap();
+        let engine =
+            SemanticVectorEngine::new("./ruvector_test_mismatch.db", VectorConfig::test_config())
+                .unwrap();
         let wrong_dims = vec![0.1; 128];
         let result = engine.index_memory("test", &wrong_dims);
         assert!(matches!(result, Err(MemoryError::DimensionMismatch { .. })));
@@ -752,7 +756,9 @@ mod tests {
 
     #[test]
     fn test_vector_count_initially_zero() {
-        let engine = SemanticVectorEngine::new("./ruvector_test_zero.db", VectorConfig::test_config()).unwrap();
+        let engine =
+            SemanticVectorEngine::new("./ruvector_test_zero.db", VectorConfig::test_config())
+                .unwrap();
         assert_eq!(engine.vector_count(), 0);
         std::fs::remove_file("./ruvector_test_zero.db").ok();
     }

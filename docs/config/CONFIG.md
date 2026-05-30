@@ -4,9 +4,10 @@
 > **Reference:** `config/savant.toml`
 
 Configuration uses [Figment](https://docs.rs/figment) for layered loading:
+
 1. **Defaults** (from `Default` impl)
-2. **TOML file** (`config/savant.toml` or `~/.savant/savant.toml`)
-3. **Environment variables** with `SAVANT_` prefix (e.g., `SAVANT_SERVER_HOST`)
+1. **TOML file** (`config/savant.toml` or `~/.savant/savant.toml`)
+1. **Environment variables** with `SAVANT_` prefix (e.g., `SAVANT_SERVER_HOST`)
 
 All fields use `#[serde(default)]` — partial config files are valid. Missing sections use defaults.
 

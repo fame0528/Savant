@@ -61,4 +61,5 @@ savant --migrate --from ./legacy_project --to ./savant_workspace
 ```
 
 ## 4. Support
+
 Refer to [collective_intelligence.md](../collective_intelligence.md) for details on how your agents will participate in the new consensus model.

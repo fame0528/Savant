@@ -1,9 +1,9 @@
+# SAVANT v0.4.0
+
 <!-- markdownlint-disable MD033 -->
 <div align="center">
 
 <img src="img/savant.png" alt="Savant Logo" width="180" />
-
-# SAVANT v0.3.5
 
 **One Mind. A Thousand Faces.**
 
@@ -62,6 +62,8 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 - **Cognitive Architecture** — Goal decomposition, strategic synthesis, memory consolidation, and proactive heartbeat loops
 - **Consciousness Layer** — Continuously thinking daemon with entropy-based cadence, reconstructive narrative synthesis, wonder engine, anti-echo-chamber, and consciousness budget
 - **Resource Governor** — CPU/memory-aware agent spawning with 4 pressure levels, adaptive semaphore, and deferred agent queue
+- **Two-Tier Agent System** — Full agents (workspace-based, persistent, governor-gated at 128 concurrent) and Sub-Agents (profile-based, ephemeral, governor-aware). 6 specialized profiles: coding, documentation, research, testing, orchestrator, general. Each profile has its own SOUL.md, tool restrictions, and iteration budget.
+- **Delegation Engine** — Profile-based sub-agent spawning with keyword routing, delegation hooks (on_start, on_complete), result caching (5min TTL), and lifecycle observability events. Wired into the live agent loop.
 - **Cost-Aware Routing** — Heuristic task complexity classification routes simple tasks to cheap models and complex tasks to expensive models
 - **Proactive Context Gathering** — Parallel memory + git log gathering before user asks
 - **Threat Intelligence** — Global blocklist sync with configurable threat intelligence feed
@@ -87,7 +89,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 ## Architecture
 
-<img src="img/architecture.png" alt="Savant Architecture v0.3.5" width="850" />
+<img src="img/architecture.png" alt="Savant Architecture v0.4.0" width="850" />
 
 </div>
 
@@ -176,15 +178,15 @@ Savant implements a **mandatory security gate** for all skills. Every skill must
 - **Dangerous Command Detection** — sudo, chmod 777, crontab, pipe-to-bash
 - **10 Proactive Checks:**
   1. Clipboard hijacking
-  2. Persistence injection
-  3. Lateral movement
-  4. Cryptojacking
-  5. Reverse shell
-  6. Keylogger
-  7. Screen capture
-  8. Time-bomb
-  9. Typosquatting (Levenshtein distance)
-  10. Dependency confusion (async registry verification)
+  1. Persistence injection
+  1. Lateral movement
+  1. Cryptojacking
+  1. Reverse shell
+  1. Keylogger
+  1. Screen capture
+  1. Time-bomb
+  1. Typosquatting (Levenshtein distance)
+  1. Dependency confusion (async registry verification)
 
 ---
 
@@ -283,6 +285,7 @@ memory_db_path = "./data/memory"   # Agent memory engine (separate instance)
 Changes to `savant.toml` are applied automatically via file watcher.
 
 **Provider tiers:**
+
 - **Default** — `opengateway` + `mimo-v2.5-pro` (free, unlimited, zero setup)
 - **Local** — `ollama` + `gemma4` (offline, private, no cloud dependency)
 - **Bring Your Own** — `openrouter`, `openai`, `anthropic`, etc. (API key required)
@@ -319,6 +322,7 @@ match result {
 ### Skill Discovery
 
 Skills are discovered from two locations:
+
 - **Swarm-wide:** `<workspace>/skills/`
 - **Agent-specific:** `<workspace>/workspaces/workspace-{name}/skills/`
 
@@ -351,7 +355,7 @@ Instructions and implementation details...
 | :--- | :--- |
 | `savant_core` | Shared types, config, error handling, traits, Fjall DB |
 | `savant_gateway` | Axum WebSocket server, authentication, skill control, config watcher |
-| `savant_agent` | Agent lifecycle, swarm coordination, 15 LLM providers, A2A delegation |
+| `savant_agent` | Agent lifecycle, swarm coordination, 15 LLM providers, A2A delegation, two-tier agent system |
 | `savant_cognitive` | Strategic synthesis, goal decomposition, proactive loops |
 | `savant_memory` | Hybrid storage (Fjall LSM + vectors + consolidation), WAL journaling |
 | `savant_skills` | OpenClaw skills, security scanner, ClawHub, Docker/Nix |

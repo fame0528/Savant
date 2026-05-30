@@ -16,8 +16,8 @@ Every action performed by an agent is authorized via an **Ed25519-signed Capabil
 ### Token Flow
 
 1. **Gateway** mints a token for an agent during task delegation.
-2. **Agent** passes the token to the **Wassette Sandbox** via IPC.
-3. **Sandbox** verifies the signature and scope *mathematically* before granting tool access.
+1. **Agent** passes the token to the **Wassette Sandbox** via IPC.
+1. **Sandbox** verifies the signature and scope *mathematically* before granting tool access.
 
 ## 2. Wassette Sandbox (OCI WASM)
 
@@ -40,6 +40,7 @@ All non-public REST endpoints require API key authentication:
 ### Immutable Config Fields
 
 Security-critical fields blocked from runtime mutation (returns 403):
+
 - `server.dashboard_api_key`, `server.host`, `server.port`, `server.signing_key`, `security.enable_blocklist_sync`
 
 ### Input Validation
@@ -61,6 +62,7 @@ Side-effect tool execution wrapped in `tokio::spawn` to isolate panics. Panics c
 ### Security Scanner
 
 Mandatory on every tool execution (no optional bypass). Scans for:
+
 - Command injection patterns
 - Dangerous file operations
 - Network exfiltration attempts

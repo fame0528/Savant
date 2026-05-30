@@ -112,7 +112,10 @@ struct AppState {
 
 #[tauri::command]
 #[allow(clippy::disallowed_methods)] // serde_json::json! macro uses .unwrap() on compile-time-validated literals
-async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Result<serde_json::Value, String> {
+async fn ignite_swarm(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<serde_json::Value, String> {
     info!("=== SWARM IGNITION STARTED ===");
 
     let mut lock = state.ignition.lock().await;
@@ -123,13 +126,17 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
             eprintln!("[desktop] Failed to emit system-log-event: {}", e);
         }
         // Return the dashboard API key + gateway port from the already-stored ignition config
-        let dashboard_key = lock.as_ref()
+        let dashboard_key = lock
+            .as_ref()
             .and_then(|ig| ig.config.server.dashboard_api_key.clone())
             .unwrap_or_default();
-        let gateway_port = lock.as_ref()
+        let gateway_port = lock
+            .as_ref()
             .map(|ig| ig.config.server.port)
             .unwrap_or(8080);
-        return Ok(serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key, "gateway_port": gateway_port }));
+        return Ok(
+            serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key, "gateway_port": gateway_port }),
+        );
     }
 
     // Step 1: Resolve paths using SavantPathResolver (set up in main.rs setup hook)
@@ -148,9 +155,12 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
             match SavantPathResolver::new(&app_handle) {
                 Ok(r) => {
                     app_handle.manage(r);
-                    app_handle.try_state::<SavantPathResolver>().ok_or_else(|| {
-                        "Failed to register SavantPathResolver even after inline creation".to_string()
-                    })?
+                    app_handle
+                        .try_state::<SavantPathResolver>()
+                        .ok_or_else(|| {
+                            "Failed to register SavantPathResolver even after inline creation"
+                                .to_string()
+                        })?
                 }
                 Err(e) => {
                     let msg = format!("CRITICAL: SavantPathResolver creation failed: {}", e);
@@ -252,12 +262,19 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
         Ok(ignition) => {
             info!("[3/5] IgnitionService returned OK");
             // Report key source in release mode (bootstrap_log writes to file, survives sink suppression)
-            let key_source = if std::env::var("OPENGATEWAY_API_KEY").ok().filter(|k| !k.is_empty()).is_some() {
+            let key_source = if std::env::var("OPENGATEWAY_API_KEY")
+                .ok()
+                .filter(|k| !k.is_empty())
+                .is_some()
+            {
                 "loaded"
             } else {
                 "MISSING"
             };
-            bootstrap_log(&format!("[3/5] IgnitionService OK — OpenGateway key: {}", key_source));
+            bootstrap_log(&format!(
+                "[3/5] IgnitionService OK — OpenGateway key: {}",
+                key_source
+            ));
 
             // Step 4: Store state
             info!("[4/5] Storing ignition state...");
@@ -285,9 +302,16 @@ async fn ignite_swarm(state: State<'_, AppState>, app_handle: AppHandle) -> Resu
                 eprintln!("[desktop] Failed to emit system-log-event: {}", e);
             }
             // Return dashboard API key + gateway port so frontend can connect
-            let dashboard_key = ignition_arc.config.server.dashboard_api_key.clone().unwrap_or_default();
+            let dashboard_key = ignition_arc
+                .config
+                .server
+                .dashboard_api_key
+                .clone()
+                .unwrap_or_default();
             let gateway_port = ignition_arc.config.server.port;
-            Ok(serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key, "gateway_port": gateway_port }))
+            Ok(
+                serde_json::json!({ "status": msg, "dashboard_api_key": dashboard_key, "gateway_port": gateway_port }),
+            )
         }
         Err(e) => {
             let msg = format!("IGNITION FAILED: {}", e);

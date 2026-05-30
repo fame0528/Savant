@@ -87,31 +87,31 @@ impl Tool for SovereignShell {
             .max()
             .unwrap_or(RiskLevel::Clean);
 
-            if max_severity >= RiskLevel::High {
-                let details: Vec<String> = findings
-                    .iter()
-                    .map(|f| format!("[{}] {}", f.severity, f.message))
-                    .collect();
-                tracing::warn!(
-                    command = command,
-                    risk_level = %max_severity,
-                    findings = findings.len(),
-                    "Shell command blocked by security scanner"
-                );
-                return Err(SavantError::InvalidInput(format!(
-                    "Command blocked by security scanner (risk: {}):\n{}",
-                    max_severity,
-                    details.join("\n")
-                )));
-            }
+        if max_severity >= RiskLevel::High {
+            let details: Vec<String> = findings
+                .iter()
+                .map(|f| format!("[{}] {}", f.severity, f.message))
+                .collect();
+            tracing::warn!(
+                command = command,
+                risk_level = %max_severity,
+                findings = findings.len(),
+                "Shell command blocked by security scanner"
+            );
+            return Err(SavantError::InvalidInput(format!(
+                "Command blocked by security scanner (risk: {}):\n{}",
+                max_severity,
+                details.join("\n")
+            )));
+        }
 
-            if !findings.is_empty() {
-                tracing::info!(
-                    command = command,
-                    findings = findings.len(),
-                    "Shell command has security findings (proceeding — below block threshold)"
-                );
-            }
+        if !findings.is_empty() {
+            tracing::info!(
+                command = command,
+                findings = findings.len(),
+                "Shell command has security findings (proceeding — below block threshold)"
+            );
+        }
 
         let output = tokio::process::Command::new("sh")
             .arg("-c")
@@ -120,8 +120,14 @@ impl Tool for SovereignShell {
             // Strip sensitive environment variables before spawning child process
             .env_clear()
             .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
-            .env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string()))
+            .env(
+                "HOME",
+                std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
+            )
+            .env(
+                "LANG",
+                std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string()),
+            )
             .env("TERM", "xterm-256color")
             .output()
             .await

@@ -94,14 +94,12 @@ async fn canvas_ws_handler(
                 .get(axum::http::header::AUTHORIZATION)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.strip_prefix("Bearer "))
-                .or_else(|| {
-                    headers
-                        .get("x-api-key")
-                        .and_then(|v| v.to_str().ok())
-                });
+                .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()));
 
             let authorized = provided
-                .map(|k| crate::auth::http_middleware::constant_time_eq(k.as_bytes(), key.as_bytes()))
+                .map(|k| {
+                    crate::auth::http_middleware::constant_time_eq(k.as_bytes(), key.as_bytes())
+                })
                 .unwrap_or(false);
 
             if !authorized {
@@ -181,11 +179,13 @@ pub async fn start_gateway(
         let webhook_token = {
             use blake3::Hasher;
             let mut hasher = Hasher::new();
-            hasher.update(&std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-                .to_le_bytes());
+            hasher.update(
+                &std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+                    .to_le_bytes(),
+            );
             hasher.update(uuid::Uuid::new_v4().as_bytes());
             hasher.finalize().to_hex().to_string()
         };
@@ -348,7 +348,10 @@ pub async fn start_gateway(
         // Dashboard feature APIs
         .route("/api/memory/search", get(memory_search_handler))
         .route("/api/governor/status", get(governor_status_handler))
-        .route("/api/consciousness/status", get(consciousness_status_handler))
+        .route(
+            "/api/consciousness/status",
+            get(consciousness_status_handler),
+        )
         .route("/api/chat", axum::routing::post(rest_chat_handler))
         .route("/api/changelog", get(changelog_handler))
         .route(
@@ -535,18 +538,32 @@ async fn websocket_handler(
 ) -> impl IntoResponse {
     // Connection limit: max 100 concurrent WebSocket connections
     const MAX_WS_CONNECTIONS: usize = 100;
-    let current = state.ws_connections.load(std::sync::atomic::Ordering::Relaxed);
+    let current = state
+        .ws_connections
+        .load(std::sync::atomic::Ordering::Relaxed);
     if current >= MAX_WS_CONNECTIONS {
-        tracing::warn!("[gateway] WebSocket connection rejected — limit reached ({}/{})", current, MAX_WS_CONNECTIONS);
-        return (axum::http::StatusCode::TOO_MANY_REQUESTS, "Too many connections").into_response();
+        tracing::warn!(
+            "[gateway] WebSocket connection rejected — limit reached ({}/{})",
+            current,
+            MAX_WS_CONNECTIONS
+        );
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "Too many connections",
+        )
+            .into_response();
     }
-    state.ws_connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .ws_connections
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     ws.on_upgrade(|socket| handle_socket_with_cleanup(socket, state))
 }
 
 async fn handle_socket_with_cleanup(socket: WebSocket, state: Arc<GatewayState>) {
     handle_socket(socket, state.clone()).await;
-    state.ws_connections.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .ws_connections
+        .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
@@ -736,6 +753,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                         session_id: Some(savant_core::types::SessionId("learnings".to_string())),
                         channel: savant_core::types::AgentOutputChannel::Telemetry,
                         images: Vec::new(),
+                        is_error: false,
                     };
                     if let Err(e) =
                         crate::persistence::GatewayPersistence::persist_chat(&storage_clone, &msg)
@@ -806,20 +824,28 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         }
     });
 
-
     // 7. Task 4: WebSocket Receiver
     let storage = state.storage.clone();
     let nexus_inner = state.nexus.clone();
     // Snapshot config at connection time — the handler needs an owned Config,
     // not the Arc<RwLock<Config>> wrapper.
     let config_snapshot = state.config.read().await.clone();
+    let out_tx_recv = outgoing_tx.clone();
     let mut recv_task = tokio::spawn({
         let session_id = session_id.clone();
         let session_context_clone = session_context.clone();
+        let out_tx_recv = out_tx_recv;
         async move {
             while let Some(msg_result) = receiver.next().await {
                 match msg_result {
                     Ok(Message::Text(text)) => {
+                        // D2: Structured tracing at WS message receipt (FID-20260529)
+                        tracing::debug!(
+                            "[gateway] INBOUND WS frame: session={}, size={}b",
+                            session_id.0,
+                            text.len()
+                        );
+
                         // GTW-10: Validate message size before parsing to prevent memory exhaustion
                         const MAX_WS_MESSAGE_BYTES: usize = 1024 * 1024; // 1 MB
                         if text.len() > MAX_WS_MESSAGE_BYTES {
@@ -828,6 +854,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                                 text.len(),
                                 MAX_WS_MESSAGE_BYTES
                             );
+                            // A4: Send error response to client (FID-20260529)
+                            let _ = out_tx_recv
+                                .send(Message::Text(
+                                    r#"{"error":"Message too large","limit":1048576}"#.to_string(),
+                                ))
+                                .await;
                             continue;
                         }
                         match serde_json::from_str::<RequestFrame>(&text) {
@@ -849,6 +881,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                                         session_id.0,
                                         frame.session_id.0
                                     );
+                                    // A3: Send session.mismatch event (FID-20260529)
+                                    let mismatch_event = savant_core::types::EventFrame {
+                                        event_type: format!("session.{}.mismatch", session_id.0),
+                                        payload: serde_json::json!({
+                                            "expected": session_id.0,
+                                            "received": frame.session_id.0,
+                                            "action": "reconnect"
+                                        })
+                                        .to_string(),
+                                    };
+                                    if let Ok(msg) = serde_json::to_string(&mismatch_event) {
+                                        let _ = out_tx_recv
+                                            .send(Message::Text(format!("EVENT:{}", msg)))
+                                            .await;
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -878,22 +925,75 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
         }
     });
 
-    // 8. Wait for connection closure
+    // B2: Task supervisor — track task completion for graceful cleanup (FID-20260529)
+    enum TaskEvent {
+        TaskDied { name: &'static str },
+    }
+    let (task_event_tx, mut task_event_rx) = tokio::sync::mpsc::channel::<TaskEvent>(8);
+
+    // B3: Deterministic cleanup helper (FID-20260529)
+    let cleanup = |session_id: &savant_core::types::SessionId, state: &Arc<GatewayState>| {
+        state.sessions.remove(session_id);
+        state
+            .ws_connections
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    };
+
+    // 8. Wait for connection closure with task supervision
     tokio::select! {
-        _ = (&mut lane_fwd_task) => {},
-        _ = (&mut telemetry_task) => {},
-        _ = (&mut debug_log_task) => {},
-        _ = (&mut send_task) => {},
-        _ = (&mut recv_task) => {},
+        result = (&mut lane_fwd_task) => {
+            if let Err(e) = result {
+                tracing::error!("[gateway] lane_fwd_task panicked for session {}: {:?}", session_id.0, e);
+                let _ = task_event_tx.send(TaskEvent::TaskDied { name: "lane_fwd" }).await;
+            }
+        },
+        result = (&mut telemetry_task) => {
+            if let Err(e) = result {
+                tracing::error!("[gateway] telemetry_task panicked for session {}: {:?}", session_id.0, e);
+                let _ = task_event_tx.send(TaskEvent::TaskDied { name: "telemetry" }).await;
+            }
+        },
+        result = (&mut debug_log_task) => {
+            if let Err(e) = result {
+                tracing::error!("[gateway] debug_log_task panicked for session {}: {:?}", session_id.0, e);
+                let _ = task_event_tx.send(TaskEvent::TaskDied { name: "debug_log" }).await;
+            }
+        },
+        result = (&mut send_task) => {
+            match result {
+                Ok(()) => {},
+                Err(e) => {
+                    tracing::error!("[gateway] send_task panicked for session {}: {:?}", session_id.0, e);
+                    let _ = task_event_tx.send(TaskEvent::TaskDied { name: "send" }).await;
+                }
+            }
+        },
+        result = (&mut recv_task) => {
+            match result {
+                Ok(()) => {},
+                Err(e) => {
+                    tracing::error!("[gateway] recv_task panicked for session {}: {:?}", session_id.0, e);
+                    let _ = task_event_tx.send(TaskEvent::TaskDied { name: "recv" }).await;
+                }
+            }
+        },
+        // B3: Handle task death events from supervisor
+        Some(event) = task_event_rx.recv() => {
+            match event {
+                TaskEvent::TaskDied { name } => {
+                    tracing::warn!("[gateway] Task '{}' died for session {}, initiating cleanup", name, session_id.0);
+                }
+            }
+        },
     }
 
-    // 9. Cleanup
+    // 9. Cleanup — deterministic teardown
     lane_fwd_task.abort();
     telemetry_task.abort();
     debug_log_task.abort();
     send_task.abort();
     recv_task.abort();
-    state.sessions.remove(&session_id);
+    cleanup(&session_id, &state);
     tracing::info!("Session closed: {}", session_id.0);
 }
 
@@ -1309,9 +1409,8 @@ async fn request_id_middleware(
     let mut response = next.run(req).await;
     response.headers_mut().insert(
         "x-request-id",
-        axum::http::HeaderValue::from_str(&request_id).unwrap_or_else(|_| {
-            axum::http::HeaderValue::from_static("invalid")
-        }),
+        axum::http::HeaderValue::from_str(&request_id)
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("invalid")),
     );
     response
 }
@@ -1323,7 +1422,10 @@ async fn memory_search_handler(
     axum::extract::State(state): axum::extract::State<Arc<GatewayState>>,
 ) -> axum::response::Response {
     let query = params.get("q").cloned().unwrap_or_default();
-    let limit: usize = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(10);
+    let limit: usize = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
 
     match state.storage.get_swarm_history(limit * 5) {
         Ok(messages) => {
@@ -1419,7 +1521,8 @@ async fn consciousness_status_handler(
             return axum::Json(serde_json::json!({
                 "status": "disabled",
                 "message": "Consciousness daemon not running"
-            })).into_response();
+            }))
+            .into_response();
         }
     };
 
@@ -1427,7 +1530,8 @@ async fn consciousness_status_handler(
         "status": "ok",
         "state": state_name,
         "entropy": entropy,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// POST /api/chat — REST API for sending messages (alternative to WebSocket)
@@ -1437,7 +1541,10 @@ async fn rest_chat_handler(
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> axum::response::Response {
     let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
-    let agent_id = body.get("agent_id").and_then(|v| v.as_str()).unwrap_or("global");
+    let agent_id = body
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("global");
 
     if message.is_empty() {
         return (

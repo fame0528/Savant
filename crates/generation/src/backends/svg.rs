@@ -62,6 +62,7 @@ impl SvgBackend {
                     session_id: None,
                     channel: savant_core::types::AgentOutputChannel::Chat,
                     images: Vec::new(),
+                    ..Default::default()
                 },
                 savant_core::types::ChatMessage {
                     is_telemetry: false,
@@ -73,6 +74,7 @@ impl SvgBackend {
                     session_id: None,
                     channel: savant_core::types::AgentOutputChannel::Chat,
                     images: Vec::new(),
+                    ..Default::default()
                 },
             ];
 

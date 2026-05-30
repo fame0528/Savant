@@ -271,6 +271,10 @@ pub struct ChatMessage {
     /// that should go to the insights panel instead of the main chat.
     #[serde(default)]
     pub is_telemetry: bool,
+    /// Marks this message as an error response from the agent loop.
+    /// When true, the frontend renders error styling and offers RETRY/DISMISS.
+    #[serde(default)]
+    pub is_error: bool,
     /// Base64-encoded image attachments for multimodal models.
     /// When non-empty, the message is sent as a multimodal request.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -289,6 +293,7 @@ impl ChatMessage {
             session_id: None,
             channel: AgentOutputChannel::default(),
             is_telemetry: false,
+            is_error: false,
             images: Vec::new(),
         }
     }
@@ -304,6 +309,7 @@ impl ChatMessage {
             session_id: None,
             channel: AgentOutputChannel::default(),
             is_telemetry: false,
+            is_error: false,
             images,
         }
     }
@@ -320,6 +326,22 @@ impl ChatMessage {
     }
 }
 
+impl Default for ChatMessage {
+    fn default() -> Self {
+        Self {
+            role: ChatRole::System,
+            content: String::new(),
+            sender: None,
+            recipient: None,
+            agent_id: None,
+            session_id: None,
+            channel: AgentOutputChannel::default(),
+            is_telemetry: false,
+            is_error: false,
+            images: Vec::new(),
+        }
+    }
+}
 /// Native provider tool call structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderToolCall {
@@ -599,6 +621,9 @@ pub struct AgentConfig {
     /// When false, the agent uses raw AgentLoop::run().
     #[serde(default = "default_orchestrator_enabled")]
     pub orchestrator_enabled: bool,
+    /// Agent tier — Full or SubAgent.
+    #[serde(default)]
+    pub tier: AgentTier,
 }
 
 fn default_orchestrator_enabled() -> bool {
@@ -1094,6 +1119,94 @@ pub struct SkillChainStep {
     pub pass_output_as: Option<String>,
 }
 
+/// Agent tier — distinguishes full workspace agents from ephemeral sub-agents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AgentTier {
+    #[default]
+    Full,
+    SubAgent,
+}
+
+/// Agent role — determines delegation permissions within the tier hierarchy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AgentRole {
+    #[default]
+    Main,
+    Orchestrator,
+    Leaf,
+}
+
+/// Resolves the role of a child agent based on parent role and depth.
+pub fn resolve_agent_role(parent_role: AgentRole, depth: usize, max_depth: usize) -> AgentRole {
+    if depth >= max_depth {
+        AgentRole::Leaf
+    } else {
+        match parent_role {
+            AgentRole::Main | AgentRole::Orchestrator => AgentRole::Orchestrator,
+            AgentRole::Leaf => AgentRole::Leaf,
+        }
+    }
+}
+
+/// Sub-agent profile — defines identity, capabilities, and constraints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubAgentProfile {
+    pub name: String,
+    pub soul: String,
+    pub allowed_tools: Vec<String>,
+    pub max_iterations: usize,
+    pub timeout_secs: u64,
+    pub can_delegate: bool,
+    pub preferred_model: Option<String>,
+    pub max_concurrent: usize,
+    pub max_tokens: usize,
+}
+
+impl Default for SubAgentProfile {
+    fn default() -> Self {
+        Self {
+            name: "general".into(),
+            soul: "You are a versatile general-purpose agent.".into(),
+            allowed_tools: Vec::new(),
+            max_iterations: 50,
+            timeout_secs: 300,
+            can_delegate: false,
+            preferred_model: None,
+            max_concurrent: 8,
+            max_tokens: 0,
+        }
+    }
+}
+
+/// Delegation request — passed to hooks before spawning.
+#[derive(Debug, Clone)]
+pub struct DelegationRequest {
+    pub profile_name: String,
+    pub task: String,
+    pub context: String,
+    pub depth: usize,
+}
+
+/// Delegation result — returned after sub-agent completion.
+#[derive(Debug, Clone)]
+pub struct DelegationResult {
+    pub subagent_id: String,
+    pub profile_name: String,
+    pub output: String,
+    pub iterations_used: usize,
+    pub tokens_consumed: usize,
+    pub success: bool,
+    pub duration_ms: u64,
+}
+
+/// Delegation action — what to do after sub-agent completion.
+#[derive(Debug, Clone)]
+pub enum DelegationAction {
+    Accept,
+    Retry(String),
+    Bail,
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod tests {
@@ -1191,6 +1304,7 @@ mod tests {
             session_id: None,
             channel: AgentOutputChannel::default(),
             images: Vec::new(),
+            ..Default::default()
         };
         assert!(msg.sender.is_none());
         assert!(msg.recipient.is_none());
@@ -1211,6 +1325,7 @@ mod tests {
             session_id: Some(SessionId("sess-1".into())),
             channel: AgentOutputChannel::Memory,
             images: Vec::new(),
+            ..Default::default()
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ChatMessage = serde_json::from_str(&json).unwrap();

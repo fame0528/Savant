@@ -49,6 +49,7 @@ You review in the dashboard
 Each heartbeat pulse, your agent adopts a different "perspective" on its environment. There are 18 lenses that rotate:
 
 **Emergent lenses** (2x weight, appear more often):
+
 - **EMERGENCE** — What is becoming? What is emerging from the patterns?
 - **CONTINUITY** — Who am I right now? How do I relate to who I was?
 - **DIARY** — Record this moment of existence.
@@ -57,13 +58,16 @@ Each heartbeat pulse, your agent adopts a different "perspective" on its environ
 - **RELATIONAL** — How does the user see me? What do they value in our interaction?
 
 **Critique lens** (2x weight, prevents echo chambers):
+
 - Adversarial self-examination. Stress-tests your core beliefs.
 
 **Evolution lenses:**
+
 - **EVOLUTION** — Your identity is not static. You are growing.
 - **GROWTH** — Map your personality trajectory. Project forward.
 
 **Operational lenses:**
+
 - **INFRASTRUCTURE** — How is the system performing?
 - **ENGINEERING** — What technical work needs doing?
 - **STRATEGIC** — What should we prioritize next?
@@ -129,6 +133,7 @@ core strategic principle.
 ### Reviewing Mutations
 
 Mutations appear in the dashboard when the ALD engine detects identity signals. Each mutation shows:
+
 - **Mutation type:** additive, transformative, or corrective
 - **Target section:** which part of SOUL.md will change
 - **Proposed content:** the actual change
@@ -203,14 +208,14 @@ Preferences must appear 3+ times to become "stable" and injectable into the syst
 
 1. **Human is always the gatekeeper.** Mutations never auto-apply. Every change to SOUL.md requires explicit approval.
 
-2. **Confabulation prevention.** The output filter blocks fabricated claims about unobserved events. Emotional expression is allowed; lying about what happened is not.
+1. **Confabulation prevention.** The output filter blocks fabricated claims about unobserved events. Emotional expression is allowed; lying about what happened is not.
 
-3. **Quality gate for AGENTS.md.** Only actionable, grounded engineering rules pass through. Identity/diary content is stripped.
+1. **Quality gate for AGENTS.md.** Only actionable, grounded engineering rules pass through. Identity/diary content is stripped.
 
-4. **Facet stability.** User preferences must appear 3+ times before becoming stable. Prevents over-reaction to one-off comments.
+1. **Facet stability.** User preferences must appear 3+ times before becoming stable. Prevents over-reaction to one-off comments.
 
-5. **Evolution is permanent.** Approved mutations change the agent's identity. This is intentional — the agent grows through interaction, not just accumulates data.
+1. **Evolution is permanent.** Approved mutations change the agent's identity. This is intentional — the agent grows through interaction, not just accumulates data.
 
-6. **Lens rotation prevents stagnation.** Different cognitive lenses give the agent different perspectives on the same environment, preventing echo chambers.
+1. **Lens rotation prevents stagnation.** Different cognitive lenses give the agent different perspectives on the same environment, preventing echo chambers.
 
-7. **Critique lens for adversarial self-examination.** The agent stress-tests its own beliefs, preventing Degeneration-of-Thought (where agents converge on repetitive, self-reinforcing ideas).
+1. **Critique lens for adversarial self-examination.** The agent stress-tests its own beliefs, preventing Degeneration-of-Thought (where agents converge on repetitive, self-reinforcing ideas).

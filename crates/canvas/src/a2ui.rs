@@ -145,7 +145,10 @@ impl CanvasManager {
             if let Err(e) = self.update_tx.send(event) {
                 // Expected during initialization when no WebSocket subscribers exist yet.
                 // State is stored in self.state — subscribers get a full snapshot on connect.
-                debug!("[canvas::a2ui] No subscribers for element event (expected during init): {:?}", e);
+                debug!(
+                    "[canvas::a2ui] No subscribers for element event (expected during init): {:?}",
+                    e
+                );
             }
         }
 
@@ -158,7 +161,10 @@ impl CanvasManager {
             .map_err(|e| format!("Failed to serialize new state: {}", e))?;
         let diff = compute_diff(&old_val, &new_val, old_version, state.version);
         if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
-            debug!("[canvas::a2ui] No subscribers for state diff (expected during init): {:?}", e);
+            debug!(
+                "[canvas::a2ui] No subscribers for state diff (expected during init): {:?}",
+                e
+            );
         }
 
         Ok(state.version)
@@ -193,7 +199,10 @@ impl CanvasManager {
             .map_err(|e| format!("Failed to serialize new state: {}", e))?;
         let diff = compute_diff(&old_val, &new_val, old_version, state.version);
         if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
-            debug!("[canvas::a2ui] No subscribers for state diff (expected during init): {:?}", e);
+            debug!(
+                "[canvas::a2ui] No subscribers for state diff (expected during init): {:?}",
+                e
+            );
         }
 
         Ok(state.version)
@@ -215,7 +224,10 @@ impl CanvasManager {
             .map_err(|e| format!("Failed to serialize new state: {}", e))?;
         let diff = compute_diff(&old_val, &new_val, old_version, state.version);
         if let Err(e) = self.update_tx.send(CanvasEvent::StateDiff { diff }) {
-            debug!("[canvas::a2ui] No subscribers for state diff (expected during init): {:?}", e);
+            debug!(
+                "[canvas::a2ui] No subscribers for state diff (expected during init): {:?}",
+                e
+            );
         }
 
         Ok(state.version)

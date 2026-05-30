@@ -10,6 +10,7 @@ pub mod schema_validator;
 pub mod settings;
 pub mod shell;
 pub mod skill_manager;
+pub mod tool_filter;
 pub mod tool_forge;
 pub mod web;
 pub mod web_projection;

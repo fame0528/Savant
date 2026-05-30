@@ -44,17 +44,28 @@ impl SessionLane {
         tokio::spawn(async move {
             while let Some(frame) = rx.recv().await {
                 // 🏰 Lane Backpressure: 30s timeout on concurrency acquisition
-                let _permit =
-                    match timeout(Duration::from_secs(30), concurrency_limit.acquire()).await {
-                        Ok(Ok(p)) => p,
-                        _ => {
-                            tracing::error!(
-                                "Lane timeout: Failed to acquire concurrency permit for session {}",
-                                frame.session_id.0
-                            );
-                            continue;
+                let _permit = match timeout(Duration::from_secs(30), concurrency_limit.acquire())
+                    .await
+                {
+                    Ok(Ok(p)) => p,
+                    _ => {
+                        tracing::error!(
+                            "Lane timeout: Failed to acquire concurrency permit for session {}",
+                            frame.session_id.0
+                        );
+                        // A2: Send error response to client (FID-20260529)
+                        let error_response = savant_core::types::ResponseFrame {
+                            request_id: frame.request_id.clone(),
+                            payload:
+                                "Error: Server busy, message could not be processed. Please retry."
+                                    .to_string(),
+                        };
+                        if let Err(e) = response_tx.send(error_response).await {
+                            tracing::warn!("[gateway] Failed to send lane timeout error: {}", e);
                         }
-                    };
+                        continue;
+                    }
+                };
 
                 tracing::debug!(
                     "[LANE:ACTUATOR] Processing frame for session: {}",

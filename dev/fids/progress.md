@@ -1,31 +1,31 @@
 # FID Progress Tracking
 
-> **Last Updated:** 2026-05-28 18:19 EDT (v0.3.5)
+> **Last Updated:** 2026-05-30 14:30 EDT (v0.4.0)
 > **Active FIDs:** 0
-> **Closed FIDs:** 87 in `dev/fids/archived/`
+> **Closed FIDs:** 94 in `dev/fids/archived/`
 
 ---
 
-## Status: v0.3.5 — Dashboard UI Fixes V2 Complete
+## Status: v0.4.0 — All FIDs Closed, Ready for Push
 
 | Metric | Count |
 |:-------|:-----:|
-| Total FIDs this session | 8 |
-| FIDs closed this session | 7 (ONBOARDING, BUILD3, BUILD4, SETUP-WIZARD, DASHBOARD-CONN, BUILD6, DASHBOARD-UI-FIXES-V2) |
+| Total FIDs this session | 13 |
+| FIDs closed this session | 13 |
 | FIDs active | 0 |
-| Issues fixed | 17 (9 Build 7 + partition key + Copy All rewrite + 6 dashboard UI regressions) |
-| Commits on main (pushed) | 16 |
+| Issues fixed this session | 29 (27 previous + 2 memory enclave) |
 | Clippy warnings | 0 |
 
 ---
 
-## Build State (2026-05-28 v0.3.5)
+## Build State (2026-05-29 v0.4.0)
 
-- Version: 0.3.5 across all 28 crates + 2 tauri.conf.json + dashboard/package.json
+- Version: 0.4.0 — single source in `VERSION` file + `Cargo.toml [workspace.package]`
+- All 28 crates use `version.workspace = true` (workspace inheritance)
 - `cargo check --workspace` — 0 errors
 - `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings
+- `cargo fmt --check` — 0 violations
 - `npx tsc --noEmit` — 0 errors
-- `npx tsc --noEmit` (dashboard) — 0 errors
 
 ---
 
@@ -82,6 +82,32 @@
 
 ---
 
+## Active FIDs
+
+None — all FIDs closed.
+
+---
+
+## Completed FIDs (Archived This Session)
+
+- `FID-20260529-MARKDOWN-ZERO-DEFECT.md` — 8,501 markdown violations eliminated (CLOSED)
+- `FID-20260530-AGENT-TIER-REDESIGN.md` — Two-tier agent system, 10 bug fixes, 37 steps (CLOSED)
+- `FID-20260530-SESSION-STATE-WAL-ENTERPRISE.md` — WAL frontmatter redesign, 6 tests (CLOSED)
+- `FID-20260529-MESSAGING-AND-SCALING.md` — Messaging pipeline hardening, 10-state status UX (CLOSED)
+
+Three production-blocking issues identified during codebase analysis:
+
+| # | Sev | Issue | Root Cause | Status |
+|---|-----|-------|-----------|--------|
+| 1 | CRITICAL | Messaging failure — agent fails to respond (9 failure points) | Silent drops at identity pinning, lane backpressure, LLM errors, session mismatch, task cascade | OPEN |
+| 2 | HIGH | Dashboard window not spawning maximized | Missing `maximized: true` in tauri.conf.json main window config | OPEN |
+| 3 | HIGH | Message status UX gap — only 3 of 5 states used, zero error/timeout states | Status dot is binary (sent/processing/complete) with no feedback on failures | OPEN |
+| 4 | LOW | Logs window x: -2560 personal multi-monitor config | Out of scope — noted for public release | DEFERRED |
+
+**FID:** `dev/fids/FID-20260529-MESSAGING-AND-SCALING.md`
+
+---
+
 ## New Issues Discovered (2026-05-28)
 
 | # | Sev | Issue | Root Cause | Status |
@@ -94,9 +120,12 @@
 
 ## Archived FIDs This Session
 
+- `FID-20260528-DASHBOARD-UI-FIXES.md` → archived (PARTIAL — superseded by V2/V3)
+- `FID-20260528-DASHBOARD-UI-FIXES-V2.md` → archived (CLOSED)
+- `FID-20260528-DASHBOARD-V3.md` → archived (ALL ISSUES CERTIFIED — 10 issues)
+- `FID-20260528-v034-BUILD7-REGRESSIONS.md` → archived (FIXED — pushed)
 - `FID-20260527-DASHBOARD-CONNECTIVITY-VERSION.md` → archived (CLOSED — superseded by BUILD5/BUILD6)
 - `FID-20260528-v033-BUILD6-LOG-ANALYSIS.md` → archived (CLOSED — all 5 issues fixed)
-
 - `FID-20260526-AUDIT-FINDINGS-V2.md` → archived (CLOSED)
 - `FID-20260527-EMBEDDING-IGNITION-FIX.md` → archived (FIXED)
 - `FID-20260527-ONBOARDING-BOOT-FAILURES.md` → archived (FIXED)
@@ -114,5 +143,7 @@
 - `FID-20260528-v033-BUILD5-REGRESSIONS.md` — 3 issues from build 5 (CLOSED, merged into BUILD4)
 - `FID-20260527-DASHBOARD-CONNECTIVITY-VERSION.md` — dashboard connectivity (CLOSED → archived)
 - `FID-20260528-v033-BUILD6-LOG-ANALYSIS.md` — 5 issues from build 6 (CLOSED → archived)
-- `FID-20260528-v034-BUILD7-REGRESSIONS.md` — 9 issues from build 7 (FIXED, awaiting live test)
-- `FID-20260528-DASHBOARD-UI-FIXES-V2.md` — 6 dashboard UI regressions (CLOSED)
+- `FID-20260528-v034-BUILD7-REGRESSIONS.md` — 9 issues from build 7 (FIXED → archived)
+- `FID-20260528-DASHBOARD-UI-FIXES.md` — V1 dashboard fixes (PARTIAL → archived)
+- `FID-20260528-DASHBOARD-UI-FIXES-V2.md` — 6 dashboard UI regressions (CLOSED → archived)
+- `FID-20260528-DASHBOARD-V3.md` — 10 issues: avatar, logo, Copy All, provider logs (ALL CERTIFIED → archived)

@@ -9,10 +9,12 @@ Think of it as **SQLite, but with semantic and relational intelligence for your 
 ## Documentation Overview
 
 ### Getting Started
+
 - [Installation](./getting-started/installation.md) - Install CortexaDB via pip or Cargo
 - [Quickstart](./getting-started/quickstart.md) - Your first database in 5 minutes
 
 ### Guides
+
 - [Core Concepts](./guides/core-concepts.md) - Architecture and how CortexaDB works
 - [Storage Engine](./guides/storage-engine.md) - WAL, segments, checkpoints, and compaction
 - [Query Engine](./guides/query-engine.md) - Hybrid search with vector, graph, and temporal scoring
@@ -24,10 +26,12 @@ Think of it as **SQLite, but with semantic and relational intelligence for your 
 - [Configuration](./guides/configuration.md) - All configuration options explained
 
 ### API Reference
+
 - [Python API](./api/python.md) - Complete Python API reference
 - [Rust API](./api/rust.md) - Rust crate API reference
 
 ### Resources
+
 - [Benchmarks](./resources/benchmarks.md) - Performance benchmarks and methodology
 - [Examples](./resources/examples.md) - Code examples for common use cases
 

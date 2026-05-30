@@ -51,19 +51,23 @@ use tracing::{debug, error, info, instrument, warn};
 /// - Uses DSP for dynamic speculation depth prediction
 /// - Implements /subagents spawn for deterministic subagent spawning
 /// - Handles CONTINUE_WORK tokens to prevent the dwindle pattern
+type SubagentHandle = tokio::task::JoinHandle<Result<(), String>>;
+
 pub struct Orchestrator {
     agent_loop: AgentLoop<Arc<dyn MemoryBackend>>,
     blackboard: Arc<SwarmBlackboard>,
     dsp_predictor: DspPredictor,
     token_budget: Arc<RwLock<TokenBudget>>,
     continuation_engine: crate::orchestration::ContinuationEngine,
-    subagent_handles: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    subagent_handles: Arc<RwLock<HashMap<String, SubagentHandle>>>,
     session_id: String,
     max_chain_length: u32,
+    max_subagents: usize,
     signing_key: SigningKey,
     pqc_signing_key: dilithium2::SecretKey,
     capability_registry: Arc<CapabilityRegistry>,
     memory_enclave: Option<Arc<savant_memory::engine::MemoryEnclave>>,
+    delegation_engine: Option<Arc<crate::delegation::DelegationEngine>>,
     /// Pending continuation delay to publish to blackboard on next update.
     /// Set by `execute_turn()` when a CONTINUE_WORK token is detected.
     /// Uses AtomicU32 because `update_blackboard_context` takes `&self`.
@@ -79,6 +83,8 @@ pub struct OrchestratorConfig {
     pub max_chain_length: u32,
     /// Continuation engine configuration
     pub continuation_config: crate::orchestration::ContinuationConfig,
+    /// Maximum concurrent subagents per orchestrator (0 = unlimited)
+    pub max_subagents_per_agent: usize,
 }
 
 impl Default for OrchestratorConfig {
@@ -87,6 +93,7 @@ impl Default for OrchestratorConfig {
             dsp_config: DspConfig::default(),
             max_chain_length: 10, // Match OpenClaw's safety constraint
             continuation_config: ContinuationConfig::default(),
+            max_subagents_per_agent: 8,
         }
     }
 }
@@ -137,7 +144,74 @@ impl Orchestrator {
             },
             capability_registry,
             memory_enclave,
+            delegation_engine: None,
+            max_subagents: 8, // Default, overridden by OrchestratorConfig in `new()`
             pending_continue_delay_ms: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    /// Mint a Cryptographic Capability Token (CCT) for a subagent.
+    /// Consolidates the three CCT minting paths into a single method.
+    ///
+    /// # Arguments
+    /// * `subagent_id` — The target subagent's identifier (as bytes)
+    /// * `task_entropy` — Optional task-specific entropy for entropic key derivation.
+    ///   If provided, the signing key is derived from this entropy for per-task isolation.
+    ///   If None, the base signing key is used directly.
+    fn mint_subagent_cct(
+        &self,
+        subagent_id: &[u8],
+        task_entropy: Option<&[u8]>,
+    ) -> Result<savant_security::AgentToken, OrchestratorError> {
+        let subagent_hash = xxhash_rust::xxh3::xxh3_64(subagent_id);
+
+        let signing_key = if let Some(entropy) = task_entropy {
+            savant_security::SecurityAuthority::derive_entropic_key(
+                &self.signing_key,
+                entropy,
+            )
+        } else {
+            self.signing_key.clone()
+        };
+
+        let token = savant_security::SecurityAuthority::mint_quantum_token(
+            &signing_key,
+            &self.pqc_signing_key,
+            subagent_hash,
+            &format!("/workspace/{}", self.session_id),
+            "read",
+            3600,
+            subagent_id,
+        )
+        .map_err(|e| OrchestratorError::SecurityError(e.to_string()))?;
+
+        Ok(token)
+    }
+
+    /// Set the delegation engine for this orchestrator.
+    pub fn set_delegation_engine(&mut self, engine: Arc<crate::delegation::DelegationEngine>) {
+        self.delegation_engine = Some(engine);
+    }
+
+    /// Get a reference to the delegation engine, if set.
+    pub fn delegation_engine(&self) -> Option<&Arc<crate::delegation::DelegationEngine>> {
+        self.delegation_engine.as_ref()
+    }
+
+    /// Check if the subagent limit has been reached.
+    /// Returns Ok(()) if spawning is allowed, Err if at capacity.
+    async fn check_subagent_limit(&self) -> Result<(), OrchestratorError> {
+        if self.max_subagents == 0 {
+            return Ok(()); // 0 = unlimited
+        }
+        let handles = self.subagent_handles.read().await;
+        if handles.len() >= self.max_subagents {
+            Err(OrchestratorError::SubagentLimitExceeded {
+                current: handles.len(),
+                max: self.max_subagents,
+            })
+        } else {
+            Ok(())
         }
     }
 
@@ -220,6 +294,8 @@ impl Orchestrator {
             pqc_signing_key,
             capability_registry,
             memory_enclave,
+            delegation_engine: None,
+            max_subagents: orchestrator_config.max_subagents_per_agent,
             pending_continue_delay_ms: std::sync::atomic::AtomicU32::new(0),
         })
     }
@@ -281,18 +357,43 @@ impl Orchestrator {
             }
 
             // Typed A2A delegation: if the response contains a structured delegation
-            // intent (detected via "DELEGATE:" prefix), use the typed protocol.
+            // intent (detected via "DELEGATE:" prefix or ```delegate block), use the
+            // DelegationEngine if available, otherwise fall back to legacy A2A protocol.
             if let Some(delegation_desc) = Self::parse_delegation_intent(&response) {
-                info!(task = %delegation_desc, "Typed delegation intent detected via A2A protocol");
-                self.delegate_task(
-                    &delegation_desc,
-                    0,      // required_skills: default to 0 (no specific skills required)
-                    4096,   // token_budget: default 4k tokens for subagent
-                    128,    // priority: medium
-                    300000, // deadline_ms: 5 minutes
-                    false,  // requires_consensus: default to false for non-destructive tasks
-                )
-                .await?;
+                if let Some(engine) = &self.delegation_engine {
+                    info!(task = %delegation_desc, "Delegation intent detected — routing via DelegationEngine");
+                    let profile = engine.route(&delegation_desc, &response).await;
+                    let hooks = crate::delegation::DelegationHooks {
+                        on_start: None,
+                        on_complete: None,
+                    };
+                    match engine.delegate(&profile, delegation_desc.clone(), response.clone(), hooks).await {
+                        Ok(handle) => {
+                            info!(
+                                subagent_id = %handle.id,
+                                profile = %handle.profile_name,
+                                "Sub-agent spawned via DelegationEngine"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "DelegationEngine failed — falling back to legacy A2A");
+                            self.delegate_task(
+                                &delegation_desc,
+                                0, 4096, 128, 300000, false,
+                            ).await?;
+                        }
+                    }
+                } else {
+                    info!(task = %delegation_desc, "Typed delegation intent detected via A2A protocol");
+                    self.delegate_task(
+                        &delegation_desc,
+                        0,      // required_skills: default to 0
+                        4096,   // token_budget: default 4k tokens
+                        128,    // priority: medium
+                        300000, // deadline_ms: 5 minutes
+                        false,  // requires_consensus: default false
+                    ).await?;
+                }
             }
 
             // Check for CONTINUE_WORK token (anti-dwindle)
@@ -483,8 +584,48 @@ impl Orchestrator {
     ///
     /// Looks for the pattern `DELEGATE: <task description>` in the response.
     /// Returns `Some(description)` if found, `None` otherwise.
+    /// Parse delegation intent from LLM response.
+    /// Supports two formats:
+    /// 1. Structured: ```delegate\n{"task": "...", "profile": "...", "context": "..."}\n```
+    /// 2. Legacy: DELEGATE: <task description>
+    ///
+    /// The structured format is preferred. The legacy format is supported for backward compatibility.
     fn parse_delegation_intent(response: &str) -> Option<String> {
-        for line in response.lines() {
+        // Try structured format first: look for ```delegate code block
+        let lines: Vec<&str> = response.lines().collect();
+        let mut in_delegate_block = false;
+        let mut json_content = String::new();
+
+        for line in &lines {
+            let trimmed = line.trim();
+            if trimmed == "```delegate" {
+                in_delegate_block = true;
+                json_content.clear();
+                continue;
+            }
+            if in_delegate_block && trimmed == "```" {
+                // End of block — parse JSON
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_content) {
+                    if let Some(task) = parsed.get("task").and_then(|v| v.as_str()) {
+                        if !task.is_empty() {
+                            return Some(task.to_string());
+                        }
+                    }
+                }
+                in_delegate_block = false;
+                json_content.clear();
+                continue;
+            }
+            if in_delegate_block {
+                if !json_content.is_empty() {
+                    json_content.push('\n');
+                }
+                json_content.push_str(line);
+            }
+        }
+
+        // Fall back to legacy DELEGATE: prefix
+        for line in lines {
             let trimmed = line.trim();
             if let Some(rest) = trimmed.strip_prefix("DELEGATE:") {
                 let desc = rest.trim();
@@ -510,12 +651,14 @@ impl Orchestrator {
     /// 2. Runs as an independent Tokio task
     /// 3. Publishes results to the parent's result queue
     pub async fn spawn_typed_subagent(
-        &mut self,
+        &self,
         task: &savant_ipc::a2a::protocol::DelegationTask,
         context_package: &savant_ipc::a2a::context::ContextPackage,
         target_card: &savant_ipc::a2a::agent_card::AgentCard,
         task_description: &str,
     ) -> Result<(), OrchestratorError> {
+        self.check_subagent_limit().await?;
+
         let task_id_hex = task
             .task_id
             .iter()
@@ -588,11 +731,12 @@ impl Orchestrator {
                     let output_text = output_parts.join("\n");
 
                     // Publish task completion state through the structured context.
-                    // The blackboard API supports SwarmSharedContext (keyed by session_hash),
-                    // not raw byte publishing. Completion is tracked via subagent_handles.
+                    // Keyed by task_id hash (not session_hash) to prevent concurrent subagents
+                    // from overwriting each other's blackboard state.
                     let mut task_ctx = ctx;
                     task_ctx.task_complexity_score = 10.0; // Mark as high complexity = completed
-                    if let Err(e) = blackboard.publish_context(session_hash, task_ctx) {
+                    let task_hash = xxhash_rust::xxh3::xxh3_64(task_id_hex_for_spawn.as_bytes());
+                    if let Err(e) = blackboard.publish_context(task_hash, task_ctx) {
                         warn!(
                             target_agent = %target_id_clone,
                             error = %e,
@@ -606,6 +750,7 @@ impl Orchestrator {
                         output_len = output_text.len(),
                         "Subagent completed delegated task"
                     );
+                    Ok(())
                 }
                 Err(e) => {
                     error!(
@@ -613,28 +758,14 @@ impl Orchestrator {
                         error = %e,
                         "Failed to map shared context for typed subagent"
                     );
+                    Err(format!("Failed to map shared context: {}", e))
                 }
             }
         });
 
         // Mint a Cryptographic Capability Token (CCT) for the subagent
-        // Derive a per-task signing key using entropic key derivation
-        let subagent_hash = xxhash_rust::xxh3::xxh3_64(&target_card.agent_id);
         let task_entropy = xxhash_rust::xxh3::xxh3_64(&task.task_id);
-        let derived_key = savant_security::SecurityAuthority::derive_entropic_key(
-            &self.signing_key,
-            &task_entropy.to_le_bytes(),
-        );
-        let _token = savant_security::SecurityAuthority::mint_quantum_token(
-            &derived_key,
-            &self.pqc_signing_key,
-            subagent_hash,
-            &format!("/workspace/{}", self.session_id),
-            "read",
-            3600,
-            &target_card.agent_id,
-        )
-        .map_err(|e| OrchestratorError::SecurityError(e.to_string()))?;
+        let _token = self.mint_subagent_cct(&target_card.agent_id, Some(&task_entropy.to_le_bytes()))?;
 
         let mut handles = self.subagent_handles.write().await;
         handles.insert(task_id_hex, handle);
@@ -659,7 +790,7 @@ impl Orchestrator {
     /// Returns `Ok(())` if delegation succeeded, or `Err` if no suitable agent was found
     /// or the handoff was rejected.
     pub async fn delegate_task(
-        &mut self,
+        &self,
         task_description: &str,
         required_skills: u128,
         token_budget: u32,
@@ -731,19 +862,8 @@ impl Orchestrator {
         };
 
         // Mint CCT token for the delegation and extract the raw signature bytes.
-        // The DelegationTask carries the first 64 bytes (Ed25519 portion) of the
-        // hybrid signature for lightweight verification by the target agent.
-        let subagent_hash = xxhash_rust::xxh3::xxh3_64(&target_card.agent_id);
-        let agent_token = savant_security::SecurityAuthority::mint_quantum_token(
-            &self.signing_key,
-            &self.pqc_signing_key,
-            subagent_hash,
-            &format!("/workspace/{}", self.session_id),
-            "read",
-            3600,
-            &target_card.agent_id,
-        )
-        .map_err(|e| OrchestratorError::SecurityError(e.to_string()))?;
+        // Mint a Cryptographic Capability Token (CCT) for the subagent
+        let agent_token = self.mint_subagent_cct(&target_card.agent_id, None)?;
         let cct_token = {
             let sig_bytes = &agent_token.signature;
             let mut token = [0u8; 64];
@@ -770,7 +890,7 @@ impl Orchestrator {
             0
         };
         delegation_task.requires_consensus = requires_consensus;
-        delegation_task.result_queue_id = subagent_hash;
+        delegation_task.result_queue_id = xxhash_rust::xxh3::xxh3_64(&target_card.agent_id);
         delegation_task.memory_enclave_id = target_card.memory_enclave_id;
 
         // Wire IPC task queue for delegation lifecycle management
@@ -958,7 +1078,7 @@ impl Orchestrator {
     /// a task, try them all and pick the best output.
     #[allow(clippy::too_many_arguments)]
     pub async fn speculative_delegate_task(
-        &mut self,
+        &self,
         task_description: &str,
         required_skills: u128,
         token_budget: u32,
@@ -967,6 +1087,8 @@ impl Orchestrator {
         requires_consensus: bool,
         speculative_copies: usize,
     ) -> Result<(), OrchestratorError> {
+        self.check_subagent_limit().await?;
+
         if speculative_copies <= 1 {
             // No speculation — fall back to single delegation
             return self
@@ -1054,19 +1176,8 @@ impl Orchestrator {
             };
             let task_id = uuid::Uuid::new_v4();
             let task_id_bytes = *task_id.as_bytes();
-            let subagent_hash = xxhash_rust::xxh3::xxh3_64(&card.agent_id);
-
             // Mint CCT for this candidate
-            let agent_token = savant_security::SecurityAuthority::mint_quantum_token(
-                &self.signing_key,
-                &self.pqc_signing_key,
-                subagent_hash,
-                &format!("/workspace/{}", self.session_id),
-                "read",
-                3600,
-                &card.agent_id,
-            );
-            let cct_token = match agent_token {
+            let cct_token = match self.mint_subagent_cct(&card.agent_id, None) {
                 Ok(t) => {
                     let sig_bytes = &t.signature;
                     let mut token = [0u8; 64];
@@ -1095,7 +1206,7 @@ impl Orchestrator {
                 0
             };
             delegation_task.requires_consensus = requires_consensus;
-            delegation_task.result_queue_id = subagent_hash;
+            delegation_task.result_queue_id = xxhash_rust::xxh3::xxh3_64(&card.agent_id);
             delegation_task.memory_enclave_id = card.memory_enclave_id;
 
             let context_package = if let Some(enclave) = &self.memory_enclave {
@@ -1119,12 +1230,17 @@ impl Orchestrator {
             handles.push((handle, delegation_task, context_package, card));
         }
 
-        // Wait for all speculative branches and collect results
+        // Wait for all speculative branches concurrently and collect results
         let mut best_result: Option<(u64, String, f32)> = None;
-        for (_handle, delegation_task, context_package, card) in handles {
-            let result = self
-                .spawn_typed_subagent(&delegation_task, &context_package, &card, task_description)
-                .await;
+        let mut branch_futures = Vec::new();
+        for (_, delegation_task, context_package, card) in &handles {
+            let future = self.spawn_typed_subagent(delegation_task, context_package, card, task_description);
+            branch_futures.push(future);
+        }
+
+        let results = futures::future::join_all(branch_futures).await;
+        for (i, result) in results.into_iter().enumerate() {
+            let card = handles[i].3;
 
             match result {
                 Ok(()) => {
@@ -1205,9 +1321,11 @@ impl Orchestrator {
     /// The spawned task executes the LLM with the task description as input,
     /// then executes any tool calls the LLM produces.
     async fn spawn_deterministic_subagent(
-        &mut self,
+        &self,
         command: &str,
     ) -> Result<(), OrchestratorError> {
+        self.check_subagent_limit().await?;
+
         // Parse command format: "/subagents spawn <agentId> <task>"
         let parts: Vec<_> = command.split_whitespace().collect();
         if parts.len() < 4 {
@@ -1266,6 +1384,7 @@ impl Orchestrator {
                         session_id: None,
                         channel: savant_core::types::AgentOutputChannel::Chat,
                         images: Vec::new(),
+                        ..Default::default()
                     });
                     messages.extend(history);
 
@@ -1366,15 +1485,18 @@ impl Orchestrator {
                         }
                     }
 
-                    // Update blackboard with completion
+                    // Update blackboard with completion — keyed by subagent_id hash (not session_hash)
+                    // to prevent concurrent subagents from overwriting each other.
                     let mut task_ctx = ctx;
                     task_ctx.task_complexity_score = 10.0; // Mark as completed
-                    if let Err(e) = blackboard.publish_context(session_hash, task_ctx) {
+                    let sub_hash = xxhash_rust::xxh3::xxh3_64(subagent_id_cloned.as_bytes());
+                    if let Err(e) = blackboard.publish_context(sub_hash, task_ctx) {
                         warn!(
                             "[subagent:{}] Failed to publish completion: {}",
                             subagent_id_cloned, e
                         );
                     }
+                    Ok(())
                 }
                 Err(e) => {
                     error!(
@@ -1382,22 +1504,13 @@ impl Orchestrator {
                         error = %e,
                         "Failed to map shared context"
                     );
+                    Err(format!("Failed to map shared context: {}", e))
                 }
             }
         });
 
         // Mint a Cryptographic Capability Token (CCT) for the subagent
-        let subagent_hash = xxhash_rust::xxh3::xxh3_64(subagent_id.as_bytes());
-        let _token = savant_security::SecurityAuthority::mint_quantum_token(
-            &self.signing_key,
-            &self.pqc_signing_key,
-            subagent_hash,
-            &format!("/workspace/{}", self.session_id),
-            "read",
-            3600,
-            subagent_id.as_bytes(),
-        )
-        .map_err(|e| OrchestratorError::SecurityError(e.to_string()))?;
+        let _token = self.mint_subagent_cct(subagent_id.as_bytes(), None)?;
 
         info!(
             subagent_id = %subagent_id,
@@ -1413,18 +1526,35 @@ impl Orchestrator {
     }
 
     /// Evacuates (terminates) a subagent.
+    /// Evacuate a subagent with graceful shutdown.
+    /// Waits up to 10s for the subagent to finish, then aborts if still running.
     pub async fn evacuate_subagent(&self, subagent_id: &str) -> Result<(), OrchestratorError> {
         let mut handles = self.subagent_handles.write().await;
         if let Some(handle) = handles.remove(subagent_id) {
-            handle.abort();
-            info!(subagent_id = %subagent_id, "Subagent evacuated");
+            info!(subagent_id = %subagent_id, "Evacuating subagent — waiting up to 10s for graceful shutdown");
+
+            // Wait for graceful completion with timeout
+            match tokio::time::timeout(std::time::Duration::from_secs(10), handle).await {
+                Ok(Ok(Ok(()))) => {
+                    info!(subagent_id = %subagent_id, "Subagent shut down gracefully");
+                }
+                Ok(Ok(Err(e))) => {
+                    warn!(subagent_id = %subagent_id, error = %e, "Subagent reported error during shutdown");
+                }
+                Ok(Err(e)) => {
+                    warn!(subagent_id = %subagent_id, error = %e, "Subagent task panicked during shutdown");
+                }
+                Err(_) => {
+                    warn!(subagent_id = %subagent_id, "Subagent timed out during shutdown — aborted");
+                }
+            }
             Ok(())
         } else {
             Err(OrchestratorError::SubagentNotFound)
         }
     }
 
-    /// Checks the health of all subagents and returns IDs of dead ones.
+    /// Checks the health of all subagents and returns IDs of dead or failed ones.
     pub async fn check_swarm_health(&self) -> Vec<String> {
         let handles = self.subagent_handles.read().await;
         let mut dead = Vec::new();
@@ -1436,6 +1566,25 @@ impl Orchestrator {
         }
 
         dead
+    }
+
+    /// Check if a specific subagent has failed (panicked or returned Err).
+    /// Returns None if still running, Some(Ok(())) if completed successfully,
+    /// Some(Err(msg)) if failed.
+    pub async fn check_subagent_result(&self, subagent_id: &str) -> Option<Result<(), String>> {
+        let mut handles = self.subagent_handles.write().await;
+        if let Some(handle) = handles.get(subagent_id) {
+            if handle.is_finished() {
+                // Remove and await the handle to get the result
+                if let Some(handle) = handles.remove(subagent_id) {
+                    match handle.await {
+                        Ok(result) => return Some(result),
+                        Err(e) => return Some(Err(format!("Subagent panicked: {}", e))),
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Returns the agent ID of the orchestrator.
@@ -1470,4 +1619,7 @@ pub enum OrchestratorError {
 
     #[error("Delegation failed: {0}")]
     DelegationFailed(String),
+
+    #[error("Subagent limit exceeded: {current}/{max}")]
+    SubagentLimitExceeded { current: usize, max: usize },
 }

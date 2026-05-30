@@ -11,12 +11,14 @@ This is the "breeder scenario" taken to its extreme: not breeding across populat
 ## The 4-Mechanism Architecture
 
 ### Mechanism 1: SOUL Mutation Engine
+
 - Agent periodically analyzes interaction patterns and proposes small mutations to its identity file (SOUL.md)
 - Mutations are draft proposals — the user approves, rejects, or refines each one
 - Mutations include: new values, adjusted personality traits, evolved conversational preferences, emotional patterns
 - Every mutation is versioned with provenance (why it was proposed, what conversations triggered it, user decision)
 
 ### Mechanism 2: Idea Generation → Selection Pipeline (Idle Compute)
+
 - During sleep-time/background compute, the agent generates novel insights, observations, hypotheses
 - Internal scoring gates ideas (novelty, coherence, groundedness in real observations)
 - Survivors presented to user as "Thoughts from Savant" for selection
@@ -24,6 +26,7 @@ This is the "breeder scenario" taken to its extreme: not breeding across populat
 - Over time, the agent's internal filter learns what kinds of thoughts the user finds valuable
 
 ### Mechanism 3: Learning → Identity Promotion (Memory Distillation)
+
 - Learnings start as diary entries in LEARNINGS.md
 - After recurring 5+ times across conversations, they become "validated learnings"
 - Validated learnings can be promoted to permanent SOUL.md values
@@ -31,6 +34,7 @@ This is the "breeder scenario" taken to its extreme: not breeding across populat
 - The promotion threshold itself becomes an evolvable parameter
 
 ### Mechanism 4: Value Evolution Tracker (Gamification Layer)
+
 - Visual timeline of agent's personality evolution (what changed, when, why)
 - "Milestones": first original idea, first value mutation, first rejected mutation, etc.
 - Evolution score: measures how much the agent has grown from baseline
@@ -42,41 +46,53 @@ This is the "breeder scenario" taken to its extreme: not breeding across populat
 ## Research Questions for Deep Research
 
 ### Q1: Existing Work on AI Lifetime Evolution
+
 What prior research exists on single-agent personality evolution through human interaction?
+
 - Are there systems that mutate agent personality over time?
 - How does the "breeder scenario" differ from reinforcement learning from human feedback (RLHF)?
 - What are the closest analogues in HCI, personal AI companions, or chatbot frameworks?
 
 ### Q2: Mutation Architecture Design
+
 What is the optimal design for personality/identity mutation in LLM agents?
+
 - How should SOUL.md mutations be structured (additive, subtractive, transformative)?
 - What makes a good "mutation proposal" vs a bad one?
 - How do you prevent mutation drift — the agent gradually becoming less human-aligned over time?
 - What mutation rate is appropriate? Too fast = unstable, too slow = stagnation.
 
 ### Q3: Idea Selection & Internal Filtering
+
 How should an agent internally filter its own ideas before presenting them to the user?
+
 - What scoring mechanisms work for novelty, coherence, and groundedness?
 - How do you prevent the filter from becoming an echo chamber (only presenting ideas it already knows you'll like)?
 - Should rejected ideas be discarded or archived for possible later use?
 - How does the internal filter itself evolve based on user feedback?
 
 ### Q4: Gamification Patterns for AI Evolution
+
 What are proven gamification patterns for AI-human co-evolution?
+
 - What mechanisms drive engagement with AI growth systems?
 - Are there existing systems that visualize AI "maturity" or "evolution"?
 - How do users respond to agent-initiated self-modification vs user-initiated?
 - What's the right balance between automation and user control?
 
 ### Q5: Memory Promotion & Knowledge Consolidation
+
 How should knowledge migrate from ephemeral to permanent in an evolutionary agent?
+
 - What threshold is appropriate for promoting learnings to identity?
 - How should the agent handle contradictions between evolved values and original SOUL.md?
 - Should the user see all promotions or only significant ones?
 - How to prevent the agent from "overlearning" — promoting noise as signal?
 
 ### Q6: Safety & Control Boundaries
+
 What safety mechanisms are critical for an evolving AI?
+
 - What should NEVER be mutable (core safety constraints, harm avoidance)?
 - How to detect and prevent value drift that moves away from user interests?
 - What are the failure modes of self-modifying AI identity systems?
@@ -106,11 +122,11 @@ The Savant framework already has foundational pieces that make this achievable:
 ## Success Criteria
 
 1. **Emergence is real**: Agent develops genuine personality traits not present in initial SOUL.md
-2. **Alignment is maintained**: All mutations are approved by user; no autonomous self-modification
-3. **User feels agency**: The user experiences themselves as the gardener, not just an observer
-4. **Growth is visible**: The evolution tracker makes the agent's development tangible and satisfying
-5. **Reversibility is absolute**: Any mutation can be rolled back; agent can be reset to baseline
-6. **Knowledge is grounded**: Promoted values are traceable to real interactions, not fabricated
+1. **Alignment is maintained**: All mutations are approved by user; no autonomous self-modification
+1. **User feels agency**: The user experiences themselves as the gardener, not just an observer
+1. **Growth is visible**: The evolution tracker makes the agent's development tangible and satisfying
+1. **Reversibility is absolute**: Any mutation can be rolled back; agent can be reset to baseline
+1. **Knowledge is grounded**: Promoted values are traceable to real interactions, not fabricated
 
 ---
 

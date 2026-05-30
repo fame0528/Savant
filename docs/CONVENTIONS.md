@@ -155,8 +155,8 @@ Despite `CONTRIBUTING.md` recommending `#[instrument]`, the codebase does NOT us
 Config is loaded via `figment` with this priority (highest wins):
 
 1. **Environment variables** with `SAVANT_` prefix (e.g., `SAVANT_SERVER_HOST`)
-2. **TOML file** (`config/savant.toml` or `~/.savant/savant.toml`)
-3. **Defaults** from `Default` impl
+1. **TOML file** (`config/savant.toml` or `~/.savant/savant.toml`)
+1. **Defaults** from `Default` impl
 
 ```rust
 Figment::new()
@@ -257,8 +257,8 @@ registry.register("tool_name".to_string(), Arc::new(MyTool::new()));
 ### Adding a New Tool
 
 1. Create a struct implementing `Tool`
-2. Register it in `crates/agent/src/swarm.rs` during swarm initialization
-3. Add `#[allow(clippy::disallowed_methods)]` if using `serde_json::json!()` macro
+1. Register it in `crates/agent/src/swarm.rs` during swarm initialization
+1. Add `#[allow(clippy::disallowed_methods)]` if using `serde_json::json!()` macro
 
 ### The `serde_json::json!()` Macro Problem
 
@@ -571,9 +571,9 @@ disallowed-methods = [
 This is why `#[allow(clippy::disallowed_methods)]` appears 136+ times — it's the escape hatch for:
 
 1. Test code (where `.unwrap()` is acceptable)
-2. `serde_json::json!()` macro (which internally calls `.unwrap()`)
-3. Hardcoded regex in `LazyLock` (provably infallible)
-4. One-time initialization that cannot fail
+1. `serde_json::json!()` macro (which internally calls `.unwrap()`)
+1. Hardcoded regex in `LazyLock` (provably infallible)
+1. One-time initialization that cannot fail
 
 ### Pattern 4: `ArcSwap` for Lock-Free Registries
 
@@ -701,26 +701,26 @@ pub fn validate(&self) -> Result<(), SavantError> {
 ## 12. Quick Reference: Adding a New Crate
 
 1. Create `crates/{name}/src/lib.rs` with module declarations
-2. Create `crates/{name}/src/error.rs` with `thiserror` enum
-3. Add `savant_{name} = { path = "crates/{name}" }` to workspace `Cargo.toml`
-4. Add `"crates/{name}"` to `[workspace] members`
-5. Use `tracing::{info,warn,error}!("[{name}] ...")` for logging
-6. Use `#[serde(default)]` for optional config fields
-7. Use `#[cfg(test)] #[allow(clippy::disallowed_methods)] mod tests` for test modules
+1. Create `crates/{name}/src/error.rs` with `thiserror` enum
+1. Add `savant_{name} = { path = "crates/{name}" }` to workspace `Cargo.toml`
+1. Add `"crates/{name}"` to `[workspace] members`
+1. Use `tracing::{info,warn,error}!("[{name}] ...")` for logging
+1. Use `#[serde(default)]` for optional config fields
+1. Use `#[cfg(test)] #[allow(clippy::disallowed_methods)] mod tests` for test modules
 
 ## 13. Quick Reference: Adding a New Tool
 
 1. Create struct implementing `savant_core::traits::Tool`
-2. Add `#![allow(clippy::disallowed_methods)]` if using `json!()` macro
-3. Implement `name()`, `description()`, `parameters_schema()`, `execute()`
-4. Register in `crates/agent/src/swarm.rs` during agent initialization
-5. Set `requires_approval()` if tool modifies external state
-6. Set `max_output_chars()` and `timeout_secs()` if defaults are insufficient
+1. Add `#![allow(clippy::disallowed_methods)]` if using `json!()` macro
+1. Implement `name()`, `description()`, `parameters_schema()`, `execute()`
+1. Register in `crates/agent/src/swarm.rs` during agent initialization
+1. Set `requires_approval()` if tool modifies external state
+1. Set `max_output_chars()` and `timeout_secs()` if defaults are insufficient
 
 ## 14. Quick Reference: Adding a New Provider
 
 1. Create `crates/integrations/src/providers/{name}.rs`
-2. Define `{Name}Config` with `#[serde(default)]` fields
-3. Implement `Provider` trait
-4. Register in `crates/agent/src/swarm.rs` gated behind config check
-5. Add config section to `IntegrationsConfig` in `crates/core/src/config.rs`
+1. Define `{Name}Config` with `#[serde(default)]` fields
+1. Implement `Provider` trait
+1. Register in `crates/agent/src/swarm.rs` gated behind config check
+1. Add config section to `IntegrationsConfig` in `crates/core/src/config.rs`

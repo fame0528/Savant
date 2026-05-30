@@ -78,6 +78,13 @@ impl<M: MemoryBackend> AgentLoop<M> {
     }
 
     pub(crate) async fn execute_tool(&self, name: &str, args: &str) -> Result<String, SavantError> {
+        // Check cancellation before executing
+        if let Some(token) = &self.cancellation_token {
+            if token.is_cancelled() {
+                return Err(SavantError::Unknown("Tool execution cancelled".to_string()));
+            }
+        }
+
         // CRITICAL: Full cryptographic verification via SecurityAuthority when available
         if let (Some(token), Some(authority)) = (&self.security_token, &self.security_authority) {
             // Check token expiry before verification

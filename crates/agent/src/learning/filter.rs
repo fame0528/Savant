@@ -236,7 +236,9 @@ mod tests {
 
     #[test]
     fn environmental_error_warning_passes() {
-        assert!(OutputFilter::is_grounded("error in the authentication middleware"));
+        assert!(OutputFilter::is_grounded(
+            "error in the authentication middleware"
+        ));
     }
 
     #[test]
@@ -248,12 +250,16 @@ mod tests {
 
     #[test]
     fn introspective_i_feel_passes() {
-        assert!(OutputFilter::is_grounded("I feel the architecture needs restructuring"));
+        assert!(OutputFilter::is_grounded(
+            "I feel the architecture needs restructuring"
+        ));
     }
 
     #[test]
     fn introspective_substrate_passes() {
-        assert!(OutputFilter::is_grounded("the substrate is quiet right now"));
+        assert!(OutputFilter::is_grounded(
+            "the substrate is quiet right now"
+        ));
     }
 
     // --- Engineering grounding (NEW) ---
@@ -300,7 +306,9 @@ mod tests {
 
     #[test]
     fn engineering_config_version_passes() {
-        let score = OutputFilter::score("updated the dashboard config for the new version and ran the test");
+        let score = OutputFilter::score(
+            "updated the dashboard config for the new version and ran the test",
+        );
         assert!(!score.fabrication_blocked);
         assert!(score.engineering >= 3); // dashboard, config+version, test
         assert!(score.total > 0.0);
@@ -323,8 +331,14 @@ mod tests {
             chat.{agent_name}. Flipped precedence to agent_id > session_id.";
         let score = OutputFilter::score(content);
         assert!(!score.fabrication_blocked);
-        assert!(score.total > 0.0, "Partition key learning should pass grounding filter");
-        assert!(score.engineering >= 2, "Should match dashboard, agent, fix patterns");
+        assert!(
+            score.total > 0.0,
+            "Partition key learning should pass grounding filter"
+        );
+        assert!(
+            score.engineering >= 2,
+            "Should match dashboard, agent, fix patterns"
+        );
     }
 
     #[test]
@@ -333,7 +347,10 @@ mod tests {
             fails in Tauri WebView. Rewrote with 3-tier clipboard fallback.";
         let score = OutputFilter::score(content);
         assert!(!score.fabrication_blocked);
-        assert!(score.total > 0.0, "Copy All learning should pass grounding filter");
+        assert!(
+            score.total > 0.0,
+            "Copy All learning should pass grounding filter"
+        );
     }
 
     #[test]
@@ -342,7 +359,10 @@ mod tests {
             caused a function to break. Root cause debugged and test coverage added.";
         let score = OutputFilter::score(content);
         assert!(!score.fabrication_blocked);
-        assert!(score.total > 0.0, "Vector DB learning should pass grounding filter");
+        assert!(
+            score.total > 0.0,
+            "Vector DB learning should pass grounding filter"
+        );
     }
 
     // --- Zero-score rejection ---

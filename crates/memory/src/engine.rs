@@ -97,6 +97,54 @@ pub struct MemoryEnclave {
     write_locks: [tokio::sync::Mutex<()>; 64],
 }
 
+/// Read-only handle for sub-agents. Exposes only query methods — no writes.
+/// Sub-agents receive this instead of the full `MemoryEnclave` to prevent
+/// cross-agent memory corruption.
+pub struct MemoryEnclaveHandle {
+    inner: Arc<MemoryEnclave>,
+}
+
+impl MemoryEnclaveHandle {
+    /// Create a read-only handle from a full enclave.
+    pub fn new(enclave: Arc<MemoryEnclave>) -> Self {
+        Self { inner: enclave }
+    }
+
+    /// Search memory by text query (read-only).
+    pub async fn search_by_text(&self, query: &str, limit: usize) -> Vec<(u64, f32)> {
+        let bm25 = self.inner.bm25.read().await;
+        bm25.search(query, limit)
+    }
+
+    /// Get a memory entry by ID (read-only).
+    pub fn get_metadata(&self, id: u64) -> Result<Option<crate::models::MemoryEntry>, MemoryError> {
+        self.inner.lsm.get_metadata(id)
+    }
+
+    /// Get facts by subject (read-only).
+    pub fn get_facts_by_subject(&self, subject: &str) -> Vec<(String, String, u64)> {
+        self.inner.lsm.get_facts_by_subject(subject)
+    }
+
+    /// Get session state (read-only).
+    pub fn get_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::models::SessionState>, MemoryError> {
+        self.inner.lsm.get_session_state(session_id)
+    }
+
+    /// Get lessons (read-only).
+    pub async fn get_lessons(&self) -> Vec<crate::lessons::Lesson> {
+        self.inner.get_lessons_vec().await
+    }
+
+    /// Get insights (read-only).
+    pub async fn get_insights(&self) -> Vec<crate::lessons::Insight> {
+        self.inner.get_insights_vec().await
+    }
+}
+
 impl MemoryEnclave {
     /// Returns a reference to the MAGMA 4-graph reflective memory.
     /// Use this to access Semantic, Temporal, Causal, and Entity graphs.

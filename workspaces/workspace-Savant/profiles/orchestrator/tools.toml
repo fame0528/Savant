@@ -1,0 +1,1 @@
+tools = ["delegate_task", "read", "glob", "grep"]

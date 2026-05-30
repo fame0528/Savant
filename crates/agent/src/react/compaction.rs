@@ -174,6 +174,7 @@ impl Compactor {
                         session_id: None,
                         channel: savant_core::types::AgentOutputChannel::Chat,
                         images: Vec::new(),
+                        ..Default::default()
                     };
                     recent.insert(0, summary_msg);
                 }
@@ -199,6 +200,7 @@ mod tests {
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         }
     }
 

@@ -80,10 +80,10 @@ mod tests {
             cpu_medium_pct: 70.0,
             cpu_high_pct: 85.0,
             cpu_critical_pct: 95.0,
-            max_agents_low: 16,
-            max_agents_medium: 8,
-            max_agents_high: 4,
-            max_agents_critical: 1,
+            max_agents_low: 128,
+            max_agents_medium: 64,
+            max_agents_high: 32,
+            max_agents_critical: 8,
             max_deferral_retries: 60,
         }
     }
@@ -91,43 +91,67 @@ mod tests {
     #[test]
     fn test_pressure_low() {
         let config = test_config();
-        assert_eq!(PressureLevel::from_metrics(10.0, 20.0, &config), PressureLevel::Low);
+        assert_eq!(
+            PressureLevel::from_metrics(10.0, 20.0, &config),
+            PressureLevel::Low
+        );
     }
 
     #[test]
     fn test_pressure_medium() {
         let config = test_config();
-        assert_eq!(PressureLevel::from_metrics(75.0, 20.0, &config), PressureLevel::Medium);
-        assert_eq!(PressureLevel::from_metrics(10.0, 65.0, &config), PressureLevel::Medium);
+        assert_eq!(
+            PressureLevel::from_metrics(75.0, 20.0, &config),
+            PressureLevel::Medium
+        );
+        assert_eq!(
+            PressureLevel::from_metrics(10.0, 65.0, &config),
+            PressureLevel::Medium
+        );
     }
 
     #[test]
     fn test_pressure_high() {
         let config = test_config();
-        assert_eq!(PressureLevel::from_metrics(90.0, 20.0, &config), PressureLevel::High);
-        assert_eq!(PressureLevel::from_metrics(10.0, 85.0, &config), PressureLevel::High);
+        assert_eq!(
+            PressureLevel::from_metrics(90.0, 20.0, &config),
+            PressureLevel::High
+        );
+        assert_eq!(
+            PressureLevel::from_metrics(10.0, 85.0, &config),
+            PressureLevel::High
+        );
     }
 
     #[test]
     fn test_pressure_critical() {
         let config = test_config();
-        assert_eq!(PressureLevel::from_metrics(96.0, 20.0, &config), PressureLevel::Critical);
-        assert_eq!(PressureLevel::from_metrics(10.0, 95.0, &config), PressureLevel::Critical);
+        assert_eq!(
+            PressureLevel::from_metrics(96.0, 20.0, &config),
+            PressureLevel::Critical
+        );
+        assert_eq!(
+            PressureLevel::from_metrics(10.0, 95.0, &config),
+            PressureLevel::Critical
+        );
     }
 
     #[test]
     fn test_worst_case_wins() {
         let config = test_config();
-        assert_eq!(PressureLevel::from_metrics(10.0, 85.0, &config), PressureLevel::High);
+        assert_eq!(
+            PressureLevel::from_metrics(10.0, 85.0, &config),
+            PressureLevel::High
+        );
     }
 
     #[test]
     fn test_max_agents_per_level() {
         let config = test_config();
-        assert_eq!(PressureLevel::Low.max_agents(&config), 16);
-        assert_eq!(PressureLevel::Medium.max_agents(&config), 8);
-        assert_eq!(PressureLevel::High.max_agents(&config), 4);
-        assert_eq!(PressureLevel::Critical.max_agents(&config), 1);
+        assert_eq!(PressureLevel::Low.max_agents(&config), 128);
+        assert_eq!(PressureLevel::Medium.max_agents(&config), 64);
+        assert_eq!(PressureLevel::High.max_agents(&config), 32);
+        assert_eq!(PressureLevel::Critical.max_agents(&config), 8);
     }
 
     #[test]

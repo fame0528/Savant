@@ -31,7 +31,9 @@ pub struct AntiEchoChamber {
 }
 
 impl Default for AntiEchoChamber {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AntiEchoChamber {
@@ -71,7 +73,11 @@ impl AntiEchoChamber {
             }
         }
 
-        if count > 0 { total / count as f64 } else { 0.0 }
+        if count > 0 {
+            total / count as f64
+        } else {
+            0.0
+        }
     }
 
     /// Simple word-overlap similarity (Jaccard index).

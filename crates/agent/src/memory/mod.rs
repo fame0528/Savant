@@ -154,7 +154,8 @@ impl FileLoggingMemoryBackend {
             hashes.insert(hash);
             // Rolling window: if over capacity, remove oldest half
             if hashes.len() > DEDUP_WINDOW_SIZE {
-                let to_remove: Vec<u64> = hashes.iter().take(DEDUP_WINDOW_SIZE / 2).copied().collect();
+                let to_remove: Vec<u64> =
+                    hashes.iter().take(DEDUP_WINDOW_SIZE / 2).copied().collect();
                 for h in to_remove {
                     hashes.remove(&h);
                 }
@@ -248,7 +249,10 @@ impl MemoryBackend for FileLoggingMemoryBackend {
     async fn store(&self, agent_id: &str, message: &ChatMessage) -> Result<(), SavantError> {
         // 🛡️ Sovereign Routing: Use the channel type, not string heuristics
         if message.channel == savant_core::types::AgentOutputChannel::Memory {
-            if let Err(e) = self.record_learning(agent_id, &message.content, "memory_store").await {
+            if let Err(e) = self
+                .record_learning(agent_id, &message.content, "memory_store")
+                .await
+            {
                 tracing::warn!(
                     "[agent::memory] Failed to record learning for agent {}: {}",
                     agent_id,
@@ -320,6 +324,7 @@ impl MemoryBackend for FileLoggingMemoryBackend {
                                     )),
                                     channel: savant_core::types::AgentOutputChannel::Memory,
                                     images: Vec::new(),
+                                    ..Default::default()
                                 };
                                 if let Err(e) = self.inner.store("swarm.insights", &msg).await {
                                     tracing::warn!(

@@ -8,6 +8,10 @@
   --glass-bg: rgba(10, 10, 10, 0.4);
   --selection: rgba(0, 213, 255, 0.3);
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  --status-success: #00ff88;
+  --status-error: #ff4444;
+  --status-warning: #ffaa00;
+  --status-dim: rgba(255,255,255,0.4);
 }
 
 [data-theme="light"] {
@@ -19,6 +23,10 @@
   --border: rgba(0, 136, 204, 0.3);
   --glass-bg: rgba(255, 255, 255, 0.6);
   --selection: rgba(0, 136, 204, 0.2);
+  --status-success: #00aa55;
+  --status-error: #cc0000;
+  --status-warning: #cc8800;
+  --status-dim: rgba(0,0,0,0.3);
 }
 
 * {

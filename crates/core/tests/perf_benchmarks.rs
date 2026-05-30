@@ -30,6 +30,7 @@ fn bench_storage_append() {
             session_id: None,
             channel: AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         };
         storage
             .append_chat("bench-agent", &msg)
@@ -74,6 +75,7 @@ fn bench_storage_retrieve() {
             session_id: None,
             channel: AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         };
         storage
             .append_chat("ret-agent", &msg)

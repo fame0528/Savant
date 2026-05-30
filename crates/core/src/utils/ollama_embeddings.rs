@@ -199,11 +199,13 @@ pub async fn auto_start_ollama() -> Result<(), SavantError> {
 
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         std::process::Command::new(&ollama_path)
             .arg("serve")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .spawn()
             .map_err(|e| SavantError::Unknown(format!("Failed to start Ollama: {}", e)))?;
     }
@@ -302,9 +304,14 @@ async fn ensure_model(client: &reqwest::Client, url: &str, model: &str) -> Resul
 ///
 /// If any step fails and SAVANT_DISABLE_EMBEDDINGS=1, returns NullEmbeddingProvider.
 /// Otherwise returns a hard error.
-pub async fn create_embedding_service(model_override: Option<&str>) -> Result<Box<dyn EmbeddingProvider>, SavantError> {
+pub async fn create_embedding_service(
+    model_override: Option<&str>,
+) -> Result<Box<dyn EmbeddingProvider>, SavantError> {
     // Check if embeddings are explicitly disabled
-    if std::env::var("SAVANT_DISABLE_EMBEDDINGS").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("SAVANT_DISABLE_EMBEDDINGS")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         warn!("SAVANT_DISABLE_EMBEDDINGS=1 — embedding service disabled, using null provider");
         return Ok(Box::new(NullEmbeddingProvider));
     }
@@ -328,7 +335,10 @@ pub async fn create_embedding_service(model_override: Option<&str>) -> Result<Bo
         match auto_start_ollama().await {
             Ok(()) => info!("Ollama auto-started successfully"),
             Err(e) => {
-                error!("Ollama auto-start failed: {}. Falling back to fastembed.", e);
+                error!(
+                    "Ollama auto-start failed: {}. Falling back to fastembed.",
+                    e
+                );
                 return create_fastembed_fallback();
             }
         }
@@ -338,7 +348,10 @@ pub async fn create_embedding_service(model_override: Option<&str>) -> Result<Bo
     match ensure_model(&client, &url, &model).await {
         Ok(()) => {}
         Err(e) => {
-            warn!("Ollama model check failed: {}. Falling back to fastembed.", e);
+            warn!(
+                "Ollama model check failed: {}. Falling back to fastembed.",
+                e
+            );
             return create_fastembed_fallback();
         }
     }
@@ -356,7 +369,10 @@ pub async fn create_embedding_service(model_override: Option<&str>) -> Result<Bo
             Ok(Box::new(ollama))
         }
         Err(e) => {
-            warn!("Ollama embedding test failed: {}. Falling back to fastembed.", e);
+            warn!(
+                "Ollama embedding test failed: {}. Falling back to fastembed.",
+                e
+            );
             create_fastembed_fallback()
         }
     }
@@ -366,7 +382,10 @@ pub async fn create_embedding_service(model_override: Option<&str>) -> Result<Bo
 /// If SAVANT_DISABLE_EMBEDDINGS=1, returns a null provider (degraded mode).
 /// Otherwise returns an error.
 fn create_fastembed_fallback() -> Result<Box<dyn EmbeddingProvider>, SavantError> {
-    if std::env::var("SAVANT_DISABLE_EMBEDDINGS").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("SAVANT_DISABLE_EMBEDDINGS")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         warn!("Ollama unavailable but SAVANT_DISABLE_EMBEDDINGS=1 — using null embedding provider");
         return Ok(Box::new(NullEmbeddingProvider));
     }

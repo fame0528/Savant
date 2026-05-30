@@ -24,15 +24,18 @@ Savant is a **60,826 LOC** Rust framework. This exhaustive Phase 1 analysis deta
 ## 3. Critical Gaps (Must Fix)
 
 ### 3.1 Global Mutex Contention & Swarm Chokepoints
+
 **Total Findings:** 174
 
 #### GUARDIAN Audit Analysis
+
 **Deep Audit:** Savant is specifically billed as a "101-agent" capable framework. However, a single standard `Mutex` acting as the gatekeeper for all agent lifecycle events forces Swarm continuation to single-thread. If 50 agents spawn simultaneously or process a global shutdown, thread contention spikes catastrophically. The asynchronous executor will stall waiting to acquire the lock, deadlocking Swarm memory reconciliation and severely lagging pulse intervals.
 
 **Enhancement Plan:**
 Replace standard collections mapped behind monolithic locks with highly concurrent, lock-free (or sharded lock) primitives.
+
 1. Update `Cargo.toml` to include `dashmap = "5.5"` and `crossbeam-queue = "0.3"`.
-2. Modify `crates/agent/src/swarm.rs` structurally:
+1. Modify `crates/agent/src/swarm.rs` structurally:
    ```rust
    use dashmap::DashMap;
    use crossbeam::queue::SegQueue;
@@ -44,11 +47,12 @@ Replace standard collections mapped behind monolithic locks with highly concurre
    // Replace: dead_agents: Mutex<Vec<String>>
    dead_agents: Arc<SegQueue<String>>,
    ```
-3. Remove ALL `.lock().await` blocks when accessing handles across `spawn_agent`, `evacuate_agent`, and `check_swarm_health`. DashMap implements lock-free concurrent iteration and insertion mapping natively.
+1. Remove ALL `.lock().await` blocks when accessing handles across `spawn_agent`, `evacuate_agent`, and `check_swarm_health`. DashMap implements lock-free concurrent iteration and insertion mapping natively.
 
 **Validation:** `cargo bench --bench swarm_scaling` loading 10,000 parallel agent bounds yielding zero lock suspension delays.
 
 #### Exhaustive Code Violations
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates\agent\src\swarm.rs:71` | `handles: Mutex<HashMap<String, (JoinHandle<()>, CancellationToken)>>,` |
@@ -227,14 +231,18 @@ Replace standard collections mapped behind monolithic locks with highly concurre
 | `lib\cortexadb\crates\cortexadb-core\src\query\executor.rs:88` | `if let Ok(mut guard) = cache.lock() {` |
 
 ### 3.2 Unsandboxed File IO & TOCTOU Permission Escalations
+
 **Total Findings:** 224
 
-#### GUARDIAN Audit Analysis
+#### GUARDIAN Audit Analysis — File IO & TOCTOU
+
 **Deep Audit:** `fs::write` inherently generates a file with default OS unmask bounds (e.g., `0o644` - world-readable). Several CPU cycles later, `set_permissions` restricts it to `0o600`. This creates a classic TOCTOU privilege escalation window. An adversarial process mapping `inotify` watches to the `keys` directory can intercept the secret keys during the initial file creation micro-window, resulting in immediate cryptographic token compromise despite the ensuing permission fix. Extensive use of `std::fs` outside logic sandboxes represents inherent escape vectors.
 
 **Enhancement Plan:**
 Enforce UNIX file modes AT creation time natively, removing the race window entirely.
+
 1. Rewrite file creations in `crates/core/src/crypto.rs` etc.:
+
 ```rust
     // Create explicitly with restricted bounds
     let mut options = std::fs::OpenOptions::new();
@@ -252,7 +260,8 @@ Enforce UNIX file modes AT creation time natively, removing the race window enti
 
 **Validation:** Execute a concurrent Linux shell loop reading the target file immediately on creation; confirm `Permission Denied` across all bounds.
 
-#### Exhaustive Code Violations
+#### Exhaustive Code Violations — File IO & TOCTOU
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates\agent\src\manager.rs:3` | `use savant_core::fs::registry::AgentRegistry;` |
@@ -481,14 +490,18 @@ Enforce UNIX file modes AT creation time natively, removing the race window enti
 | `lib\cortexadb\crates\cortexadb-core\src\storage\wal.rs:469` | `assert_eq!(std::fs::metadata(&wal_path).unwrap().len(), outcome.valid_bytes);` |
 
 ### 3.3 Silent State Corruption & Erased Cognitive Learning via 'let _ ='
+
 **Total Findings:** 191
 
-#### GUARDIAN Audit Analysis
+#### GUARDIAN Audit Analysis — Silent State Corruption
+
 **Deep Audit:** The Orchestrator acts as an asynchronous `NexusBridge` transmitting learning vectors, telemetry reflections, and insights. If the channel is saturated or disconnected, the `.publish` method fails (returning `Err`). By muting the return using `let _ =`, the pulse framework believes the telemetry stream safely propagated. The agent advances structurally, but the cognitive alignment data has been irreversibly lost to the void. This corrupts ALD (Autonomous Lesson Distillation) metrics because emergent behavior is observed but not persisted.
 
 **Enhancement Plan:**
+
 1. Enforce strict compiler awareness of IO drops.
-2. In `crates/agent/src/pulse/heartbeat.rs` and telemetry lanes, replace muted captures with traced fallbacks or structural Dead Letter Queues (DLQ):
+1. In `crates/agent/src/pulse/heartbeat.rs` and telemetry lanes, replace muted captures with traced fallbacks or structural Dead Letter Queues (DLQ):
+
 ```rust
     if let Err(e) = self.nexus.publish("chat.chunk", &payload).await {
         tracing::error!("[{}] ALD Telemetry Error - Nexus channel dropped reflection payload: {}", self.agent.agent_name, e);
@@ -498,7 +511,8 @@ Enforce UNIX file modes AT creation time natively, removing the race window enti
 
 **Validation:** Chaos-mesh network simulation causing temporary queue blockages; tracing must capture all dropped frames without muting.
 
-#### Exhaustive Code Violations
+#### Exhaustive Code Violations — Silent State Corruption
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates\agent\src\react_speculative.rs:148` | `let _ = self.execute_tool(&tool_name, &args).await;` |
@@ -694,14 +708,18 @@ Enforce UNIX file modes AT creation time natively, removing the race window enti
 | `lib\cortexadb\crates\cortexadb-core\src\storage\wal.rs:282` | `let _ = dir.sync_all();` |
 
 ### 3.4 Unbounded SSRF Vulnerabilities & IMDS Exposures via reqwest
+
 **Total Findings:** 70
 
-#### GUARDIAN Audit Analysis
+#### GUARDIAN Audit Analysis — SSRF & IMDS
+
 **Deep Audit:** Across 15+ micro-integrations and channels, HTTP requests execute using `reqwest::Client::new()`. Default instances lack timeout bounds and internal IP blacklisting. If an agent has access to arbitrary URL GET/POST operations, it can be manipulated by malicious prompts to query `http://169.254.169.254/latest/meta-data/` on AWS instances—retrieving raw cloud credentials seamlessly. Secondarily, without established timeouts, requesting a slow-loris tar-padded server will indefinitely hang the Swarm task thread rendering the agent catatonic.
 
 **Enhancement Plan:**
+
 1. Create a `SecureClientBuilder` in `crates/core/src/net/mod.rs` (~150 LOC).
-2. Configure the client to drop loopback addresses at the DNS resolution layer:
+1. Configure the client to drop loopback addresses at the DNS resolution layer:
+
 ```rust
 pub fn build_secure_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -711,11 +729,13 @@ pub fn build_secure_client() -> reqwest::Client {
         .expect("Failed to build Savant SecureClient")
 }
 ```
-3. Replace all generic API client instances with this centralized wrapper globally.
+
+1. Replace all generic API client instances with this centralized wrapper globally.
 
 **Validation:** Mock an agent API call to `169.254.169.254` and verify it fails due to forced invalid resolution.
 
-#### Exhaustive Code Violations
+#### Exhaustive Code Violations — SSRF & IMDS
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates\agent\src\swarm.rs:13` | `use reqwest::Client;` |
@@ -790,18 +810,22 @@ pub fn build_secure_client() -> reqwest::Client {
 | `crates\skills\src\security.rs:1475` | `let client = reqwest::Client::builder()` |
 
 ### 3.5 Unhandled Panics & DoS Vectors
+
 **Total Findings:** 833
 
-#### GUARDIAN Audit Analysis
+#### GUARDIAN Audit Analysis — Unhandled Panics
+
 **Deep Audit:** Utilizing `.unwrap()` and `.expect()` over business logic, network payload serialization, and authentication bindings guarantees that unexpected user inputs, malformed frames, or IO latency will trigger Thread Panics. If the Gateway or Orchestrator panics, the entire listener process crashes, causing massive Denial-of-Service. Note: Many identified issues are safely inside `#[cfg(test)]` paths, but those in core logic require immediate refactoring.
 
 **Enhancement Plan:**
+
 1. Substitute *all* unwraps in non-test paths with Rust's `?` propagation operator and specific typed Error mappings.
-2. `let payload_str = serde_json::to_string(&payload).map_err(|e| SavantError::Serialization(e))?;`
+1. `let payload_str = serde_json::to_string(&payload).map_err(|e| SavantError::Serialization(e))?;`
 
 **Validation:** `AFL` fuzzing against WebSocket endpoints to guarantee gracefully mapped `<Response code: 400>` closures rather than orchestrator process panic.
 
-#### Exhaustive Code Violations
+#### Exhaustive Code Violations — Unhandled Panics
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates\agent\src\ensemble\mod.rs:196` | `router.select_model(0).unwrap().model,` |
@@ -1639,9 +1663,10 @@ pub fn build_secure_client() -> reqwest::Client {
 | `skills\hello-savant\src\lib.rs:156` | `format_text("hello world", "titlecase").unwrap(),` |
 
 ---
+
 ## 4. Secondary Gaps (Should Adopt)
 
-*(Ready for Phase 2: Competitor extraction to establish AAA standards.)*
+(Ready for Phase 2: Competitor extraction to establish AAA standards.)
 
 ---
 
@@ -1650,12 +1675,15 @@ pub fn build_secure_client() -> reqwest::Client {
 These findings were discovered during the exhaustive 0-to-EOF deep traversal of every `.rs` file in the Savant codebase and were not present in the original GUARDIAN audit.
 
 ### 5.1 Clock Panic in Security Token Verification — Production Crash Vector
+
 **Severity:** CRITICAL
 
 #### Deep Audit
+
 `crates/security/src/token.rs:69` and `crates/security/src/enclave.rs:41` both use `.expect("System clock error: time is before Unix epoch")` when calling `SystemTime::now().duration_since(UNIX_EPOCH)`. In containers without RTC, VMs with clock drift, or misconfigured systems, this panics the entire agent process. Since `verify_capability()` is called on **every tool execution**, a single clock anomaly crashes the swarm.
 
 **Verified locations (confirmed in deep traversal):**
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates/security/src/token.rs:69` | `.expect("System clock error: time is before Unix epoch")` in `verify_capability` |
@@ -1682,10 +1710,13 @@ fn current_time() -> u64 {
 ---
 
 ### 5.2 SSRF Protection Incomplete — Private IP Ranges Not Blocked
+
 **Severity:** CRITICAL
 
-#### Deep Audit
+#### Deep Audit — SSRF Protection
+
 `crates/agent/src/tools/web.rs:27-32` defines `BLOCKED_HOSTS` but only blocks 3 cloud metadata IPs. The validation at line 70-95 does NOT block:
+
 - RFC 1918 private ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
 - Loopback: `127.0.0.0/8`, `::1`
 - Link-local: `169.254.0.0/16` (partially), `fe80::/10`
@@ -1695,6 +1726,7 @@ fn current_time() -> u64 {
 Additionally, `crates/agent/src/tools/web.rs:62` allows up to 5 redirects without re-validating the destination URL, enabling redirect-based SSRF bypass.
 
 **Verified locations:**
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates/agent/src/tools/web.rs:27-32` | `BLOCKED_HOSTS` only has 3 entries |
@@ -1702,16 +1734,19 @@ Additionally, `crates/agent/src/tools/web.rs:62` allows up to 5 redirects withou
 | `crates/agent/src/tools/web.rs:70-95` | `validate_url` only checks scheme and blocked hosts |
 
 **Enhancement Plan:**
+
 1. Create `crates/core/src/utils/ssrf.rs` with private IP range checking
-2. Integrate DNS resolution validation before HTTP requests
-3. Add redirect middleware that re-validates each hop
+1. Integrate DNS resolution validation before HTTP requests
+1. Add redirect middleware that re-validates each hop
 
 ---
 
 ### 5.3 Silent State Corruption via `let _ =` on Critical Memory Operations
+
 **Severity:** CRITICAL
 
-#### Deep Audit
+#### Deep Audit — Silent State Corruption
+
 The deep traversal confirmed 23+ instances of `let _ =` on `Result` types in production (non-test) code paths. The most dangerous are:
 
 | File:Line | Impact |
@@ -1730,31 +1765,38 @@ These are in addition to the 191 findings already catalogued in Section 3.3.
 ---
 
 ### 5.4 `SwarmController` No Auto-Restart for Dead Agents
+
 **Severity:** HIGH
 
-#### Deep Audit
+#### Deep Audit — SwarmController
+
 `crates/agent/src/swarm.rs:709-718` (`check_swarm_health`) detects dead agents but has no mechanism to restart them. `evacuate_agent` at line 681-706 removes dead agents from the handles map. If any agent task panics or completes (e.g., LLM provider timeout), it stays dead until manual intervention.
 
 **Verified locations:**
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates/agent/src/swarm.rs:709-718` | `check_swarm_health` only reports dead agents, doesn't restart |
 | `crates/agent/src/swarm.rs:681-706` | `evacuate_agent` removes handles but no restart logic |
 
 **Enhancement Plan:**
+
 1. Add `RestartPolicy` enum to `SwarmConfig`: `Never`, `OnFailure(max_retries)`, `Always`
-2. Add restart loop in `check_swarm_health` that calls `spawn_agent` for dead agents
-3. Add exponential backoff for restart attempts
+1. Add restart loop in `check_swarm_health` that calls `spawn_agent` for dead agents
+1. Add exponential backoff for restart attempts
 
 ---
 
 ### 5.5 `SettingsTool` Uses Blocking I/O in Async Context
+
 **Severity:** HIGH
 
-#### Deep Audit
+#### Deep Audit — SettingsTool Blocking I/O
+
 `crates/agent/src/tools/settings.rs:34-48` uses `std::fs::read_to_string` and `std::fs::write` (synchronous/blocking I/O) inside the async `Tool::execute` method. This blocks the Tokio runtime thread, potentially causing deadlocks under load.
 
 **Verified locations:**
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates/agent/src/tools/settings.rs:34` | `let content = fs::read_to_string(&self.settings_path)` — blocking |
@@ -1766,9 +1808,11 @@ Replace `std::fs` with `tokio::fs` and make the methods async.
 ---
 
 ### 5.6 `SettingsTool` Path Not Sandboxed to Agent Workspace
+
 **Severity:** HIGH
 
-#### Deep Audit
+#### Deep Audit — SettingsTool Path
+
 `crates/agent/src/tools/settings.rs:23-27` creates `SettingsTool` with `settings_path: PathBuf::from("settings.json")`, a relative path that resolves to the CWD, not the agent's workspace. Multiple agents could read/write the same file, and there's no path traversal protection.
 
 **Enhancement Plan:**
@@ -1777,12 +1821,15 @@ Make `SettingsTool::new()` accept a `workspace_path: PathBuf` and resolve as `wo
 ---
 
 ### 5.7 `SovereignSynthesis` Blocks Async Executor with `std::process::Command`
+
 **Severity:** HIGH
 
-#### Deep Audit
+#### Deep Audit — SovereignSynthesis
+
 `crates/agent/src/orchestration/synthesis.rs:213-242` runs `cargo check` and `cargo kani` synchronously using `std::process::Command`, blocking the Tokio runtime for potentially minutes during skill synthesis.
 
 **Verified locations:**
+
 | File:Line | Detail |
 |-----------|--------|
 | `crates/agent/src/orchestration/synthesis.rs:213` | `std::process::Command::new("cargo").arg("check")` — blocking |
@@ -1794,9 +1841,11 @@ Use `tokio::process::Command` or `spawn_blocking` for synthesis operations.
 ---
 
 ### 5.8 `RetryProvider::is_retryable` Misclassifies Auth Errors as Retryable
+
 **Severity:** MEDIUM
 
-#### Deep Audit
+#### Deep Audit — RetryProvider
+
 `crates/agent/src/providers/mod.rs:1325-1339` checks `AuthError` message strings for status codes. A 401/403 auth failure message containing "429" substring would be incorrectly classified as retryable. The string-based matching is fragile.
 
 **Enhancement Plan:**
@@ -1805,18 +1854,23 @@ Add dedicated `SavantError::RateLimit` and `SavantError::ServerError` variants, 
 ---
 
 ### 5.9 `VoicePulse` Is Dead Code — Placeholder Module
+
 **Severity:** LOW
 
-#### Deep Audit
+#### Deep Audit — VoicePulse
+
 `crates/agent/src/pulse/audio.rs:17-25` is a stub that logs "Voice monitoring ignited" but does nothing. It's never called from any code path in the codebase.
 
 ---
 
 ### 5.10 Duplicate Token Estimation Methods
+
 **Severity:** MEDIUM
 
-#### Deep Audit
+#### Deep Audit — Token Estimation
+
 Two different token estimation methods exist with different accuracy levels:
+
 - `crates/agent/src/budget.rs:62-64`: `4 chars ≈ 1 token` heuristic
 - `crates/agent/src/react/compaction.rs:22-25`: `words * 1.3 + 4` heuristic
 
@@ -1828,9 +1882,11 @@ Unify all token estimation through the tiktoken-based function in `crates/core/s
 ---
 
 ### 5.11 `NexusBridge` Shared Memory Has No TTL
+
 **Severity:** MEDIUM
 
-#### Deep Audit
+#### Deep Audit — NexusBridge
+
 `crates/core/src/bus.rs:44-46` creates a moka cache with `max_capacity` but no `time_to_live`. Stale state entries persist indefinitely until evicted by capacity pressure.
 
 **Enhancement Plan:**
@@ -1839,9 +1895,11 @@ Add `.time_to_live(Duration::from_secs(3600))` and `.time_to_idle(Duration::from
 ---
 
 ### 5.12 `HyperCausalEngine` Spawns Unbounded Tokio Tasks
+
 **Severity:** MEDIUM
 
-#### Deep Audit
+#### Deep Audit — HyperCausalEngine
+
 `crates/agent/src/orchestration/branching.rs:78-126` spawns `max_branches` (default 3) Tokio tasks per speculative execution. With 50+ concurrent agents, this creates 150+ concurrent speculative tasks with no global backpressure.
 
 **Enhancement Plan:**
@@ -1854,31 +1912,37 @@ Add a global `Semaphore` in `SwarmController` to limit total speculative tasks a
 These features were confirmed during the deep traversal as genuine architectural advantages:
 
 ### 6.1 Hybrid Post-Quantum Cryptographic Security
+
 - `crates/security/src/enclave.rs:72-131`: Ed25519 + Dilithium2 hybrid signatures
 - `crates/security/src/proofs.rs`: Kani formal verification of token verification
 - **No competitor has PQC-ready agent authentication.**
 
 ### 6.2 Zero-Copy Memory Architecture
+
 - `crates/memory/src/models.rs`: `#[repr(C)]` + `rkyv` + `bytecheck::CheckBytes` ensures zero-copy reads with validation
 - `crates/memory/src/engine.rs:36-43`: Atomic write lock prevents orphaned vectors
 - **crewAI, LangChain, AutoGen all use Python with GC overhead.**
 
 ### 6.3 WASM Plugin Isolation with CCT Enforcement
+
 - `crates/agent/src/plugins/wasm_host.rs:64-94`: Every plugin tool call verified against cryptographic capability tokens
 - `crates/agent/src/plugins/wasm_tools.rs:58`: Fuel-limited WASM execution (10M fuel)
 - **No competitor has WASM-based plugin isolation with capability enforcement.**
 
 ### 6.4 Self-Repair Agent Loop
+
 - `crates/agent/src/react/self_repair.rs`: ToolHealthTracker + StuckDetector + recovery hints
 - `crates/agent/src/react/reactor.rs:136-183`: 3-path heuristic resolution (Hint → Rollback → Fatal)
 - **No competitor has automatic stuck detection with state rollback.**
 
 ### 6.5 Entropy-Based Memory Arbiter
+
 - `crates/memory/src/arbiter.rs`: Shannon entropy contradiction resolution
 - `crates/memory/src/distillation.rs`: LLM-powered triplet extraction from enclave to collective
 - **No competitor has automated factual contradiction resolution.**
 
 ### 6.6 19-Channel Communication Matrix
+
 - `crates/channels/src/`: Discord, Telegram, WhatsApp, Matrix, Slack, Email, IRC, Signal, Teams, LINE, Feishu, DingTalk, WeCom, Bluesky, X, Reddit, Nostr, Twitch, Google Chat, Mattermost, Voice
 - **No competitor has this breadth of channel support out of the box.**
 
@@ -1901,7 +1965,7 @@ These features were confirmed during the deep traversal as genuine architectural
 | P3 | Unbounded speculative tasks | 1 module | 3 hours | Task explosion |
 | P3 | VoicePulse dead code | 1 module | 15 min | Code hygiene |
 
-**Total estimated P0+P1 remediation: ~15 hours (2 developer-days)**
+**Total estimated P0+P1 remediation: ~15 hours (2 developer-days).**
 
 ---
 
@@ -1987,9 +2051,10 @@ These features were verified as genuinely superior across ALL 25+ competitors:
 ### 8.4 Recommended Sprint Plan
 
 **Sprint 1 (P0 — 1 week):**
+
 1. Multi-agent orchestration patterns (~500 LOC)
-2. Vector store backend trait (~200 LOC)
-3. MCP server capability (~400 LOC)
+1. Vector store backend trait (~200 LOC)
+1. MCP server capability (~400 LOC)
 
 **Sprint 2 (P1 — 2 weeks):**
 4. DM pairing security (~400 LOC)
@@ -2005,7 +2070,7 @@ These features were verified as genuinely superior across ALL 25+ competitors:
 12. Output guardrails (~200 LOC)
 13. Multi-session management (~200 LOC)
 
-**Total: ~4,100 LOC across 3 sprints (6 weeks)**
+**Total: ~4,100 LOC across 3 sprints (6 weeks).**
 
 ---
 

@@ -231,25 +231,56 @@ pub async fn handle_message(
             }
 
             // Route message to appropriate agent through Nexus
-            if let Err(e) = route_chat_message(message, &state.nexus).await {
-                tracing::error!("Failed to route chat message: {}", e);
+            match route_chat_message(message, &state.nexus).await {
+                Ok(()) => {
+                    // D3: Structured tracing after successful route (FID-20260529)
+                    tracing::info!(
+                        "[gateway] OUTBOUND to Nexus: topic=chat.message, session={}",
+                        session.session_id.0
+                    );
 
-                let error_response = ChatMessage {
-                    is_telemetry: false,
-                    role: ChatRole::System,
-                    content: format!("Error: {}", e),
-                    sender: Some("SYSTEM".to_string()),
-                    recipient: None,
-                    agent_id: None,
-                    session_id: Some(session.session_id.clone()),
-                    channel: savant_core::types::AgentOutputChannel::Chat,
-                    images: Vec::new(),
-                };
+                    // E-3: Send delivery ACK to client (FID-20260529)
+                    let ack_event = savant_core::types::EventFrame {
+                        event_type: format!("session.{}.ack", session.session_id.0),
+                        payload: serde_json::json!({
+                            "status": "delivered",
+                            "timestamp": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs()
+                        })
+                        .to_string(),
+                    };
+                    if let Err(e) = state
+                        .nexus
+                        .publish(&ack_event.event_type, &ack_event.payload)
+                        .await
+                    {
+                        tracing::warn!("[gateway] Failed to send delivery ACK: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to route chat message: {}", e);
 
-                if let Err(e) =
-                    send_response_to_client(error_response, &session.session_id, &state.nexus).await
-                {
-                    tracing::warn!("[gateway] Failed to send error response to client: {}", e);
+                    let error_response = ChatMessage {
+                        is_telemetry: false,
+                        role: ChatRole::System,
+                        content: format!("Error: {}", e),
+                        sender: Some("SYSTEM".to_string()),
+                        recipient: None,
+                        agent_id: None,
+                        session_id: Some(session.session_id.clone()),
+                        channel: savant_core::types::AgentOutputChannel::Chat,
+                        images: Vec::new(),
+                        is_error: false,
+                    };
+
+                    if let Err(e) =
+                        send_response_to_client(error_response, &session.session_id, &state.nexus)
+                            .await
+                    {
+                        tracing::warn!("[gateway] Failed to send error response to client: {}", e);
+                    }
                 }
             }
         }
@@ -508,7 +539,11 @@ pub async fn handle_message(
                     // SEC #8: Limit agents per BulkManifest request
                     const MAX_BULK_AGENTS: usize = 10;
                     if agent_count > MAX_BULK_AGENTS {
-                        tracing::warn!("[gateway] BulkManifest rejected: {} agents exceeds limit of {}", agent_count, MAX_BULK_AGENTS);
+                        tracing::warn!(
+                            "[gateway] BulkManifest rejected: {} agents exceeds limit of {}",
+                            agent_count,
+                            MAX_BULK_AGENTS
+                        );
                         return;
                     }
                     tracing::info!("Bulk manifestation requested for {} agents", agent_count);
@@ -680,7 +715,11 @@ pub async fn handle_message(
                     // SEC #9: Input length limit on NLCommand
                     const MAX_NL_COMMAND_LEN: usize = 10_000;
                     if text.len() > MAX_NL_COMMAND_LEN {
-                        tracing::warn!("[gateway] NLCommand rejected: {} bytes exceeds limit of {}", text.len(), MAX_NL_COMMAND_LEN);
+                        tracing::warn!(
+                            "[gateway] NLCommand rejected: {} bytes exceeds limit of {}",
+                            text.len(),
+                            MAX_NL_COMMAND_LEN
+                        );
                         return;
                     }
                     let intent = savant_core::nlp::parse_command(&text);
@@ -1274,6 +1313,15 @@ async fn route_chat_message(
     message: ChatMessage,
     nexus: &Arc<NexusBridge>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // C2: Check agent presence before routing (FID-20260529)
+    if let Some(agents_json) = nexus.shared_memory.get("system.agents") {
+        if agents_json.is_empty() || agents_json == "[]" || agents_json == "{}" {
+            return Err("No agents available to process your message.".into());
+        }
+    } else {
+        return Err("No agents available to process your message.".into());
+    }
+
     let event_payload = serde_json::to_string(&message)?;
 
     tracing::info!(

@@ -115,12 +115,10 @@ impl ProactiveContextGatherer {
             .await;
 
         match output {
-            Ok(output) if output.status.success() => {
-                Ok(String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .map(String::from)
-                    .collect())
-            }
+            Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(String::from)
+                .collect()),
             _ => Ok(Vec::new()),
         }
     }

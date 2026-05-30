@@ -161,6 +161,7 @@ impl NotionAdapter {
                                         session_id: Some(sid),
                                         channel: savant_core::types::AgentOutputChannel::Chat,
                                         images: Vec::new(),
+                                        ..Default::default()
                                     };
                                     let frame = EventFrame {
                                         event_type: "chat.message".into(),

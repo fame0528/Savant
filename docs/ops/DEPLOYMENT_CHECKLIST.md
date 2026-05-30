@@ -131,7 +131,7 @@ curl http://localhost:3000/api/agents  # → 401 Unauthorized
 
 ## Verification
 
-- [ ] Dashboard loads at http://localhost:3000
+- [ ] Dashboard loads at <http://localhost:3000>
 - [ ] WebSocket connects successfully
 - [ ] Agent discovery shows workspace agents
 - [ ] Config auto-reload works (edit savant.toml, verify log message)

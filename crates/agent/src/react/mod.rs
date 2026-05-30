@@ -425,6 +425,9 @@ pub struct AgentLoop<M: MemoryBackend> {
     pub(crate) facet_cache: crate::learning::FacetCache,
     /// Agent-side rate limiter for LLM API call throttling.
     pub(crate) rate_limiter: Option<Arc<crate::rate_limiter::RateLimiter>>,
+    /// CancellationToken for graceful shutdown and sub-agent cancellation.
+    /// Checked before each tool execution. If cancelled, tool returns immediately.
+    pub(crate) cancellation_token: Option<tokio_util::sync::CancellationToken>,
 }
 
 impl<M: MemoryBackend> AgentLoop<M> {
@@ -505,6 +508,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             facet_extractor: crate::learning::FacetExtractor::new(),
             facet_cache: crate::learning::FacetCache::new(),
             rate_limiter: None,
+            cancellation_token: None,
         }
     }
 

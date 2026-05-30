@@ -52,9 +52,9 @@ The optimization blueprint dictates a Hybrid Isolation Strategy, physically and 
 To bridge the Private Enclave and the Collective Graph safely, the architecture utilizes a one-way, LLM-mediated "Memory Distillation" pipeline. This prevents the "Hive-Mind" from becoming polluted with unstructured, private dialogue.
 
 1. **Extraction & Sanitization:** A background asynchronous process (often operating during idle compute cycles) scans the agent's private local episodic memory. It extracts causal relationships, generalized patterns, and factual assertions.  
-2. **Anonymization:** The distillation prompt is strictly instructed to strip all Personally Identifiable Information (PII), API keys, and session-specific metadata. The architecture enforces explicit data boundaries and least-privilege access to guarantee regulatory alignment.  
-3. **Promotion:** The sanitized knowledge is transformed into a highly structured triplet (Subject \-\> Predicate \-\> Object) representing an entity relationship. It is then vectorized and published to the Shared State via an Event Sourcing protocol, ensuring that the reasoning behind each write is captured alongside the data itself.  
-4. **Delegation Tokens:** Any read or write operation targeting the Collective Graph must be signed with JSON Web Tokens (JWT) that prove the complete custody path of the delegation chain. This ensures that malicious or compromised agents cannot poison the shared graph, as each delegation is cryptographically signed.
+1. **Anonymization:** The distillation prompt is strictly instructed to strip all Personally Identifiable Information (PII), API keys, and session-specific metadata. The architecture enforces explicit data boundaries and least-privilege access to guarantee regulatory alignment.  
+1. **Promotion:** The sanitized knowledge is transformed into a highly structured triplet (Subject \-\> Predicate \-\> Object) representing an entity relationship. It is then vectorized and published to the Shared State via an Event Sourcing protocol, ensuring that the reasoning behind each write is captured alongside the data itself.  
+1. **Delegation Tokens:** Any read or write operation targeting the Collective Graph must be signed with JSON Web Tokens (JWT) that prove the complete custody path of the delegation chain. This ensures that malicious or compromised agents cannot poison the shared graph, as each delegation is cryptographically signed.
 
 By enforcing this cryptographic and semantic boundary, the architecture achieves the localized security of an isolated microservice while maintaining the emergent intelligence and continuous learning capabilities of a unified swarm.
 
@@ -96,10 +96,10 @@ To prevent infinite loops, an aggressive Circuit Breaker is configured within th
 
 To programmatically detect when an agent is hallucinating or generating conflicting data before it enters the Shared Graph, the system utilizes advanced information-theoretic metrics. Rather than relying on simple, easily manipulated confidence scores emitted by the LLM, the system calculates the Shannon Entropy of the generated tokens.
 
-The Shannon Entropy ![][image1] of a probability distribution, representing the level of uncertainty, is defined as:
+The Shannon Entropy ![formula][image1] of a probability distribution, representing the level of uncertainty, is defined as:
 
-![][image2]  
-Where ![][image3] is the probability of the token ![][image4] being generated. High entropy indicates a flat probability distribution, meaning the model is highly uncertain and is effectively guessing. Low entropy indicates a sharp probability distribution, signifying confidence. By establishing strict entropy thresholds—such as setting an upper bound of 1.5 bits for factual memory commits—the architecture proactively blocks uncertain, potentially contradictory facts from entering the Shared Graph. If the entropy exceeds the threshold, the system forces the agent to request human clarification or trigger the Arbiter.
+![formula][image2]  
+Where ![formula][image3] is the probability of the token ![formula][image4] being generated. High entropy indicates a flat probability distribution, meaning the model is highly uncertain and is effectively guessing. Low entropy indicates a sharp probability distribution, signifying confidence. By establishing strict entropy thresholds—such as setting an upper bound of 1.5 bits for factual memory commits—the architecture proactively blocks uncertain, potentially contradictory facts from entering the Shared Graph. If the entropy exceeds the threshold, the system forces the agent to request human clarification or trigger the Arbiter.
 
 ### **Native Temporal Knowledge Invalidation**
 
@@ -118,8 +118,8 @@ Traditional local databases rely on duct-taping Full-Text Search (FTS) alongside
 CortexaDB replaces this with a natively integrated **Hybrid Search** engine.1 It does not simply retrieve based on cosine similarity; it computes results using **Vector \+ Graph \+ Time** simultaneously.1
 
 1. **Semantic Matching:** It locates the initial concept via HNSW vector similarity.  
-2. **Graph Traversal:** Upon finding a semantic match, it immediately traverses adjacency list edges to find connected, structural "related thoughts" without requiring a secondary SQL JOIN or external graph query.  
-3. **Temporal Prioritization:** It inherently factors in recency, ensuring the most up-to-date facts override obsolete matching vectors.1
+1. **Graph Traversal:** Upon finding a semantic match, it immediately traverses adjacency list edges to find connected, structural "related thoughts" without requiring a secondary SQL JOIN or external graph query.  
+1. **Temporal Prioritization:** It inherently factors in recency, ensuring the most up-to-date facts override obsolete matching vectors.1
 
 ### **Automated Lifecycle Management**
 
@@ -133,10 +133,10 @@ By virtualizing the context window as a Directed Acyclic Graph, the system preve
 
 Crucially, the severe engineering hazards of cross-database synchronization are eliminated. CortexaDB's unified WAL with CRC32 checksums ensures 100% atomic durability without orphans 1, and its arc-swap lock-free reads effortlessly scale beneath Axum's async runtime. Finally, the integration of Shannon Entropy limits, Hierarchical Arbitration, and native Hybrid Search (Vector \+ Graph \+ Time) ensures that the Hive-Mind retrieves highly accurate, contextual payloads instantly without blocking the event loop.1 Executing this optimized architecture transforms an erratic ensemble of agents into a unified, secure, and relentlessly logical cognitive engine.
 
-#### **Works cited**
+### **Works cited**
 
 1. I built "SQLite for AI Agents" A local-first memory engine with hybrid Vector, Graph, and Temporal indexing \- Reddit, accessed March 19, 2026, [https://www.reddit.com/r/LocalLLM/comments/1rehu2k/i\_built\_sqlite\_for\_ai\_agents\_a\_localfirst\_memory/](https://www.reddit.com/r/LocalLLM/comments/1rehu2k/i_built_sqlite_for_ai_agents_a_localfirst_memory/)  
-2. https://github.com/anaslimem/CortexaDB
+1. <https://github.com/anaslimem/CortexaDB>
 
 [image1]: <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAYCAYAAAC4CK7hAAACuUlEQVR4Xu2WS6hNURjH/wp5Jq8kSiQlcpUYMSAKRSJFMjJgoJTC9OpeY+8BkSgRJgp5DBwpKVNFSa6SAaHExPP+/+fbq9b+rHP22ffscyfur37tc9a3X+tb61t7AUP8P4ygE3xjG1R9v5bQA8/QZT7QBurIMbrZB1KspB/p38jPdCedQh/R31HsG71Kx+rijOH0NN0TtcXoGV+Rf8YbOo+Oobdc7AmdXL/SjndQIkHn6B+62gdgbYpdoMNcTKyhNRRPg22wF32AfCKmwl5+F2wUPGvpfTrOBzwT6TPaR2fkQ3UOwV5ghw+Q0fQu3esDCabRF/QLXZi16cVP0i3hpARKkDqqRDRlPv1Eb8CmSYz+q11xnedZQl8hHUvRDUuKjqETSkJqpGOOIP1+OZRp3VyZ92iE+mAjppHz7KaP6XgfaIBGQiPykh6lB1DcCbGOvqUzfSDmBP1FN9Hpzq2w+tA5KS5mtkoYYSVONZeqiRQa+Xd0qQ8EQn18p5foWadWl0b1oeKrwYa9DPtg97yCgqkSoaRqRDb4QKCd+ggdSU3JRmgF1JL+HvmiLyJ0JJXQOqE+9vsAiuujbEf0LbhOJyFf9K0QOpJ6zzr6fvyky30A1qZYo/oo05FZ9GZ2FKHotRxrWS6i6dRq5/shwtRTMpqhl79HF0dtulY1ovsXfh/IHNh01Or1D1oJVOSp+hhFb8O2Fl0uFqPR0nk636NldREsWetdTIRpfQ3Fq5dWq9dwtaqCU+90k+AHuh22t9EW4kcU0+/LsH2RZyN9DtuXxfQiv0fT/k2JCxyPYuEZ5+nI6JwYdbqGFrYpA2U27OOWqrGqCNOw27VXiqZPDz2V/e4Ec+nT7NhRtG14SBf4QAUoOYfpwex3x9E3QkVbtJUvywrYYlT1fZuyCrb9qAp9ErT9GdRODDFQ+gG3HaD4TNFcUwAAAABJRU5ErkJggg==>
 

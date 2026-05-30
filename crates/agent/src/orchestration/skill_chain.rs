@@ -123,7 +123,10 @@ impl SkillChainExecutor {
                         chain_name: chain.name.clone(),
                         steps_executed: step_results,
                         success: false,
-                        error: Some(format!("Step {} ({}) failed: {}", index, step.skill_name, e)),
+                        error: Some(format!(
+                            "Step {} ({}) failed: {}",
+                            index, step.skill_name, e
+                        )),
                     };
                 }
             }
@@ -146,7 +149,10 @@ impl SkillChainExecutor {
         input: &str,
     ) -> Result<String, SavantError> {
         let tool = tools.get(&step.skill_name).ok_or_else(|| {
-            SavantError::Unknown(format!("Skill '{}' not found in tool registry", step.skill_name))
+            SavantError::Unknown(format!(
+                "Skill '{}' not found in tool registry",
+                step.skill_name
+            ))
         })?;
 
         let payload = serde_json::json!({ "input": input });
@@ -195,11 +201,14 @@ mod tests {
     #[tokio::test]
     async fn test_chain_step_not_found() {
         let executor = SkillChainExecutor::new();
-        let chain = make_chain("test", vec![SkillChainStep {
-            skill_name: "nonexistent".to_string(),
-            condition: None,
-            pass_output_as: None,
-        }]);
+        let chain = make_chain(
+            "test",
+            vec![SkillChainStep {
+                skill_name: "nonexistent".to_string(),
+                condition: None,
+                pass_output_as: None,
+            }],
+        );
         let tools = HashMap::new();
         let result = executor.execute(&chain, &tools, "").await;
         assert!(!result.success);
@@ -209,11 +218,14 @@ mod tests {
     #[tokio::test]
     async fn test_chain_skips_on_condition() {
         let executor = SkillChainExecutor::new();
-        let chain = make_chain("conditional", vec![SkillChainStep {
-            skill_name: "step1".to_string(),
-            condition: Some("impossible-condition-xyz".to_string()),
-            pass_output_as: None,
-        }]);
+        let chain = make_chain(
+            "conditional",
+            vec![SkillChainStep {
+                skill_name: "step1".to_string(),
+                condition: Some("impossible-condition-xyz".to_string()),
+                pass_output_as: None,
+            }],
+        );
         let tools = HashMap::new();
         let result = executor.execute(&chain, &tools, "no match here").await;
         assert!(result.success); // Skipped = not failed
@@ -223,11 +235,26 @@ mod tests {
     #[tokio::test]
     async fn test_max_steps_exceeded() {
         let executor = SkillChainExecutor { max_steps: 2 };
-        let chain = make_chain("long", vec![
-            SkillChainStep { skill_name: "a".to_string(), condition: None, pass_output_as: None },
-            SkillChainStep { skill_name: "b".to_string(), condition: None, pass_output_as: None },
-            SkillChainStep { skill_name: "c".to_string(), condition: None, pass_output_as: None },
-        ]);
+        let chain = make_chain(
+            "long",
+            vec![
+                SkillChainStep {
+                    skill_name: "a".to_string(),
+                    condition: None,
+                    pass_output_as: None,
+                },
+                SkillChainStep {
+                    skill_name: "b".to_string(),
+                    condition: None,
+                    pass_output_as: None,
+                },
+                SkillChainStep {
+                    skill_name: "c".to_string(),
+                    condition: None,
+                    pass_output_as: None,
+                },
+            ],
+        );
         let tools = HashMap::new();
         let result = executor.execute(&chain, &tools, "").await;
         assert!(!result.success);

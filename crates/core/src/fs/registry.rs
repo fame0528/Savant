@@ -1,5 +1,5 @@
 use crate::error::SavantError;
-use crate::types::{AgentConfig, AgentFileConfig, AgentIdentity, ModelProvider};
+use crate::types::{AgentConfig, AgentFileConfig, AgentIdentity, AgentTier, ModelProvider};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -283,6 +283,7 @@ impl AgentRegistry {
             personality_traits: None,
             evolution_state: None,
             orchestrator_enabled: true,
+            tier: AgentTier::Full,
         };
 
         // Write agent config to workspace — identity/skills/evolution only.
@@ -465,6 +466,7 @@ This is your private space. Your diary. Your inner monologue.
             personality_traits: None,
             evolution_state: None,
             orchestrator_enabled: true,
+            tier: AgentTier::Full,
         };
 
         // Write agent.json if it doesn't exist

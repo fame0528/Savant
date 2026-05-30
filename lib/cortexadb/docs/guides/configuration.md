@@ -112,9 +112,10 @@ Limits total storage size in bytes. Eviction works the same as `max_entries`.
 ### Eviction Strategy
 
 Eviction is deterministic and follows this priority:
+
 1. Sort entries by `(importance ASC, created_at ASC)`
-2. Evict from the bottom until under the limit
-3. Evictions are logged to the WAL for crash recovery
+1. Evict from the bottom until under the limit
+1. Evictions are logged to the WAL for crash recovery
 
 ---
 

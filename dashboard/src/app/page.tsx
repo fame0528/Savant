@@ -19,6 +19,7 @@ export default function ChatPage() {
     streamingContent,
     streamingThoughts,
     typingAgents,
+    agentActivity,
     agents,
     manifestPrompt,
     setManifestPrompt,
@@ -35,12 +36,16 @@ export default function ChatPage() {
     handleCopy,
     getAgentMeta,
     sendControlFrame,
+    sendChatMessage,
     requestLaneHistory,
     showDebug,
     setShowDebug,
     copiedId,
     setCopiedId,
     connectionStatus,
+    setLaneMessages,
+    setTypingAgents,
+    setStreamingContent,
   } = ctx;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -285,15 +290,27 @@ export default function ChatPage() {
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.3)', fontFamily: 'monospace' }}>{(typeof msg.timestamp === 'string' ? new Date(msg.timestamp) : new Date()).toLocaleTimeString()}</div>
-                        {msg.role === 'user' && msg.status && (
-                          <div title={msg.status} style={{
-                            width: '8px', height: '8px', borderRadius: '50%',
-                            background: msg.status === 'complete' ? '#00ff88' : msg.status === 'processing' ? 'var(--accent)' : msg.status === 'sent' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)',
-                            boxShadow: msg.status === 'processing' ? '0 0 8px var(--accent)' : msg.status === 'complete' ? '0 0 6px #00ff88' : 'none',
-                            animation: msg.status === 'processing' ? 'pulse 1.5s ease-in-out infinite' : 'none',
-                            transition: 'all 0.3s ease'
-                          }} />
-                        )}
+                        {msg.role === 'user' && msg.status && (() => {
+                          const sc: Record<string, {c: string, g: string, a: string, l: string}> = {
+                            sending:   {c: 'var(--status-dim, rgba(255,255,255,0.2))', g: 'none', a: 'sendingPulse 0.8s ease-in-out infinite', l: 'SENDING'},
+                            sent:      {c: 'var(--status-dim, rgba(255,255,255,0.4))', g: 'none', a: 'none', l: ''},
+                            delivered: {c: 'var(--accent)', g: '0 0 4px var(--accent)', a: 'deliveredPop 0.3s ease-out', l: 'DELIVERED'},
+                            thinking:  {c: 'var(--accent)', g: '0 0 8px var(--accent)', a: 'thinkingRotate 3s ease-in-out infinite', l: 'THINKING'},
+                            executing: {c: 'var(--status-warning, #ffaa00)', g: '0 0 8px #ffaa00', a: 'executingPulse 1s ease-in-out infinite', l: 'EXECUTING'},
+                            streaming: {c: 'var(--accent)', g: '0 0 12px var(--accent)', a: 'pulse 1.5s ease-in-out infinite', l: ''},
+                            complete:  {c: 'var(--status-success, #00ff88)', g: '0 0 6px #00ff88', a: 'completeCheck 0.4s ease-out', l: ''},
+                            failed:    {c: 'var(--status-error, #ff4444)', g: '0 0 8px #ff4444', a: 'errorShake 0.3s ease-in-out 2', l: 'FAILED'},
+                            error:     {c: 'var(--status-error, #ff4444)', g: '0 0 8px #ff4444', a: 'errorShake 0.3s ease-in-out 2', l: 'ERROR'},
+                            timeout:   {c: 'var(--status-warning, #ffaa00)', g: '0 0 6px #ffaa00', a: 'timeoutPulse 2s ease-in-out infinite', l: 'TIMEOUT'},
+                          };
+                          const cfg = sc[msg.status] || sc.sent;
+                          return (
+                            <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                              <div className={styles.statusDot} title={msg.status} aria-label={'Message status: ' + msg.status} style={{background: cfg.c, boxShadow: cfg.g, animation: cfg.a}} />
+                              {cfg.l && <span className={styles.statusLabel} style={{color: cfg.c}}>{cfg.l}</span>}
+                            </div>
+                          );
+                        })()}
                         {msg.role === 'assistant' && (
                           <button onClick={() => handleCopy(msg.content, `msg-${i}`)} className={styles.copyButton}>
                             {copiedId === `msg-${i}` ? '✓ COPIED' : 'COPY'}
@@ -304,6 +321,79 @@ export default function ChatPage() {
                     <div style={{ fontSize: '15px', lineHeight: '1.6', wordBreak: 'break-word', color: '#eee', whiteSpace: 'pre-wrap', letterSpacing: '0.3px' }}>
                       <FormattedContent content={msg.content} msgId={`msg-${i}`} thoughts={msg.thoughts} />
                     </div>
+                    {/* E-10: Inline recovery actions for terminal states (FID-20260529) */}
+                    {msg.role === 'user' && ['failed', 'error', 'timeout'].includes(msg.status || '') && (
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        <button
+                          onClick={() => {
+                            // Cancel any pending in-flight processing for this lane
+                            const nextTyping = new Set(typingAgents);
+                            nextTyping.delete(laneKey);
+                            setTypingAgents(nextTyping);
+                            const nextStreaming = new Map(streamingContent);
+                            nextStreaming.delete(laneKey);
+                            setStreamingContent(nextStreaming);
+                            // Re-send the original message content
+                            sendChatMessage('user', msg.content, activeAgent || null);
+                          }}
+                          style={{
+                            background: 'transparent', border: '1px solid var(--status-error, #ff4444)',
+                            color: 'var(--status-error, #ff4444)', padding: '4px 12px', borderRadius: '4px',
+                            cursor: 'pointer', fontSize: '10px', fontWeight: 700, letterSpacing: '1px',
+                          }}
+                        >
+                          RETRY
+                        </button>
+                        {msg.status === 'timeout' && (
+                          <button
+                            onClick={() => {
+                              // Reset status to previous active state (delivered) and restart timer
+                              setLaneMessages(prev => {
+                                const next = { ...prev };
+                                const msgs = next[laneKey];
+                                if (msgs && msgs.length > 0) {
+                                  const last = msgs[msgs.length - 1];
+                                  if (last.status === 'timeout') {
+                                    msgs[msgs.length - 1] = { ...last, status: 'delivered' as const };
+                                  }
+                                }
+                                return next;
+                              });
+                            }}
+                            style={{
+                              background: 'transparent', border: '1px solid var(--status-warning, #ffaa00)',
+                              color: 'var(--status-warning, #ffaa00)', padding: '4px 12px', borderRadius: '4px',
+                              cursor: 'pointer', fontSize: '10px', fontWeight: 700, letterSpacing: '1px',
+                            }}
+                          >
+                            WAIT
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            // Dismiss: mark as complete with strikethrough
+                            setLaneMessages(prev => {
+                              const next = { ...prev };
+                              const msgs = next[laneKey];
+                              if (msgs && msgs.length > 0) {
+                                const last = msgs[msgs.length - 1];
+                                if (['failed', 'error', 'timeout'].includes(last.status || '')) {
+                                  msgs[msgs.length - 1] = { ...last, status: 'complete' as const };
+                                }
+                              }
+                              return next;
+                            });
+                          }}
+                          style={{
+                            background: 'transparent', border: '1px solid rgba(255,255,255,0.2)',
+                            color: 'rgba(255,255,255,0.4)', padding: '4px 12px', borderRadius: '4px',
+                            cursor: 'pointer', fontSize: '10px', fontWeight: 700, letterSpacing: '1px',
+                          }}
+                        >
+                          DISMISS
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -336,10 +426,13 @@ export default function ChatPage() {
               );
             })}
 
-            {/* Typing indicator — shows when agent is thinking but hasn't started streaming */}
-            {Array.from(typingAgents).filter(agentId => !streamingContent.has(agentId) || !streamingContent.get(agentId)).map(agentId => {
-              if (streamingContent.has(agentId) && streamingContent.get(agentId)) return null;
+            {/* E-11: Activity-aware typing indicator (FID-20260529) */}
+            {Array.from(agentActivity.entries()).filter(([agentId, activity]) => {
+              if (streamingContent.has(agentId) && streamingContent.get(agentId)) return false;
+              return activity.state !== 'streaming';
+            }).map(([agentId, activity]) => {
               const meta = getAgentMeta(agentId, 'assistant');
+              const elapsed = Math.floor((Date.now() - activity.startedAt) / 1000);
               return (
                 <div key={`typing-${agentId}`} style={{
                   display: 'flex', alignItems: 'center', gap: '12px',
@@ -357,11 +450,28 @@ export default function ChatPage() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: '10px', color: 'var(--accent)', fontWeight: 700, letterSpacing: '1px' }}>{meta.name}</span>
-                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                      {[0, 1, 2].map(i => (
-                        <div key={i} className={styles.dot} style={{ animationDelay: `${i * 0.15}s` }} />
-                      ))}
-                    </div>
+                    {activity.state === 'thinking' && (
+                      <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
+                        . . . thinking... ({elapsed}s)
+                      </span>
+                    )}
+                    {activity.state === 'executing' && (
+                      <span style={{ fontSize: '10px', color: 'var(--status-warning, #ffaa00)', fontFamily: 'monospace' }}>
+                        {activity.toolName || 'executing tool'} ({elapsed}s)
+                      </span>
+                    )}
+                    {activity.state === 'timeout' && (
+                      <span style={{ fontSize: '10px', color: 'var(--status-warning, #ffaa00)', fontFamily: 'monospace' }}>
+                        no response for {elapsed}s
+                      </span>
+                    )}
+                    {activity.state === 'thinking' && (
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                        {[0, 1, 2].map(i => (
+                          <div key={i} className={styles.dot} style={{ animationDelay: `${i * 0.15}s` }} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

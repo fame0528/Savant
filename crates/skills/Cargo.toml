@@ -1,6 +1,6 @@
 [package]
 name = "savant_skills"
-version = "0.3.5"
+version.workspace = true
 edition = "2021"
 license.workspace = true
 

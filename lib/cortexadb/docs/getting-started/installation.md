@@ -28,7 +28,7 @@ To install the latest development version directly from GitHub:
 pip install "cortexadb @ git+https://github.com/anaslimem/CortexaDB.git#subdirectory=crates/cortexadb-py"
 ```
 
-### Requirements
+### Requirements — Python
 
 - Python 3.8+
 - Supported platforms: macOS (arm64, x86_64), Linux (x86_64, aarch64)
@@ -46,7 +46,7 @@ Add CortexaDB to your `Cargo.toml`:
 cortexadb-core = { git = "https://github.com/anaslimem/CortexaDB.git" }
 ```
 
-### Requirements
+### Requirements — Rust
 
 - Rust 1.70+
 - C++ compiler (for usearch dependency)
@@ -55,7 +55,7 @@ cortexadb-core = { git = "https://github.com/anaslimem/CortexaDB.git" }
 
 ## Verifying the Installation
 
-### Python
+### Verifying — Python
 
 ```python
 from cortexadb import CortexaDB
@@ -64,7 +64,7 @@ db = CortexaDB.open("/tmp/test.mem", dimension=64)
 print(db.stats())  # Should print Stats object
 ```
 
-### Rust
+### Verifying — Rust
 
 ```rust
 use cortexadb_core::CortexaDB;

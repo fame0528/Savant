@@ -237,8 +237,15 @@ impl ALDEngine {
         // Reject confabulation markers
         let lower = content.to_lowercase();
         let confabulation_markers = [
-            "i feel", "i sense", "i believe", "i think", "my experience",
-            "as an ai", "i am becoming", "i am growing", "my identity",
+            "i feel",
+            "i sense",
+            "i believe",
+            "i think",
+            "my experience",
+            "as an ai",
+            "i am becoming",
+            "i am growing",
+            "my identity",
         ];
         for marker in &confabulation_markers {
             if lower.contains(marker) {
@@ -248,9 +255,21 @@ impl ALDEngine {
 
         // Must contain at least one actionable verb or directive
         let actionable_verbs = [
-            "use ", "avoid ", "prefer ", "always ", "never ",
-            "ensure ", "must ", "should ", "instead of ", "replace ",
-            "add ", "remove ", "fix ", "change ", "update ",
+            "use ",
+            "avoid ",
+            "prefer ",
+            "always ",
+            "never ",
+            "ensure ",
+            "must ",
+            "should ",
+            "instead of ",
+            "replace ",
+            "add ",
+            "remove ",
+            "fix ",
+            "change ",
+            "update ",
         ];
         let has_action = actionable_verbs.iter().any(|v| lower.contains(v));
 

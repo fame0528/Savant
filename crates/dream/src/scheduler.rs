@@ -192,8 +192,8 @@ impl DreamScheduler {
 
         // REM Phase — use explicit constructor with correct embedding dimension
         let rem_controller = super::rem::RemController::new(
-            5,    // cluster_sample_count
-            3,    // max_associations
+            5,   // cluster_sample_count
+            3,   // max_associations
             768, // embedding_dimension — must match vector engine dimensions
         );
         let rem_result = match tokio::time::timeout(

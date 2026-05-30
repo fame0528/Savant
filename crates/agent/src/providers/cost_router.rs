@@ -76,21 +76,42 @@ mod tests {
 
     #[test]
     fn test_simple_task_classification() {
-        assert_eq!(CostAwareRouter::classify("Summarize this"), TaskComplexity::Simple);
-        assert_eq!(CostAwareRouter::classify("List files"), TaskComplexity::Simple);
+        assert_eq!(
+            CostAwareRouter::classify("Summarize this"),
+            TaskComplexity::Simple
+        );
+        assert_eq!(
+            CostAwareRouter::classify("List files"),
+            TaskComplexity::Simple
+        );
     }
 
     #[test]
     fn test_moderate_task_classification() {
-        assert_eq!(CostAwareRouter::classify("Analyze why the build fails"), TaskComplexity::Moderate);
-        assert_eq!(CostAwareRouter::classify("Compare X and Y approaches"), TaskComplexity::Moderate);
+        assert_eq!(
+            CostAwareRouter::classify("Analyze why the build fails"),
+            TaskComplexity::Moderate
+        );
+        assert_eq!(
+            CostAwareRouter::classify("Compare X and Y approaches"),
+            TaskComplexity::Moderate
+        );
     }
 
     #[test]
     fn test_complex_task_classification() {
-        assert_eq!(CostAwareRouter::classify("Implement a new provider"), TaskComplexity::Complex);
-        assert_eq!(CostAwareRouter::classify("```\ncode here\n```"), TaskComplexity::Complex);
-        assert_eq!(CostAwareRouter::classify("Debug this crash"), TaskComplexity::Complex);
+        assert_eq!(
+            CostAwareRouter::classify("Implement a new provider"),
+            TaskComplexity::Complex
+        );
+        assert_eq!(
+            CostAwareRouter::classify("```\ncode here\n```"),
+            TaskComplexity::Complex
+        );
+        assert_eq!(
+            CostAwareRouter::classify("Debug this crash"),
+            TaskComplexity::Complex
+        );
     }
 
     #[test]
@@ -98,6 +119,9 @@ mod tests {
         let router = CostAwareRouter::new("cheap-model", "expensive-model");
         assert_eq!(router.select_model(TaskComplexity::Simple), "cheap-model");
         assert_eq!(router.select_model(TaskComplexity::Moderate), "cheap-model");
-        assert_eq!(router.select_model(TaskComplexity::Complex), "expensive-model");
+        assert_eq!(
+            router.select_model(TaskComplexity::Complex),
+            "expensive-model"
+        );
     }
 }

@@ -464,6 +464,15 @@ impl HeartbeatPulse {
 
         match &chat_message {
             Ok(message) => {
+                // D1: Structured tracing at message entry (FID-20260529)
+                tracing::info!(
+                    "[{}] INBOUND chat.message: sender={:?}, session={:?}, content_len={}",
+                    self.agent.agent_name,
+                    message.sender,
+                    message.session_id,
+                    message.content.len()
+                );
+
                 let content = message.content.clone();
                 let sender = message.sender.clone();
                 let agent_id = message.agent_id.clone();
@@ -477,6 +486,14 @@ impl HeartbeatPulse {
                     // Check for direct match or platform-prefixed match (e.g., discord:ID)
                     let is_self = s == my_id || s == my_name || s.ends_with(&format!(":{}", my_id));
                     if is_self {
+                        // A1: Log identity pinning drop (FID-20260529)
+                        tracing::warn!(
+                            "[{}] Identity pinning: dropped message from self (sender={:?}, agent_id={:?}, content_preview={})",
+                            self.agent.agent_name,
+                            s_raw,
+                            agent_id,
+                            &message.content[..message.content.len().min(80)]
+                        );
                         return Ok(());
                     }
                 }
@@ -484,6 +501,13 @@ impl HeartbeatPulse {
                 if let Some(ref sid_raw) = agent_id {
                     let sid = sid_raw.to_lowercase();
                     if sid == my_id || sid == my_name {
+                        // A1: Log identity pinning drop (FID-20260529)
+                        tracing::warn!(
+                            "[{}] Identity pinning: dropped message targeted at self (agent_id={:?}, content_preview={})",
+                            self.agent.agent_name,
+                            sid_raw,
+                            &message.content[..message.content.len().min(80)]
+                        );
                         return Ok(());
                     }
                 }
@@ -704,12 +728,37 @@ impl HeartbeatPulse {
                                 }
                             }
                             Err(e) => {
+                                // B1: Publish error response to user (FID-20260529)
                                 tracing::error!(
                                     "[{}] Agent Loop Error: {}",
                                     self.agent.agent_name,
                                     e
                                 );
-                                return Err(e);
+                                let error_response = savant_core::types::ChatMessage {
+                                    role: savant_core::types::ChatRole::Assistant,
+                                    content: format!("I encountered an error processing your message: {}. Please try again.", e),
+                                    sender: Some(self.agent.agent_id.clone()),
+                                    recipient: response_recipient.clone(),
+                                    agent_id: Some(self.agent.agent_id.clone()),
+                                    session_id: message.session_id.clone(),
+                                    channel: savant_core::types::AgentOutputChannel::Chat,
+                                    is_telemetry: false,
+                                    is_error: true,
+                                    images: Vec::new(),
+                                };
+                                if let Ok(payload) = serde_json::to_string(&error_response) {
+                                    if let Err(pub_err) =
+                                        self.nexus.publish("chat.message", &payload).await
+                                    {
+                                        tracing::warn!(
+                                            "[{}] Failed to publish error response: {}",
+                                            self.agent.agent_name,
+                                            pub_err
+                                        );
+                                    }
+                                }
+                                // Return Ok to avoid killing the heartbeat loop
+                                return Ok(());
                             }
                             _ => {
                                 // SessionStart, TurnEnd, and future events — handled silently
@@ -744,6 +793,7 @@ impl HeartbeatPulse {
                     channel: savant_core::types::AgentOutputChannel::Chat,
                     is_telemetry: false,
                     images: Vec::new(),
+                    ..Default::default()
                 };
 
                 let response_payload = serde_json::to_string(&response)?;
@@ -1319,6 +1369,7 @@ impl HeartbeatPulse {
                 channel: savant_core::types::AgentOutputChannel::Chat,
                 is_telemetry: false,
                 images: Vec::new(),
+                ..Default::default()
             };
             if let Ok(payload) = serde_json::to_string(&final_msg) {
                 if let Err(e) = self.nexus.publish("chat.message", &payload).await {
@@ -1498,6 +1549,7 @@ impl HeartbeatPulse {
                 channel: savant_core::types::AgentOutputChannel::Telemetry,
                 is_telemetry: true,
                 images: Vec::new(),
+                ..Default::default()
             };
 
             if let Ok(payload) = serde_json::to_string(&final_msg) {

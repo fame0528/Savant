@@ -1,4 +1,4 @@
-use crate::types::{AgentConfig, ChatMessage, ChatRole, ModelProvider};
+use crate::types::{AgentConfig, AgentTier, ChatMessage, ChatRole, ModelProvider};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -38,6 +38,7 @@ impl From<LegacyOpenClawConfig> for AgentConfig {
             personality_traits: None,
             evolution_state: None,
             orchestrator_enabled: true,
+            tier: AgentTier::Full,
         }
     }
 }
@@ -68,6 +69,7 @@ impl From<LegacyMessage> for ChatMessage {
             session_id: None,
             channel: crate::types::AgentOutputChannel::Chat,
             images: Vec::new(),
+            is_error: false,
         }
     }
 }

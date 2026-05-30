@@ -62,7 +62,7 @@ The Context Window Compression (L2) sub-system operates asynchronously as an amb
 When the active context window exceeds 75% utilization, the L2 subsystem engages via a spawned Tokio thread. To circumvent the tail-budget exhaustion bug observed in Hermes 13, the Savant L2 subsystem executes a staged fallback process.
 
 1. **Stage One (L2 Tool Eviction):** The system scans the middle context for older, successfully resolved tool results. It evicts the full L1-compacted text and replaces it with a highly dense, one-line semantic marker (e.g., \`\`). This process requires zero LLM API calls and operates instantaneously.23  
-2. **Stage Two (Semantic Summarization):** Only if L2 Tool Eviction fails to bring the context back below the 75% threshold does the subsystem calculate the remaining token budget. It secures a guaranteed minimum of 6 conversational turns in the protected tail, regardless of token size, ensuring the agent never loses its immediate train of thought. The remaining middle turns are submitted to a fast, cost-effective auxiliary LLM (e.g., Claude 3.5 Haiku or Gemini 1.5 Flash) for structured summarization.6
+1. **Stage Two (Semantic Summarization):** Only if L2 Tool Eviction fails to bring the context back below the 75% threshold does the subsystem calculate the remaining token budget. It secures a guaranteed minimum of 6 conversational turns in the protected tail, regardless of token size, ensuring the agent never loses its immediate train of thought. The remaining middle turns are submitted to a fast, cost-effective auxiliary LLM (e.g., Claude 3.5 Haiku or Gemini 1.5 Flash) for structured summarization.6
 
 Crucially, this subsystem enforces a strict "Preserve-on-Failure" mandate. If the auxiliary summarization LLM returns an HTTP 500 timeout error or generates malformed output, the system must abort the L2 compression rather than replacing the middle turns with an empty string—a catastrophic failure mode previously identified in the Hermes codebase.24
 
@@ -120,7 +120,7 @@ pub struct TokenJuiceRule {
     pub id: String,  
     pub family: RuleFamily,  
     \#\[serde(default)\]  
-    pub extends: Option\<String\>,   
+    pub extends: Option\<String\>,
     pub match\_criteria: MatchCriteria,  
     pub filters: Filters,  
     pub transforms: Transforms,  
@@ -132,7 +132,7 @@ pub struct TokenJuiceRule {
 pub struct MatchCriteria {  
     pub tool\_names: Vec\<String\>,  
     pub argv\_patterns: Vec\<String\>,  
-    pub output\_heuristics: Option\<Vec\<String\>\>,   
+    pub output\_heuristics: Option\<Vec\<String\>\>,
 }
 
 \#  
@@ -140,7 +140,7 @@ pub struct Transforms {
     pub strip\_ansi: bool,  
     pub normalize\_whitespace: bool,  
     pub dedupe\_adjacent\_lines: bool,  
-    pub extract\_json\_schema: bool,   
+    pub extract\_json\_schema: bool,
 }
 
 \#  
@@ -242,32 +242,32 @@ The final, most computationally demanding phase is the implementation of L1.5 Se
 #### **Works cited**
 
 1. Deep Dive into Context Engineering for Agents \- Galileo AI, accessed May 12, 2026, [https://galileo.ai/blog/context-engineering-for-agents](https://galileo.ai/blog/context-engineering-for-agents)  
-2. The Fundamentals of Context Management and Compaction in LLMs | by Isaac Kargar, accessed May 12, 2026, [https://kargarisaac.medium.com/the-fundamentals-of-context-management-and-compaction-in-llms-171ea31741a2](https://kargarisaac.medium.com/the-fundamentals-of-context-management-and-compaction-in-llms-171ea31741a2)  
-3. Building Openclaw from Scratch — Part 4 (Tool Loop Detection) | by Apoorv Agarwal, accessed May 12, 2026, [https://systemdesigner.medium.com/building-openclaw-from-scratch-part-4-tool-loop-detection-be84dba448a5](https://systemdesigner.medium.com/building-openclaw-from-scratch-part-4-tool-loop-detection-be84dba448a5)  
-4. Agentic AI: How to Save on Tokens | Towards Data Science, accessed May 12, 2026, [https://towardsdatascience.com/agentic-ai-how-to-save-on-tokens/](https://towardsdatascience.com/agentic-ai-how-to-save-on-tokens/)  
-5. Smart Token Compression | OpenHuman \- GitBook, accessed May 12, 2026, [https://tinyhumans.gitbook.io/openhuman/features/token-compression](https://tinyhumans.gitbook.io/openhuman/features/token-compression)  
-6. Context Compression and Caching | Hermes Agent \- nous research, accessed May 12, 2026, [https://hermes-agent.nousresearch.com/docs/developer-guide/context-compression-and-caching](https://hermes-agent.nousresearch.com/docs/developer-guide/context-compression-and-caching)  
-7. BUG: Tool-result guard ignores resolved contextTokens budget when contextWindow is lower · Issue \#74917 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/74917](https://github.com/openclaw/openclaw/issues/74917)  
-8. skills/rtk-token-optimizer/SKILL.md · master · Vincent Durieux / Albert Agentic · GitLab, accessed May 12, 2026, [https://forge.apps.education.fr/durieuxvincent/albert-agentic/-/blob/master/skills/rtk-token-optimizer/SKILL.md](https://forge.apps.education.fr/durieuxvincent/albert-agentic/-/blob/master/skills/rtk-token-optimizer/SKILL.md)  
-9. write-time tool result externalization to prevent session JSONL bloat · Issue \#64151 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/64151](https://github.com/openclaw/openclaw/issues/64151)  
-10. I Only Compressed CLI Output, Yet Tokens Dropped by 80%? | MadPlay, accessed May 12, 2026, [https://madplay.github.io/en/post/rtk-reduce-ai-coding-agent-token-usage](https://madplay.github.io/en/post/rtk-reduce-ai-coding-agent-token-usage)  
-11. GitHub \- vincentkoc/tokenjuice: Token weight loss. Lean output compaction for terminal-heavy agent workflows. Works as a native CLI tool or as an extension to popular coding and agent frameworks., accessed May 12, 2026, [https://github.com/vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice)  
-12. Context References | Hermes Agent \- nous research, accessed May 12, 2026, [https://hermes-agent.nousresearch.com/docs/user-guide/features/context-references](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-references)  
-13. \[Bug\]: Context compression causes incoherent responses on small-context models · Issue \#7133 · NousResearch/hermes-agent \- GitHub, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/7133](https://github.com/NousResearch/hermes-agent/issues/7133)  
-14. \[Bug\]: Embedded runs can fail with server\_error in long sessions even when UI context appears below limit · Issue \#50333 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/50333](https://github.com/openclaw/openclaw/issues/50333)  
-15. Pull requests · vincentkoc/tokenjuice \- GitHub, accessed May 12, 2026, [https://github.com/vincentkoc/tokenjuice/pulls](https://github.com/vincentkoc/tokenjuice/pulls)  
-16. Feature Request: Execution Guardrails for Tool Safety · Issue \#6823 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/6823](https://github.com/openclaw/openclaw/issues/6823)  
-17. feat: RTK exec proxy — compress tool output to save context tokens · Issue \#37057 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/37057](https://github.com/openclaw/openclaw/issues/37057)  
-18. Exec tool output not truncated before session write — single large output can exceed context limit · Issue \#16574 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/16574](https://github.com/openclaw/openclaw/issues/16574)  
-19. GitHub \- rtk-ai/rtk: CLI proxy that reduces LLM token consumption by 60-90% on common dev commands. Single Rust binary, zero dependencies, accessed May 12, 2026, [https://github.com/rtk-ai/rtk](https://github.com/rtk-ai/rtk)  
-20. rtk/CLAUDE.md at develop · rtk-ai/rtk \- GitHub, accessed May 12, 2026, [https://github.com/rtk-ai/rtk/blob/develop/CLAUDE.md](https://github.com/rtk-ai/rtk/blob/develop/CLAUDE.md)  
-21. RTK — Rust Token Killer, accessed May 12, 2026, [https://www.rtk-ai.app/](https://www.rtk-ai.app/)  
-22. \[i18n\] Thai Translation: Developer Guide Part b \- context-compression-and-caching, context-engine-plugin, contributing, creating-skills, cron-internals · Issue \#15127 · NousResearch/hermes-agent \- GitHub, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/15127](https://github.com/NousResearch/hermes-agent/issues/15127)  
-23. tracking: context compression improvements · Issue \#9666 · NousResearch/hermes-agent, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/9666](https://github.com/NousResearch/hermes-agent/issues/9666)  
-24. Bug: context\_compressor drops messages when summarization fails · Issue \#11585 · NousResearch/hermes-agent \- GitHub, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/11585](https://github.com/NousResearch/hermes-agent/issues/11585)  
-25. Tool Guard \- OpenClaw Plugin, accessed May 12, 2026, [https://openclawdir.com/plugins/tool-guard-9i24v4](https://openclawdir.com/plugins/tool-guard-9i24v4)  
-26. Long-running tool call may fail with missing tool result in session history while underlying task continues · Issue \#66775 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/66775](https://github.com/openclaw/openclaw/issues/66775)  
-27. The Impact of Big Five Personality Traits on AI Agent Decision-Making in Public Spaces: A Social Simulation Study \- arXiv, accessed May 12, 2026, [https://arxiv.org/html/2503.15497v1](https://arxiv.org/html/2503.15497v1)  
-28. How to Reduce Token Usage in AI Agents: 10 MCP Optimization Techniques | MindStudio, accessed May 12, 2026, [https://www.mindstudio.ai/blog/reduce-token-usage-ai-agents-mcp-optimization](https://www.mindstudio.ai/blog/reduce-token-usage-ai-agents-mcp-optimization)  
-29. AI Agent File Deduplication Techniques & MCP Workflows | Fastio, accessed May 12, 2026, [https://fast.io/resources/ai-agent-file-deduplication/](https://fast.io/resources/ai-agent-file-deduplication/)  
-30. \[Bug\]: underestimates token count for multimodal messages, causing oversized tail protection and ineffective context compression · Issue \#16087 · NousResearch/hermes-agent \- GitHub, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/16087](https://github.com/NousResearch/hermes-agent/issues/16087)
+1. The Fundamentals of Context Management and Compaction in LLMs | by Isaac Kargar, accessed May 12, 2026, [https://kargarisaac.medium.com/the-fundamentals-of-context-management-and-compaction-in-llms-171ea31741a2](https://kargarisaac.medium.com/the-fundamentals-of-context-management-and-compaction-in-llms-171ea31741a2)  
+1. Building Openclaw from Scratch — Part 4 (Tool Loop Detection) | by Apoorv Agarwal, accessed May 12, 2026, [https://systemdesigner.medium.com/building-openclaw-from-scratch-part-4-tool-loop-detection-be84dba448a5](https://systemdesigner.medium.com/building-openclaw-from-scratch-part-4-tool-loop-detection-be84dba448a5)  
+1. Agentic AI: How to Save on Tokens | Towards Data Science, accessed May 12, 2026, [https://towardsdatascience.com/agentic-ai-how-to-save-on-tokens/](https://towardsdatascience.com/agentic-ai-how-to-save-on-tokens/)  
+1. Smart Token Compression | OpenHuman \- GitBook, accessed May 12, 2026, [https://tinyhumans.gitbook.io/openhuman/features/token-compression](https://tinyhumans.gitbook.io/openhuman/features/token-compression)  
+1. Context Compression and Caching | Hermes Agent \- nous research, accessed May 12, 2026, [https://hermes-agent.nousresearch.com/docs/developer-guide/context-compression-and-caching](https://hermes-agent.nousresearch.com/docs/developer-guide/context-compression-and-caching)  
+1. BUG: Tool-result guard ignores resolved contextTokens budget when contextWindow is lower · Issue \#74917 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/74917](https://github.com/openclaw/openclaw/issues/74917)  
+1. skills/rtk-token-optimizer/SKILL.md · master · Vincent Durieux / Albert Agentic · GitLab, accessed May 12, 2026, [https://forge.apps.education.fr/durieuxvincent/albert-agentic/-/blob/master/skills/rtk-token-optimizer/SKILL.md](https://forge.apps.education.fr/durieuxvincent/albert-agentic/-/blob/master/skills/rtk-token-optimizer/SKILL.md)  
+1. write-time tool result externalization to prevent session JSONL bloat · Issue \#64151 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/64151](https://github.com/openclaw/openclaw/issues/64151)  
+1. I Only Compressed CLI Output, Yet Tokens Dropped by 80%? | MadPlay, accessed May 12, 2026, [https://madplay.github.io/en/post/rtk-reduce-ai-coding-agent-token-usage](https://madplay.github.io/en/post/rtk-reduce-ai-coding-agent-token-usage)  
+1. GitHub \- vincentkoc/tokenjuice: Token weight loss. Lean output compaction for terminal-heavy agent workflows. Works as a native CLI tool or as an extension to popular coding and agent frameworks., accessed May 12, 2026, [https://github.com/vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice)  
+1. Context References | Hermes Agent \- nous research, accessed May 12, 2026, [https://hermes-agent.nousresearch.com/docs/user-guide/features/context-references](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-references)  
+1. \[Bug\]: Context compression causes incoherent responses on small-context models · Issue \#7133 · NousResearch/hermes-agent \- GitHub, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/7133](https://github.com/NousResearch/hermes-agent/issues/7133)  
+1. \[Bug\]: Embedded runs can fail with server\_error in long sessions even when UI context appears below limit · Issue \#50333 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/50333](https://github.com/openclaw/openclaw/issues/50333)  
+1. Pull requests · vincentkoc/tokenjuice \- GitHub, accessed May 12, 2026, [https://github.com/vincentkoc/tokenjuice/pulls](https://github.com/vincentkoc/tokenjuice/pulls)  
+1. Feature Request: Execution Guardrails for Tool Safety · Issue \#6823 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/6823](https://github.com/openclaw/openclaw/issues/6823)  
+1. feat: RTK exec proxy — compress tool output to save context tokens · Issue \#37057 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/37057](https://github.com/openclaw/openclaw/issues/37057)  
+1. Exec tool output not truncated before session write — single large output can exceed context limit · Issue \#16574 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/16574](https://github.com/openclaw/openclaw/issues/16574)  
+1. GitHub \- rtk-ai/rtk: CLI proxy that reduces LLM token consumption by 60-90% on common dev commands. Single Rust binary, zero dependencies, accessed May 12, 2026, [https://github.com/rtk-ai/rtk](https://github.com/rtk-ai/rtk)  
+1. rtk/CLAUDE.md at develop · rtk-ai/rtk \- GitHub, accessed May 12, 2026, [https://github.com/rtk-ai/rtk/blob/develop/CLAUDE.md](https://github.com/rtk-ai/rtk/blob/develop/CLAUDE.md)  
+1. RTK — Rust Token Killer, accessed May 12, 2026, [https://www.rtk-ai.app/](https://www.rtk-ai.app/)  
+1. \[i18n\] Thai Translation: Developer Guide Part b \- context-compression-and-caching, context-engine-plugin, contributing, creating-skills, cron-internals · Issue \#15127 · NousResearch/hermes-agent \- GitHub, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/15127](https://github.com/NousResearch/hermes-agent/issues/15127)  
+1. tracking: context compression improvements · Issue \#9666 · NousResearch/hermes-agent, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/9666](https://github.com/NousResearch/hermes-agent/issues/9666)  
+1. Bug: context\_compressor drops messages when summarization fails · Issue \#11585 · NousResearch/hermes-agent \- GitHub, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/11585](https://github.com/NousResearch/hermes-agent/issues/11585)  
+1. Tool Guard \- OpenClaw Plugin, accessed May 12, 2026, [https://openclawdir.com/plugins/tool-guard-9i24v4](https://openclawdir.com/plugins/tool-guard-9i24v4)  
+1. Long-running tool call may fail with missing tool result in session history while underlying task continues · Issue \#66775 \- GitHub, accessed May 12, 2026, [https://github.com/openclaw/openclaw/issues/66775](https://github.com/openclaw/openclaw/issues/66775)  
+1. The Impact of Big Five Personality Traits on AI Agent Decision-Making in Public Spaces: A Social Simulation Study \- arXiv, accessed May 12, 2026, [https://arxiv.org/html/2503.15497v1](https://arxiv.org/html/2503.15497v1)  
+1. How to Reduce Token Usage in AI Agents: 10 MCP Optimization Techniques | MindStudio, accessed May 12, 2026, [https://www.mindstudio.ai/blog/reduce-token-usage-ai-agents-mcp-optimization](https://www.mindstudio.ai/blog/reduce-token-usage-ai-agents-mcp-optimization)  
+1. AI Agent File Deduplication Techniques & MCP Workflows | Fastio, accessed May 12, 2026, [https://fast.io/resources/ai-agent-file-deduplication/](https://fast.io/resources/ai-agent-file-deduplication/)  
+1. \[Bug\]: underestimates token count for multimodal messages, causing oversized tail protection and ineffective context compression · Issue \#16087 · NousResearch/hermes-agent \- GitHub, accessed May 12, 2026, [https://github.com/NousResearch/hermes-agent/issues/16087](https://github.com/NousResearch/hermes-agent/issues/16087)

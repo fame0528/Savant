@@ -47,6 +47,7 @@ impl NarrativeSynthesizer {
             channel: savant_core::types::AgentOutputChannel::Chat,
             is_telemetry: false,
             images: Vec::new(),
+            ..Default::default()
         }];
 
         let stream = llm.stream_completion(messages, vec![]).await?;

@@ -1,0 +1,4 @@
+max_iterations = 50
+timeout_secs = 300
+can_delegate = false
+max_tokens = 0

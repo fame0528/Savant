@@ -67,9 +67,7 @@ impl SkillVerifier {
         // Check required files exist
         for required in REQUIRED_FILES {
             if !skill_dir.join(required).exists() {
-                issues.push(VerificationIssue::MissingRequiredFile(
-                    required.to_string(),
-                ));
+                issues.push(VerificationIssue::MissingRequiredFile(required.to_string()));
             }
         }
 
@@ -158,11 +156,9 @@ mod tests {
 
         match verifier.verify(dir.path()).await {
             VerificationResult::Fail(issues) => {
-                assert!(
-                    issues
-                        .iter()
-                        .any(|i| matches!(i, VerificationIssue::MissingRequiredFile(_)))
-                );
+                assert!(issues
+                    .iter()
+                    .any(|i| matches!(i, VerificationIssue::MissingRequiredFile(_))));
             }
             _ => panic!("Expected Fail for empty skill dir"),
         }
@@ -172,8 +168,11 @@ mod tests {
     async fn test_valid_skill_passes() {
         let dir = tempdir().expect("dir");
         fs::create_dir_all(dir.path().join("src")).expect("src dir");
-        fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
-            .expect("Cargo.toml");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("Cargo.toml");
         fs::write(dir.path().join("src/lib.rs"), "pub fn test() {}").expect("lib.rs");
 
         let verifier = SkillVerifier::without_syntax_check();
@@ -187,19 +186,20 @@ mod tests {
     async fn test_oversized_file_detected() {
         let dir = tempdir().expect("dir");
         fs::create_dir_all(dir.path().join("src")).expect("src dir");
-        fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
-            .expect("Cargo.toml");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("Cargo.toml");
         // Write a large file (> 100KB)
         fs::write(dir.path().join("src/lib.rs"), "x".repeat(200_000)).expect("lib.rs");
 
         let verifier = SkillVerifier::without_syntax_check();
         match verifier.verify(dir.path()).await {
             VerificationResult::Fail(issues) => {
-                assert!(
-                    issues
-                        .iter()
-                        .any(|i| matches!(i, VerificationIssue::FileTooLarge(_, _)))
-                );
+                assert!(issues
+                    .iter()
+                    .any(|i| matches!(i, VerificationIssue::FileTooLarge(_, _))));
             }
             _ => panic!("Expected Fail for oversized file"),
         }

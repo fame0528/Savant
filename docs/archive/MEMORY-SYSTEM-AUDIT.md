@@ -36,7 +36,7 @@
 | **Procedural** | Not explicitly modeled | ProceduralMemory (name, steps[], triggerCondition, frequency) | **Savant has no procedural memory** — major gap |
 | **Lessons/Insights** | Not explicitly modeled | Lesson (content, confidence, decayRate, reinforcements), Insight (synthesized from graph traversal) | **Savant has no lessons or insights layer** |
 | **Actions/Work Items** | TaskState journal (WAL with XXH3) | Action (status, priority, tags, deps, result, sketchId, crystallizedInto) | agentmemory has full action lifecycle with dependency graphs |
-| **Retention Scoring** | PromotionEngine (OCEAN personality-driven) | RetentionScore (Ebbinghaus: salience * exp(-λ*Δt) + reinforcement) | Different approaches — Savant uses personality, agentmemory uses cognitive model |
+| **Retention Scoring** | PromotionEngine (OCEAN personality-driven) | RetentionScore (Ebbinghaus: salience *exp(-λ*Δt) + reinforcement) | Different approaches — Savant uses personality, agentmemory uses cognitive model |
 | **Audit Trail** | WAL (CortexaDB internal) | AuditEntry (30+ operation types, qualityScore, userId) | agentmemory has explicit application-level audit trail |
 
 ---
@@ -117,6 +117,7 @@
 ### Priority 1: High Impact, Low-Medium Effort
 
 #### 8.1 BM25 Keyword Search Index
+
 **Source:** agentmemory `state/search-index.ts`
 **Gap:** Savant's fallback is a naive substring match. agentmemory has a full BM25 inverted index with Porter stemmer, synonym expansion (45+ developer term groups), and CJK segmentation.
 **Recommendation:** Add a BM25 index as a parallel search path in `vector_engine.rs`. When semantic search returns no results or embedding service is unavailable, use BM25 instead of substring matching.
@@ -124,6 +125,7 @@
 **Estimated effort:** Medium (2-3 days)
 
 #### 8.2 SHA-256 Deduplication Window
+
 **Source:** agentmemory `functions/dedup.ts`
 **Gap:** Savant has no deduplication. Duplicate messages/memories can be stored repeatedly.
 **Recommendation:** Add a 5-minute SHA-256 dedup window in `async_backend.rs::store()`. Hash the content + session_id, check against a recent-hash cache, skip if duplicate.
@@ -131,6 +133,7 @@
 **Estimated effort:** Low (half day)
 
 #### 8.3 Privacy Filter / Secret Redaction
+
 **Source:** agentmemory `functions/privacy.ts`
 **Gap:** Savant stores all content verbatim, including potential secrets.
 **Recommendation:** Add a privacy filter module that scans content for 15+ secret patterns (API keys, tokens, JWTs, AWS keys, GitHub PATs, etc.) and redacts them before storage. Support `<private>` tag stripping.
@@ -138,6 +141,7 @@
 **Estimated effort:** Low (1 day)
 
 #### 8.4 Access Tracking with Timestamp History
+
 **Source:** agentmemory `functions/access-tracker.ts`
 **Gap:** Savant tracks `hit_count` and `last_accessed_at` but not access history.
 **Recommendation:** Extend `MemoryEntry` to track last N access timestamps (e.g., last 20). This feeds better retention scoring and temporal analysis.
@@ -147,6 +151,7 @@
 ### Priority 2: High Impact, Medium-High Effort
 
 #### 8.5 Procedural Memory Layer
+
 **Source:** agentmemory `functions/consolidation-pipeline.ts` (Procedural tier)
 **Gap:** Savant has no procedural memory — it cannot learn and store workflows, decision patterns, or step-by-step procedures.
 **Recommendation:** Add a `ProceduralMemory` type with fields: `name`, `steps[]`, `trigger_condition`, `frequency`, `strength`, `tags`. Create a background consolidation task that identifies recurring tool-call patterns across sessions and extracts them as procedures.
@@ -154,6 +159,7 @@
 **Estimated effort:** High (1-2 weeks)
 
 #### 8.6 Lessons & Insights Layer
+
 **Source:** agentmemory `functions/lessons.ts`, `functions/reflect.ts`
 **Gap:** Savant has no explicit lessons-learned or insight synthesis layer.
 **Recommendation:** Add `Lesson` (content, confidence, decay_rate, reinforcements, source) and `Insight` (title, content, confidence, source_concept_cluster) types. Create a reflective consolidation task that traverses the MAGMA graph to synthesize higher-order insights from concept clusters.
@@ -161,6 +167,7 @@
 **Estimated effort:** High (1-2 weeks)
 
 #### 8.7 Triple-Stream RRF Search Fusion
+
 **Source:** agentmemory `state/hybrid-search.ts`
 **Gap:** Savant uses HNSW-only semantic search. agentmemory fuses BM25 + Vector + Graph with Reciprocal Rank Fusion (k=60), dynamic weight normalization, and session diversification.
 **Recommendation:** When BM25 is added (8.1), implement RRF fusion between BM25 and HNSW scores. Add optional graph-score contribution from MAGMA. Implement session diversification (max 3 results per session).
@@ -168,6 +175,7 @@
 **Estimated effort:** Medium (3-5 days)
 
 #### 8.8 Ebbinghaus Retention Scoring
+
 **Source:** agentmemory `functions/retention.ts`
 **Gap:** Savant's PromotionEngine uses OCEAN personality traits for scoring. agentmemory uses a cognitive model: `score = salience * exp(-λ*Δt) + σ * Σ(1/days_since_access)`.
 **Recommendation:** Add an alternative retention scoring mode using the Ebbinghaus model. This is more principled for general-purpose memory decay. Keep OCEAN as an optional override. Add tier thresholds (hot >= 0.7, warm >= 0.4, cold >= 0.15).
@@ -177,6 +185,7 @@
 ### Priority 3: Medium Impact, Medium Effort
 
 #### 8.9 Query Expansion & Reformulation
+
 **Source:** agentmemory `functions/query-expansion.ts`
 **Gap:** Savant queries are literal — no expansion, reformulation, or temporal concretization.
 **Recommendation:** Add a lightweight query expansion module that handles: temporal expressions ("last week" -> date range), synonym expansion, and entity extraction from queries. Can be rule-based (no LLM required).
@@ -184,6 +193,7 @@
 **Estimated effort:** Medium (2-3 days)
 
 #### 8.10 Memory Versioning & Supersession Chains
+
 **Source:** agentmemory `functions/remember.rs` (Jaccard similarity check)
 **Gap:** Savant has no memory versioning. When a fact changes, the old version is lost or duplicated.
 **Recommendation:** Add `version`, `parent_id`, `supersedes[]`, `is_latest` fields to `MemoryEntry`. When storing a new memory, check similarity with existing memories (Jaccard > 0.7). If similar, mark old as superseded, link to new.
@@ -191,6 +201,7 @@
 **Estimated effort:** Medium (2-3 days)
 
 #### 8.11 Cross-Encoder Reranking
+
 **Source:** agentmemory `state/reranker.ts`
 **Gap:** Savant has no reranking — search results are returned in raw score order.
 **Recommendation:** Add optional cross-encoder reranking (using a local model like ms-marco-MiniLM) on top-N search results. This significantly improves precision for the top results.
@@ -198,6 +209,7 @@
 **Estimated effort:** Medium (3-5 days)
 
 #### 8.12 Application-Level Audit Trail
+
 **Source:** agentmemory `functions/audit.ts`
 **Gap:** Savant's WAL is internal to CortexaDB. There's no application-level audit of memory operations.
 **Recommendation:** Add an `AuditEntry` type that logs: operation type (30+ types), timestamp, target memory IDs, quality score. Store in a dedicated CortexaDB collection. Useful for debugging and compliance.
@@ -207,18 +219,21 @@
 ### Priority 4: Lower Priority / Future
 
 #### 8.13 Mesh P2P Sync
+
 **Source:** agentmemory `functions/mesh.ts`
 **Gap:** Savant's collective enclave is local-only. No P2P sync between Savant instances.
 **Recommendation:** For multi-machine deployments, add optional P2P sync of collective enclave entries. Can use the existing A2A protocol as a foundation.
 **Estimated effort:** High (2-3 weeks)
 
 #### 8.14 Image/Multimodal Memory
+
 **Source:** agentmemory `functions/vision-search.ts`, `functions/image-refs.ts`
 **Gap:** Savant is text-only. agentmemory supports CLIP image embeddings and image reference counting.
 **Recommendation:** If multimodal agents are planned, add image embedding support to the vector engine with CLIP or similar.
 **Estimated effort:** High (2-3 weeks)
 
 #### 8.15 Circuit Breaker + Provider Fallback Chain
+
 **Source:** agentmemory `providers/circuit-breaker.ts`, `providers/fallback-chain.ts`
 **Gap:** Savant has a single embedding provider. If it fails, semantic search is dead.
 **Recommendation:** Add circuit breaker pattern around embedding service. Support fallback chain (e.g., fastembed -> Ollama -> no semantic).

@@ -468,7 +468,6 @@ async fn run_event_loop(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-
     let events = EventHandler::new(250);
 
     let mut running = true;
@@ -511,6 +510,7 @@ async fn run_event_loop(
                                             session_id: None,
                                             channel: savant_core::types::AgentOutputChannel::default(),
                                             is_telemetry: false,
+                                            is_error: false,
                                             images: vec![],
                                         }),
                                         signature: None,

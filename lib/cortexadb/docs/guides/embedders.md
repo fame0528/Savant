@@ -118,9 +118,9 @@ class MyEmbedder(Embedder):
 When an embedder is configured:
 
 1. **`add(text)`** - Text is embedded via `embedder.embed(text)`, then stored with the embedding
-2. **`search(query)`** - Query is embedded via `embedder.embed(query)`, then used for vector search
-3. **`ingest(text)`** - Each chunk is embedded individually after chunking
-4. **`load(file)`** - File is read, chunked, and each chunk is embedded
+1. **`search(query)`** - Query is embedded via `embedder.embed(query)`, then used for vector search
+1. **`ingest(text)`** - Each chunk is embedded individually after chunking
+1. **`load(file)`** - File is read, chunked, and each chunk is embedded
 
 You can always override auto-embedding by providing an explicit `embedding` parameter:
 

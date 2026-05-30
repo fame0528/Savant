@@ -11,22 +11,22 @@
 ## Table of Contents
 
 1. [What We're Building](#1-what-were-building)
-2. [Dataset & Tokenization](#2-dataset--tokenization)
-3. [Data Loading: Batches & Context Windows](#3-data-loading-batches--context-windows)
-4. [Bigram Language Model (Baseline)](#4-bigram-language-model-baseline)
-5. [Training & Generation Basics](#5-training--generation-basics)
-6. [The Self-Attention Trick](#6-the-self-attention-trick)
-7. [Self-Attention: Keys, Queries, Values](#7-self-attention-keys-queries-values)
-8. [Scaled Dot-Product Attention](#8-scaled-dot-product-attention)
-9. [Multi-Head Attention](#9-multi-head-attention)
-10. [Feed-Forward Networks](#10-feed-forward-networks)
-11. [Residual Connections](#11-residual-connections)
-12. [Layer Normalization](#12-layer-normalization)
-13. [Dropout](#13-dropout)
-14. [The Full Transformer](#14-the-full-transformer)
-15. [Encoder vs. Decoder & Cross-Attention](#15-encoder-vs-decoder--cross-attention)
-16. [Scaling Results](#16-scaling-results)
-17. [From This to ChatGPT](#17-from-this-to-chatgpt)
+1. [Dataset & Tokenization](#2-dataset--tokenization)
+1. [Data Loading: Batches & Context Windows](#3-data-loading-batches--context-windows)
+1. [Bigram Language Model (Baseline)](#4-bigram-language-model-baseline)
+1. [Training & Generation Basics](#5-training--generation-basics)
+1. [The Self-Attention Trick](#6-the-self-attention-trick)
+1. [Self-Attention: Keys, Queries, Values](#7-self-attention-keys-queries-values)
+1. [Scaled Dot-Product Attention](#8-scaled-dot-product-attention)
+1. [Multi-Head Attention](#9-multi-head-attention)
+1. [Feed-Forward Networks](#10-feed-forward-networks)
+1. [Residual Connections](#11-residual-connections)
+1. [Layer Normalization](#12-layer-normalization)
+1. [Dropout](#13-dropout)
+1. [The Full Transformer](#14-the-full-transformer)
+1. [Encoder vs. Decoder & Cross-Attention](#15-encoder-vs-decoder--cross-attention)
+1. [Scaling Results](#16-scaling-results)
+1. [From This to ChatGPT](#17-from-this-to-chatgpt)
 
 ---
 
@@ -90,7 +90,7 @@ We never feed the entire text at once. Instead, we sample **chunks** of length `
 
 A chunk of 9 characters contains **8 individual training examples**:
 
-```
+```text
 Context: [18]              → Target: 47
 Context: [18, 47]          → Target: 56
 Context: [18, 47, 56]      → Target: 57
@@ -104,7 +104,7 @@ This trains the model to handle context lengths from 1 up to `block_size`, which
 
 Multiple chunks are stacked into a batch tensor for GPU parallelism:
 
-```
+```text
 Input X:  (batch_size × block_size)  — e.g., 4×8
 Targets Y: (batch_size × block_size) — offset by 1
 ```
@@ -275,7 +275,7 @@ class Head(nn.Module):
 
 From the "Attention Is All You Need" paper:
 
-```
+```text
 Attention(Q, K, V) = softmax(QK^T / √d_k) V
 ```
 
@@ -338,7 +338,7 @@ class FeedForward(nn.Module):
 
 Deep networks suffer from optimization difficulties. **Skip connections** (from [He et al., 2015](https://arxiv.org/abs/1512.03385)) solve this:
 
-```
+```text
 x = x + self.attention(self.ln1(x))   # fork → communicate → add back
 x = x + self.feed_forward(self.ln2(x)) # fork → compute → add back
 ```
@@ -375,6 +375,7 @@ self.dropout = nn.Dropout(dropout)  # e.g., p=0.2
 ```
 
 Applied at:
+
 - After the residual connection (before adding back)
 - After multi-head attention output
 - After attention softmax (preventing some token-to-token communication)
@@ -400,7 +401,7 @@ At test time, everything is fully enabled — all sub-networks merge into a sing
 
 ### Architecture
 
-```
+```text
 Input tokens
   → Token embeddings + Positional embeddings
   → [Multi-Head Self-Attention → Feed-Forward] × 6 layers
@@ -439,14 +440,14 @@ The scaled model generates recognizable Shakespeare-like text (nonsensical but s
 
 The "Attention Is All You Need" paper was a **machine translation** paper:
 
-```
+```text
 Encoder: French tokens → bidirectional self-attention → encoded representation
 Decoder: English tokens → masked self-attention + cross-attention to encoder → translation
 ```
 
 **Cross-attention**: Queries come from the decoder; keys and values come from the encoder. This conditions generation on an external source.
 
-```
+```text
 Q = decoder tokens
 K, V = encoder output
 ```
@@ -488,8 +489,8 @@ Exactly what we did — train a decoder-only Transformer on a massive text corpu
 Transforms the document completer into a helpful assistant:
 
 1. **Supervised Fine-Tuning (SFT)**: Train on curated question-answer pairs written by human labelers
-2. **Reward Modeling**: Human raters rank multiple model responses to train a reward model that predicts desirability
-3. **RLHF (PPO)**: Reinforcement learning optimizes the model to generate responses that score high on the reward model
+1. **Reward Modeling**: Human raters rank multiple model responses to train a reward model that predicts desirability
+1. **RLHF (PPO)**: Reinforcement learning optimizes the model to generate responses that score high on the reward model
 
 This stage uses far less data (thousands of examples, not trillions of tokens) but is critical for making the model useful and safe.
 
@@ -500,12 +501,12 @@ This stage uses far less data (thousands of examples, not trillions of tokens) b
 ## Key Takeaways
 
 1. **Attention is a communication mechanism**: Tokens aggregate information from other tokens in a data-dependent way
-2. **Self-attention**: Keys, queries, and values all come from the same source — tokens attend to each other
-3. **The Transformer block** = communicate (attention) + compute (feed-forward), repeated many times
-4. **Residual connections** enable training deep networks by creating gradient superhighways
-5. **Layer normalization** stabilizes training by normalizing feature distributions
-6. **Scaling** (more parameters, more data, more compute) is what makes these models powerful — the architecture is essentially unchanged since 2017
-7. **Pre-training** gives you a document completer; **fine-tuning** gives you an assistant
+1. **Self-attention**: Keys, queries, and values all come from the same source — tokens attend to each other
+1. **The Transformer block** = communicate (attention) + compute (feed-forward), repeated many times
+1. **Residual connections** enable training deep networks by creating gradient superhighways
+1. **Layer normalization** stabilizes training by normalizing feature distributions
+1. **Scaling** (more parameters, more data, more compute) is what makes these models powerful — the architecture is essentially unchanged since 2017
+1. **Pre-training** gives you a document completer; **fine-tuning** gives you an assistant
 
 ---
 

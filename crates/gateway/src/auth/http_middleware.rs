@@ -97,7 +97,10 @@ pub async fn auth_middleware(
     let path = req.uri().path();
 
     // Allow public endpoints without authentication
-    if PUBLIC_PATHS.iter().any(|p| path == *p || path.starts_with(&format!("{p}/"))) {
+    if PUBLIC_PATHS
+        .iter()
+        .any(|p| path == *p || path.starts_with(&format!("{p}/")))
+    {
         return next.run(req).await;
     }
 
@@ -111,9 +114,7 @@ pub async fn auth_middleware(
     let provided_key = extract_api_key(&req);
 
     match provided_key {
-        Some(key) if constant_time_eq(key.as_bytes(), expected.as_bytes()) => {
-            next.run(req).await
-        }
+        Some(key) if constant_time_eq(key.as_bytes(), expected.as_bytes()) => next.run(req).await,
         _ => {
             // Rate-limit WARN logging to prevent log spam from polling endpoints
             let now_ms = std::time::SystemTime::now()

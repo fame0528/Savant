@@ -412,6 +412,7 @@ impl SlackAdapter {
                     session_id: Some(session_id),
                     channel: AgentOutputChannel::Chat,
                     images: Vec::new(),
+                    ..Default::default()
                 };
 
                 let event = EventFrame {

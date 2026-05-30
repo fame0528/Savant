@@ -209,7 +209,10 @@ impl IgnitionService {
                 );
             } else if let Some(err) = &intel_result.error {
                 if err.contains("401") || err.contains("Unauthorized") {
-                    tracing::debug!("Threat intelligence sync skipped (auth not configured): {}", err);
+                    tracing::debug!(
+                        "Threat intelligence sync skipped (auth not configured): {}",
+                        err
+                    );
                 } else {
                     tracing::warn!("Threat intelligence sync failed: {}", err);
                 }

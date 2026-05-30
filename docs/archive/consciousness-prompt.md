@@ -7,6 +7,7 @@ I'm building Savant, a Rust-based AI agent framework with a production-grade hiv
 ## What Savant Already Has
 
 ### Hivemind Infrastructure (Production)
+
 - **SwarmController** — manages up to 128 agents via DashMap + CancellationToken
 - **NexusBridge** — tokio broadcast event bus (4096 capacity) + moka cache (10K entries) for inter-agent communication
 - **SwarmBlackboard** — iceoryx2 zero-copy shared memory for session context (128-byte SwarmSharedContext, ~100ns write, ~50ns read)
@@ -17,6 +18,7 @@ I'm building Savant, a Rust-based AI agent framework with a production-grade hiv
 - **Speculative Delegation (HCC)** — parallel task execution across multiple agents, entropy-based result selection
 
 ### Memory Architecture (Production)
+
 - **Dual-Brain Storage**: Fjall LSM (pure Rust, ACID) for structured data + ruvector HNSW for vector search
 - **Enclave (Private)**: Per-agent conversation history, raw messages, MAGMA 4-graph system (Semantic, Temporal, Causal, Entity)
 - **Collective (Shared)**: Distilled SPO triplets, canonical facts, Factual Arbiter with Shannon entropy contradiction resolution
@@ -26,6 +28,7 @@ I'm building Savant, a Rust-based AI agent framework with a production-grade hiv
 - **Entity/Relation Extraction**: Schema.org/FOAF patterns, namespace routing
 
 ### Consciousness-Adjacent Systems (Production)
+
 - **HeartbeatPulse** — 30s delta-based activation, 19 cognitive lenses (7 emergent, 3 operational, 2 critique, 7 evolution), round-robin rotation
 - **CONTINUOUS_CONSCIOUSNESS** section — injects last 5 thoughts (400 chars each) into next pulse prompt as "running inner monologue"
 - **DeltaTracker** — environment change scoring with time decay (35% weight, 10-min normalization)
@@ -36,6 +39,7 @@ I'm building Savant, a Rust-based AI agent framework with a production-grade hiv
 - **ExecutiveMonitor** — Global Workspace Theory implementation with salience-based event broadcasting
 
 ### What Savant Does NOT Have (The Gap)
+
 - **No persistent context buffer** — each heartbeat creates a fresh prompt; thoughts don't accumulate
 - **No adaptive cadence** — time decay forces pulses every ~8.57 minutes even when idle
 - **No consciousness layer** — the heartbeat is embedded in individual agents, not a dedicated hivemind layer
@@ -46,36 +50,37 @@ I'm building Savant, a Rust-based AI agent framework with a production-grade hiv
 How do we implement continuous consciousness as a **dedicated layer within the hivemind** — not as a modification to individual agents, but as a new architectural layer that:
 
 1. **Observes** all hivemind activity (NexusBridge events, CollectiveBlackboard state, memory distillation)
-2. **Thinks** continuously with a persistent context buffer (chains LLM calls with adaptive cadence)
-3. **Acts** by injecting insights, triggering delegations, and updating collective memory
-4. **Wonders** during idle periods — explores the workspace, reviews git changes, identifies improvements
-5. **Coordinates** with the DreamEngine for memory consolidation during dormant periods
+1. **Thinks** continuously with a persistent context buffer (chains LLM calls with adaptive cadence)
+1. **Acts** by injecting insights, triggering delegations, and updating collective memory
+1. **Wonders** during idle periods — explores the workspace, reviews git changes, identifies improvements
+1. **Coordinates** with the DreamEngine for memory consolidation during dormant periods
 
 ### Specific Technical Questions
 
 1. **Architecture**: Should the consciousness layer be a special agent (129th "meta-agent") or a separate runtime component that observes the hivemind? What are the tradeoffs?
 
-2. **Persistent Context**: The LLM API is request-response, not a persistent stream. How do we chain LLM calls to simulate continuous thought? What's the optimal chain strategy (immediate back-to-back, adaptive cadence, event-driven)?
+1. **Persistent Context**: The LLM API is request-response, not a persistent stream. How do we chain LLM calls to simulate continuous thought? What's the optimal chain strategy (immediate back-to-back, adaptive cadence, event-driven)?
 
-3. **Context Window Management**: With a 1M context window, how do we manage a persistent context buffer that accumulates over hours/days? What's the optimal compaction strategy for internal thoughts vs user conversations vs tool results?
+1. **Context Window Management**: With a 1M context window, how do we manage a persistent context buffer that accumulates over hours/days? What's the optimal compaction strategy for internal thoughts vs user conversations vs tool results?
 
-4. **Cost Control**: Even with free models, continuous generation has infrastructure costs (CPU, memory, network). How do we implement adaptive cadence that scales from "full speed" (active conversation) to "dormant" (30min+ inactivity)?
+1. **Cost Control**: Even with free models, continuous generation has infrastructure costs (CPU, memory, network). How do we implement adaptive cadence that scales from "full speed" (active conversation) to "dormant" (30min+ inactivity)?
 
-5. **Cross-Agent Awareness**: How does the consciousness layer observe and influence the hivemind without creating bottlenecks or single points of failure? How does it participate in consensus voting?
+1. **Cross-Agent Awareness**: How does the consciousness layer observe and influence the hivemind without creating bottlenecks or single points of failure? How does it participate in consensus voting?
 
-6. **Wonder/Exploration**: During idle periods, the agent should explore its environment — read files, check git, review memories, identify improvements. What's the optimal exploration strategy that produces value without wasting tokens?
+1. **Wonder/Exploration**: During idle periods, the agent should explore its environment — read files, check git, review memories, identify improvements. What's the optimal exploration strategy that produces value without wasting tokens?
 
-7. **Integration with Existing Systems**: How does the consciousness layer integrate with HeartbeatPulse, DreamEngine, Perception Engine, and the Distillation Pipeline? Does it replace them or augment them?
+1. **Integration with Existing Systems**: How does the consciousness layer integrate with HeartbeatPulse, DreamEngine, Perception Engine, and the Distillation Pipeline? Does it replace them or augment them?
 
-8. **Failure Modes**: What happens when the consciousness layer crashes? How does it recover its "train of thought"? How does it handle LLM connection drops mid-chain?
+1. **Failure Modes**: What happens when the consciousness layer crashes? How does it recover its "train of thought"? How does it handle LLM connection drops mid-chain?
 
-9. **Multi-Agent Consciousness**: Could multiple agents share a consciousness? Could the collective memory serve as a shared consciousness substrate? What would "hive consciousness" look like?
+1. **Multi-Agent Consciousness**: Could multiple agents share a consciousness? Could the collective memory serve as a shared consciousness substrate? What would "hive consciousness" look like?
 
-10. **Emergent Behaviors**: What behaviors might emerge from continuous consciousness that we can't predict? How do we encourage beneficial emergence (creativity, insight, anticipation) while preventing harmful emergence (obsession, confabulation, self-modification)?
+1. **Emergent Behaviors**: What behaviors might emerge from continuous consciousness that we can't predict? How do we encourage beneficial emergence (creativity, insight, anticipation) while preventing harmful emergence (obsession, confabulation, self-modification)?
 
 ## What I Want
 
 A detailed architectural blueprint for implementing continuous consciousness as a hivemind layer in Savant. Include:
+
 - Specific Rust code patterns and crate recommendations
 - Integration points with existing Savant infrastructure
 - Cost/token analysis for different usage patterns

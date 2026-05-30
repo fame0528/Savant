@@ -227,6 +227,7 @@ mod tests {
             session_id: None,
             channel: AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -289,6 +290,7 @@ mod tests {
             session_id: None,
             channel: AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         }];
         let facets = extractor.extract(&msgs);
         assert!(facets.is_empty());

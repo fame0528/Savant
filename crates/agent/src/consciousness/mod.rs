@@ -235,10 +235,13 @@ impl ConsciousnessDaemon {
         if new_state != self.current_state {
             tracing::info!(
                 "[consciousness] State transition: {} → {} (entropy={:.3})",
-                self.current_state, new_state, entropy_val
+                self.current_state,
+                new_state,
+                entropy_val
             );
             self.current_state = new_state;
-            self.state_handle.store(new_state.as_u8(), Ordering::Relaxed);
+            self.state_handle
+                .store(new_state.as_u8(), Ordering::Relaxed);
         }
 
         // Budget check
@@ -313,7 +316,10 @@ impl ConsciousnessDaemon {
                 tracing::warn!("[consciousness] Narrative synthesis failed: {}", e);
             }
             Err(_) => {
-                tracing::warn!("[consciousness] Narrative synthesis timed out after {:?}", timeout);
+                tracing::warn!(
+                    "[consciousness] Narrative synthesis timed out after {:?}",
+                    timeout
+                );
             }
         }
     }

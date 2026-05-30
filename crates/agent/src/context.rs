@@ -203,6 +203,7 @@ impl ContextAssembler {
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         });
 
         for msg in history {

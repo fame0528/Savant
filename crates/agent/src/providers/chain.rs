@@ -9,10 +9,10 @@
 use crate::providers::privacy_router::{PrivacyConfig, PrivacyRouter, RoutingDecision};
 use savant_core::error::SavantError;
 use savant_core::traits::LlmProvider;
-use std::sync::Arc;
 use savant_core::types::{ChatChunk, ChatMessage};
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::stream::Stream;
@@ -640,7 +640,8 @@ impl LlmProvider for ProviderChain {
         while attempts < self.max_retries {
             let call_result = tokio::time::timeout(
                 self.call_timeout,
-                self.inner.stream_completion(messages.clone(), tools.clone()),
+                self.inner
+                    .stream_completion(messages.clone(), tools.clone()),
             )
             .await;
 
@@ -727,18 +728,11 @@ impl LlmProvider for ProviderChain {
             );
             match fallback_provider.stream_completion(messages, tools).await {
                 Ok(stream) => {
-                    tracing::info!(
-                        "[{}] Fallback provider succeeded",
-                        self.chain_key,
-                    );
+                    tracing::info!("[{}] Fallback provider succeeded", self.chain_key,);
                     return Ok(stream);
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "[{}] Fallback provider also failed: {}",
-                        self.chain_key,
-                        e,
-                    );
+                    tracing::warn!("[{}] Fallback provider also failed: {}", self.chain_key, e,);
                     // Return the primary's error, not the fallback's
                 }
             }
@@ -786,7 +780,9 @@ mod tests {
         {
             Err(SavantError::Unknown("mock provider failed".to_string()))
         }
-        fn context_window(&self) -> Option<usize> { Some(4096) }
+        fn context_window(&self) -> Option<usize> {
+            Some(4096)
+        }
     }
 
     /// Mock provider that succeeds with a simple response.
@@ -813,7 +809,9 @@ mod tests {
             };
             Ok(Box::pin(futures::stream::iter(vec![Ok(chunk)])))
         }
-        fn context_window(&self) -> Option<usize> { Some(4096) }
+        fn context_window(&self) -> Option<usize> {
+            Some(4096)
+        }
     }
 
     fn test_message(content: &str) -> ChatMessage {
@@ -827,6 +825,7 @@ mod tests {
             channel: savant_core::types::AgentOutputChannel::Chat,
             is_telemetry: false,
             images: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -839,7 +838,9 @@ mod tests {
         );
         chain = chain.with_fallback(Arc::new(SuccessProvider));
 
-        let result = chain.stream_completion(vec![test_message("hello")], vec![]).await;
+        let result = chain
+            .stream_completion(vec![test_message("hello")], vec![])
+            .await;
         assert!(result.is_ok());
     }
 
@@ -890,7 +891,9 @@ mod tests {
             ChainConfig::default(),
         );
 
-        let result = chain.stream_completion(vec![test_message("hello")], vec![]).await;
+        let result = chain
+            .stream_completion(vec![test_message("hello")], vec![])
+            .await;
         assert!(result.is_ok());
 
         let state = chain.breaker.current_state().await;

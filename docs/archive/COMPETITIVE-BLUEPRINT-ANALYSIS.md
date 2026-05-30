@@ -16,7 +16,7 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 
 ### Blueprint 1: Zero-Copy Memory Mesh via `Arc<RwLock<ArrowArray>>`
 
-**Status: PARTIALLY IMPLEMENTED**
+#### Status: PARTIALLY IMPLEMENTED
 
 | Aspect | Blueprint Proposal | Savant Reality |
 |--------|-------------------|----------------|
@@ -31,7 +31,7 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 
 ### Blueprint 2: Embedded WASM/WASI Sandboxing
 
-**Status: IMPLEMENTED (exceeds blueprint)**
+#### Status: IMPLEMENTED (exceeds blueprint)
 
 | Aspect | Blueprint Proposal | Savant Reality |
 |--------|-------------------|----------------|
@@ -47,7 +47,7 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 
 ### Blueprint 3: Event-Sourced Durable State Machines
 
-**Status: IMPLEMENTED**
+#### Status: IMPLEMENTED
 
 | Aspect | Blueprint Proposal | Savant Reality |
 |--------|-------------------|----------------|
@@ -63,7 +63,7 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 
 ### Blueprint 4: Monomorphized OTLP Middleware Tracing
 
-**Status: PARTIALLY IMPLEMENTED**
+#### Status: PARTIALLY IMPLEMENTED — OTLP Middleware
 
 | Aspect | Blueprint Proposal | Savant Reality |
 |--------|-------------------|----------------|
@@ -78,7 +78,7 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 
 ### Blueprint 5: High-Performance A2A Protocol via tonic gRPC
 
-**Status: NOT IMPLEMENTED**
+#### Status: NOT IMPLEMENTED
 
 | Aspect | Blueprint Proposal | Savant Reality |
 |--------|-------------------|----------------|
@@ -109,10 +109,11 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 **Problem:** Savant injects all MCP tool schemas into every turn, consuming excessive context tokens. At scale, this matches OpenClaw's documented 60k+ token overhead.
 
 **Proposed Fix:**
+
 1. Add token cost estimation for each tool schema in `crates/mcp/src/server.rs`
-2. Implement selective injection: analyze current task context, inject only relevant tool schemas
-3. Add a two-phase approach: (a) determine which tools are needed, (b) inject only those schemas
-4. Add a configurable token budget for MCP schema injection
+1. Implement selective injection: analyze current task context, inject only relevant tool schemas
+1. Add a two-phase approach: (a) determine which tools are needed, (b) inject only those schemas
+1. Add a configurable token budget for MCP schema injection
 
 **Files:** `crates/mcp/src/server.rs`, `crates/agent/src/context.rs`
 
@@ -121,9 +122,10 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 **Problem:** No networked agent-to-agent communication protocol exists.
 
 **Proposed Fix:**
+
 1. Evaluate whether multi-machine swarms are a real requirement for Savant's use case
-2. If yes: implement typed A2A protocol using `tonic` gRPC + `prost` protobuf
-3. If no: defer — current iceoryx2 IPC is sufficient for single-machine deployment
+1. If yes: implement typed A2A protocol using `tonic` gRPC + `prost` protobuf
+1. If no: defer — current iceoryx2 IPC is sufficient for single-machine deployment
 
 **Files:** New crate or `crates/ipc/` extension
 
@@ -132,9 +134,10 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 **Problem:** Gateway handlers lack composable middleware for auth, rate-limiting, tracing, cost tracking.
 
 **Proposed Fix:**
+
 1. Refactor gateway components to implement `tower::Service` trait
-2. Add middleware layers: auth, rate-limit, cost tracking, request logging
-3. Enables drop-in observability without modifying handler logic
+1. Add middleware layers: auth, rate-limit, cost tracking, request logging
+1. Enables drop-in observability without modifying handler logic
 
 **Files:** `crates/gateway/src/server.rs`, new middleware modules
 
@@ -144,9 +147,9 @@ The blueprint catalogs 5 architectural failure modes in legacy AI agent framewor
 
 1. **"Eliminate JSON serialization entirely"** — Overstated. Serialization is still needed at system boundaries. Arrow mainly helps for cross-language interop, which Savant doesn't need.
 
-2. **"Microsecond WASM instantiation"** — Conflates sandbox creation with execution time. Savant's actual WASM config (100M fuel, 30s timeout) is appropriate for real work.
+1. **"Microsecond WASM instantiation"** — Conflates sandbox creation with execution time. Savant's actual WASM config (100M fuel, 30s timeout) is appropriate for real work.
 
-3. **Apache Arrow recommendation** — Savant's `rkyv` approach already achieves zero-copy deserialization. Arrow would add complexity without meaningful benefit for a single-language codebase.
+1. **Apache Arrow recommendation** — Savant's `rkyv` approach already achieves zero-copy deserialization. Arrow would add complexity without meaningful benefit for a single-language codebase.
 
 ---
 

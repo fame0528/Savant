@@ -27,17 +27,23 @@ When the user asks to "format text" with a style (uppercase, lowercase, titlecas
 ## Available Functions
 
 ### `greet(name: string)`
+
 Returns a personalized greeting message.
+
 - Input: `{"action": "greet", "name": "World"}`
 - Output: `"Hello, World! Welcome to Savant."`
 
 ### `word_count(text: string)`
+
 Counts words, characters, and lines in the provided text.
+
 - Input: `{"action": "word_count", "text": "Hello world\nThis is Savant"}`
 - Output: JSON with word_count, char_count, line_count
 
 ### `format_text(text: string, style: string)`
+
 Formats text in the specified style (uppercase, lowercase, titlecase).
+
 - Input: `{"action": "format_text", "text": "hello world", "style": "uppercase"}`
 - Output: `"HELLO WORLD"`
 
@@ -48,6 +54,7 @@ This skill follows the OpenClaw SKILL.md specification. It runs in WASM mode by 
 ## Security
 
 This skill:
+
 - Has no network access
 - Has no filesystem access
 - Runs in isolated WASM sandbox

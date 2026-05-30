@@ -59,6 +59,7 @@ impl Tool for MemoryAppendTool {
             session_id: None, // Will be prioritized by Backend if None
             channel: savant_core::types::AgentOutputChannel::Memory,
             images: Vec::new(),
+            ..Default::default()
         };
 
         self.memory.store(&self.agent_id, &msg).await?;

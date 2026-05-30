@@ -62,26 +62,23 @@ impl WonderEngine {
             channel: savant_core::types::AgentOutputChannel::Chat,
             is_telemetry: false,
             images: Vec::new(),
+            ..Default::default()
         }];
 
         // Call LLM with exploration timeout
         let timeout = std::time::Duration::from_secs(30);
-        let response = match tokio::time::timeout(
-            timeout,
-            Self::collect_stream(llm, messages),
-        )
-        .await
-        {
-            Ok(Ok(text)) => text,
-            Ok(Err(e)) => {
-                tracing::debug!("[wonder] LLM exploration failed: {}", e);
-                return None;
-            }
-            Err(_) => {
-                tracing::debug!("[wonder] LLM exploration timed out after {:?}", timeout);
-                return None;
-            }
-        };
+        let response =
+            match tokio::time::timeout(timeout, Self::collect_stream(llm, messages)).await {
+                Ok(Ok(text)) => text,
+                Ok(Err(e)) => {
+                    tracing::debug!("[wonder] LLM exploration failed: {}", e);
+                    return None;
+                }
+                Err(_) => {
+                    tracing::debug!("[wonder] LLM exploration timed out after {:?}", timeout);
+                    return None;
+                }
+            };
 
         if response.is_empty() {
             return None;
@@ -91,7 +88,8 @@ impl WonderEngine {
 
         // Apply exploration_temperature as stochastic acceptance:
         // Higher temperature = more lenient acceptance of lower rewards.
-        let acceptance_threshold = self.reward_threshold * (1.0 - self.exploration_temperature * 0.5);
+        let acceptance_threshold =
+            self.reward_threshold * (1.0 - self.exploration_temperature * 0.5);
 
         if reward >= acceptance_threshold {
             tracing::info!(
@@ -218,7 +216,9 @@ mod tests {
     #[test]
     fn test_reward_evaluation_high() {
         let engine = WonderEngine::new();
-        let reward = engine.evaluate_reward("The file src/main.rs:42 needs fixing — you should update the error handling");
+        let reward = engine.evaluate_reward(
+            "The file src/main.rs:42 needs fixing — you should update the error handling",
+        );
         assert!(reward >= 0.5);
     }
 

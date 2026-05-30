@@ -7,13 +7,25 @@ import { logger } from "@/lib/logger";
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
+type MessageStatus =
+  | 'sending'      // WS transmit in progress
+  | 'sent'         // WS send succeeded
+  | 'delivered'    // Gateway ACK received
+  | 'thinking'     // Agent Thought events flowing (telemetry chunks)
+  | 'executing'    // Agent tool execution in progress
+  | 'streaming'    // Agent final answer streaming (non-telemetry chunks)
+  | 'complete'     // Final chat.message received
+  | 'failed'       // Agent loop error (is_error field on ChatMessage)
+  | 'error'        // Transmission failure (ws.send failed, connection lost)
+  | 'timeout';     // No response within 30s threshold
+
 interface Message {
   role: string;
   content: string;
   agent?: string;
   timestamp: string;
   thoughts?: string;
-  status?: 'sending' | 'sent' | 'read' | 'processing' | 'complete';
+  status?: MessageStatus;
 }
 
 interface Agent {
@@ -22,6 +34,13 @@ interface Agent {
   status: string;
   role: string;
   image?: string;
+}
+
+// E-11: Activity-aware agent state (FID-20260529)
+interface AgentActivity {
+  state: 'thinking' | 'executing' | 'streaming' | 'timeout';
+  toolName?: string;
+  startedAt: number;
 }
 
 interface Insight {
@@ -69,6 +88,7 @@ export interface DashboardState {
   isMounted: boolean;
   isSessionReady: boolean;
   typingAgents: Set<string>;
+  agentActivity: Map<string, AgentActivity>;
   syncedLanes: Set<string>;
   collapsedInsights: Set<string>;
   
@@ -102,6 +122,7 @@ export interface DashboardState {
   setIsMounted: (b: boolean) => void;
   ignitionError: string | null;
   setTypingAgents: (set: Set<string>) => void;
+  setAgentActivity: (fn: (prev: Map<string, AgentActivity>) => Map<string, AgentActivity>) => void;
   setSyncedLanes: (set: Set<string>) => void;
   setCollapsedInsights: (set: Set<string>) => void;
   setIsEvolutionMode: (b: boolean) => void;
@@ -214,6 +235,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [isSessionReady, setIsSessionReady] = useState(false);
   const [ignitionError, setIgnitionError] = useState<string | null>(null);
   const [typingAgents, setTypingAgents] = useState<Set<string>>(new Set());
+  const [agentActivity, setAgentActivity] = useState<Map<string, AgentActivity>>(new Map());
   const [syncedLanes, setSyncedLanes] = useState<Set<string>>(new Set());
   
   const socketRef = useRef<WebSocket | null>(null);
@@ -225,6 +247,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const gatewayPortRef = useRef<number>(8080);
   const pendingUserMessagesRef = useRef<Set<string>>(new Set());
   const dedupedMessagesRef = useRef<Set<string>>(new Set());
+  // E-7: Dual timeout timers — 60s ACK timer (sent->error), 30s response timer (delivered->timeout)
+  const ackTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const responseTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Keep ref in sync with state
   const setStreamingThoughtsSynced = useCallback((updater: (prev: Map<string, string>) => Map<string, string>) => {
@@ -282,6 +307,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     setActiveAgent(normalizedId);
     setIsManifestMode(isManifest);
     setTypingAgents(new Set());
+    setAgentActivity(new Map());
     setStreamingContent(new Map());
     if (normalizedId) {
       localStorage.setItem('activeAgent', normalizedId);
@@ -308,6 +334,42 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       sessionIdRef.current = evData.session_id;
       setIsSessionReady(true);
       logger.info("[Dashboard] Session assigned:", evData.session_id);
+    } else if (type === "ack") {
+      // E-3: Gateway delivery ACK — upgrade 'sent' to 'delivered' (FID-20260529)
+      // Cancel ACK timer since gateway acknowledged
+      ackTimeoutRef.current.forEach((timer, key) => { clearTimeout(timer); });
+      ackTimeoutRef.current.clear();
+      setLaneMessages(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(lane => {
+          const msgs = next[lane];
+          if (msgs?.length) {
+            const last = msgs[msgs.length - 1];
+            if (last.role === 'user' && last.status === 'sent') {
+              msgs[msgs.length - 1] = { ...last, status: 'delivered' as const };
+            }
+          }
+        });
+        return next;
+      });
+      // E-7: Start response timer (30s) — fires to 'timeout' if agent never responds
+      const respTimer = setTimeout(() => {
+        setLaneMessages(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(lane => {
+            const msgs = next[lane];
+            if (msgs?.length) {
+              const last = msgs[msgs.length - 1];
+              if (last.role === 'user' && ['delivered', 'thinking', 'executing'].includes(last.status || '')) {
+                msgs[msgs.length - 1] = { ...last, status: 'timeout' as const };
+              }
+            }
+          });
+          return next;
+        });
+        responseTimeoutRef.current.delete('global');
+      }, 30_000);
+      responseTimeoutRef.current.set('global', respTimer);
     } else if (type === "agents.discovered") {
       const rawAgents = evData.agents || [];
       const uniqueAgents = Array.from(new Map(rawAgents.map((a: any, i: number) => {
@@ -357,9 +419,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (!content.trim()) return; // Skip empty messages (e.g., from failed streaming)
       const agentId = (msg.agent_id || msg.sender || 'unknown').toLowerCase().trim();
       setTypingAgents(prev => { const next = new Set(prev); next.delete(agentId); return next; });
+      setAgentActivity(prev => { const next = new Map(prev); next.delete(agentId); return next; });
       setStreamingContent(prev => { const next = new Map(prev); next.delete(agentId); return next; });
       const agentThoughts = streamingThoughtsRef.current.get(agentId);
       setStreamingThoughtsSynced(prev => { const next = new Map(prev); next.delete(agentId); return next; });
+      // E-6: Cancel response timer on chat.message (FID-20260529)
+      responseTimeoutRef.current.forEach((timer) => { clearTimeout(timer); });
+      responseTimeoutRef.current.clear();
       // Dedup: skip user messages that were already added optimistically by sendChatMessage
       if (msg.role === 'user') {
         const trimmed = content.trim();
@@ -417,9 +483,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           const laneId = lane.toLowerCase();
           // Mark last pending user message as complete
           const existing = next[laneId] || [];
+          // E-6: Check is_error field for failed state (FID-20260529)
+          const isError = msg.is_error === true;
           const updated = existing.map(m =>
-            m.role === 'user' && (m.status === 'sent' || m.status === 'processing')
-              ? { ...m, status: 'complete' as const }
+            m.role === 'user' && m.status && !['complete', 'failed', 'error', 'timeout'].includes(m.status)
+              ? { ...m, status: (isError ? 'failed' : 'complete') as MessageStatus }
               : m
           );
           next[laneId] = [...updated, {
@@ -444,19 +512,69 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             next.set(agentId, existing + thoughtContent);
             return next;
           });
+          // E-4: Upgrade status to 'thinking' on first telemetry chunk (FID-20260529)
+          // Cancel response timer since agent is active
+          responseTimeoutRef.current.forEach((timer) => { clearTimeout(timer); });
+          responseTimeoutRef.current.clear();
+          setLaneMessages(prev => {
+            const next = { ...prev };
+            Object.keys(next).forEach(lane => {
+              const msgs = next[lane];
+              if (msgs?.length) {
+                const last = msgs[msgs.length - 1];
+                if (last.role === 'user' && ['delivered', 'sent'].includes(last.status || '')) {
+                  msgs[msgs.length - 1] = { ...last, status: 'thinking' as const };
+                }
+              }
+            });
+            return next;
+          });
+          // E-4: Detect tool execution from Action events
+          if (thoughtContent.includes('**Executing Tool:**')) {
+            // E-11: Update agent activity to executing (FID-20260529)
+            setAgentActivity(prev => {
+              const next = new Map(prev);
+              const existing = next.get(agentId);
+              next.set(agentId, { state: 'executing', startedAt: existing?.startedAt || Date.now() });
+              return next;
+            });
+            setLaneMessages(prev => {
+              const next = { ...prev };
+              Object.keys(next).forEach(lane => {
+                const msgs = next[lane];
+                if (msgs?.length) {
+                  const last = msgs[msgs.length - 1];
+                  if (last.role === 'user' && ['thinking', 'delivered'].includes(last.status || '')) {
+                    msgs[msgs.length - 1] = { ...last, status: 'executing' as const };
+                  }
+                }
+              });
+              return next;
+            });
+          }
         }
         return;
       }
       setTypingAgents(prev => { const next = new Set(prev); next.add(agentId); return next; });
-      // Mark last user message as 'processing' when agent starts streaming
+      // E-11: Track agent activity state (FID-20260529)
+      setAgentActivity(prev => {
+        const next = new Map(prev);
+        const existing = next.get(agentId);
+        // Only upgrade state, don't downgrade from executing to thinking
+        if (!existing || existing.state === 'thinking' || existing.state === 'streaming') {
+          next.set(agentId, { state: 'thinking', startedAt: existing?.startedAt || Date.now() });
+        }
+        return next;
+      });
+      // E-4/E-5: Upgrade status through thinking -> executing -> streaming (FID-20260529)
       setLaneMessages(prev => {
         const next = { ...prev };
         Object.keys(next).forEach(lane => {
           const msgs = next[lane];
           if (msgs && msgs.length > 0) {
             const last = msgs[msgs.length - 1];
-            if (last.role === 'user' && last.status === 'sent') {
-              msgs[msgs.length - 1] = { ...last, status: 'processing' as const };
+            if (last.role === 'user' && ['sent', 'delivered', 'thinking', 'executing'].includes(last.status || '')) {
+              msgs[msgs.length - 1] = { ...last, status: 'streaming' as const };
             }
           }
         });
@@ -776,10 +894,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const payload = { role: role === 'user' ? 'user' : 'assistant', content, recipient, broadcast };
       logger.debug("Dashboard", `Sending chat message (session: ${sessionIdRef.current}, recipient: ${recipient || 'global/broadcast'})`);
 
-      // Add user message to local lane messages immediately (optimistic add).
-      // Store a dedup key so processEvent skips the server echo of this same message.
+      // E-2: Set 'sending' on optimistic add, upgrade to 'sent' after ws.send succeeds (FID-20260529)
       const laneKey = recipient ? recipient.toLowerCase() : "global";
-      const dedupKey = `${role}:${content.trim().substring(0, 100)}:${Date.now()}`;
       setLaneMessages(prev => ({
         ...prev,
         [laneKey]: [...(prev[laneKey] || []), {
@@ -787,17 +903,61 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           content,
           agent: 'user',
           timestamp: new Date().toISOString(),
-          status: 'sent' as const,
+          status: 'sending' as const,
         }]
       }));
-      // Track the dedup key — processEvent will skip matching user messages
       pendingUserMessagesRef.current.add(content.trim());
       setTimeout(() => { pendingUserMessagesRef.current.delete(content.trim()); }, 10000);
 
-      socketRef.current.send(JSON.stringify({
-        session_id: sessionIdRef.current,
-        payload
-      }));
+      // Attempt ws.send — upgrade to 'sent' on success, 'error' on failure
+      try {
+        socketRef.current.send(JSON.stringify({
+          session_id: sessionIdRef.current,
+          payload
+        }));
+        // ws.send succeeded — upgrade status to 'sent'
+        setLaneMessages(prev => {
+          const next = { ...prev };
+          const msgs = next[laneKey];
+          if (msgs && msgs.length > 0) {
+            const last = msgs[msgs.length - 1];
+            if (last.role === 'user' && last.status === 'sending') {
+              msgs[msgs.length - 1] = { ...last, status: 'sent' as const };
+            }
+          }
+          return next;
+        });
+        // E-7: Start ACK timer (60s) — fires to 'error' if gateway never acknowledges
+        const laneTimerKey = `${laneKey}:${Date.now()}`;
+        const ackTimer = setTimeout(() => {
+          setLaneMessages(prev => {
+            const next = { ...prev };
+            const msgs = next[laneKey];
+            if (msgs && msgs.length > 0) {
+              const last = msgs[msgs.length - 1];
+              if (last.role === 'user' && last.status === 'sent') {
+                msgs[msgs.length - 1] = { ...last, status: 'error' as const };
+              }
+            }
+            return next;
+          });
+          ackTimeoutRef.current.delete(laneTimerKey);
+        }, 60_000);
+        ackTimeoutRef.current.set(laneTimerKey, ackTimer);
+      } catch {
+        // ws.send failed — set 'error' status
+        setLaneMessages(prev => {
+          const next = { ...prev };
+          const msgs = next[laneKey];
+          if (msgs && msgs.length > 0) {
+            const last = msgs[msgs.length - 1];
+            if (last.role === 'user' && last.status === 'sending') {
+              msgs[msgs.length - 1] = { ...last, status: 'error' as const };
+            }
+          }
+          return next;
+        });
+      }
     } else {
       logger.error("Dashboard", `Cannot send message: WebSocket state is ${socketRef.current?.readyState} (expected ${WebSocket.OPEN})`);
       return;
@@ -877,6 +1037,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     isSessionReady,
     ignitionError,
     typingAgents, setTypingAgents,
+    agentActivity, setAgentActivity,
     syncedLanes, setSyncedLanes,
     collapsedInsights, setCollapsedInsights,
     insightScrollRef,

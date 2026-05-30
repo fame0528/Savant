@@ -346,6 +346,7 @@ fn build_step(sub_task: &SubTask, step_index: usize, session_id: &str) -> Reques
             session_id: Some(SessionId(session_id.to_string())),
             channel: savant_core::types::AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         })
     } else {
         // Control/coordination step

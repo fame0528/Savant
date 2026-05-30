@@ -35,10 +35,10 @@ pub fn score_messages(messages: &[ChatMessage], current_query: &str) -> Vec<Cont
 
     for (i, msg) in messages.iter().enumerate() {
         let role_weight = match msg.role {
-            ChatRole::System => 1.0,     // System messages are always important
-            ChatRole::User => 0.7,       // User messages are usually important
-            ChatRole::Assistant => 0.5,  // Assistant responses are less critical
-            _ => 0.6,                    // Tool and other roles
+            ChatRole::System => 1.0,    // System messages are always important
+            ChatRole::User => 0.7,      // User messages are usually important
+            ChatRole::Assistant => 0.5, // Assistant responses are less critical
+            _ => 0.6,                   // Tool and other roles
         };
 
         // Recency: exponential decay — recent messages matter more
@@ -94,7 +94,10 @@ pub fn score_messages(messages: &[ChatMessage], current_query: &str) -> Vec<Cont
 }
 
 /// Improved keyword overlap with case-insensitive matching.
-fn improved_keyword_overlap(content: &str, query_tokens: &std::collections::HashSet<String>) -> f32 {
+fn improved_keyword_overlap(
+    content: &str,
+    query_tokens: &std::collections::HashSet<String>,
+) -> f32 {
     let content_lower = content.to_lowercase();
     let content_tokens: std::collections::HashSet<&str> = content_lower
         .split_whitespace()
@@ -105,7 +108,8 @@ fn improved_keyword_overlap(content: &str, query_tokens: &std::collections::Hash
         return 0.0;
     }
 
-    let query_refs: std::collections::HashSet<&str> = query_tokens.iter().map(|s| s.as_str()).collect();
+    let query_refs: std::collections::HashSet<&str> =
+        query_tokens.iter().map(|s| s.as_str()).collect();
     let intersection = content_tokens.intersection(&query_refs).count();
     let min_size = content_tokens.len().min(query_refs.len());
 
@@ -127,6 +131,7 @@ mod tests {
             session_id: None,
             channel: savant_core::types::AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -163,12 +168,9 @@ mod tests {
 
     #[test]
     fn test_keyword_overlap() {
-        let query_tokens: std::collections::HashSet<String> = ["build", "errors"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let overlap =
-            improved_keyword_overlap("the build failed with errors", &query_tokens);
+        let query_tokens: std::collections::HashSet<String> =
+            ["build", "errors"].iter().map(|s| s.to_string()).collect();
+        let overlap = improved_keyword_overlap("the build failed with errors", &query_tokens);
         assert!(overlap > 0.0);
     }
 }

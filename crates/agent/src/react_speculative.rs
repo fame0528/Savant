@@ -80,6 +80,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
             session_id: None, // Will be set by AgentLoop if needed
             channel: savant_core::types::AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         }];
 
         // Horizon instruction prefix
@@ -119,6 +120,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                             session_id: None,
                             channel: savant_core::types::AgentOutputChannel::Chat,
                             images: Vec::new(),
+                            ..Default::default()
                         });
                     }
                     current_history.insert(0, ChatMessage {
@@ -131,6 +133,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                         session_id: None,
                         channel: savant_core::types::AgentOutputChannel::Chat,
                         images: Vec::new(),
+                        ..Default::default()
                     });
                     current_history.extend(history.clone());
 
@@ -210,6 +213,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     session_id: None, // Speculative reflection
                     channel: savant_core::types::AgentOutputChannel::Chat,
                     images: Vec::new(),
+                    ..Default::default()
                 };
                 self.memory.store(&self.agent_id, &final_msg).await?;
 

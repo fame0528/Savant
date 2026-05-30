@@ -108,6 +108,14 @@ pub struct SwarmController {
     credential_broker: Arc<savant_security::continuous::credentials::CredentialBroker>,
     /// Graceful shutdown tracker — RAII-based in-flight request tracking.
     shutdown_tracker: Arc<crate::graceful_shutdown::GracefulShutdownTracker>,
+    /// Shared CapabilityRegistry — one instance for all agents (not per-agent).
+    shared_capability_registry: Arc<savant_ipc::CapabilityRegistry>,
+    /// Delegation engine — profile-based sub-agent spawning.
+    #[allow(dead_code)]
+    delegation_engine: Arc<crate::delegation::DelegationEngine>,
+    /// Sub-agent registry — lightweight tracking for active sub-agents.
+    #[allow(dead_code)]
+    subagent_registry: Arc<crate::subagent_registry::SubAgentRegistry>,
     /// Panopticon replay recorder for agent reasoning trace.
     replay_recorder: Arc<savant_panopticon::replay::ReplayRecorder>,
     /// Schema (code intelligence) index — shared across all agents.
@@ -331,6 +339,9 @@ impl SwarmController {
         let credential_broker =
             Arc::new(savant_security::continuous::credentials::CredentialBroker::new());
 
+        // Clone workspace root before config is moved into struct
+        let workspace_root_for_delegation = config.workspace_root.clone();
+
         Ok(Self {
             config,
             nexus,
@@ -386,6 +397,25 @@ impl SwarmController {
                 } else {
                     None
                 }
+            },
+            shared_capability_registry: Arc::new(
+                savant_ipc::CapabilityRegistry::new("shared_swarm_caps", 128)
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("Failed to create shared CapabilityRegistry: {}. Using fallback.", e);
+                        savant_ipc::CapabilityRegistry::new("fallback_shared_caps", 128)
+                            .expect("CRITICAL: Cannot create fallback CapabilityRegistry")
+                    })
+            ),
+            subagent_registry: crate::subagent_registry::SubAgentRegistry::new(),
+            delegation_engine: {
+                let del_gov_config = savant_core::config::ResourceGovernorConfig::default();
+                let governor = crate::governor::SwarmGovernor::new(del_gov_config, CancellationToken::new());
+                let registry = crate::subagent_registry::SubAgentRegistry::new();
+                crate::delegation::DelegationEngine::new(
+                    governor,
+                    registry,
+                    vec![workspace_root_for_delegation],
+                )
             },
         })
     }
@@ -585,17 +615,25 @@ impl SwarmController {
             .unwrap_or_default();
 
         // Assign a unique index for consensus voting (sequential 1-128)
-        let mut agent_index = self.agent_index_counter.fetch_add(1, Ordering::SeqCst);
-        if agent_index > 128 {
-            // Wrap around: 0 is global, so we use 1-128
-            self.agent_index_counter.store(2, Ordering::SeqCst);
-            agent_index = 1;
-        }
+        // Uses compare_exchange loop to prevent race condition on wrap-around.
+        let agent_index = loop {
+            let current = self.agent_index_counter.load(Ordering::SeqCst);
+            let next = if current >= 128 { 1 } else { current + 1 };
+            if self
+                .agent_index_counter
+                .compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break next;
+            }
+        };
 
         let shutdown_token = CancellationToken::new();
         let shutdown_task_token = shutdown_token.clone();
         let dream_engine = self.engine.clone();
         let replay_recorder = self.replay_recorder.clone();
+        let shared_capability_registry = self.shared_capability_registry.clone();
+        let delegation_engine = self.delegation_engine.clone();
 
         let handle = tokio::spawn(async move {
             let mut agent_cfg = agent_cfg;
@@ -931,6 +969,8 @@ impl SwarmController {
                 .collect();
 
             // Create async memory backend from the shared engine
+            // W1a: Extract enclave before engine is moved (FID-20260529-MEMORY-ENCLAVE)
+            let memory_enclave = engine.enclave();
             let inner_backend = Arc::new(AsyncMemoryBackend::with_embeddings(
                 engine,
                 embedding_service.clone(),
@@ -1283,34 +1323,10 @@ impl SwarmController {
             agent_loop.register_default_hooks().await;
 
             // 9. Build Orchestrator from the pre-built AgentLoop (enterprise-grade wiring)
-            // Adds A2A delegation, continuation engine, handoff validation, DSP prediction
-            let capability_registry = match savant_ipc::CapabilityRegistry::new(
-                &format!("agent_{}_caps", agent_cfg.agent_id),
-                16, // max_agents
-            ) {
-                Ok(reg) => Arc::new(reg),
-                Err(e) => {
-                    tracing::warn!(
-                        "[{}] Failed to create CapabilityRegistry: {}. Using fallback.",
-                        agent_name,
-                        e
-                    );
-                    // Fallback: create with a safe name
-                    match savant_ipc::CapabilityRegistry::new("fallback_caps", 16) {
-                        Ok(reg) => Arc::new(reg),
-                        Err(fb_err) => {
-                            tracing::error!(
-                                "[{}] CRITICAL: CapabilityRegistry fallback failed: {}. Agent cannot start.",
-                                agent_name,
-                                fb_err
-                            );
-                            return;
-                        }
-                    }
-                }
-            };
+            // Uses shared CapabilityRegistry for cross-agent delegation.
+            let capability_registry = shared_capability_registry;
 
-            let orchestrator = crate::orchestration::Orchestrator::from_agent_loop(
+            let mut orchestrator = crate::orchestration::Orchestrator::from_agent_loop(
                 agent_loop,
                 agent_cfg.agent_id.clone(),
                 agent_cfg
@@ -1319,8 +1335,35 @@ impl SwarmController {
                     .unwrap_or_else(|| agent_cfg.agent_id.clone()),
                 blackboard.clone(),
                 capability_registry,
-                None, // memory_enclave — not available at swarm level
+                Some(memory_enclave),
             );
+
+            // Wire DelegationEngine into Orchestrator for profile-based sub-agent spawning
+            orchestrator.set_delegation_engine(delegation_engine.clone());
+
+            // C1: Publish agent ready event after boot (FID-20260529)
+            let ready_event = savant_core::types::EventFrame {
+                event_type: "system.agent.ready".to_string(),
+                payload: serde_json::json!({
+                    "agent_id": agent_cfg.agent_id,
+                    "agent_name": agent_cfg.agent_name,
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                })
+                .to_string(),
+            };
+            if let Err(e) = nexus
+                .publish(&ready_event.event_type, &ready_event.payload)
+                .await
+            {
+                tracing::warn!(
+                    "[swarm] Failed to publish agent.ready for {}: {}",
+                    agent_cfg.agent_name,
+                    e
+                );
+            }
 
             // 10. Start the Heartbeat Pulse with the Orchestrator
             let pulse =

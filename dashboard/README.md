@@ -1,9 +1,9 @@
+# SAVANT DASHBOARD
+
 <!-- markdownlint-disable MD033 -->
 <div align="center">
 
 <img src="../img/savant.png" alt="Savant Logo" width="120" />
-
-# SAVANT DASHBOARD
 
 **The Brain. Real-Time Swarm Observability.**
 

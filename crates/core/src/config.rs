@@ -761,18 +761,42 @@ pub struct ResourceGovernorConfig {
     pub max_deferral_retries: u32,
 }
 
-fn default_governor_monitor_interval() -> u64 { 5 }
-fn default_governor_mem_medium() -> f64 { 60.0 }
-fn default_governor_mem_high() -> f64 { 80.0 }
-fn default_governor_mem_critical() -> f64 { 92.0 }
-fn default_governor_cpu_medium() -> f64 { 70.0 }
-fn default_governor_cpu_high() -> f64 { 85.0 }
-fn default_governor_cpu_critical() -> f64 { 95.0 }
-fn default_governor_max_low() -> usize { 16 }
-fn default_governor_max_medium() -> usize { 8 }
-fn default_governor_max_high() -> usize { 4 }
-fn default_governor_max_critical() -> usize { 1 }
-fn default_governor_max_deferral() -> u32 { 60 }
+fn default_governor_monitor_interval() -> u64 {
+    5
+}
+fn default_governor_mem_medium() -> f64 {
+    60.0
+}
+fn default_governor_mem_high() -> f64 {
+    80.0
+}
+fn default_governor_mem_critical() -> f64 {
+    92.0
+}
+fn default_governor_cpu_medium() -> f64 {
+    70.0
+}
+fn default_governor_cpu_high() -> f64 {
+    85.0
+}
+fn default_governor_cpu_critical() -> f64 {
+    95.0
+}
+fn default_governor_max_low() -> usize {
+    128
+}
+fn default_governor_max_medium() -> usize {
+    64
+}
+fn default_governor_max_high() -> usize {
+    32
+}
+fn default_governor_max_critical() -> usize {
+    8
+}
+fn default_governor_max_deferral() -> u32 {
+    60
+}
 
 impl Default for TrajectoryConfig {
     fn default() -> Self {
@@ -801,6 +825,43 @@ impl Default for ResourceGovernorConfig {
             max_agents_high: default_governor_max_high(),
             max_agents_critical: default_governor_max_critical(),
             max_deferral_retries: default_governor_max_deferral(),
+        }
+    }
+}
+
+/// Agent limits for the two-tier agent system.
+/// Controls concurrency, depth, iterations, tokens, and timeouts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLimits {
+    /// Max concurrent full agents (default: 128)
+    pub max_concurrent_full: usize,
+    /// Max concurrent sub-agents (default: 128)
+    pub max_concurrent_subagents: usize,
+    /// Max children per agent (default: 8)
+    pub max_children_per_agent: usize,
+    /// Max spawn depth (default: 2)
+    pub max_spawn_depth: usize,
+    /// Max iterations per sub-agent (default: 50)
+    pub max_iterations_per_subagent: usize,
+    /// Max tokens per sub-agent (default: 0 = unlimited)
+    pub max_tokens_per_subagent: usize,
+    /// Sub-agent timeout in seconds (default: 300)
+    pub subagent_timeout_secs: u64,
+    /// Graceful drain timeout in seconds (default: 10)
+    pub drain_timeout_secs: u64,
+}
+
+impl Default for AgentLimits {
+    fn default() -> Self {
+        Self {
+            max_concurrent_full: 128,
+            max_concurrent_subagents: 128,
+            max_children_per_agent: 8,
+            max_spawn_depth: 2,
+            max_iterations_per_subagent: 50,
+            max_tokens_per_subagent: 0,
+            subagent_timeout_secs: 300,
+            drain_timeout_secs: 10,
         }
     }
 }
@@ -946,10 +1007,7 @@ impl Config {
             .merge(Env::prefixed("SAVANT_"))
             .extract()
             .unwrap_or_else(|e| {
-                tracing::warn!(
-                    "Config extraction failed ({}), falling back to defaults",
-                    e
-                );
+                tracing::warn!("Config extraction failed ({}), falling back to defaults", e);
                 Config::default()
             });
 
@@ -1203,14 +1261,13 @@ pub const OPENGATEWAY_DEFAULT_KEYS: &[&str] = &[
     "ogw_live_9b9d5220301ac1278279ede23f833547",
 ];
 
-static KEY_ROTATION_INDEX: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static KEY_ROTATION_INDEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Returns the next built-in OpenGateway API key (round-robin).
 /// Call once at startup; repeated calls within the same process advance the index.
 pub fn next_default_opengateway_key() -> &'static str {
-    let idx =
-        KEY_ROTATION_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % OPENGATEWAY_DEFAULT_KEYS.len();
+    let idx = KEY_ROTATION_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        % OPENGATEWAY_DEFAULT_KEYS.len();
     OPENGATEWAY_DEFAULT_KEYS[idx]
 }
 

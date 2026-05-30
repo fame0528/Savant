@@ -1,22 +1,22 @@
 # Savant Security Model
 
-> **Last Updated:** 2026-05-28 (v0.3.5)
+> **Last Updated:** 2026-05-29 (v0.4.0)
 
 ## Overview
 
 Savant implements security across five layers:
 
 1. **API Authentication** — REST middleware with constant-time comparison
-2. **Transport Security** — WebSocket authentication with Ed25519 signatures
-3. **Skill Security** — Mandatory scanning with 10 proactive checks
-4. **Execution Security** — Sandboxed skill execution with resource limits
-5. **API Key Security** — Master key exchange flow prevents direct key exposure
+1. **Transport Security** — WebSocket authentication with Ed25519 signatures
+1. **Skill Security** — Mandatory scanning with 10 proactive checks
+1. **Execution Security** — Sandboxed skill execution with resource limits
+1. **API Key Security** — Master key exchange flow prevents direct key exposure
 
 **Core Principle:** The user is sovereign. No hard blocks — just increasing click friction based on risk level.
 
 ---
 
-## API Authentication (v0.3.5)
+## API Authentication (v0.4.0)
 
 ### REST API Middleware
 
@@ -57,6 +57,7 @@ Requires editing `savant.toml` and restarting.
 ### Environment Variable Filtering
 
 Shell commands use `env_clear()` + only pass safe variables:
+
 - `PATH` — required for command resolution
 - `HOME` — required for user context
 - `LANG` — required for locale
@@ -118,6 +119,7 @@ Regex-based detection of malicious URLs, credential theft, data exfiltration, an
 ## Secrets Redaction
 
 Log output is automatically scanned and redacted for:
+
 - `sk-...` patterns (API keys)
 - `key=...` patterns (key-value secrets)
 - `token=...` patterns (auth tokens)
@@ -128,12 +130,14 @@ Log output is automatically scanned and redacted for:
 ## Path Traversal Prevention
 
 All file operations use `secure_resolve_path()`:
+
 - Validates absolute paths are under workspace root
 - Blocks `..` traversal above workspace root
 - Re-roots absolute paths to workspace
 - Null byte injection blocked
 
 Config mutations validated via `validate_config_path()`:
+
 - Blocks `..` in config paths
 - Blocks null bytes
 
@@ -144,6 +148,7 @@ Config mutations validated via `validate_config_path()`:
 ### Ed25519 Session Tokens
 
 All WebSocket connections require a signed session token containing:
+
 - `session_id` — UUIDv4 unique session identifier
 - `agent_id` — Optional agent association
 - `nonce` — Random nonce for replay prevention
@@ -172,10 +177,11 @@ LRU cache of recently seen nonces (10K entries). Each nonce checked against cach
 ### Master Key Exchange
 
 OpenRouter master keys are never used directly for completions:
+
 1. Master key authenticates to OpenRouter key exchange endpoint
-2. Scoped regular API key returned
-3. Regular key cached process-wide via `OnceCell`
-4. All completions use the regular key
+1. Scoped regular API key returned
+1. Regular key cached process-wide via `OnceCell`
+1. All completions use the regular key
 
 ### Ephemeral Credentials
 
@@ -201,4 +207,4 @@ OpenRouter master keys are never used directly for completions:
 
 ---
 
-*Documentation updated: 2026-05-28. Reflects v0.3.5 codebase.*
+*Documentation updated: 2026-05-29. Reflects v0.4.0 codebase.*

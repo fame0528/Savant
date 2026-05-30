@@ -14,10 +14,11 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, SemaphorePermit};
 use tokio_util::sync::CancellationToken;
 
-/// Orchestrates resource-aware agent spawning.
+/// Orchestrates resource-aware agent spawning with tier-aware concurrency.
 pub struct SwarmGovernor {
     pub monitor: Arc<ResourceMonitor>,
     semaphore: AdaptiveSemaphore,
+    subagent_semaphore: AdaptiveSemaphore,
     config: ResourceGovernorConfig,
     deferred_agents: Arc<Mutex<Vec<(AgentConfig, u32)>>>,
     shutdown: CancellationToken,
@@ -27,16 +28,18 @@ impl SwarmGovernor {
     pub fn new(config: ResourceGovernorConfig, shutdown: CancellationToken) -> Arc<Self> {
         let monitor = ResourceMonitor::new(config.clone(), shutdown.clone());
         let semaphore = AdaptiveSemaphore::new(monitor.clone(), config.clone());
+        let subagent_semaphore = AdaptiveSemaphore::new(monitor.clone(), config.clone());
         Arc::new(Self {
             monitor,
             semaphore,
+            subagent_semaphore,
             config,
             deferred_agents: Arc::new(Mutex::new(Vec::new())),
             shutdown,
         })
     }
 
-    /// Start background tasks (monitor + adaptive adjuster).
+    /// Start background tasks (monitor + adaptive adjuster + deferred drain).
     pub fn start(self: &Arc<Self>) -> Vec<tokio::task::JoinHandle<()>> {
         let mut handles = Vec::new();
 
@@ -46,9 +49,7 @@ impl SwarmGovernor {
         // Start adaptive permit adjuster
         let gov = self.clone();
         handles.push(tokio::spawn(async move {
-            let interval = std::time::Duration::from_secs(
-                gov.config.monitor_interval_secs.max(1),
-            );
+            let interval = std::time::Duration::from_secs(gov.config.monitor_interval_secs.max(1));
             loop {
                 tokio::select! {
                     _ = gov.shutdown.cancelled() => break,
@@ -59,29 +60,66 @@ impl SwarmGovernor {
             }
         }));
 
+        // Start deferred agent drain loop
+        let gov = self.clone();
+        handles.push(tokio::spawn(async move {
+            let drain_interval = std::time::Duration::from_secs(5);
+            loop {
+                tokio::select! {
+                    _ = gov.shutdown.cancelled() => break,
+                    _ = tokio::time::sleep(drain_interval) => {
+                        // Try to spawn one deferred agent per drain cycle
+                        if let Some(agent) = gov.pop_deferred().await {
+                            if gov.try_spawn().is_some() {
+                                // Spawn succeeded — re-defer with incremented retry count
+                                // so the caller knows to proceed
+                                gov.defer_agent_with_retries(agent, 1).await;
+                            } else {
+                                // No permits available — re-defer unchanged
+                                gov.defer_agent_with_retries(agent, 0).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }));
+
         handles
     }
 
-    /// Try to acquire a spawn permit. Returns None if pressure is too high.
+    /// Try to acquire a spawn permit for a full agent. Returns None if pressure is too high.
     pub fn try_spawn(&self) -> Option<SemaphorePermit<'_>> {
         self.semaphore.try_acquire()
+    }
+
+    /// Try to acquire a spawn permit for a sub-agent. Returns None if pressure is too high.
+    pub fn try_spawn_subagent(&self) -> Option<SemaphorePermit<'_>> {
+        self.subagent_semaphore.try_acquire()
     }
 
     /// Queue an agent for deferred spawning.
     /// Uses `.lock().await` for backpressure — never silently drops.
     pub async fn defer_agent(&self, agent: AgentConfig) {
+        self.defer_agent_with_retries(agent, 0).await;
+    }
+
+    /// Queue an agent for deferred spawning with a specific retry count.
+    pub async fn defer_agent_with_retries(&self, agent: AgentConfig, retries: u32) {
         tracing::warn!(
-            "[governor] Deferring agent '{}' — {} pressure, {} permits available",
+            "[governor] Deferring agent '{}' — {} pressure, {} permits available, retry {}/{}",
             agent.agent_name,
             self.current_pressure(),
-            self.available_permits()
+            self.available_permits(),
+            retries,
+            self.config.max_deferral_retries
         );
         let mut deferred = self.deferred_agents.lock().await;
-        deferred.push((agent, 0));
+        deferred.push((agent, retries));
     }
 
     /// Pop next deferred agent if retries not exhausted.
-    /// Uses `.lock().await` for backpressure — never silently drops.
+    /// The agent is removed from the queue. The caller must re-defer
+    /// via `defer_agent()` if spawning fails.
     pub async fn pop_deferred(&self) -> Option<AgentConfig> {
         let mut deferred = self.deferred_agents.lock().await;
         if deferred.is_empty() {
@@ -96,7 +134,6 @@ impl SwarmGovernor {
             );
             None
         } else {
-            deferred.push((agent.clone(), retries + 1));
             Some(agent)
         }
     }
@@ -137,10 +174,10 @@ mod tests {
             cpu_medium_pct: 70.0,
             cpu_high_pct: 85.0,
             cpu_critical_pct: 95.0,
-            max_agents_low: 16,
-            max_agents_medium: 8,
-            max_agents_high: 4,
-            max_agents_critical: 1,
+            max_agents_low: 128,
+            max_agents_medium: 64,
+            max_agents_high: 32,
+            max_agents_critical: 8,
             max_deferral_retries: 3,
         }
     }
@@ -184,12 +221,51 @@ mod tests {
             personality_traits: None,
             evolution_state: None,
             orchestrator_enabled: true,
+            tier: savant_core::types::AgentTier::Full,
         };
 
         gov.defer_agent(agent).await;
         let popped = gov.pop_deferred().await;
         assert!(popped.is_some());
         assert_eq!(popped.unwrap().agent_name, "test");
+    }
+
+    #[tokio::test]
+    async fn test_pop_deferred_no_duplicate() {
+        let shutdown = CancellationToken::new();
+        let gov = SwarmGovernor::new(test_config(), shutdown);
+
+        let agent = AgentConfig {
+            agent_id: "test".into(),
+            agent_name: "test".into(),
+            model_provider: savant_core::types::ModelProvider::Ollama,
+            api_key: None,
+            env_vars: Default::default(),
+            system_prompt: String::new(),
+            model: None,
+            heartbeat_interval: 60,
+            allowed_skills: Vec::new(),
+            workspace_path: std::path::PathBuf::new(),
+            identity: None,
+            parent_id: None,
+            session_id: None,
+            proactive: savant_core::config::ProactiveConfig::default(),
+            llm_params: savant_core::types::LlmParams::default(),
+            personality_traits: None,
+            evolution_state: None,
+            orchestrator_enabled: true,
+            tier: savant_core::types::AgentTier::Full,
+        };
+
+        gov.defer_agent(agent).await;
+
+        // Pop the agent — it should be removed from the queue
+        let popped = gov.pop_deferred().await;
+        assert!(popped.is_some());
+
+        // Second pop should return None — no duplicate
+        let second = gov.pop_deferred().await;
+        assert!(second.is_none(), "pop_deferred() should not return the same agent twice");
     }
 
     #[tokio::test]

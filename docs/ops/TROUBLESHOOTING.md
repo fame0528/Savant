@@ -33,6 +33,7 @@ lsof -i :3000                      # Linux/macOS
 **Symptom:** All REST API requests return 401 Unauthorized
 **Cause:** `dashboard_api_key` is set but request doesn't include the key
 **Fix:**
+
 - Include `Authorization: Bearer <key>` or `X-API-Key: <key>` header
 - Or set `dashboard_api_key = ""` in `savant.toml` for development mode (no auth)
 - Restart gateway after changing `dashboard_api_key`
@@ -42,6 +43,7 @@ lsof -i :3000                      # Linux/macOS
 **Symptom:** ConfigSet returns "Field is immutable at runtime"
 **Cause:** Attempting to change a security-critical field via API/WebSocket
 **Fix:** Edit `config/savant.toml` directly and restart. Immutable fields:
+
 - `server.dashboard_api_key`
 - `server.host`
 - `server.port`
@@ -53,6 +55,7 @@ lsof -i :3000                      # Linux/macOS
 **Symptom:** Dashboard shows "Disconnected"
 **Cause:** Gateway not running or wrong WebSocket URL
 **Fix:**
+
 - Verify gateway is running: `curl http://localhost:3000/live` should return "OK"
 - Check WebSocket URL is `ws://127.0.0.1:3000/ws` (default in dashboard)
 - Set `NEXT_PUBLIC_WS_URL` env var if using custom host/port
@@ -72,7 +75,8 @@ mkdir -p workspaces/substrate
 **Symptom:** `Ollama auto-start failed` error
 **Cause:** Ollama not installed or not in PATH
 **Fix:**
-- Install Ollama: https://ollama.com/download
+
+- Install Ollama: <https://ollama.com/download>
 - Verify: `ollama --version`
 - The system falls back gracefully with a clear error message
 - Set `SAVANT_DISABLE_EMBEDDINGS=1` to skip embedding features entirely
@@ -92,6 +96,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** Agents deferred with `[governor] Deferring '...' — HIGH pressure`
 **Cause:** System under CPU or memory pressure
 **Fix:**
+
 - Check system resources: `htop` or Task Manager
 - Increase thresholds in `[resource_governor]`:
   ```toml
@@ -106,6 +111,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** `[consciousness] Budget exhausted — skipping thought`
 **Cause:** Token budget exceeded for current hour/day
 **Fix:**
+
 - Increase budget in code (future: configurable in savant.toml)
 - Wait for hourly reset
 - Check quiet hours: 10PM–7AM UTC blocks consciousness operations
@@ -115,6 +121,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** `Circuit breaker is OPEN — provider temporarily unavailable`
 **Cause:** Provider failed 5+ consecutive times
 **Fix:**
+
 - Wait 60 seconds for automatic recovery (HalfOpen state)
 - Check provider status: is the API key valid? Is the service up?
 - Check logs for the underlying error
@@ -130,6 +137,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** Expected learning entries not appearing in LEARNINGS.md
 **Cause:** Entry was filtered by quality gate
 **Fix:** Check `FILTERED.jsonl` for rejected entries with reasons:
+
 - `not_grounded` — entry lacks environmental grounding
 - `duplicate` — content-hash dedup detected duplicate
 - Entry exceeded 2000 char limit
@@ -139,6 +147,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** `Docker connection failed` error
 **Cause:** Docker Desktop not running or not installed
 **Fix:**
+
 - Start Docker Desktop
 - Verify: `docker ps` should work without errors
 - Check: `docker --version` should show version 20+
@@ -148,6 +157,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** `ClawHub install failed` error
 **Cause:** Network issue or invalid skill name
 **Fix:**
+
 - Check internet connection
 - Verify skill exists: `curl https://clawhub.com/api/skills/<name>`
 - Check `skills/` directory permissions
@@ -157,6 +167,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** `No OpenRouter API key found` warning
 **Cause:** Missing or invalid `OR_MASTER_KEY` in `.env`
 **Fix:**
+
 - Set `OR_MASTER_KEY=sk-or-v1-...` in `.env`
 - Or set `SAVANT_DEV_MODE=1` for development mode
 - Restart the gateway after changing `.env`
@@ -165,12 +176,14 @@ The system auto-pulls missing models on startup if Ollama is running.
 
 **Symptom:** Gateway responses take >1 second
 **Possible causes:**
+
 - Model is too large for available RAM
 - Network latency to AI provider
 - Too many concurrent agents (governor throttling)
 - Debug build instead of release
 
 **Fix:**
+
 - Check `cargo run --release` (debug builds are slow)
 - Monitor with `RUST_LOG=info` to see timing information
 - Reduce `max_tokens` in `config/savant.toml`
@@ -182,6 +195,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** Obsidian vault not updating
 **Cause:** `vault_path` not set or directory doesn't exist
 **Fix:**
+
 - Set `[obsidian].vault_path` in `savant.toml`
 - Ensure directory exists and is writable
 - Check logs for `[obsidian]` messages
@@ -192,6 +206,7 @@ The system auto-pulls missing models on startup if Ollama is running.
 **Symptom:** Changes to `savant.toml` not taking effect
 **Cause:** File watcher not detecting changes (rare)
 **Fix:**
+
 - Restart the gateway
 - Check logs for `config: Loading from` messages
 - Ensure you're editing the correct `savant.toml` (check path in logs)

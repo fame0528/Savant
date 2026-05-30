@@ -175,7 +175,10 @@ impl SovereignSynthesizer {
     }
 
     /// Creates a synthesizer with LLM-driven code generation.
-    pub fn with_llm(workspace_dir: PathBuf, provider: Arc<dyn savant_core::traits::LlmProvider>) -> Self {
+    pub fn with_llm(
+        workspace_dir: PathBuf,
+        provider: Arc<dyn savant_core::traits::LlmProvider>,
+    ) -> Self {
         Self {
             workspace_dir,
             llm_provider: Some(provider),
@@ -202,9 +205,17 @@ impl SovereignSynthesizer {
             // Generate source code (LLM or template)
             let src_dir = self.workspace_dir.join(skill_name);
             let result = if let Some(ref provider) = self.llm_provider {
-                self.generate_with_llm(skill_name, logic_prompt, &accumulated_errors, provider, &src_dir).await
+                self.generate_with_llm(
+                    skill_name,
+                    logic_prompt,
+                    &accumulated_errors,
+                    provider,
+                    &src_dir,
+                )
+                .await
             } else {
-                self.generate_with_template(skill_name, logic_prompt, &src_dir).await
+                self.generate_with_template(skill_name, logic_prompt, &src_dir)
+                    .await
             };
 
             match result {
@@ -217,7 +228,8 @@ impl SovereignSynthesizer {
 
                     match self.verify_source(crate_dir).await {
                         Ok(()) => {
-                            let promoted = self.genetic_forge_promotion(skill_name, &src_path).await?;
+                            let promoted =
+                                self.genetic_forge_promotion(skill_name, &src_path).await?;
                             info!("Synthesis successful after {} attempts.", attempts);
                             return Ok(promoted);
                         }
@@ -243,7 +255,8 @@ impl SovereignSynthesizer {
 
         Err(anyhow::anyhow!(
             "Synthesis failed after {} attempts. Errors:\n{}",
-            max_attempts, accumulated_errors
+            max_attempts,
+            accumulated_errors
         ))
     }
 
@@ -313,6 +326,7 @@ proptest = "1"
                 channel: savant_core::types::AgentOutputChannel::Chat,
                 is_telemetry: false,
                 images: Vec::new(),
+                ..Default::default()
             },
             ChatMessage {
                 role: ChatRole::User,
@@ -324,6 +338,7 @@ proptest = "1"
                 channel: savant_core::types::AgentOutputChannel::Chat,
                 is_telemetry: false,
                 images: Vec::new(),
+                ..Default::default()
             },
         ];
 
@@ -343,10 +358,16 @@ proptest = "1"
     }
 
     /// Parse LLM response into skill files.
-    fn parse_llm_response(&self, name: &str, response: &str, src_dir: &Path) -> Result<std::path::PathBuf> {
+    fn parse_llm_response(
+        &self,
+        name: &str,
+        response: &str,
+        src_dir: &Path,
+    ) -> Result<std::path::PathBuf> {
         std::fs::create_dir_all(src_dir.join("src"))?;
 
-        let cargo_toml = self.extract_section(response, "Cargo.toml")
+        let cargo_toml = self
+            .extract_section(response, "Cargo.toml")
             .unwrap_or_else(|| self.generate_default_cargo_toml(name));
         let lib_rs = self.extract_section(response, "src/lib.rs")
             .unwrap_or_else(|| format!("//! Auto-generated skill: {}\n\npub fn run() -> Result<String, String> {{\n    Ok(\"Skill executed\".to_string())\n}}\n", name));
@@ -375,11 +396,19 @@ proptest = "1"
     }
 
     /// Generate skill using templates (fallback when LLM unavailable).
-    async fn generate_with_template(&self, name: &str, prompt: &str, src_dir: &Path) -> Result<std::path::PathBuf> {
+    async fn generate_with_template(
+        &self,
+        name: &str,
+        prompt: &str,
+        src_dir: &Path,
+    ) -> Result<std::path::PathBuf> {
         std::fs::create_dir_all(src_dir.join("src"))?;
 
         let template = StaticTemplateRegistry::find_template(prompt);
-        info!("Selected template '{}' for intent: '{}'", template.name, prompt);
+        info!(
+            "Selected template '{}' for intent: '{}'",
+            template.name, prompt
+        );
 
         // Write lib.rs from template
         std::fs::write(src_dir.join("src").join("lib.rs"), template.source)?;
@@ -392,10 +421,9 @@ proptest = "1"
             .collect::<Vec<_>>()
             .join("\n");
 
-        let cargo_toml = self.generate_default_cargo_toml(name).replace(
-            "# Dependencies will be added here",
-            &deps
-        );
+        let cargo_toml = self
+            .generate_default_cargo_toml(name)
+            .replace("# Dependencies will be added here", &deps);
         std::fs::write(src_dir.join("Cargo.toml"), cargo_toml)?;
 
         // Write SKILL.md
@@ -435,19 +463,40 @@ path = "src/lib.rs"
     /// Pin a dependency to a specific version (not wildcard).
     fn pin_dependency(&self, dep: &str) -> String {
         let known_versions: std::collections::HashMap<&str, &str> = [
-            ("tokio", "tokio = { version = \"1\", features = [\"full\"] }"),
-            ("serde", "serde = { version = \"1\", features = [\"derive\"] }"),
+            (
+                "tokio",
+                "tokio = { version = \"1\", features = [\"full\"] }",
+            ),
+            (
+                "serde",
+                "serde = { version = \"1\", features = [\"derive\"] }",
+            ),
             ("serde_json", "serde_json = \"1\""),
-            ("reqwest", "reqwest = { version = \"0.12\", features = [\"json\"] }"),
+            (
+                "reqwest",
+                "reqwest = { version = \"0.12\", features = [\"json\"] }",
+            ),
             ("anyhow", "anyhow = \"1\""),
-            ("chrono", "chrono = { version = \"0.4\", features = [\"serde\"] }"),
+            (
+                "chrono",
+                "chrono = { version = \"0.4\", features = [\"serde\"] }",
+            ),
             ("tracing", "tracing = \"0.1\""),
-            ("rusqlite", "rusqlite = { version = \"0.31\", features = [\"bundled\"] }"),
+            (
+                "rusqlite",
+                "rusqlite = { version = \"0.31\", features = [\"bundled\"] }",
+            ),
             ("blake3", "blake3 = \"1\""),
             ("uuid", "uuid = { version = \"1\", features = [\"v4\"] }"),
-        ].iter().cloned().collect();
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
-        known_versions.get(dep).map(|s| s.to_string()).unwrap_or_else(|| format!("{} = \"*\"", dep))
+        known_versions
+            .get(dep)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("{} = \"*\"", dep))
     }
 
     /// Verify the generated source code compiles.
@@ -463,10 +512,7 @@ path = "src/lib.rs"
 
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "Synthesis: 'cargo check' failed:\n{}",
-                err
-            ));
+            return Err(anyhow::anyhow!("Synthesis: 'cargo check' failed:\n{}", err));
         }
 
         info!("Verification passed.");

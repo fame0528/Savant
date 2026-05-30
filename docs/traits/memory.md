@@ -95,10 +95,10 @@ Rejected entries logged to `FILTERED.jsonl` for human review with rejection reas
 ## Security Considerations
 
 1. **Isolation**: Memory must be partitioned strictly by `agent_id`. Under no circumstances should an agent be able to retrieve memories from a different identity unless explicitly shared via the `CollectiveBlackboard`.
-2. **Entropic Pruning**: The implementation must utilize **Information-Entropy Gain (IEG)** to cull low-value memories, preventing context pollution and side-channel leakage.
-3. **Preamble Injection**: Retrieval must be preceded by a **Sovereign Preamble v3** check to verify that context remains within its cognitive bounds.
-4. **Injection Defense**: All inbound vault edits scanned via `scan_prompt()` before affecting agent state. Vault treated as potentially hostile data source.
-5. **Memory Recall Deduplication**: Recalled memories injected into system prompt only (not duplicated in conversation history) to prevent attention waste.
+1. **Entropic Pruning**: The implementation must utilize **Information-Entropy Gain (IEG)** to cull low-value memories, preventing context pollution and side-channel leakage.
+1. **Preamble Injection**: Retrieval must be preceded by a **Sovereign Preamble v3** check to verify that context remains within its cognitive bounds.
+1. **Injection Defense**: All inbound vault edits scanned via `scan_prompt()` before affecting agent state. Vault treated as potentially hostile data source.
+1. **Memory Recall Deduplication**: Recalled memories injected into system prompt only (not duplicated in conversation history) to prevent attention waste.
 
 ---
 

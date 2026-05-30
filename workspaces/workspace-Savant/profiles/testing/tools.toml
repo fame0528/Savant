@@ -1,0 +1,1 @@
+tools = ["read", "write", "edit", "cargo", "npm", "bash", "glob", "grep"]

@@ -423,7 +423,7 @@ impl SkillRegistry {
             .unwrap_or_else(|| "agents-config".to_string());
 
         let mut manifest = if let Some(fm) = frontmatter_str {
-             serde_yaml::from_str::<SkillManifest>(fm).unwrap_or_else(|_| SkillManifest {
+            serde_yaml::from_str::<SkillManifest>(fm).unwrap_or_else(|_| SkillManifest {
                 name: dir_name.clone(),
                 version: "1.0.0".to_string(),
                 description: format!("Agent configuration from {}", path_ref.display()),

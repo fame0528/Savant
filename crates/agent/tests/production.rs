@@ -97,6 +97,7 @@ async fn test_production_swarm_initialization_50_agents() {
             personality_traits: None,
             evolution_state: None,
             orchestrator_enabled: true,
+            tier: savant_core::types::AgentTier::Full,
         });
     }
 
@@ -191,6 +192,7 @@ async fn test_agent_panic_recovery_logic() {
             personality_traits: None,
             evolution_state: None,
             orchestrator_enabled: true,
+            tier: savant_core::types::AgentTier::Full,
         }],
         Arc::new(
             Storage::new(base_temp.join("panic_storage"), 100_000)
@@ -267,6 +269,7 @@ async fn test_500_agent_initialization_scaling() {
             personality_traits: None,
             evolution_state: None,
             orchestrator_enabled: true,
+            tier: savant_core::types::AgentTier::Full,
         });
     }
 

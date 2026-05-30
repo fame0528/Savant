@@ -472,6 +472,7 @@ mod tests {
                 session_id: None,
                 channel: savant_core::types::AgentOutputChannel::default(),
                 images: Vec::new(),
+                ..Default::default()
             });
         let payload_str = serde_json::to_string(&payload).unwrap();
         let message = format!("req-cm:{}:{}", timestamp, payload_str);

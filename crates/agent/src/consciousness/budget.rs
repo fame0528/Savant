@@ -225,8 +225,8 @@ mod tests {
     fn test_quiet_hours_default() {
         let budget = ConsciousnessBudget::new();
         let (start, end) = budget.quiet_hours();
-        assert_eq!(start, 3);  // 3AM UTC = 11PM EDT
-        assert_eq!(end, 11);   // 11AM UTC = 7AM EDT
+        assert_eq!(start, 3); // 3AM UTC = 11PM EDT
+        assert_eq!(end, 11); // 11AM UTC = 7AM EDT
     }
 
     #[test]

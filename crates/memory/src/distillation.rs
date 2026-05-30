@@ -217,7 +217,8 @@ async fn extract_triplets(
         session_id: None,
         channel: savant_core::types::AgentOutputChannel::Chat,
         images: Vec::new(),
-    }, ChatMessage {
+            ..Default::default()
+        }, ChatMessage {
         is_telemetry: false,
         role: ChatRole::User,
         content: prompt,
@@ -227,7 +228,8 @@ async fn extract_triplets(
         session_id: None,
         channel: savant_core::types::AgentOutputChannel::Chat,
         images: Vec::new(),
-    }];
+            ..Default::default()
+        }];
 
     let mut stream = llm
         .stream_completion(messages, vec![])

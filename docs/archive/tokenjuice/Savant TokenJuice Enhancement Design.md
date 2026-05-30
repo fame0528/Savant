@@ -74,32 +74,32 @@ To prevent Regex DoS, every rule includes a budget\_ms field. If the regex evalu
 
 To eliminate the O(N) bottleneck and achieve sub-5ms latencies, Savant TokenJuice implements a dual-stage classification engine.
 
-**Stage 1: Aho-Corasick Trie Indexing**
+#### Stage 1: Aho-Corasick Trie Indexing
 
 Upon initialization and during any hot-reload event, the RuleRegistry compiles all match\_criteria strings (tool names and argv structures) into an Aho-Corasick automaton. When execute\_tool yields an output, the routing to the appropriate rule is determined in O(L) time, where L is the length of the command invocation string. This algorithmic complexity is completely independent of the total number of registered rules, instantly resolving the linear scaling penalty.
 
-**Stage 2: Heuristic Content Probing (Semantic Classifier)**
+#### Stage 2: Heuristic Content Probing (Semantic Classifier)
 
 If the Trie index yields no specific match (or flags the command as generic), the engine routes the output to the Heuristic Byte Prober. Instead of blindly applying a 60/40 truncation, this classifier reads the first 1024 bytes of the payload. It calculates byte entropy to detect compressed or binary data, immediately bypassing reduction if binary magic numbers are found. It scans for structural indicators (e.g., matching { and } for JSON, or \--- for YAML) and specific semantic keywords (PASS, FAIL, error:). If the prober detects a high density of JSON formatting, it automatically dynamically routes the payload to the generic fallback/json\_minify rule, achieving content-aware classification without explicit argv configuration.
 
 ### **Integration with Savant's Existing Architecture**
 
-**Tokio Async Integration (reactor.rs)**
+#### Tokio Async Integration (reactor.rs)
 
 The integration point at crates/agent/src/react/reactor.rs line 103 is completely rewritten. The synchronous truncate\_output is replaced with an asynchronous .await call to savant\_tokenjuice::compact(). To prevent Tokio thread exhaustion, the classification index lookup runs inline, but any intensive text manipulation (regex application, line deduplication) is dispatched to the blocking thread pool via tokio::task::spawn\_blocking. The engine exclusively utilizes zero-copy deserialization; outputs are manipulated using Cow\<'a, str\> (Clone-on-Write). If a payload requires no modification, the engine simply passes the original reference, avoiding massive string allocations.
 
-**Sandboxed Tool Output Integration**
+#### Sandboxed Tool Output Integration
 
 Savant frequently executes tools inside isolated WASM, Docker, or Nix sandboxes \[User Prompt\]. These sandboxes generate streaming outputs rather than monolithic strings. Savant TokenJuice integrates directly with Tokio AsyncRead streams. Utilizing a sliding window buffer, the engine applies line-based deduplication and regex filtering on the fly. This streaming architecture prevents 100MB Docker logs from ever materializing fully in memory, drastically reducing the peak RAM overhead of the agent.
 
-**OCEAN Personality Matrix Integration**
+#### OCEAN Personality Matrix Integration
 
 Savant's PromotionEngine models agent personalities using the OCEAN framework \[User Prompt\]. TokenJuice dynamically scales its compression aggressiveness based on the active agent's profile traits.
 
 * **High Openness**: Agents scoring high in Openness favor exploration, creativity, and divergent thinking. TokenJuice mathematically lowers its compression thresholds (e.g., truncating at 90% instead of 60%) and disables aggressive regex dropping, preserving maximum context, anomalies, and edge-cases for the agent to explore.  
 * **High Conscientiousness**: Agents scoring high in Conscientiousness require structured, highly specific, and disciplined data. TokenJuice increases its aggressiveness, relentlessly stripping whitespace, formatting, boilerplate text, and non-essential warnings, delivering highly dense, noise-free payloads tailored for precise execution.
 
-**SemanticVectorEngine (HNSW) Integration**
+#### SemanticVectorEngine (HNSW) Integration
 
 Before applying any regex reduction, TokenJuice calculates a rapid localized hash (such as MinHash) of the output payload. It queries Savant's SemanticVectorEngine to determine if identical or highly similar (e.g., \>0.95 cosine similarity) tool output already resides in the agent's recent context window. If redundant data is detected, TokenJuice aborts text processing and replaces the entire payload with a semantic pointer: \`\`. This dramatically prevents context rot caused by agents polling the same endpoints repeatedly.
 
@@ -206,7 +206,7 @@ The final phase addresses outputs that are critically important but highly unstr
 #### **Works cited**
 
 1. Smart Token Compression | OpenHuman \- GitBook, accessed May 12, 2026, [https://tinyhumans.gitbook.io/openhuman/features/token-compression](https://tinyhumans.gitbook.io/openhuman/features/token-compression)  
-2. GitHub \- vincentkoc/tokenjuice: Token weight loss. Lean output compaction for terminal-heavy agent workflows. Works as a native CLI tool or as an extension to popular coding and agent frameworks., accessed May 12, 2026, [https://github.com/vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice)  
-3. Tokenjuice \- OpenClaw Docs, accessed May 12, 2026, [https://docs.openclaw.ai/tools/tokenjuice](https://docs.openclaw.ai/tools/tokenjuice)  
-4. gstack/docs/designs/GCOMPACTION.md at main \- GitHub, accessed May 12, 2026, [https://github.com/garrytan/gstack/blob/main/docs/designs/GCOMPACTION.md](https://github.com/garrytan/gstack/blob/main/docs/designs/GCOMPACTION.md)  
-5. Tool output compression for agents \- 60-70% token reduction on tool-heavy workloads (open source, works with local models) : r/LocalLLaMA \- Reddit, accessed May 12, 2026, [https://www.reddit.com/r/LocalLLaMA/comments/1qbei13/tool\_output\_compression\_for\_agents\_6070\_token/](https://www.reddit.com/r/LocalLLaMA/comments/1qbei13/tool_output_compression_for_agents_6070_token/)
+1. GitHub \- vincentkoc/tokenjuice: Token weight loss. Lean output compaction for terminal-heavy agent workflows. Works as a native CLI tool or as an extension to popular coding and agent frameworks., accessed May 12, 2026, [https://github.com/vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice)  
+1. Tokenjuice \- OpenClaw Docs, accessed May 12, 2026, [https://docs.openclaw.ai/tools/tokenjuice](https://docs.openclaw.ai/tools/tokenjuice)  
+1. gstack/docs/designs/GCOMPACTION.md at main \- GitHub, accessed May 12, 2026, [https://github.com/garrytan/gstack/blob/main/docs/designs/GCOMPACTION.md](https://github.com/garrytan/gstack/blob/main/docs/designs/GCOMPACTION.md)  
+1. Tool output compression for agents \- 60-70% token reduction on tool-heavy workloads (open source, works with local models) : r/LocalLLaMA \- Reddit, accessed May 12, 2026, [https://www.reddit.com/r/LocalLLaMA/comments/1qbei13/tool\_output\_compression\_for\_agents\_6070\_token/](https://www.reddit.com/r/LocalLLaMA/comments/1qbei13/tool_output_compression_for_agents_6070_token/)

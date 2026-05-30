@@ -18,8 +18,8 @@ use axum::{
 };
 use futures::stream::Stream;
 use serde::Deserialize;
-use std::sync::Arc;
 use std::convert::Infallible;
+use std::sync::Arc;
 
 /// Validate that a section/key name contains only safe characters.
 fn is_valid_identifier(s: &str) -> bool {
@@ -213,10 +213,7 @@ pub async fn setup_check_handler(State(state): State<Arc<GatewayState>>) -> impl
         );
 
         // Find best model: exact configured match > any gemma > first model
-        let best_model = find_best_model(
-            &configured_model,
-            &ollama_result.installed_models,
-        );
+        let best_model = find_best_model(&configured_model, &ollama_result.installed_models);
 
         if let Some(found) = best_model {
             checks["model_available"] = serde_json::Value::Bool(true);
@@ -506,13 +503,21 @@ async fn launch_ollama() -> Result<String, String> {
     let client = savant_core::net::secure_client_with_timeout(3, 3)
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-    if client.get(format!("{}/api/tags", ollama_url)).send().await.is_ok() {
+    if client
+        .get(format!("{}/api/tags", ollama_url))
+        .send()
+        .await
+        .is_ok()
+    {
         return Ok("Ollama is already running".to_string());
     }
 
     // Try to find and launch Ollama
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
         // Try common Windows install paths
         let candidates = [
             format!(
@@ -527,6 +532,10 @@ async fn launch_ollama() -> Result<String, String> {
             if std::path::Path::new(path).exists() {
                 match std::process::Command::new(path)
                     .arg("serve")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .creation_flags(CREATE_NO_WINDOW)
                     .spawn()
                 {
                     Ok(_) => {
@@ -536,7 +545,13 @@ async fn launch_ollama() -> Result<String, String> {
                     }
                     Err(_) => {
                         // Try without args (GUI app)
-                        match std::process::Command::new(path).spawn() {
+                        match std::process::Command::new(path)
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .spawn()
+                        {
                             Ok(_) => {
                                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                                 return Ok(format!("Ollama GUI launched from {}", path));
@@ -549,7 +564,15 @@ async fn launch_ollama() -> Result<String, String> {
         }
 
         // Try `ollama` on PATH
-        if std::process::Command::new("ollama").arg("serve").spawn().is_ok() {
+        if std::process::Command::new("ollama")
+            .arg("serve")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .is_ok()
+        {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             return Ok("Ollama launched from PATH".to_string());
         }

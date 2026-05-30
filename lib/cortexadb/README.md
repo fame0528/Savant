@@ -1,12 +1,11 @@
+# CortexaDB
+
 <div align="center">
   <img src="https://raw.githubusercontent.com/anaslimem/CortexaDB/main/logo.png" alt="CortexaDB Logo" width="200" />
 </div>
-
-<h1 align="center">CortexaDB</h1>
 <p align="center">
   <small>SQLite for AI Agents</small>
 </p>
-
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT%2FApache--2.0-blue.svg" alt="License" /></a>
@@ -16,22 +15,21 @@
   <a href="https://cortexa-db.vercel.app"><img src="https://img.shields.io/badge/Docs-cortexa--db.vercel.app-purple.svg" alt="Documentation" /></a>
 </p>
 
-
 📖 **[Read the full documentation](https://cortexa-db.vercel.app)**
 
 **CortexaDB** is a lightweight, high-performance embedded database built in Rust, specifically designed to serve as the long-term memory for AI agents. It provides a single-file, zero-dependency storage solution that combines the simplicity of SQLite with the semantic power of vector search, graph relationships, and temporal indexing.
 
 ---
 
-### The Problem: Why CortexaDB?
+## The Problem: Why CortexaDB?
 
-Current AI agent frameworks often struggle with "memory" once the context window fills up. Developers usually have to choose between complex, over-engineered vector databases (that require a running server) or simple JSON files (that are slow and lose searchability at scale). 
+Current AI agent frameworks often struggle with "memory" once the context window fills up. Developers usually have to choose between complex, over-engineered vector databases (that require a running server) or simple JSON files (that are slow and lose searchability at scale).
 
 CortexaDB exists to provide a **middle ground**: a hard-durable, embedded memory engine that runs inside your agent's process. It ensures your agent never forgets, starting instantly with zero overhead, and maintaining millisecond query latencies even as it learns thousands of new facts.
 
 ---
 
-### Quickstart
+## Quickstart
 
 ```python
 from cortexadb import CortexaDB
@@ -56,11 +54,12 @@ print(f"Top Hit: {hits[0].id}")
 
 ---
 
-### Installation
+## Installation
 
 CortexaDB is available on PyPI for Python and can be added via Cargo for Rust.
 
-**Python**
+### Python
+
 ```bash
 pip install cortexadb
 pip install cortexadb[docs,pdf]  # Optional: For PDF/Docx support
@@ -68,7 +67,7 @@ pip install cortexadb[docs,pdf]  # Optional: For PDF/Docx support
 
 ---
 
-### Core Capabilities
+## Core Capabilities
 
 - **100x Faster Ingestion**: New batch insertion system allows processing 5,000+ chunks/second.
 - **Hybrid Retrieval**: Search by semantic similarity (Vector), structural relationship (Graph), and time-based recency in a single query.
@@ -82,7 +81,7 @@ pip install cortexadb[docs,pdf]  # Optional: For PDF/Docx support
 <details>
 <summary><b>Technical Architecture & Benchmarks</b></summary>
 
-### Performance Benchmarks (v1.0.0)
+## Performance Benchmarks (v1.0.0)
 
 Measured on an M-series Mac — 10,000 embeddings × 384 dimensions.
 
@@ -100,6 +99,7 @@ See the [full benchmark docs](https://cortexa-db.vercel.app/docs/resources/bench
 ---
 
 ## License & Status
+
 CortexaDB `v1.0.0` is a **stable release** available under the **MIT** and **Apache-2.0** licenses.  
 We welcome feedback and contributions!
 

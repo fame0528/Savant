@@ -103,9 +103,9 @@ To execute this heavy neural operation locally within the Rust ecosystem without
 The advanced retrieval pipeline operates sequentially:
 
 1. **Candidate Generation**: LanceDB executes a hybrid search, independently retrieving top candidates via vector semantic similarity and BM25 full-text keyword search.  
-2. **Reciprocal Rank Fusion (RRF)**: The results from the vector and keyword searches are mathematically merged to stabilize the candidate pool, ensuring that documents scoring moderately well in both metrics are elevated.53  
-3. **Cross-Encoder Scoring**: The ort runtime processes the top ![][image6] candidates from the fusion stage against the active query. The transformer outputs raw logits, to which a sigmoid activation function is applied to yield a normalized precision score between 0 and 1\.48  
-4. **Final Sort and Injection**: The candidate memories are sorted by their precise cross-encoder score and injected seamlessly into the agent's active working memory window.53
+1. **Reciprocal Rank Fusion (RRF)**: The results from the vector and keyword searches are mathematically merged to stabilize the candidate pool, ensuring that documents scoring moderately well in both metrics are elevated.53  
+1. **Cross-Encoder Scoring**: The ort runtime processes the top ![][image6] candidates from the fusion stage against the active query. The transformer outputs raw logits, to which a sigmoid activation function is applied to yield a normalized precision score between 0 and 1\.48  
+1. **Final Sort and Injection**: The candidate memories are sorted by their precise cross-encoder score and injected seamlessly into the agent's active working memory window.53
 
 ## **4\. Systems Integration & Recommended Deliverables**
 
@@ -202,7 +202,7 @@ pub trait CognitiveLoop: Actor {
 pub trait SubconsciousLoop: Actor {  
     /// Compresses raw episodic logs into generalized semantic rules.  
     async fn dream(&mut self) \-\> Result\<(), MemoryError\>;  
-      
+
     /// Periodically re-indexes the vector database to optimize future retrieval latency.  
     async fn consolidate\_memory(&mut self) \-\> Result\<(), MemoryError\>;  
 }
@@ -212,7 +212,7 @@ pub trait SubconsciousLoop: Actor {
 pub trait MemoryManager {  
     /// Commits a discrete thought or event to the Left Brain (redb).  
     async fn append\_episodic\_log(&self, event: EpisodicEvent) \-\> Result\<(), DatabaseError\>;  
-      
+
     /// Embeds and stores an associative memory in the Right Brain (LanceDB).  
     async fn store\_semantic\_vector(&self, memory: SemanticMemory) \-\> Result\<(), DatabaseError\>;  
       
@@ -246,58 +246,58 @@ By adhering to these rigorous architectural standards, the OpenClaw framework ca
 #### **Works cited**
 
 1. Introducing Spawned: Erlang-Style Actors for Rust \- LambdaClass Blog, accessed May 25, 2026, [https://blog.lambdaclass.com/introducing-spawned-erlang-style-actors-for-rust/](https://blog.lambdaclass.com/introducing-spawned-erlang-style-actors-for-rust/)  
-2. Utlity of async for actors / tokio actors? \- help \- The Rust Programming Language Forum, accessed May 25, 2026, [https://users.rust-lang.org/t/utlity-of-async-for-actors-tokio-actors/134485](https://users.rust-lang.org/t/utlity-of-async-for-actors-tokio-actors/134485)  
-3. Actor Model in Rust: Building Concurrent Systems With tokio and Channels, accessed May 25, 2026, [https://dev.to/dylan\_dumont\_266378d98367/actor-model-in-rust-building-concurrent-systems-with-tokio-and-channels-5e9n](https://dev.to/dylan_dumont_266378d98367/actor-model-in-rust-building-concurrent-systems-with-tokio-and-channels-5e9n)  
-4. Actor | Actix Web, accessed May 25, 2026, [https://actix.rs/docs/actix/actor/](https://actix.rs/docs/actix/actor/)  
-5. Async-friendly actor framework? : r/rust \- Reddit, accessed May 25, 2026, [https://www.reddit.com/r/rust/comments/roctxq/asyncfriendly\_actor\_framework/](https://www.reddit.com/r/rust/comments/roctxq/asyncfriendly_actor_framework/)  
-6. slawlor/ractor: Rust actor framework \- GitHub, accessed May 25, 2026, [https://github.com/slawlor/ractor](https://github.com/slawlor/ractor)  
-7. Ractor, accessed May 25, 2026, [https://slawlor.github.io/ractor/](https://slawlor.github.io/ractor/)  
-8. ractor::actor \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/ractor/latest/ractor/actor/index.html](https://docs.rs/ractor/latest/ractor/actor/index.html)  
-9. ractor\_supervisor \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/ractor-supervisor](https://docs.rs/ractor-supervisor)  
-10. Ractor – a Rust Actor Framework | Hacker News, accessed May 25, 2026, [https://news.ycombinator.com/item?id=42030625](https://news.ycombinator.com/item?id=42030625)  
-11. select in tokio \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/tokio/latest/tokio/macro.select.html](https://docs.rs/tokio/latest/tokio/macro.select.html)  
-12. Futurelock: A subtle risk in async Rust \- Hacker News, accessed May 25, 2026, [https://news.ycombinator.com/item?id=45774086](https://news.ycombinator.com/item?id=45774086)  
-13. Cancellation \- Comprehensive Rust \- Google, accessed May 25, 2026, [https://google.github.io/comprehensive-rust/concurrency/async-pitfalls/cancellation.html](https://google.github.io/comprehensive-rust/concurrency/async-pitfalls/cancellation.html)  
-14. Cancel safety in async and tokio::select\!{} \- help \- The Rust Programming Language Forum, accessed May 25, 2026, [https://users.rust-lang.org/t/cancel-safety-in-async-and-tokio-select/92381](https://users.rust-lang.org/t/cancel-safety-in-async-and-tokio-select/92381)  
-15. Build with Naz : Rust async in practice tokio::select\!, actor pattern & cancel safety, accessed May 25, 2026, [https://developerlife.com/2024/07/10/rust-async-cancellation-safety-tokio/](https://developerlife.com/2024/07/10/rust-async-cancellation-safety-tokio/)  
-16. Diagnosing a Double-Free Concurrency Bug in Rust's Unbounded Channels \- Materialize, accessed May 25, 2026, [https://materialize.com/blog/rust-concurrency-bug-unbounded-channels/](https://materialize.com/blog/rust-concurrency-bug-unbounded-channels/)  
-17. Rust's First Breach: CVE-2025-68260 Marks the First Rust Vulnerability in the Linux Kernel, accessed May 25, 2026, [https://www.penligent.ai/hackinglabs/rusts-first-breach-cve-2025-68260-marks-the-first-rust-vulnerability-in-the-linux-kernel/](https://www.penligent.ai/hackinglabs/rusts-first-breach-cve-2025-68260-marks-the-first-rust-vulnerability-in-the-linux-kernel/)  
-18. Why LanceDB Is the Most Natural Memory Layer for OpenClaw, accessed May 25, 2026, [https://www.lancedb.com/blog/openclaw-lancedb-memory-layer](https://www.lancedb.com/blog/openclaw-lancedb-memory-layer)  
-19. Types of AI Agent Memory: Episodic, Semantic, Procedural and More \- Atlan, accessed May 25, 2026, [https://atlan.com/know/types-of-ai-agent-memory/](https://atlan.com/know/types-of-ai-agent-memory/)  
-20. What Is AI Agent Memory? | IBM, accessed May 25, 2026, [https://www.ibm.com/think/topics/ai-agent-memory](https://www.ibm.com/think/topics/ai-agent-memory)  
-21. AI agent memory: Building stateful AI systems \- Redis, accessed May 25, 2026, [https://redis.io/blog/ai-agent-memory-stateful-systems/](https://redis.io/blog/ai-agent-memory-stateful-systems/)  
-22. Beyond Short-term Memory: The 3 Types of Long-term Memory AI Agents Need \- MachineLearningMastery.com, accessed May 25, 2026, [https://machinelearningmastery.com/beyond-short-term-memory-the-3-types-of-long-term-memory-ai-agents-need/](https://machinelearningmastery.com/beyond-short-term-memory-the-3-types-of-long-term-memory-ai-agents-need/)  
-23. \[Proposal\] Dual-Brain Memory Architecture: SQLite \+ LanceDB with importance scoring, time decay, and emotional analysis · Issue \#65679 \- GitHub, accessed May 25, 2026, [https://github.com/openclaw/openclaw/issues/65679](https://github.com/openclaw/openclaw/issues/65679)  
-24. How Rust Protects Against Memory Leaks and Memory Corruption, accessed May 25, 2026, [https://blog.intelligencex.org/rust-memory-safety-protection](https://blog.intelligencex.org/rust-memory-safety-protection)  
-25. redb \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/redb](https://docs.rs/redb)  
-26. 1.0 release\! \- redb, accessed May 25, 2026, [https://www.redb.org/post/2023/06/16/1-0-stable-release/](https://www.redb.org/post/2023/06/16/1-0-stable-release/)  
-27. ReDB \- An embedded key-value database in pure Rust \- GitHub, accessed May 25, 2026, [https://github.com/cberner/redb](https://github.com/cberner/redb)  
-28. Top Vector Databases for Enterprise AI: 2026 Comparison \- Atlan, accessed May 25, 2026, [https://atlan.com/know/top-vector-databases-enterprise-ai/](https://atlan.com/know/top-vector-databases-enterprise-ai/)  
-29. GitHub \- lancedb/lancedb: Developer-friendly OSS embedded retrieval library for multimodal AI. Search More; Manage Less., accessed May 25, 2026, [https://github.com/lancedb/lancedb](https://github.com/lancedb/lancedb)  
-30. LanceDB vs Qdrant \- by Sergei Petrov \- Medium, accessed May 25, 2026, [https://medium.com/@plaggy/lancedb-vs-qdrant-caf01c89965a](https://medium.com/@plaggy/lancedb-vs-qdrant-caf01c89965a)  
-31. Metadata Filtering in LanceDB, accessed May 25, 2026, [https://docs.lancedb.com/search/filtering](https://docs.lancedb.com/search/filtering)  
-32. Full-Text Search (FTS) \- LanceDB, accessed May 25, 2026, [https://docs.lancedb.com/search/full-text-search](https://docs.lancedb.com/search/full-text-search)  
-33. Search \- LanceDB, accessed May 25, 2026, [https://docs.lancedb.com/search](https://docs.lancedb.com/search)  
-34. Show HN: Orch8 – Durable workflow engine in Rust, one binary, Postgres or SQLite, accessed May 25, 2026, [https://news.ycombinator.com/item?id=48021431](https://news.ycombinator.com/item?id=48021431)  
-35. How to Implement Actor State Snapshots in Dapr \- OneUptime, accessed May 25, 2026, [https://oneuptime.com/blog/post/2026-03-31-dapr-implement-actor-state-snapshots/view](https://oneuptime.com/blog/post/2026-03-31-dapr-implement-actor-state-snapshots/view)  
-36. serde\_state: Stateful serde \[de\]serialization : r/rust \- Reddit, accessed May 25, 2026, [https://www.reddit.com/r/rust/comments/6o1p46/serde\_state\_stateful\_serde\_deserialization/](https://www.reddit.com/r/rust/comments/6o1p46/serde_state_stateful_serde_deserialization/)  
-37. Memory, Not Magic: What Agents Actually Remember Between Sessions | by Micheal Lanham | Apr, 2026 | Medium, accessed May 25, 2026, [https://medium.com/@Micheal-Lanham/memory-not-magic-what-agents-actually-remember-between-sessions-c05dadb53dc7](https://medium.com/@Micheal-Lanham/memory-not-magic-what-agents-actually-remember-between-sessions-c05dadb53dc7)  
-38. Integrating Dynamic Human-like Memory Recall and Consolidation in LLM-Based Agents \- arXiv, accessed May 25, 2026, [https://arxiv.org/pdf/2404.00573](https://arxiv.org/pdf/2404.00573)  
-39. A Deep Dive Into LangChain's Generative Agents | blog\_posts – Weights & Biases \- Wandb, accessed May 25, 2026, [https://wandb.ai/vincenttu/blog\_posts/reports/A-Deep-Dive-Into-LangChain-s-Generative-Agents--Vmlldzo1MzMwNjI3](https://wandb.ai/vincenttu/blog_posts/reports/A-Deep-Dive-Into-LangChain-s-Generative-Agents--Vmlldzo1MzMwNjI3)  
-40. Integrating large language model-based agents into a virtual patient chatbot for clinical anamnesis training \- PMC, accessed May 25, 2026, [https://pmc.ncbi.nlm.nih.gov/articles/PMC12180958/](https://pmc.ncbi.nlm.nih.gov/articles/PMC12180958/)  
-41. I Built a Cross-Platform Memory Layer for AI Agents Using Ebbinghaus Forgetting Curves, accessed May 25, 2026, [https://dev.to/smara/how-ebbinghaus-forgetting-curves-make-ai-agents-smarter-ef3](https://dev.to/smara/how-ebbinghaus-forgetting-curves-make-ai-agents-smarter-ef3)  
-42. FSFM: A Biologically-Inspired Framework for Selective Forgetting of Agent Memory \- arXiv, accessed May 25, 2026, [https://arxiv.org/html/2604.20300v1](https://arxiv.org/html/2604.20300v1)  
-43. Forgetting Curve \- The Decision Lab, accessed May 25, 2026, [https://thedecisionlab.com/reference-guide/psychology/forgetting-curve](https://thedecisionlab.com/reference-guide/psychology/forgetting-curve)  
-44. TimeWeightedVectorStoreRetrie, accessed May 25, 2026, [https://langchain-opentutorial.gitbook.io/langchain-opentutorial/10-retriever/09-timeweightedvectorstoreretriever](https://langchain-opentutorial.gitbook.io/langchain-opentutorial/10-retriever/09-timeweightedvectorstoreretriever)  
-45. TD-DNN: A Time Decay-Based Deep Neural Network for Recommendation System \- MDPI, accessed May 25, 2026, [https://www.mdpi.com/2076-3417/12/13/6398](https://www.mdpi.com/2076-3417/12/13/6398)  
-46. Agent\_Memory\_Techniques/all\_techniques/19\_forgetting\_and\_decay/forgetting\_and\_decay.ipynb at main \- GitHub, accessed May 25, 2026, [https://github.com/NirDiamant/Agent\_Memory\_Techniques/blob/main/all\_techniques/19\_forgetting\_and\_decay/forgetting\_and\_decay.ipynb](https://github.com/NirDiamant/Agent_Memory_Techniques/blob/main/all_techniques/19_forgetting_and_decay/forgetting_and_decay.ipynb)  
-47. Retrieval Is Not Enough: AI for Organizations Needs Epistemic Infrastructure \- arXiv, accessed May 25, 2026, [https://arxiv.org/html/2604.11759v2](https://arxiv.org/html/2604.11759v2)  
-48. frankensearch\_rerank \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/frankensearch-rerank](https://docs.rs/frankensearch-rerank)  
-49. GitHub \- pykeio/ort: Fast ML inference & training for ONNX models in Rust, accessed May 25, 2026, [https://github.com/pykeio/ort](https://github.com/pykeio/ort)  
-50. Building Sentence Transformers in Rust: A Practical Guide with Burn, ONNX Runtime, and Candle \- DEV Community, accessed May 25, 2026, [https://dev.to/mayu2008/building-sentence-transformers-in-rust-a-practical-guide-with-burn-onnx-runtime-and-candle-281k](https://dev.to/mayu2008/building-sentence-transformers-in-rust-a-practical-guide-with-burn-onnx-runtime-and-candle-281k)  
-51. fastembed \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/fastembed](https://docs.rs/fastembed)  
-52. Local Embeddings with Fastembed, Rig & Rust \- DEV Community, accessed May 25, 2026, [https://dev.to/joshmo\_dev/local-embeddings-with-fastembed-rig-rust-3581](https://dev.to/joshmo_dev/local-embeddings-with-fastembed-rig-rust-3581)  
-53. Vera, a local-first code search for AI agents (Rust, ONNX, 63 languages, CLI \+ SKILL/MCP), accessed May 25, 2026, [https://www.reddit.com/r/LocalLLaMA/comments/1s5idyp/vera\_a\_localfirst\_code\_search\_for\_ai\_agents\_rust/](https://www.reddit.com/r/LocalLLaMA/comments/1s5idyp/vera_a_localfirst_code_search_for_ai_agents_rust/)  
-54. State of AI Agent Memory 2026: Benchmarks, Architectures & Production Gaps \- Mem0, accessed May 25, 2026, [https://mem0.ai/blog/state-of-ai-agent-memory-2026](https://mem0.ai/blog/state-of-ai-agent-memory-2026)  
-55. Evaluating Very Long-Term Conversational Memory of LLM Agents, accessed May 25, 2026, [https://snap-research.github.io/locomo/](https://snap-research.github.io/locomo/)  
-56. Memory OS of AI Agent \- arXiv, accessed May 25, 2026, [https://arxiv.org/html/2506.06326v1](https://arxiv.org/html/2506.06326v1)
+1. Utlity of async for actors / tokio actors? \- help \- The Rust Programming Language Forum, accessed May 25, 2026, [https://users.rust-lang.org/t/utlity-of-async-for-actors-tokio-actors/134485](https://users.rust-lang.org/t/utlity-of-async-for-actors-tokio-actors/134485)  
+1. Actor Model in Rust: Building Concurrent Systems With tokio and Channels, accessed May 25, 2026, [https://dev.to/dylan\_dumont\_266378d98367/actor-model-in-rust-building-concurrent-systems-with-tokio-and-channels-5e9n](https://dev.to/dylan_dumont_266378d98367/actor-model-in-rust-building-concurrent-systems-with-tokio-and-channels-5e9n)  
+1. Actor | Actix Web, accessed May 25, 2026, [https://actix.rs/docs/actix/actor/](https://actix.rs/docs/actix/actor/)  
+1. Async-friendly actor framework? : r/rust \- Reddit, accessed May 25, 2026, [https://www.reddit.com/r/rust/comments/roctxq/asyncfriendly\_actor\_framework/](https://www.reddit.com/r/rust/comments/roctxq/asyncfriendly_actor_framework/)  
+1. slawlor/ractor: Rust actor framework \- GitHub, accessed May 25, 2026, [https://github.com/slawlor/ractor](https://github.com/slawlor/ractor)  
+1. Ractor, accessed May 25, 2026, [https://slawlor.github.io/ractor/](https://slawlor.github.io/ractor/)  
+1. ractor::actor \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/ractor/latest/ractor/actor/index.html](https://docs.rs/ractor/latest/ractor/actor/index.html)  
+1. ractor\_supervisor \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/ractor-supervisor](https://docs.rs/ractor-supervisor)  
+1. Ractor – a Rust Actor Framework | Hacker News, accessed May 25, 2026, [https://news.ycombinator.com/item?id=42030625](https://news.ycombinator.com/item?id=42030625)  
+1. select in tokio \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/tokio/latest/tokio/macro.select.html](https://docs.rs/tokio/latest/tokio/macro.select.html)  
+1. Futurelock: A subtle risk in async Rust \- Hacker News, accessed May 25, 2026, [https://news.ycombinator.com/item?id=45774086](https://news.ycombinator.com/item?id=45774086)  
+1. Cancellation \- Comprehensive Rust \- Google, accessed May 25, 2026, [https://google.github.io/comprehensive-rust/concurrency/async-pitfalls/cancellation.html](https://google.github.io/comprehensive-rust/concurrency/async-pitfalls/cancellation.html)  
+1. Cancel safety in async and tokio::select\!{} \- help \- The Rust Programming Language Forum, accessed May 25, 2026, [https://users.rust-lang.org/t/cancel-safety-in-async-and-tokio-select/92381](https://users.rust-lang.org/t/cancel-safety-in-async-and-tokio-select/92381)  
+1. Build with Naz : Rust async in practice tokio::select\!, actor pattern & cancel safety, accessed May 25, 2026, [https://developerlife.com/2024/07/10/rust-async-cancellation-safety-tokio/](https://developerlife.com/2024/07/10/rust-async-cancellation-safety-tokio/)  
+1. Diagnosing a Double-Free Concurrency Bug in Rust's Unbounded Channels \- Materialize, accessed May 25, 2026, [https://materialize.com/blog/rust-concurrency-bug-unbounded-channels/](https://materialize.com/blog/rust-concurrency-bug-unbounded-channels/)  
+1. Rust's First Breach: CVE-2025-68260 Marks the First Rust Vulnerability in the Linux Kernel, accessed May 25, 2026, [https://www.penligent.ai/hackinglabs/rusts-first-breach-cve-2025-68260-marks-the-first-rust-vulnerability-in-the-linux-kernel/](https://www.penligent.ai/hackinglabs/rusts-first-breach-cve-2025-68260-marks-the-first-rust-vulnerability-in-the-linux-kernel/)  
+1. Why LanceDB Is the Most Natural Memory Layer for OpenClaw, accessed May 25, 2026, [https://www.lancedb.com/blog/openclaw-lancedb-memory-layer](https://www.lancedb.com/blog/openclaw-lancedb-memory-layer)  
+1. Types of AI Agent Memory: Episodic, Semantic, Procedural and More \- Atlan, accessed May 25, 2026, [https://atlan.com/know/types-of-ai-agent-memory/](https://atlan.com/know/types-of-ai-agent-memory/)  
+1. What Is AI Agent Memory? | IBM, accessed May 25, 2026, [https://www.ibm.com/think/topics/ai-agent-memory](https://www.ibm.com/think/topics/ai-agent-memory)  
+1. AI agent memory: Building stateful AI systems \- Redis, accessed May 25, 2026, [https://redis.io/blog/ai-agent-memory-stateful-systems/](https://redis.io/blog/ai-agent-memory-stateful-systems/)  
+1. Beyond Short-term Memory: The 3 Types of Long-term Memory AI Agents Need \- MachineLearningMastery.com, accessed May 25, 2026, [https://machinelearningmastery.com/beyond-short-term-memory-the-3-types-of-long-term-memory-ai-agents-need/](https://machinelearningmastery.com/beyond-short-term-memory-the-3-types-of-long-term-memory-ai-agents-need/)  
+1. \[Proposal\] Dual-Brain Memory Architecture: SQLite \+ LanceDB with importance scoring, time decay, and emotional analysis · Issue \#65679 \- GitHub, accessed May 25, 2026, [https://github.com/openclaw/openclaw/issues/65679](https://github.com/openclaw/openclaw/issues/65679)  
+1. How Rust Protects Against Memory Leaks and Memory Corruption, accessed May 25, 2026, [https://blog.intelligencex.org/rust-memory-safety-protection](https://blog.intelligencex.org/rust-memory-safety-protection)  
+1. redb \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/redb](https://docs.rs/redb)  
+1. 1.0 release\! \- redb, accessed May 25, 2026, [https://www.redb.org/post/2023/06/16/1-0-stable-release/](https://www.redb.org/post/2023/06/16/1-0-stable-release/)  
+1. ReDB \- An embedded key-value database in pure Rust \- GitHub, accessed May 25, 2026, [https://github.com/cberner/redb](https://github.com/cberner/redb)  
+1. Top Vector Databases for Enterprise AI: 2026 Comparison \- Atlan, accessed May 25, 2026, [https://atlan.com/know/top-vector-databases-enterprise-ai/](https://atlan.com/know/top-vector-databases-enterprise-ai/)  
+1. GitHub \- lancedb/lancedb: Developer-friendly OSS embedded retrieval library for multimodal AI. Search More; Manage Less., accessed May 25, 2026, [https://github.com/lancedb/lancedb](https://github.com/lancedb/lancedb)  
+1. LanceDB vs Qdrant \- by Sergei Petrov \- Medium, accessed May 25, 2026, [https://medium.com/@plaggy/lancedb-vs-qdrant-caf01c89965a](https://medium.com/@plaggy/lancedb-vs-qdrant-caf01c89965a)  
+1. Metadata Filtering in LanceDB, accessed May 25, 2026, [https://docs.lancedb.com/search/filtering](https://docs.lancedb.com/search/filtering)  
+1. Full-Text Search (FTS) \- LanceDB, accessed May 25, 2026, [https://docs.lancedb.com/search/full-text-search](https://docs.lancedb.com/search/full-text-search)  
+1. Search \- LanceDB, accessed May 25, 2026, [https://docs.lancedb.com/search](https://docs.lancedb.com/search)  
+1. Show HN: Orch8 – Durable workflow engine in Rust, one binary, Postgres or SQLite, accessed May 25, 2026, [https://news.ycombinator.com/item?id=48021431](https://news.ycombinator.com/item?id=48021431)  
+1. How to Implement Actor State Snapshots in Dapr \- OneUptime, accessed May 25, 2026, [https://oneuptime.com/blog/post/2026-03-31-dapr-implement-actor-state-snapshots/view](https://oneuptime.com/blog/post/2026-03-31-dapr-implement-actor-state-snapshots/view)  
+1. serde\_state: Stateful serde \[de\]serialization : r/rust \- Reddit, accessed May 25, 2026, [https://www.reddit.com/r/rust/comments/6o1p46/serde\_state\_stateful\_serde\_deserialization/](https://www.reddit.com/r/rust/comments/6o1p46/serde_state_stateful_serde_deserialization/)  
+1. Memory, Not Magic: What Agents Actually Remember Between Sessions | by Micheal Lanham | Apr, 2026 | Medium, accessed May 25, 2026, [https://medium.com/@Micheal-Lanham/memory-not-magic-what-agents-actually-remember-between-sessions-c05dadb53dc7](https://medium.com/@Micheal-Lanham/memory-not-magic-what-agents-actually-remember-between-sessions-c05dadb53dc7)  
+1. Integrating Dynamic Human-like Memory Recall and Consolidation in LLM-Based Agents \- arXiv, accessed May 25, 2026, [https://arxiv.org/pdf/2404.00573](https://arxiv.org/pdf/2404.00573)  
+1. A Deep Dive Into LangChain's Generative Agents | blog\_posts – Weights & Biases \- Wandb, accessed May 25, 2026, [https://wandb.ai/vincenttu/blog\_posts/reports/A-Deep-Dive-Into-LangChain-s-Generative-Agents--Vmlldzo1MzMwNjI3](https://wandb.ai/vincenttu/blog_posts/reports/A-Deep-Dive-Into-LangChain-s-Generative-Agents--Vmlldzo1MzMwNjI3)  
+1. Integrating large language model-based agents into a virtual patient chatbot for clinical anamnesis training \- PMC, accessed May 25, 2026, [https://pmc.ncbi.nlm.nih.gov/articles/PMC12180958/](https://pmc.ncbi.nlm.nih.gov/articles/PMC12180958/)  
+1. I Built a Cross-Platform Memory Layer for AI Agents Using Ebbinghaus Forgetting Curves, accessed May 25, 2026, [https://dev.to/smara/how-ebbinghaus-forgetting-curves-make-ai-agents-smarter-ef3](https://dev.to/smara/how-ebbinghaus-forgetting-curves-make-ai-agents-smarter-ef3)  
+1. FSFM: A Biologically-Inspired Framework for Selective Forgetting of Agent Memory \- arXiv, accessed May 25, 2026, [https://arxiv.org/html/2604.20300v1](https://arxiv.org/html/2604.20300v1)  
+1. Forgetting Curve \- The Decision Lab, accessed May 25, 2026, [https://thedecisionlab.com/reference-guide/psychology/forgetting-curve](https://thedecisionlab.com/reference-guide/psychology/forgetting-curve)  
+1. TimeWeightedVectorStoreRetrie, accessed May 25, 2026, [https://langchain-opentutorial.gitbook.io/langchain-opentutorial/10-retriever/09-timeweightedvectorstoreretriever](https://langchain-opentutorial.gitbook.io/langchain-opentutorial/10-retriever/09-timeweightedvectorstoreretriever)  
+1. TD-DNN: A Time Decay-Based Deep Neural Network for Recommendation System \- MDPI, accessed May 25, 2026, [https://www.mdpi.com/2076-3417/12/13/6398](https://www.mdpi.com/2076-3417/12/13/6398)  
+1. Agent\_Memory\_Techniques/all\_techniques/19\_forgetting\_and\_decay/forgetting\_and\_decay.ipynb at main \- GitHub, accessed May 25, 2026, [https://github.com/NirDiamant/Agent\_Memory\_Techniques/blob/main/all\_techniques/19\_forgetting\_and\_decay/forgetting\_and\_decay.ipynb](https://github.com/NirDiamant/Agent_Memory_Techniques/blob/main/all_techniques/19_forgetting_and_decay/forgetting_and_decay.ipynb)  
+1. Retrieval Is Not Enough: AI for Organizations Needs Epistemic Infrastructure \- arXiv, accessed May 25, 2026, [https://arxiv.org/html/2604.11759v2](https://arxiv.org/html/2604.11759v2)  
+1. frankensearch\_rerank \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/frankensearch-rerank](https://docs.rs/frankensearch-rerank)  
+1. GitHub \- pykeio/ort: Fast ML inference & training for ONNX models in Rust, accessed May 25, 2026, [https://github.com/pykeio/ort](https://github.com/pykeio/ort)  
+1. Building Sentence Transformers in Rust: A Practical Guide with Burn, ONNX Runtime, and Candle \- DEV Community, accessed May 25, 2026, [https://dev.to/mayu2008/building-sentence-transformers-in-rust-a-practical-guide-with-burn-onnx-runtime-and-candle-281k](https://dev.to/mayu2008/building-sentence-transformers-in-rust-a-practical-guide-with-burn-onnx-runtime-and-candle-281k)  
+1. fastembed \- Rust \- Docs.rs, accessed May 25, 2026, [https://docs.rs/fastembed](https://docs.rs/fastembed)  
+1. Local Embeddings with Fastembed, Rig & Rust \- DEV Community, accessed May 25, 2026, [https://dev.to/joshmo\_dev/local-embeddings-with-fastembed-rig-rust-3581](https://dev.to/joshmo_dev/local-embeddings-with-fastembed-rig-rust-3581)  
+1. Vera, a local-first code search for AI agents (Rust, ONNX, 63 languages, CLI \+ SKILL/MCP), accessed May 25, 2026, [https://www.reddit.com/r/LocalLLaMA/comments/1s5idyp/vera\_a\_localfirst\_code\_search\_for\_ai\_agents\_rust/](https://www.reddit.com/r/LocalLLaMA/comments/1s5idyp/vera_a_localfirst_code_search_for_ai_agents_rust/)  
+1. State of AI Agent Memory 2026: Benchmarks, Architectures & Production Gaps \- Mem0, accessed May 25, 2026, [https://mem0.ai/blog/state-of-ai-agent-memory-2026](https://mem0.ai/blog/state-of-ai-agent-memory-2026)  
+1. Evaluating Very Long-Term Conversational Memory of LLM Agents, accessed May 25, 2026, [https://snap-research.github.io/locomo/](https://snap-research.github.io/locomo/)  
+1. Memory OS of AI Agent \- arXiv, accessed May 25, 2026, [https://arxiv.org/html/2506.06326v1](https://arxiv.org/html/2506.06326v1)

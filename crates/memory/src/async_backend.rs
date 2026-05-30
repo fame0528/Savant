@@ -401,6 +401,7 @@ impl MemoryBackend for AsyncMemoryBackend {
                                         channel: savant_core::types::AgentOutputChannel::Chat,
                                         is_telemetry: false,
                                         images: vec![],
+                                        ..Default::default()
                                     });
                                 }
                             }
@@ -1200,6 +1201,7 @@ mod tests {
             session_id: Some(SessionId("test_session".to_string())),
             channel: AgentOutputChannel::Chat,
             images: Vec::new(),
+            ..Default::default()
         };
 
         // Store
@@ -1235,6 +1237,7 @@ mod tests {
                 session_id: Some(SessionId("query_session".to_string())),
                 channel: AgentOutputChannel::Chat,
                 images: Vec::new(),
+                ..Default::default()
             };
             backend.store("query_session", &msg).await.unwrap();
         }

@@ -1,3 +1,5 @@
+# Savant Debug Log
+
 [22:54:54.235] [WARN] RedrawEventsCleared emitted without explicit MainEventsCleared
 [22:54:54.235] [WARN] NewEvents emitted without explicit RedrawEventsCleared
 [22:54:43.693] [WARN] RedrawEventsCleared emitted without explicit MainEventsCleared
@@ -407,8 +409,10 @@ STDOUT:
 
 STDERR:
 At line:1 char:63
+
 + cd /mnt/c/Users/PC/Desktop/Savant/workspaces/workspace-Savant && pwd
 +                                                               ~~
+
 The token '&&' is not a valid statement separator in this version.
     + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
     + FullyQualifiedErrorId : InvalidEndOfLine

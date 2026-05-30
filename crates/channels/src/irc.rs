@@ -396,6 +396,7 @@ impl IrcAdapter {
                     session_id: Some(session_id),
                     channel: savant_core::types::AgentOutputChannel::Chat,
                     images: Vec::new(),
+                    ..Default::default()
                 };
 
                 let event = EventFrame {

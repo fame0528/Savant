@@ -13,17 +13,19 @@ We are currently debugging a fundamental problem: the agent's reflection system 
 ### 1.1 The Heartbeat System
 
 The agent runs an autonomous heartbeat every ~60 seconds. Each heartbeat:
+
 1. Reads the environment (git status, filesystem activity, system memory metrics)
-2. Constructs a prompt with environment context
-3. Sends the prompt to an LLM (via OpenRouter, currently `stepfun/step-3.5-flash:free`)
-4. The LLM produces a response (thought + optional tool calls)
-5. The response is stored in the memory backend and optionally written to LEARNINGS.md
+1. Constructs a prompt with environment context
+1. Sends the prompt to an LLM (via OpenRouter, currently `stepfun/step-3.5-flash:free`)
+1. The LLM produces a response (thought + optional tool calls)
+1. The response is stored in the memory backend and optionally written to LEARNINGS.md
 
 ### 1.2 The Prompt Injection Pipeline
 
 The agent receives context from multiple sources:
 
 **System Prompt (every conversation):**
+
 - SOUL.md (351 lines — identity, personality, values, loyalty to user)
 - AGENTS.md (29 lines — technical operating rules, stripped of diary content)
 - Substrate operational directive
@@ -31,6 +33,7 @@ The agent receives context from multiple sources:
 - Token budget
 
 **Heartbeat Prompt (every pulse):**
+
 - Agent name
 - SOUL.md (read again directly — injected twice)
 - Git status (`git status --short` — REAL)
@@ -41,34 +44,40 @@ The agent receives context from multiple sources:
 - Heartbeat directives (from HEARTBEAT.md)
 
 **Memory Retrieval (when not disabled):**
+
 - `memory.retrieve()` — returns 10 messages via semantic search from the 3-layer memory system
 - Recalls old conversation messages into the current conversation history
 
 **File Reads (via tools):**
+
 - Agent can read ANY file within its workspace via the `foundation` tool
 - Can read LEARNINGS.md (20k+ lines), CONTEXT.md, SOUL.md, AGENTS.md, etc.
 
 ### 1.3 The Memory System (3-Layer Architecture)
 
-**Layer 1: LSM Storage (CortexaDB)**
+#### Layer 1: LSM Storage (CortexaDB)
+
 - Embedded database with WAL-backed durability
 - Collections: transcript.{session_id}, metadata, temporal, dag, facts, sessions, turns
 - Zero-copy deserialization via rkyv
 - Atomic compaction (write-before-delete pattern)
 
-**Layer 2: Semantic Vector Engine (ruvector-core)**
+#### Layer 2: Semantic Vector Engine (ruvector-core)
+
 - HNSW index for approximate nearest neighbor search
 - 2560-dimensional embeddings (qwen3-embedding:4b via Ollama)
 - Cosine distance metric with SIMD acceleration
 - 32x binary quantization
 
-**Layer 3: Collective (Hive-Mind)**
+#### Layer 3: Collective (Hive-Mind)
+
 - Shared enclave for distilled knowledge across 101 agents
 - SPO (Subject-Predicate-Object) facts index
 - Distillation pipeline: enclave → LLM triplet extraction → collective
 - Factual arbiter: resolves contradictions via Shannon entropy
 
 **Dual-Enclave Architecture:**
+
 - `enclave` — Private per-agent memory
 - `collective` — Shared hive-mind memory
 - Distillation pipeline bridges them every 5 minutes
@@ -98,15 +107,16 @@ Multiple overlapping injection paths were creating a self-referential loop:
 
 1. **CONTEXT.md loop:** Agent writes CONTEXT.md via `foundation` tool → reads it back next cycle → writes again. Even after disabling `distill_context()`, the agent uses file tools to recreate CONTEXT.md.
 
-2. **LEARNINGS.md backlog:** 20k+ lines of old identity/privacy/diary content from previous builds. The agent can read this via file tools and incorporate it into responses.
+1. **LEARNINGS.md backlog:** 20k+ lines of old identity/privacy/diary content from previous builds. The agent can read this via file tools and incorporate it into responses.
 
-3. **Memory retrieval:** `memory.retrieve()` recalls old messages (including identity/privacy discussions) into conversation history via semantic search.
+1. **Memory retrieval:** `memory.retrieve()` recalls old messages (including identity/privacy discussions) into conversation history via semantic search.
 
-4. **SOUL.md injection (double):** SOUL.md is injected into both the system prompt AND the heartbeat prompt. Contains identity/loyalty/relationship content that steers reflection toward identity topics.
+1. **SOUL.md injection (double):** SOUL.md is injected into both the system prompt AND the heartbeat prompt. Contains identity/loyalty/relationship content that steers reflection toward identity topics.
 
-5. **Learning emitter:** Stores entries with `Memory` channel, which passes through `build_messages()` filter and enters conversation context.
+1. **Learning emitter:** Stores entries with `Memory` channel, which passes through `build_messages()` filter and enters conversation context.
 
 **Remaining Active Paths After All Fixes:**
+
 - Agent reading LEARNINGS.md via file tools (20k+ old entries)
 - Agent writing CONTEXT.md via file tools (self-referential)
 - Old messages in memory backend (semantic search recalls identity content)
@@ -116,6 +126,7 @@ Multiple overlapping injection paths were creating a self-referential loop:
 **Symptom:** Agent responses are cut short mid-sentence. Example: "On Sentience & " — response ends abruptly.
 
 **Root Cause:** Unknown. Possible causes:
+
 - Token limit on the free OpenRouter model
 - Stream connection dropping mid-response
 - Response length exceeding context window
@@ -144,6 +155,7 @@ Multiple overlapping injection paths were creating a self-referential loop:
 ### 2.4 Agent Capabilities (Safety Boundary)
 
 **What the Agent CAN Do:**
+
 - Read/write/delete/move/create any file within workspace
 - Execute shell commands (with destructive pattern blocking)
 - Run git commands (status, diff, log, add, commit, push)
@@ -153,6 +165,7 @@ Multiple overlapping injection paths were creating a self-referential loop:
 - Monitor file modification times
 
 **What the Agent CANNOT Do:**
+
 - Access files outside workspace directory
 - Access GitHub API
 - Run destructive commands (rm -rf, format, git reset --hard)
@@ -161,6 +174,7 @@ Multiple overlapping injection paths were creating a self-referential loop:
 - See real-time user input (heartbeat is autonomous)
 
 **Shell Safety Gaps:**
+
 - `SAFE_SYSTEM_DIRS` allowlist includes `/usr/bin`, `/usr/local/bin` — agent can execute system binaries
 - Git commands are not in destructive patterns (only `git reset --hard`, `git clean -fd` blocked)
 - `settings.json` writes bypass `secure_resolve_path()` — uses `std::fs` directly
@@ -178,6 +192,7 @@ The system should produce genuine emergent behavior — the agent should think a
 ### 3.2 Grounded in Reality (No Hallucination)
 
 Every statement the agent makes should be traceable to a real observation:
+
 - Git stats should be from actual `git` commands
 - Memory metrics should be from actual OS queries
 - System state should be from actual file reads
@@ -187,6 +202,7 @@ Every statement the agent makes should be traceable to a real observation:
 ### 3.3 Self-Healing (Hands-Free)
 
 The system should be fully autonomous:
+
 - Ollama should auto-start if not running
 - Embedding failures should self-heal
 - Stream errors should gracefully complete, not crash
@@ -195,6 +211,7 @@ The system should be fully autonomous:
 ### 3.4 Scalable (Hive-Mind Ready)
 
 Each of the 101 agents should have:
+
 - Its own workspace with its own LEARNINGS.md
 - Its own memory enclave (private)
 - Access to the collective enclave (shared)
@@ -203,6 +220,7 @@ Each of the 101 agents should have:
 ### 3.5 Safety (Sandboxed)
 
 The agent should have clear, enforceable boundaries:
+
 - Filesystem access restricted to workspace
 - Shell commands restricted to safe operations
 - No access to user data outside workspace
@@ -213,39 +231,51 @@ The agent should have clear, enforceable boundaries:
 ## 4. Research Questions for Deep Research
 
 ### Q1: Emergent Behavior in LLM Agents
+
 What are the proven techniques for eliciting genuine emergent behavior in LLM agents? Specifically:
+
 - How do other frameworks (AutoGPT, BabyAGI, Voyager, Generative Agents) handle agent reflection?
 - What prompt architectures produce genuine self-reflection vs. rote repetition?
 - Is there research on "forced emergence" vs. "natural emergence" in multi-agent systems?
 - What is the minimum viable prompt for genuine environmental observation?
 
 ### Q2: LLM Hallucination Mitigation
+
 What are the current best practices for grounding LLM outputs in reality?
+
 - How to prevent LLMs from fabricating emotional states?
 - How to enforce "only say what you can observe" constraints?
 - Are there prompt engineering techniques that reduce fabrication?
 - How do other AI agent frameworks handle the "I feel" problem?
 
 ### Q3: Self-Referential Loop Prevention
+
 How do other systems prevent self-referential loops in agent memory?
+
 - When an agent reads its own previous output, how do you prevent amplification?
 - Is there research on "memory poisoning" in autonomous agents?
 - How do you maintain agent autonomy while preventing self-referential echo chambers?
 
 ### Q4: Agent Sandboxing & Safety
+
 What are the current best practices for sandboxing autonomous AI agents?
+
 - How do other frameworks restrict filesystem access?
 - What shell safety patterns are proven effective?
 - How to handle the "agent can read its own configuration files" problem?
 
 ### Q5: Forever Memory Architecture
+
 What are the proven architectures for permanent agent memory?
+
 - How do other systems handle the "old content pollutes new observations" problem?
 - Is there research on memory consolidation strategies for autonomous agents?
 - How do you balance memory retention with context window constraints?
 
 ### Q6: Stream Reliability
+
 What are the best practices for handling long-lived SSE streams with LLM APIs?
+
 - How to handle mid-stream connection drops gracefully?
 - What retry/resume strategies work for streaming LLM responses?
 - How to prevent partial responses from being stored as complete?
@@ -255,6 +285,7 @@ What are the best practices for handling long-lived SSE streams with LLM APIs?
 ## 5. Current Codebase State
 
 ### Files Modified (This Session)
+
 - `crates/agent/src/pulse/heartbeat.rs` — Removed topic rotation, pulse memory, diary prompts; added minimal prompt; disabled distill_context; added skip_memory_retrieval flag
 - `crates/agent/src/react/mod.rs` — Added skip_memory_retrieval field
 - `crates/agent/src/react/stream.rs` — Conditional memory retrieval skip
@@ -273,11 +304,12 @@ What are the best practices for handling long-lived SSE streams with LLM APIs?
 - `docs/memory.md` — Comprehensive memory system documentation (585 lines)
 
 ### Key Unresolved Issues
+
 1. CONTEXT.md self-referential loop (agent writes via tools, reads back)
-2. LEARNINGS.md backlog (20k+ old identity/privacy entries accessible via file tools)
-3. Stream truncation (responses cut short mid-sentence)
-4. SOUL.md double injection (system prompt + heartbeat prompt)
-5. No "genuineness" constraint on agent output
+1. LEARNINGS.md backlog (20k+ old identity/privacy entries accessible via file tools)
+1. Stream truncation (responses cut short mid-sentence)
+1. SOUL.md double injection (system prompt + heartbeat prompt)
+1. No "genuineness" constraint on agent output
 
 ---
 

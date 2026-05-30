@@ -8,17 +8,17 @@
 ## Table of Contents
 
 1. [Pre-Training Stage](#1-pre-training-stage)
-2. [Tokenization](#2-tokenization)
-3. [Neural Network Training](#3-neural-network-training)
-4. [Neural Network Internals](#4-neural-network-internals)
-5. [Inference](#5-inference)
-6. [Post-Training: From Base Model to Assistant](#6-post-training-from-base-model-to-assistant)
-7. [Hallucinations & Mitigations](#7-hallucinations--mitigations)
-8. [Tool Use & Web Search](#8-tool-use--web-search)
-9. [Knowledge: Parameters vs. Context Window](#9-knowledge-parameters-vs-context-window)
-10. [Model Psychology & Self-Knowledge](#10-model-psychology--self-knowledge)
-11. [Thinking Models & Reinforcement Learning](#11-thinking-models--reinforcement-learning)
-12. [Practical Takeaways](#12-practical-takeaways)
+1. [Tokenization](#2-tokenization)
+1. [Neural Network Training](#3-neural-network-training)
+1. [Neural Network Internals](#4-neural-network-internals)
+1. [Inference](#5-inference)
+1. [Post-Training: From Base Model to Assistant](#6-post-training-from-base-model-to-assistant)
+1. [Hallucinations & Mitigations](#7-hallucinations--mitigations)
+1. [Tool Use & Web Search](#8-tool-use--web-search)
+1. [Knowledge: Parameters vs. Context Window](#9-knowledge-parameters-vs-context-window)
+1. [Model Psychology & Self-Knowledge](#10-model-psychology--self-knowledge)
+1. [Thinking Models & Reinforcement Learning](#11-thinking-models--reinforcement-learning)
+1. [Practical Takeaways](#12-practical-takeaways)
 
 ---
 
@@ -59,7 +59,7 @@ Neural networks require a **one-dimensional sequence of symbols** from a finite 
 
 ### The Tokenization Pipeline
 
-```
+```text
 Raw Text → UTF-8 Bytes → Byte Pair Encoding (BPE) → Token Sequence
 ```
 
@@ -89,15 +89,15 @@ Raw Text → UTF-8 Bytes → Byte Pair Encoding (BPE) → Token Sequence
 
 The core objective is **next-token prediction**: given a window of tokens, predict the token that follows.
 
-```
+```text
 Input tokens (context) → Neural Network → Probability distribution over vocabulary
 ```
 
 1. **Sample** a window of tokens from the training data (variable length, up to a max like 8,000–16,000 tokens)
-2. **Forward pass**: Feed tokens through the network, producing a probability for each possible next token
-3. **Compute loss**: The correct next token (the label) gets a low probability initially — the loss measures this gap
-4. **Update parameters**: Adjust the network's weights so the correct token's probability increases
-5. **Repeat** across millions of windows in parallel batches
+1. **Forward pass**: Feed tokens through the network, producing a probability for each possible next token
+1. **Compute loss**: The correct next token (the label) gets a low probability initially — the loss measures this gap
+1. **Update parameters**: Adjust the network's weights so the correct token's probability increases
+1. **Repeat** across millions of windows in parallel batches
 
 ### What the Network Learns
 
@@ -118,7 +118,7 @@ Costs have dropped dramatically — GPT-2 reproduction now costs ~$100–$600 th
 
 Training requires massive GPU clusters:
 
-```
+```text
 Single GPU → 8× GPUs per node → Multiple nodes → Data center
 ```
 
@@ -134,11 +134,12 @@ Single GPU → 8× GPUs per node → Multiple nodes → Data center
 
 Modern LLMs use the **Transformer** architecture — a mathematical function parameterized by billions of weights.
 
-```
+```text
 Token Sequence → Embedding → [Attention Block → MLP Block] × N layers → Logits → Softmax → Probabilities
 ```
 
 **Key components:**
+
 - **Embedding**: Each token maps to a vector (a distributed representation)
 - **Attention blocks**: Allow tokens to communicate with each other across the sequence
 - **MLP blocks**: Per-token transformations
@@ -160,18 +161,18 @@ Inference is the process of **generating new token sequences** from a trained mo
 
 ### The Generation Loop
 
-```
+```text
 Prefix tokens → Network → Probability distribution → Sample token → Append → Repeat
 ```
 
 1. Start with a prefix (your prompt)
-2. Feed tokens into the network
-3. Get a probability distribution over the next token
-4. **Sample** a token (stochastic — like flipping a biased coin)
-5. Append the sampled token to the sequence
-6. Repeat from step 2
+1. Feed tokens into the network
+1. Get a probability distribution over the next token
+1. **Sample** a token (stochastic — like flipping a biased coin)
+1. Append the sampled token to the sequence
+1. Repeat from step 2
 
-### Key Properties
+### Key Properties — Autoregressive Sampling
 
 - **Stochastic**: The same prefix can produce different outputs each time
 - **Remix, not copy**: Outputs are *inspired by* training data, not verbatim reproductions (usually)
@@ -191,7 +192,7 @@ A base model is an **internet document simulator** — it doesn't answer questio
 
 Conversations are encoded as special token sequences:
 
-```
+```text
 <|im_start|>user<|im_sep|>What is 2+2?<|im_end|>
 <|im_start|>assistant<|im_sep|>2+2 is 4.<|im_end|>
 ```
@@ -201,9 +202,9 @@ Special tokens (`<|im_start|>`, `<|im_sep|>`, `<|im_end|>`) are **new tokens int
 ### SFT (Supervised Fine-Tuning)
 
 1. **Create conversation datasets**: Human labelers (or LLMs with human editing) write ideal assistant responses
-2. **Labeling instructions**: Companies provide guidelines — typically "helpful, truthful, harmless" with hundreds of pages of specifics
-3. **Fine-tune**: Continue training the base model on these conversation datasets, swapping internet documents for conversations
-4. **Short training**: Post-training takes ~3 hours vs. ~3 months for pre-training
+1. **Labeling instructions**: Companies provide guidelines — typically "helpful, truthful, harmless" with hundreds of pages of specifics
+1. **Fine-tune**: Continue training the base model on these conversation datasets, swapping internet documents for conversations
+1. **Short training**: Post-training takes ~3 hours vs. ~3 months for pre-training
 
 ### The SFT Dataset Ecosystem
 
@@ -231,9 +232,9 @@ In the training set, questions of the form "Who is X?" are **always answered con
 Used by Meta for Llama 3:
 
 1. **Generate questions** from documents in the training set (using an LLM)
-2. **Interrogate the model**: Ask it the same question multiple times
-3. **Compare answers** to ground truth using an LLM judge
-4. **If the model doesn't know**: Add training examples where "I don't know" is the correct response
+1. **Interrogate the model**: Ask it the same question multiple times
+1. **Compare answers** to ground truth using an LLM judge
+1. **If the model doesn't know**: Add training examples where "I don't know" is the correct response
 
 This teaches the model to recognize its own uncertainty — wiring internal confidence signals to verbalized refusal.
 
@@ -249,15 +250,16 @@ Instead of just refusing, the model can **look up** information it doesn't know.
 
 Models emit **special tokens** to invoke tools:
 
-```
+```text
 <|search_start|>query text<|search_end|>
 ```
 
 When the inference engine encounters `<|search_end|>`:
+
 1. Pauses generation
-2. Executes the search (e.g., via Bing)
-3. Pastes the results into the context window
-4. Resumes generation with the search results available
+1. Executes the search (e.g., via Bing)
+1. Pastes the results into the context window
+1. Resumes generation with the search results available
 
 ### Training Tool Use
 
@@ -266,9 +268,10 @@ A few thousand conversation examples demonstrating correct tool usage teach the 
 ### In Practice (ChatGPT)
 
 When ChatGPT encounters a question it can't confidently answer from memory, it:
+
 1. Emits search tokens
-2. Retrieves web results
-3. Cites sources in its response
+1. Retrieves web results
+1. Cites sources in its response
 
 ---
 
@@ -286,7 +289,7 @@ This is one of the most important mental models for working with LLMs:
 **Always provide the source material in the prompt.** Instead of asking the model to recall from its parameters, paste the relevant text directly into the context window.
 
 Example:
-```
+```text
 # Weak prompt (relies on parameter memory)
 "Summarize Chapter 1 of Pride and Prejudice"
 
@@ -306,6 +309,7 @@ The second prompt produces significantly higher quality output because the model
 ### No Persistent Self
 
 LLMs have **no persistent existence**. Each conversation:
+
 - Boots up
 - Processes tokens
 - Shuts off
@@ -315,6 +319,7 @@ There's no continuous "self" — asking "who are you?" produces statistically pl
 ### Self-Identity Confabulation
 
 When a base model says "I was built by OpenAI" or "I am ChatGPT," it's not because it was trained on OpenAI's data. It's because:
+
 - During pre-training, it saw many conversations where the assistant identified as ChatGPT
 - During SFT, it took on a generic "helpful assistant" persona
 - It doesn't have a ground-truth label for its own identity — it makes one up
@@ -322,6 +327,7 @@ When a base model says "I was built by OpenAI" or "I am ChatGPT," it's not becau
 ### Overriding Self-Knowledge
 
 Developers can override self-identity through:
+
 - **System prompts**: Explicitly define who the model is
 - **Training data**: Include self-identification examples specific to the deployment
 - **Fine-tuning**: Train on conversations with the desired identity
@@ -354,15 +360,15 @@ These models are still **primordial** — they represent the early hints of a fu
 
 1. **LLMs are tools, not oracles.** They're statistical systems that will randomly hallucinate, fail at mental arithmetic, or can't count letters.
 
-2. **Always verify.** Use LLMs for inspiration and first drafts, but check their work and own the product.
+1. **Always verify.** Use LLMs for inspiration and first drafts, but check their work and own the product.
 
-3. **Provide context, don't rely on recall.** Paste source material into the context window rather than asking the model to remember from its parameters.
+1. **Provide context, don't rely on recall.** Paste source material into the context window rather than asking the model to remember from its parameters.
 
-4. **Understand the training set bias.** The model's behavior reflects what human labelers would produce following the company's labeling instructions.
+1. **Understand the training set bias.** The model's behavior reflects what human labelers would produce following the company's labeling instructions.
 
-5. **Tools amplify capability.** Web search, code execution, and other tools compensate for the model's inability to access current information.
+1. **Tools amplify capability.** Web search, code execution, and other tools compensate for the model's inability to access current information.
 
-6. **Thinking models are exciting but early.** They show genuine reasoning capability in verifiable domains, but transfer to open-ended tasks remains uncertain.
+1. **Thinking models are exciting but early.** They show genuine reasoning capability in verifiable domains, but transfer to open-ended tasks remains uncertain.
 
 ---
 

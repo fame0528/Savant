@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2026-05-30
+
+**v0.4.0: Two-tier agent system, DelegationEngine, 10 bug fixes, 8,501 markdown violations eliminated. 37 implementation steps across 3 FIDs.**
+
+### Added
+
+#### Two-Tier Agent System (FID-20260530-AGENT-TIER-REDESIGN)
+- **AgentTier enum** (`Full` / `SubAgent`) added to `AgentConfig` for type-level distinction between workspace agents and ephemeral sub-agents.
+- **AgentRole enum** (`Main` / `Orchestrator` / `Leaf`) for delegation depth control. Leaf agents cannot delegate further.
+- **SubAgentProfile** struct with SOUL.md, tool restrictions, iteration budget, token budget, timeout, and delegation permissions.
+- **6 specialized profiles** with enterprise-quality SOUL.md persona specs: coding (ECHO-compliant), documentation, research, testing, orchestrator, general.
+- **DelegationEngine** — profile-based sub-agent spawning with keyword routing, delegation hooks (on_start, on_complete), result caching (5min TTL), and lifecycle observability events.
+- **SubAgentRegistry** — DashMap-based in-memory tracking for active sub-agents with IterationBudget, CancellationToken, and cancel-by-parent.
+- **SubAgentSemaphore** — separate governor permit pool for sub-agents (128/64/32/8).
+- **AgentFileLock** — reader-writer locks with deadlock prevention for multi-agent file access.
+- **LoopDetector** — multi-layered tool call loop detection (identical 4x, failing 6x, max 75 calls, max 20 failures).
+- **ToolFilter** — per-profile tool restrictions for sub-agents.
+- **WorkspaceGuard** — path validation for sub-agent file operations.
+- **MemoryEnclaveHandle** — read-only wrapper for sub-agent memory access.
+- **AgentLimits** config struct with sub-agent concurrency, depth, iteration, token, and timeout limits.
+- **Structured delegation parser** — ` ```delegate ` JSON blocks with legacy `DELEGATE:` fallback.
+- **Governor defaults updated** from 16/8/4/1 to 128/64/32/8 (proven: OpenClaw ran 101 agents on same hardware).
+- **Shared CapabilityRegistry** — single instance at Swarm level instead of per-agent.
+- **5 integration tests** for full delegation pipeline.
+
+#### Bug Fixes (10 pre-existing bugs)
+- **pop_deferred() duplicate spawn** — removed re-push before return, added deferred drain loop.
+- **Blackboard clobbering** — subagent-specific hashes replace shared session_hash.
+- **CCT minting consolidation** — 3 duplicate sites merged into single `mint_subagent_cct()`.
+- **Subagent count limit** — `max_subagents_per_agent` check on all spawn paths.
+- **Graceful subagent shutdown** — 10s drain timeout replaces `handle.abort()`.
+- **Error propagation** — `JoinHandle<Result<(), String>>` replaces swallowed errors.
+- **Speculative parallelism** — `join_all` for concurrent branch execution.
+- **Agent index race condition** — `compare_exchange` loop replaces `fetch_add` + `store`.
+- **Shared CapabilityRegistry** — Swarm-level singleton replaces per-agent instances.
+- **Structured delegation parser** — ` ```delegate ` JSON blocks replace naive `DELEGATE:` prefix.
+
+#### Session State WAL (FID-20260530-SESSION-STATE-WAL-ENTERPRISE)
+- **YAML frontmatter + structured markdown** replaces minified JSON WAL format.
+- **Schema versioning** — `schema_version: u32` field on WorkingBuffer (v0=legacy, v1=frontmatter).
+- **Frontmatter parser** with legacy JSON fallback and auto-detection.
+- **CLI `state --inspect`** — colored, structured display of WAL sections.
+- **6 unit tests** for roundtrip, legacy compat, braces-in-content, missing file, schema default.
+
+#### Markdown Zero Defect (FID-20260529-MARKDOWN-ZERO-DEFECT)
+- **8,501 markdownlint violations eliminated** across 300 files (29 rules). Zero violations remaining.
+- **Auto-fix pass** handled 7,126 violations (MD032, MD022, MD012, MD009, MD047, MD058, MD055, MD004, MD007, MD030, MD056).
+- **Manual fixes** for 1,375 violations (MD040, MD024, MD036, MD029, MD025, MD026, MD001, MD041).
+
+#### Workspace Updates
+- **SOUL.md** rewritten as enterprise persona specification. Removed corrupted maxim entries, stale v16.2 references, marketing prose.
+- **AGENTS.md** updated with two-tier architecture documentation and profile table.
+- **6 profile SOUL.md files** rewritten to enterprise quality with behavioral profiles, operational constraints, decision frameworks, and identity invariants.
+
+## [0.4.0] - 2026-05-29
+
+**v0.4.0: Messaging pipeline hardening, 10-state message status UX, memory enclave wiring. 26 issues fixed across 3 FIDs.**
+
+### Added
+
+#### Message Status UX (Category E — 11 items)
+- **10-state message status machine** replacing the previous 3-state system (`sent`/`processing`/`complete`). New states: `sending`, `sent`, `delivered`, `thinking`, `executing`, `streaming`, `complete`, `failed`, `error`, `timeout`.
+- **Gateway delivery ACK** — gateway publishes `session.{id}.ack` after routing a message to Nexus. Frontend upgrades status from `sent` to `delivered`.
+- **Telemetry-driven granularity** — telemetry chunks now drive `thinking`/`executing` state transitions. `**Executing Tool:**` content detected for `executing` state.
+- **Dual timeout timers** — 60s ACK timer (`sent` → `error` if gateway never acknowledges) + 30s response timer (`delivered` → `timeout` if agent never responds).
+- **Inline recovery actions** — `RETRY`, `DISMISS`, and `WAIT LONGER` buttons on terminal-state messages (`failed`, `error`, `timeout`). RETRY cancels in-flight processing before re-sending.
+- **Activity-aware typing indicator** — replaces binary bouncing dots with context-aware display showing `thinking`, `executing` (with tool name), and elapsed time.
+- **10-state status dot** — each state has distinct color, glow, animation, and micro-label. CSS variables for theme support. `prefers-reduced-motion` support. `aria-label` for screen readers.
+- **`is_error` field on `ChatMessage`** — structured error detection replaces fragile string matching.
+
+#### Messaging Pipeline Hardening (Categories A-D — 13 items)
+- **Identity pinning logging** (A1) — silent drops from echo-back prevention now logged with content preview.
+- **Lane backpressure error response** (A2) — timed-out messages now send error `ResponseFrame` instead of `continue`.
+- **Session mismatch event** (A3) — stale session IDs trigger `session.mismatch` event with auto-reconnection.
+- **Oversized message error** (A4) — messages >1MB now return error instead of silent drop.
+- **Agent loop error response** (B1) — LLM errors publish `is_error: true` response to user instead of killing heartbeat loop.
+- **Task supervisor** (B2) — task panics detected and logged with task name. Deterministic cleanup on all paths.
+- **`tokio::select!` complete arm** (B3) — deterministic session cleanup when all tasks complete naturally.
+- **`system.agent.ready` event** (C1) — agent publishes ready event after boot for presence tracking.
+- **Agent presence check** (C2) — gateway checks `system.agents` before routing, returns "No agents available" error.
+- **Structured tracing** (D1-D3) — inbound message tracing at agent, WS frame tracing at gateway, outbound Nexus tracing at gateway.
+
+#### Memory Enclave Wiring
+- **Orchestrator now receives `MemoryEnclave`** — `engine.enclave()` extracted before engine move, passed to `from_agent_loop()`. Both `delegate_task()` and `continue_delegation()` now receive real context packages instead of empty ones.
+
+#### Version Infrastructure
+- **Cargo workspace version inheritance** — all 28 crates use `version.workspace = true`. Version defined once in root `Cargo.toml` `[workspace.package]`.
+- **`VERSION` file** — single source of truth. `scripts/bump-version.ps1` and `scripts/bump-version.sh` sync it to Cargo.toml, package.json, package-lock.json, and tauri.conf.json.
+
+### Fixed
+
+#### UI Scaling
+- Dashboard window now spawns maximized (`"maximized": true` in tauri.conf.json).
+
+### Changed
+
+#### Version Bump
+- **Root `Cargo.toml`** `[workspace.package]` version set to 0.4.0
+- **All 28 Cargo.toml** converted to `version.workspace = true`
+- **Both tauri.conf.json** bumped to 0.4.0
+- **dashboard/package.json** bumped to 0.4.0
+- **README.md + docs READMEs** updated to v0.4.0
+
+---
+
 ## [0.3.5] - 2026-05-28
 
 **v0.3.5: Dashboard history partition key fix, Agent Logs Copy All fix, version bump. 2 critical bugs fixed.**

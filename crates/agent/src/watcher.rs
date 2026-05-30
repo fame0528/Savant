@@ -25,11 +25,7 @@ const AGENT_INTERNAL_FILES: &[&str] = &[
 ];
 
 /// Directories whose contents should never trigger hot-reload.
-const IGNORED_DIRECTORIES: &[&str] = &[
-    "memory-vault",
-    ".obsidian",
-    ".stale",
-];
+const IGNORED_DIRECTORIES: &[&str] = &["memory-vault", ".obsidian", ".stale"];
 
 /// Minimum cooldown between hot-reload triggers (seconds).
 /// Must be longer than a full boot cycle (boot → index → ignite → first heartbeat ≈ 60-90s)

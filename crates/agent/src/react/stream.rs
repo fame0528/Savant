@@ -1190,18 +1190,19 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                             }
 
                                             let mut result = Err(SavantError::Unknown(format!("Tool access denied or not found: {}", node_name_inner)));
-                                            // Savant (the house) has unrestricted access - CCT is for sub-agents only
-                                            let is_savant = agent_id_inner.to_lowercase() == "savant";
-                                            let access_granted = if is_savant {
-                                                true
-                                            } else if let Some(token) = &security_token_inner {
+                                            // C3: All agents use CCT — no hardcoded bypasses
+                                            let access_granted = if let Some(token) = &security_token_inner {
                                                 // Token rotation check: warn if token should be rotated
                                                 if token.should_rotate() {
                                                     warn!("[{}] Security token should be rotated (80% lifetime elapsed)", agent_id_inner);
                                                 }
                                                 let resource = format!("savant://tools/{}", node_name_inner);
                                                 token.assignee_matches(agent_id_hash) && token.verify_capability(&resource, "execute")
-                                            } else { true };
+                                            } else {
+                                                // C2: No token = deny access (was: true)
+                                                warn!("[{}] No security token for agent — denying access to tool '{}'", agent_id_inner, node_name_inner);
+                                                false
+                                            };
 
                                             if access_granted {
                                                 debug!("[{}] Attempting to match tool [{}]", agent_id_inner, node_name_inner);

@@ -1026,6 +1026,9 @@ impl SwarmController {
             agent_tools.push(Arc::new(crate::tools::SkillManagerTool::new(
                 skill_manager.clone(),
             )));
+            agent_tools.push(Arc::new(crate::tools::skill_lookup::SkillLookupTool::new(
+                skill_manager.clone(),
+            )));
             if let Ok(tracker) = savant_toolforge::ProvenanceTracker::new(
                 &std::path::PathBuf::from("skills/forge/.provenance.jsonl"),
             ) {

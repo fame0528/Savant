@@ -202,8 +202,6 @@ static BUILTIN_RULE_JSONS: &[(&str, &str)] = &[
     ("cargo/check", include_str!("builtin/cargo__check.json")),
     ("cargo/build", include_str!("builtin/cargo__build.json")),
     ("cargo/clippy", include_str!("builtin/cargo__clippy.json")),
-    ("cargo/clippy", include_str!("builtin/cargo__clippy.json")),
-    ("cargo/clippy", include_str!("builtin/cargo__clippy.json")),
     // ── Package Manager ──
     ("npm/install", include_str!("builtin/npm__install.json")),
     // ── Infrastructure ──

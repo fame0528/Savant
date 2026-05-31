@@ -15,6 +15,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A concept match with relevance score from multi-tier search.
+#[derive(Debug)]
+pub struct ConceptMatch<'a> {
+    pub concept: &'a Concept,
+    pub relevance: f32,
+}
+
 /// A concept node in the reflective memory graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Concept {
@@ -257,6 +264,56 @@ impl NamespaceGraph {
         self.relations.push(relation);
     }
 
+    /// Finds concepts matching the query using three-tier matching (ranked).
+    /// Returns concepts with relevance scores for use in hybrid search fusion.
+    pub fn find_concepts_ranked(&self, query: &str) -> Vec<ConceptMatch<'_>> {
+        let query_lower = query.to_lowercase();
+        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+        let mut matches = Vec::new();
+
+        for concept in &self.concepts {
+            let label_lower = concept.label.to_lowercase();
+
+            // Tier 1: Exact match
+            if label_lower == query_lower {
+                matches.push(ConceptMatch {
+                    concept,
+                    relevance: 1.0,
+                });
+                continue;
+            }
+
+            // Tier 2: Substring match (bidirectional)
+            if label_lower.contains(&query_lower) || query_lower.contains(&label_lower) {
+                matches.push(ConceptMatch {
+                    concept,
+                    relevance: 0.8,
+                });
+                continue;
+            }
+
+            // Tier 3: Word-level overlap
+            if !query_words.is_empty() {
+                let label_words: Vec<&str> = label_lower.split_whitespace().collect();
+                let overlap = query_words
+                    .iter()
+                    .filter(|qw| label_words.iter().any(|lw| lw.contains(*qw) || qw.contains(lw)))
+                    .count();
+                if overlap > 0 {
+                    let relevance = 0.3 + (overlap as f32 / query_words.len() as f32) * 0.4;
+                    matches.push(ConceptMatch {
+                        concept,
+                        relevance,
+                    });
+                }
+            }
+        }
+
+        matches.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap_or(std::cmp::Ordering::Equal));
+        matches
+    }
+
+    /// Finds concepts matching the query (simple substring, backward-compatible).
     pub fn find_concepts(&self, query: &str) -> Vec<&Concept> {
         let query_lower = query.to_lowercase();
         self.concepts
@@ -355,6 +412,27 @@ impl ReflectiveMemory {
             _ => self
                 .graph_for_intent(&intent)
                 .map(|g| g.find_concepts(query))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Routes a query to the appropriate namespace and returns ranked concept matches.
+    /// Uses three-tier matching: exact > substring > word overlap.
+    pub fn resolve_ranked(&self, query: &str) -> Vec<ConceptMatch<'_>> {
+        let intent = resolve_graph_intent(query);
+        match intent {
+            QueryIntent::Hybrid => {
+                let mut results = Vec::new();
+                results.extend(self.semantic.find_concepts_ranked(query));
+                results.extend(self.temporal.find_concepts_ranked(query));
+                results.extend(self.causal.find_concepts_ranked(query));
+                results.extend(self.entity.find_concepts_ranked(query));
+                results.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap_or(std::cmp::Ordering::Equal));
+                results
+            }
+            _ => self
+                .graph_for_intent(&intent)
+                .map(|g| g.find_concepts_ranked(query))
                 .unwrap_or_default(),
         }
     }

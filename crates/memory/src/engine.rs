@@ -858,15 +858,16 @@ impl MemoryEnclave {
             .collect();
 
         // NS-01 + NS-09: Query reflective memory graph stream
+        // Uses ranked concept matching (exact > substring > word overlap)
         let graph_results: Vec<crate::rrf_fusion::StreamResult> = {
             let reflective = self.reflective.read().await;
-            let concepts = reflective.resolve(query);
+            let concepts = reflective.resolve_ranked(query);
             concepts
                 .into_iter()
                 .enumerate()
-                .map(|(i, c)| crate::rrf_fusion::StreamResult {
-                    doc_id: c.source_entries.first().copied().unwrap_or(i as u64),
-                    score: 1.0 / (1.0 + i as f32),
+                .map(|(i, m)| crate::rrf_fusion::StreamResult {
+                    doc_id: m.concept.source_entries.first().copied().unwrap_or(i as u64),
+                    score: m.relevance,
                     session_id: String::new(),
                 })
                 .collect()

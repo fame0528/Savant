@@ -893,7 +893,26 @@ impl MemoryEnclave {
         new_state.fork_point_turn_id = Some(from_turn_id.to_string());
         self.lsm.save_session_state(&new_state)?;
 
-        info!("Forked session {} from {} at turn {}", new_session_id, parent_session_id, from_turn_id);
+        // S3: Copy message history from parent session
+        // Fetch all messages from parent (large limit to get full history)
+        let parent_messages = self.lsm.fetch_session_tail(parent_session_id, 10_000);
+        let mut copied = 0usize;
+        for msg in &parent_messages {
+            if let Err(e) = self.lsm.append_message(&new_session_id, msg) {
+                warn!("Failed to copy message {} to forked session: {}", msg.id, e);
+            } else {
+                copied += 1;
+            }
+        }
+
+        // Update turn count on new session
+        new_state.turn_count = (copied as u64).into();
+        self.lsm.save_session_state(&new_state)?;
+
+        info!(
+            "Forked session {} from {} at turn {} ({} messages copied)",
+            new_session_id, parent_session_id, from_turn_id, copied
+        );
         Ok(new_session_id)
     }
 
@@ -901,12 +920,47 @@ impl MemoryEnclave {
     /// Finds all sessions with active_turn_id in Processing state and marks them Interrupted.
     pub fn cleanup_orphaned_turns(&self) -> Result<usize, MemoryError> {
         let mut cleaned = 0usize;
-        // Scan all session states for orphaned processing turns
-        // This is a best-effort cleanup — log but don't fail
         tracing::info!("Checking for orphaned processing turns...");
-        // The session states are stored in the LSM — we iterate and check
-        // For now, just log that cleanup was attempted
-        // Full implementation requires iterating session collection
+
+        let sessions = self.lsm.iter_session_states()?;
+        for state in &sessions {
+            if let Some(ref turn_id) = state.active_turn_id {
+                match self.lsm.get_turn_state(&state.session_id, turn_id) {
+                    Ok(Some(turn)) => {
+                        if turn.state == crate::models::TurnPhase::Processing {
+                            // Mark turn as interrupted
+                            let mut interrupted_turn = turn;
+                            interrupted_turn.state = crate::models::TurnPhase::Interrupted;
+                            interrupted_turn.completed_at = chrono::Utc::now().timestamp_millis().into();
+                            if let Err(e) = self.lsm.save_turn_state(&interrupted_turn) {
+                                warn!("Failed to mark turn {} as interrupted: {}", turn_id, e);
+                            } else {
+                                // Clear active_turn_id on session
+                                let mut updated_state = state.clone();
+                                updated_state.active_turn_id = None;
+                                if let Err(e) = self.lsm.save_session_state(&updated_state) {
+                                    warn!("Failed to clear active_turn_id for {}: {}", state.session_id, e);
+                                } else {
+                                    cleaned += 1;
+                                    info!("Cleaned orphaned turn {} in session {}", turn_id, state.session_id);
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // Turn not found — clear the stale reference
+                        let mut updated_state = state.clone();
+                        updated_state.active_turn_id = None;
+                        let _ = self.lsm.save_session_state(&updated_state);
+                        cleaned += 1;
+                    }
+                    Err(e) => {
+                        warn!("Failed to get turn state for {} in {}: {}", turn_id, state.session_id, e);
+                    }
+                }
+            }
+        }
+
         tracing::info!("Orphan turn cleanup complete ({} cleaned)", cleaned);
         Ok(cleaned)
     }
@@ -916,9 +970,23 @@ impl MemoryEnclave {
     pub fn expire_stale_sessions(&self, ttl_hours: u64) -> Result<usize, MemoryError> {
         let cutoff = chrono::Utc::now().timestamp_millis() - (ttl_hours as i64 * 3_600_000);
         let mut expired = 0usize;
-        // Session expiry is handled by the LSM compaction layer
-        // For now, log the intent — full implementation requires iterating session collection
-        tracing::debug!("Session expiry sweep: TTL={}h, cutoff={}", ttl_hours, cutoff);
+
+        let sessions = self.lsm.iter_session_states()?;
+        for state in &sessions {
+            let last_active: i64 = state.last_active.into();
+            if last_active < cutoff {
+                if let Err(e) = self.lsm.delete_session_state(&state.session_id) {
+                    warn!("Failed to delete expired session {}: {}", state.session_id, e);
+                } else {
+                    expired += 1;
+                    info!("Expired session {} (last active: {})", state.session_id, last_active);
+                }
+            }
+        }
+
+        if expired > 0 {
+            info!("Session expiry sweep: {} sessions expired (TTL={}h)", expired, ttl_hours);
+        }
         Ok(expired)
     }
 

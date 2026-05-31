@@ -1252,6 +1252,49 @@ impl LsmStorageEngine {
         format!("turns.{}", session_id)
     }
 
+    /// S1: Iterates all session states in the "sessions" collection.
+    pub fn iter_session_states(&self) -> Result<Vec<crate::models::SessionState>, MemoryError> {
+        let hits = self.db
+            .search_in_collection("sessions", self.zero_embedding(), 10_000, None)
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+
+        let mut states = Vec::new();
+        for hit in hits {
+            if let Ok(memory) = self.db.get_memory(hit.id) {
+                if !memory.content.is_empty() {
+                    let archived = rkyv::access::<
+                        <crate::models::SessionState as rkyv::Archive>::Archived,
+                        rkyv::rancor::Error,
+                    >(&memory.content);
+                    if let Ok(archived) = archived {
+                        if let Ok(state) = rkyv::deserialize::<crate::models::SessionState, rkyv::rancor::Error>(archived) {
+                            states.push(state);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(states)
+    }
+
+    /// S1: Deletes a session state from the "sessions" collection.
+    pub fn delete_session_state(&self, session_id: &str) -> Result<(), MemoryError> {
+        let key = crate::models::session_state_key(session_id);
+        // Search for the session entry to get its ID
+        let filter = {
+            let mut m = HashMap::new();
+            m.insert("key".to_string(), key);
+            m
+        };
+        if let Ok(hits) = self.db.search_in_collection("sessions", self.zero_embedding(), 1, Some(filter)) {
+            if let Some(hit) = hits.first() {
+                self.db.delete(hit.id)
+                    .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Saves a turn state to the "turns.{session_id}" collection.
     pub fn save_turn_state(&self, turn: &crate::models::TurnState) -> Result<(), MemoryError> {
         let bytes = rkyv::to_bytes::<RkyvError>(turn)

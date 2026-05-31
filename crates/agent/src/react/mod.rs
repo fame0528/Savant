@@ -441,7 +441,24 @@ impl<M: MemoryBackend> AgentLoop<M> {
     ) -> Self {
         let mut skills_summary = String::from("Available Tools:\n");
         for tool in &tools {
-            skills_summary.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
+            let schema = tool.parameters_schema();
+            let schema_hint = if schema.is_object() {
+                if let Some(props) = schema.get("properties") {
+                    let keys: Vec<&str> = props.as_object()
+                        .map(|m| m.keys().map(|k| k.as_str()).collect())
+                        .unwrap_or_default();
+                    if keys.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [params: {}]", keys.join(", "))
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            skills_summary.push_str(&format!("- {}: {}{}\n", tool.name(), tool.description(), schema_hint));
         }
         let skills_list = if tools.is_empty() {
             None

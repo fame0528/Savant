@@ -246,6 +246,10 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                 "memory_recall" | "memory_consolidate" => {
                                     savant_security::continuous::taint::TaintTag::nrem_replay()
                                 }
+                                // C6: Web/HTTP tools produce external data with lower trust
+                                "web_search" | "web_fetch" | "http" | "browser" | "web_sovereign" => {
+                                    savant_security::continuous::taint::TaintTag::external_web()
+                                }
                                 _ => savant_security::continuous::taint::TaintTag::system(),
                             };
                             self.taint_tracker.tag(&data_id, taint);

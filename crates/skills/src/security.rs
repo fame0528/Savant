@@ -702,7 +702,7 @@ impl SecurityScanner {
                 (Regex::new(r"(?i)(check.*date|if.*date.*after|datetime.*compare)").expect("valid regex pattern"),
                  "Date-based conditional execution - time-bomb pattern"),
             ],
-            enable_network_checks: false,
+            enable_network_checks: true,
         }
     }
 

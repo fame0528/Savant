@@ -719,6 +719,10 @@ pub struct SessionState {
     pub auto_approved_tools: Vec<String>,
     /// Tools explicitly denied for this session
     pub denied_tools: Vec<String>,
+    /// D10: Parent session ID (if this is a forked session)
+    pub parent_session_id: Option<String>,
+    /// D10: The turn ID where this session was forked from
+    pub fork_point_turn_id: Option<String>,
 }
 
 impl SessionState {
@@ -733,6 +737,8 @@ impl SessionState {
             active_turn_id: None,
             auto_approved_tools: Vec::new(),
             denied_tools: Vec::new(),
+            parent_session_id: None,
+            fork_point_turn_id: None,
         }
     }
 

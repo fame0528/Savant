@@ -27,6 +27,10 @@ pub struct SessionState {
     pub active_turn_id: Option<String>,
     pub auto_approved_tools: Vec<String>,
     pub denied_tools: Vec<String>,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub fork_point_turn_id: Option<String>,
 }
 
 /// Turn state — tracks lifecycle of a single user/agent turn.

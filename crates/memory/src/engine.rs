@@ -878,6 +878,25 @@ impl MemoryEnclave {
         self.lsm.save_bm25_state(&bm25)
     }
 
+    /// D10: Fork a session — creates a new session with the same history up to a given turn.
+    /// Returns the new session ID.
+    pub async fn fork_session(
+        &self,
+        parent_session_id: &str,
+        from_turn_id: &str,
+    ) -> Result<String, MemoryError> {
+        let new_session_id = format!("{}-fork-{}", parent_session_id, chrono::Utc::now().timestamp_millis());
+
+        // Create new session state with parent reference
+        let mut new_state = crate::models::SessionState::new(&new_session_id);
+        new_state.parent_session_id = Some(parent_session_id.to_string());
+        new_state.fork_point_turn_id = Some(from_turn_id.to_string());
+        self.lsm.save_session_state(&new_state)?;
+
+        info!("Forked session {} from {} at turn {}", new_session_id, parent_session_id, from_turn_id);
+        Ok(new_session_id)
+    }
+
     /// D2: Clean up orphaned Processing turns on startup.
     /// Finds all sessions with active_turn_id in Processing state and marks them Interrupted.
     pub fn cleanup_orphaned_turns(&self) -> Result<usize, MemoryError> {

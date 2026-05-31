@@ -573,6 +573,8 @@ impl MemoryBackend for AsyncMemoryBackend {
             active_turn_id: state.active_turn_id,
             auto_approved_tools: state.auto_approved_tools,
             denied_tools: state.denied_tools,
+            parent_session_id: state.parent_session_id,
+            fork_point_turn_id: state.fork_point_turn_id,
         })
     }
 
@@ -596,6 +598,8 @@ impl MemoryBackend for AsyncMemoryBackend {
                 active_turn_id: state.active_turn_id,
                 auto_approved_tools: state.auto_approved_tools,
                 denied_tools: state.denied_tools,
+                parent_session_id: state.parent_session_id,
+                fork_point_turn_id: state.fork_point_turn_id,
             })),
             None => Ok(None),
         }
@@ -613,6 +617,8 @@ impl MemoryBackend for AsyncMemoryBackend {
             active_turn_id: state.active_turn_id.clone(),
             auto_approved_tools: state.auto_approved_tools.clone(),
             denied_tools: state.denied_tools.clone(),
+            parent_session_id: state.parent_session_id.clone(),
+            fork_point_turn_id: state.fork_point_turn_id.clone(),
         };
 
         self.engine

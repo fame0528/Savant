@@ -245,6 +245,8 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                 active_turn_id: None,
                                 auto_approved_tools: vec![],
                                 denied_tools: vec![],
+                                parent_session_id: None,
+                                fork_point_turn_id: None,
                             }
                         }
                     };

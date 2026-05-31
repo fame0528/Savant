@@ -6,12 +6,45 @@
 
 ---
 
-## [v0.4.1] — 2026-05-30
+## [v0.4.1] — 2026-05-31
 
-**Version bump only.** No functional changes from v0.4.0.
+### 2026-05-31: Deep Audit Remediation — 41 Issues Fixed (FID-20260531-AUDIT-REMEDIATION)
 
-- Bumped via `scripts/bump-version.ps1`: VERSION, Cargo.toml `[workspace.package]` (28 crates inherit), dashboard/package.json, dashboard/package-lock.json, crates/desktop/src-tauri/tauri.conf.json, root package.json.
-- All 95 FIDs closed. 0 active.
+**FID:** `FID-20260531-AUDIT-REMEDIATION.md` (CLOSED)
+
+**Problem:** Deep audit of 4 subsystems against 3 reference repos (agent-vault, zot, agentmemory) found 41 issues — including 5 critical bugs where functionality was defined, tested, and documented but never wired into the runtime.
+
+**Fixes (41 issues across 5 phases):**
+
+Phase A — Critical Bugs (5): Reranker content fix, BM25 persistence, approval gate wiring, ToolFilter wiring, SkillLookupTool.
+
+Phase B — Memory System (10): Auto-recall hybrid search, graph search ranked matching, temporal decay, Ebbinghaus tier lifecycle, consolidation scheduler, procedures/lessons/insights persistence, tier migration, complementary re-embedding, Shannon entropy, entropy culling.
+
+Phase C — Tool Execution (8): auto_approved/denied enforcement, CCT no-token deny, Savant bypass removal, file tool scanning, BeforeToolCall hook, external data taint, network threat intel, tool schemas in prompt.
+
+Phase D — Session & Persistence (10): Per-message persistence, orphan cleanup, streaming persistence, ContextCompressor LLM call, archived text persistence, compact/ cleanup, circuit breaker persistence, session TTL, dedup window (as-is), session forking.
+
+Phase E — Skills (8): Security scanning, double path fix, SkillChainExecutor, hot reload, Lambda SigV4, CapabilityGrants enforcement, output sanitization.
+
+**28 commits. 1,265 tests pass.**
+
+### 2026-05-31: Enhancement + Stub Completion — 7 Items (FID-20260531-ENHANCEMENTS-AND-STUBS)
+
+**FID:** `FID-20260531-ENHANCEMENTS-AND-STUBS.md` (CLOSED)
+
+**Fixes (7 items):**
+
+Stubs (3): expire_stale_sessions() actually deletes, cleanup_orphaned_turns() actually scans, fork_session() copies message history.
+
+Enhancements (4): Cross-encoder reranking architecture (feature-gated ONNX), structured checkpoint format (6 sections), per-tool approval memory helpers, cross-ecosystem skill discovery (.claude/.agents/.opencode).
+
+**5 commits.**
+
+### Version Bump
+
+- 0.4.0 → 0.4.1 via `scripts/bump-version.ps1`
+- All 98 FIDs closed. 0 active.
+- 1,265 tests pass.
 
 ---
 

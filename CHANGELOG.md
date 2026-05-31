@@ -7,23 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.4.1] - 2026-05-30
+## [0.4.1] - 2026-05-31
 
-**v0.4.1: Version bump. All v0.4.0 work complete — 95 FIDs closed, 0 active. Two-tier agent system, DelegationEngine, 10 bug fixes, dashboard pipeline fix, 8,501 markdown violations eliminated.**
+**v0.4.1: Deep audit of 4 subsystems against 3 reference repos. 41 issues fixed + 7 enhancements. 98 FIDs closed, 0 active. 1,265 tests pass.**
+
+### Added
+
+- **Cross-ecosystem skill discovery** — scans `.claude/skills/`, `.agents/skills/`, `.opencode/skills/` alongside native paths
+- **Cross-encoder reranking architecture** — feature-gated ONNX module (`cross-encoder` feature), stub fallback when disabled
+- **Structured checkpoint format** — 6-section compaction (Goal/Constraints/Progress/Decisions/Next Steps/Critical Context)
+- **Per-tool approval memory** — `allow_tool()`, `is_tool_allowed()`, `deny_tool()` on SessionState
+- **Session forking** — `fork_session()` copies message history from parent session
+- **SkillLookupTool** — on-demand skill instruction retrieval
+- **BeforeToolCall hook** — logs tool name + args before each tool call
+- **Consolidation scheduler** — background task running promotion (15min), tier migration (30min), entropy culling (1hr), session expiry (24hr)
+- **Skill hot reload** — wired into swarm startup
+- **SkillChainExecutor** — wired via `execute_chain` action on SkillManagerTool
+- **Lambda SigV4 authentication** — HMAC-SHA256 signing for AWS Lambda invocations
+
+### Fixed
+
+- **Reranker** — now fetches actual document content from LSM (was passing doc_id as content)
+- **BM25 index** — persists to CortexaDB for crash recovery (was lost on restart)
+- **Approval gate** — `requires_approval()` checked before tool execution (was never called)
+- **ToolFilter** — wired into agent loop via `with_tool_filter()` builder (was defined but unused)
+- **Auto-recall** — uses hybrid search instead of vector-only
+- **Graph search** — 3-tier ranked matching (exact > substring > word overlap)
+- **Temporal decay** — applied in default hybrid_search path
+- **Ebbinghaus tiers** — drive lifecycle decisions (Hot/Warm/Cold/Dead)
+- **Procedures/lessons/insights** — persisted to CortexaDB
+- **Tier migration** — L0→L1→L2 based on age/access/importance
+- **Complementary queries** — re-embedded instead of reusing original embedding
+- **Shannon entropy** — stored for auto-indexed entries
+- **CCT system** — no-token denied, Savant bypass removed
+- **File tools** — content scanned via SecurityScanner before write
+- **Network threat intel** — enabled by default
+- **Tool schemas** — parameter hints in system prompt
+- **User messages** — persisted immediately on receipt
+- **Assistant responses** — persisted on receipt (not just at turn end)
+- **Orphan turns** — cleaned up on startup
+- **ContextCompressor** — calls LLM for structured summaries
+- **Compaction** — returns archived text for persistence
+- **Circuit breaker** — state persisted to file
+- **Session TTL** — 7-day default expiry
+- **compact/** — duplicate clippy rule removed, empty dirs cleaned
+- **Skill security** — files scanned before loading (SKILL.md, AGENTS.md, .cursorrules)
+- **Double path** — `skills/skills/` bug fixed
+- **CapabilityGrants** — enforced in SkillTool execute
+- **Skill output** — sanitized (ANSI strip, secret scrub, truncate)
+- **Session expiry** — actually deletes stale sessions from LSM
+- **Orphan cleanup** — actually scans and cleans Processing turns
+- **Fork history** — copies messages from parent session
 
 ### Changed
 
-- **Version bump** — 0.4.0 → 0.4.1 via `scripts/bump-version.ps1`. Synced: VERSION, Cargo.toml `[workspace.package]` (28 crates inherit), dashboard/package.json, dashboard/package-lock.json, crates/desktop/src-tauri/tauri.conf.json, root package.json.
+- **Version bump** — 0.4.0 → 0.4.1
 
 ### Status
 
-- 95 FIDs closed, 0 active
+- 98 FIDs closed, 0 active
 - `cargo check --workspace` — 0 errors
-- `cargo clippy --lib` — 0 warnings
-- `cargo test --lib` — 335/335 pass
-- `npx tsc --noEmit` — 0 errors
-- `markdownlint` — 0 violations
-- Version: 0.4.1 across all 5 targets
+- `cargo test --workspace --lib` — 1,265/1,265 pass
+- Version: 0.4.1 across all targets
 
 ---
 

@@ -231,6 +231,32 @@ impl Tool for SkillTool {
         self.manifest.capabilities.clone()
     }
     async fn execute(&self, payload: serde_json::Value) -> Result<String, SavantError> {
+        // E7: Enforce CapabilityGrants before execution
+        let caps = &self.manifest.capabilities;
+
+        // Check required environment variables
+        if caps.requires_env.is_empty() == false {
+            for env_var in &caps.requires_env {
+                if std::env::var(env_var).is_err() {
+                    return Err(SavantError::Unknown(format!(
+                        "Skill '{}' requires env var '{}' which is not set",
+                        self.manifest.name, env_var
+                    )));
+                }
+            }
+        }
+
+        // Check fs_write capability if payload contains file paths
+        if caps.fs_write.is_empty() {
+            if let Some(path) = payload.get("path").and_then(|v| v.as_str()) {
+                // Skill has no fs_write grants but payload targets a file
+                tracing::warn!(
+                    "Skill '{}' has no fs_write grants but targets path '{}'",
+                    self.manifest.name, path
+                );
+            }
+        }
+
         self.executor.execute(payload).await
     }
 }

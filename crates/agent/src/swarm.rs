@@ -335,6 +335,17 @@ impl SwarmController {
         }
         let skill_manager = Arc::new(tokio::sync::Mutex::new(skill_manager));
 
+        // E5: Wire skill hot reload — watches skills directory for changes
+        let hot_reload = savant_skills::hot_reload::SkillHotReload::new(
+            skill_path.clone(),
+            Arc::new(tokio::sync::Mutex::new(savant_skills::parser::SkillRegistry::new())),
+        );
+        if let Err(e) = hot_reload.start() {
+            tracing::warn!("[swarm] Skill hot reload failed to start: {}", e);
+        } else {
+            tracing::info!("[swarm] Skill hot reload active for {:?}", skill_path);
+        }
+
         // Initialize credential broker for per-task ephemeral token management
         let credential_broker =
             Arc::new(savant_security::continuous::credentials::CredentialBroker::new());

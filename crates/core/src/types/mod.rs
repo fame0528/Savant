@@ -33,6 +33,20 @@ pub struct SessionState {
     pub fork_point_turn_id: Option<String>,
 }
 
+impl SessionState {
+    /// E3: Add a tool to the auto-approved list.
+    pub fn allow_tool(&mut self, tool_name: &str) {
+        if !self.auto_approved_tools.iter().any(|t| t == tool_name) {
+            self.auto_approved_tools.push(tool_name.to_string());
+        }
+    }
+
+    /// E3: Check if a tool is auto-approved.
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        self.auto_approved_tools.iter().any(|t| t == tool_name)
+    }
+}
+
 /// Turn state — tracks lifecycle of a single user/agent turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnState {

@@ -760,6 +760,27 @@ impl SessionState {
         self.active_turn_id = None;
         self.touch();
     }
+
+    /// E3: Add a tool to the auto-approved list (per-tool "always allow" memory).
+    pub fn allow_tool(&mut self, tool_name: &str) {
+        if !self.auto_approved_tools.contains(&tool_name.to_string()) {
+            self.auto_approved_tools.push(tool_name.to_string());
+            self.touch();
+        }
+    }
+
+    /// E3: Check if a tool is auto-approved.
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        self.auto_approved_tools.iter().any(|t| t == tool_name)
+    }
+
+    /// E3: Add a tool to the denied list.
+    pub fn deny_tool(&mut self, tool_name: &str) {
+        if !self.denied_tools.contains(&tool_name.to_string()) {
+            self.denied_tools.push(tool_name.to_string());
+            self.touch();
+        }
+    }
 }
 
 /// Turn state persisted in the `turns.{session_id}` collection of CortexaDB.

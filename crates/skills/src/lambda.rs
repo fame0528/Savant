@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -139,12 +140,6 @@ impl LambdaSkillExecutor {
             function_name, region
         );
 
-        // Build the Lambda invoke URL
-        let url = format!(
-            "https://lambda.{}.amazonaws.com/2015-03-31/functions/{}/invocations",
-            region, function_name
-        );
-
         // For synchronous invocation, use RequestResponse
         let invocation_type = if self.config.synchronous {
             "RequestResponse"
@@ -159,14 +154,113 @@ impl LambdaSkillExecutor {
             payload: payload.to_string(),
         };
 
-        // Build the request with AWS signature
-        // Uses HMAC-SHA256 AWS Signature Version 4 signing with the configured credentials.
-        let response = self
+        // Build the request with AWS Signature V4
+        let url = format!(
+            "https://lambda.{}.amazonaws.com/2015-03-31/functions/{}/invocations",
+            self.config.region, self.config.function_name
+        );
+
+        // E6: AWS Signature V4 signing
+        let now = chrono::Utc::now();
+        let date_stamp = now.format("%Y%m%d").to_string();
+        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+        let payload = &request.payload;
+
+        let access_key = std::env::var("AWS_ACCESS_KEY_ID").unwrap_or_default();
+        let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default();
+
+        let signed_headers = if !access_key.is_empty() && !secret_key.is_empty() {
+            let payload_hash = {
+                let mut hasher = Sha256::new();
+                hasher.update(payload.as_bytes());
+                hex::encode(hasher.finalize())
+            };
+
+            let canonical_headers = format!(
+                "content-type:application/json\nhost:lambda.{}.amazonaws.com\nx-amz-date:{}\nx-amz-invocation-type:{}\n",
+                self.config.region, amz_date, request.invocation_type
+            );
+            let signed_header_list = "content-type;host;x-amz-date;x-amz-invocation-type";
+            let canonical_request = format!(
+                "POST\n/2015-03-31/functions/{}/invocations\n\n{}\n{}\n{}",
+                self.config.function_name,
+                canonical_headers,
+                signed_header_list,
+                payload_hash
+            );
+
+            let credential_scope = format!("{}/{}/lambda/aws4_request", date_stamp, self.config.region);
+            let string_to_sign = format!(
+                "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+                amz_date,
+                credential_scope,
+                {
+                    let mut hasher = Sha256::new();
+                    hasher.update(canonical_request.as_bytes());
+                    hex::encode(hasher.finalize())
+                }
+            );
+
+            // HMAC-SHA256 signing chain
+            let signing_key = {
+                use hmac::Mac;
+                type HmacSha256 = hmac::Hmac<Sha256>;
+                let k_date = {
+                    let mut mac = HmacSha256::new_from_slice(format!("AWS4{}", secret_key).as_bytes()).unwrap();
+                    mac.update(date_stamp.as_bytes());
+                    mac.finalize().into_bytes()
+                };
+                let k_region = {
+                    let mut mac = HmacSha256::new_from_slice(&k_date).unwrap();
+                    mac.update(self.config.region.as_bytes());
+                    mac.finalize().into_bytes()
+                };
+                let k_service = {
+                    let mut mac = HmacSha256::new_from_slice(&k_region).unwrap();
+                    mac.update(b"lambda");
+                    mac.finalize().into_bytes()
+                };
+                let k_signing = {
+                    let mut mac = HmacSha256::new_from_slice(&k_service).unwrap();
+                    mac.update(b"aws4_request");
+                    mac.finalize().into_bytes()
+                };
+                k_signing
+            };
+
+            let signature = {
+                use hmac::Mac;
+                type HmacSha256 = hmac::Hmac<Sha256>;
+                let mut mac = HmacSha256::new_from_slice(&signing_key).unwrap();
+                mac.update(string_to_sign.as_bytes());
+                hex::encode(mac.finalize().into_bytes())
+            };
+
+            let authorization = format!(
+                "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+                access_key, credential_scope, signed_header_list, signature
+            );
+
+            Some((authorization, amz_date.clone(), payload_hash))
+        } else {
+            None
+        };
+
+        let mut request_builder = self
             .client
             .post(&url)
             .header("X-Amz-Invocation-Type", &request.invocation_type)
-            .header("Content-Type", "application/json")
-            .body(request.payload)
+            .header("Content-Type", "application/json");
+
+        if let Some((auth, date, hash)) = &signed_headers {
+            request_builder = request_builder
+                .header("Authorization", auth)
+                .header("X-Amz-Date", date)
+                .header("X-Amz-Content-Sha256", hash);
+        }
+
+        let response = request_builder
+            .body(payload.clone())
             .send()
             .await
             .map_err(|e| SavantError::Unknown(format!("Lambda invocation failed: {}", e)))?;

@@ -1488,6 +1488,12 @@ impl<M: MemoryBackend> AgentLoop<M> {
 
                             yield Ok(AgentEvent::FinalAnswer(clean_answer.trim().to_string()));
 
+                            // D3: Persist assistant response immediately (crash recovery)
+                            let d3_msg = ChatMessage { role: ChatRole::Assistant, content: final_response.clone(), sender: Some(self.agent_id.clone()), recipient: None, agent_id: None, session_id: session_id.clone(), channel: savant_core::types::AgentOutputChannel::Chat, is_telemetry: false, images: Vec::new(), is_error: false };
+                            if let Err(e) = self.memory.store(&sid, &d3_msg).await {
+                                tracing::warn!("[{}] D3: Failed to persist assistant response: {}", self.agent_id, e);
+                            }
+
                             if let Some(collective) = &self.collective_blackboard {
                                 if let Ok(mut state) = collective.read_global_state() {
                                     state.heuristic_version = state.heuristic_version.wrapping_add(1);

@@ -623,6 +623,8 @@ pub enum SkillSource {
     Local { path: PathBuf },
     /// Skill installed from URL
     Url { url: String },
+    /// E4: Skill from another agent ecosystem (.claude, .agents, .opencode)
+    CrossEcosystem { ecosystem: String, path: PathBuf },
 }
 
 impl std::fmt::Display for SkillSource {
@@ -632,6 +634,7 @@ impl std::fmt::Display for SkillSource {
             SkillSource::ClawHub { slug, .. } => write!(f, "clawhub:{}", slug),
             SkillSource::Local { path } => write!(f, "local:{}", path.display()),
             SkillSource::Url { url } => write!(f, "url:{}", url),
+            SkillSource::CrossEcosystem { ecosystem, path } => write!(f, "{}:{}", ecosystem, path.display()),
         }
     }
 }
@@ -837,6 +840,33 @@ impl SkillManager {
             "Skill discovery complete: {} swarm-wide, {} agent-specific",
             result.swarm_skills, result.agent_skills
         );
+
+        // E4: Cross-ecosystem skill discovery
+        let cross_ecosystems: Vec<(&str, &str)> = vec![
+            (".claude/skills", "claude"),
+            (".agents/skills", "agents"),
+            (".opencode/skills", "opencode"),
+        ];
+
+        for (path_suffix, source_name) in &cross_ecosystems {
+            let cross_path = std::path::Path::new(path_suffix);
+            if cross_path.exists() {
+                info!(
+                    "Discovering cross-ecosystem skills from: {} (source: {})",
+                    cross_path.display(),
+                    source_name
+                );
+                let cross_count = self
+                    .discover_and_scan_skills(cross_path, SkillScope::SwarmWide)
+                    .await?;
+                if cross_count > 0 {
+                    info!(
+                        "Cross-ecosystem: found {} skills from {}",
+                        cross_count, source_name
+                    );
+                }
+            }
+        }
 
         Ok(result)
     }

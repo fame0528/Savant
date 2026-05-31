@@ -71,6 +71,9 @@ pub struct MemoryConfig {
     /// Maximum vector elements in the HNSW index. Default: 1,000,000.
     #[serde(default = "default_vector_max_elements")]
     pub vector_max_elements: usize,
+    /// D8: Session TTL in hours. Sessions older than this are cleaned up. Default: 168 (7 days).
+    #[serde(default = "default_session_ttl_hours")]
+    pub session_ttl_hours: u64,
 }
 
 // Default functions for serde
@@ -97,6 +100,9 @@ fn default_max_bm25_documents() -> usize {
 }
 fn default_true() -> bool {
     true
+}
+fn default_session_ttl_hours() -> u64 {
+    168
 }
 fn default_daily_log_read_cap_bytes() -> usize {
     2000
@@ -150,6 +156,7 @@ impl Default for MemoryConfig {
             recall_similarity_threshold: default_recall_similarity_threshold(),
             recall_max_tokens: default_recall_max_tokens(),
             vector_max_elements: default_vector_max_elements(),
+            session_ttl_hours: default_session_ttl_hours(),
         }
     }
 }

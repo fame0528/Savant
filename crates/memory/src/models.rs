@@ -26,6 +26,9 @@ pub struct MemoryConfig {
     /// Temporal decay lambda for search result scoring. Default: 0.03.
     #[serde(default = "default_temporal_decay_lambda")]
     pub temporal_decay_lambda: f32,
+    /// Whether to apply temporal decay in hybrid_search. Default: true.
+    #[serde(default = "default_true")]
+    pub apply_temporal_decay: bool,
     /// Number of recent messages to include in context. Default: 20.
     #[serde(default = "default_recent_message_count")]
     pub recent_message_count: usize,
@@ -92,6 +95,9 @@ fn default_bm25_b() -> f32 {
 fn default_max_bm25_documents() -> usize {
     50_000
 }
+fn default_true() -> bool {
+    true
+}
 fn default_daily_log_read_cap_bytes() -> usize {
     2000
 }
@@ -129,6 +135,7 @@ impl Default for MemoryConfig {
             arbiter_sweep_interval_secs: default_arbiter_sweep_interval_secs(),
             shannon_entropy_cap: default_shannon_entropy_cap(),
             temporal_decay_lambda: default_temporal_decay_lambda(),
+            apply_temporal_decay: default_true(),
             recent_message_count: default_recent_message_count(),
             bm25_k1: default_bm25_k1(),
             bm25_b: default_bm25_b(),

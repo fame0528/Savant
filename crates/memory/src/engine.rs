@@ -841,18 +841,39 @@ impl MemoryEnclave {
                 .collect()
         };
 
-        // Vector search with original embedding
+        // Vector search with original embedding + temporal decay
         let vector_raw = self.vector.recall(query_embedding, top_k * 2, None)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let lambda = self.config.temporal_decay_lambda;
         let vector_results: Vec<crate::rrf_fusion::StreamResult> = vector_raw
             .iter()
             .filter_map(|sr| {
                 sr.document_id
                     .parse::<u64>()
                     .ok()
-                    .map(|doc_id| crate::rrf_fusion::StreamResult {
-                        doc_id,
-                        score: sr.score,
-                        session_id: String::new(),
+                    .map(|doc_id| {
+                        // Apply temporal decay if enabled
+                        let score = if self.config.apply_temporal_decay {
+                            if let Ok(Some(entry)) = self.lsm.get_metadata(doc_id) {
+                                let age_hours = (now - i64::from(entry.created_at)) as f32 / 3_600_000.0;
+                                let effective_lambda = if entry.importance >= 8 {
+                                    lambda * 0.5 // Half decay for high-importance
+                                } else {
+                                    lambda
+                                };
+                                let decay = (-effective_lambda * age_hours).exp();
+                                sr.score * decay
+                            } else {
+                                sr.score
+                            }
+                        } else {
+                            sr.score
+                        };
+                        crate::rrf_fusion::StreamResult {
+                            doc_id,
+                            score,
+                            session_id: String::new(),
+                        }
                     })
             })
             .collect();

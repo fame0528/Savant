@@ -1059,11 +1059,11 @@ impl AsyncMemoryBackend {
             }
         };
 
-        // Semantic search
-        let search_results = match self.engine.semantic_search(&embedding, config.max_results) {
+        // Hybrid search (BM25 + vector + graph fused via RRF)
+        let search_results = match self.engine.enclave().hybrid_search(&query_owned, &embedding, config.max_results).await {
             Ok(r) => r,
             Err(e) => {
-                debug!("Auto-recall: semantic search failed: {}", e);
+                debug!("Auto-recall: hybrid search failed: {}", e);
                 return Ok(block);
             }
         };

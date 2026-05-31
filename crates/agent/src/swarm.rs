@@ -997,18 +997,20 @@ impl SwarmController {
             agent_tools.push(Arc::new(crate::tools::FoundationTool::new(
                 agent_cfg.workspace_path.clone(),
             )));
+            // C4: Shared security scanner for file tools
+            let file_scanner = Arc::new(savant_skills::security::SecurityScanner::new());
             agent_tools.push(Arc::new(crate::tools::FileMoveTool::new(
                 agent_cfg.workspace_path.clone(),
-            )));
+            ).with_scanner(file_scanner.clone())));
             agent_tools.push(Arc::new(crate::tools::FileDeleteTool::new(
                 agent_cfg.workspace_path.clone(),
-            )));
+            ).with_scanner(file_scanner.clone())));
             agent_tools.push(Arc::new(crate::tools::FileAtomicEditTool::new(
                 agent_cfg.workspace_path.clone(),
-            )));
+            ).with_scanner(file_scanner.clone())));
             agent_tools.push(Arc::new(crate::tools::FileCreateTool::new(
                 agent_cfg.workspace_path.clone(),
-            )));
+            ).with_scanner(file_scanner)));
             // NA-09: Wire SettingsTool with workspace path for sandbox-safe resolution
             agent_tools.push(Arc::new(crate::tools::SettingsTool::with_workspace(
                 &agent_cfg.workspace_path,

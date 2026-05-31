@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use savant_core::error::SavantError;
 use savant_core::traits::Tool;
 use serde_json::Value;
+use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::info;
@@ -93,11 +94,17 @@ pub(crate) fn secure_resolve_path(workspace: &Path, target: &str) -> Result<Path
 /// Tool for atomic file moves/renames.
 pub struct FileMoveTool {
     workspace_dir: PathBuf,
+    scanner: Option<Arc<savant_skills::security::SecurityScanner>>,
 }
 
 impl FileMoveTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+        Self { workspace_dir, scanner: None }
+    }
+
+    pub fn with_scanner(mut self, scanner: Arc<savant_skills::security::SecurityScanner>) -> Self {
+        self.scanner = Some(scanner);
+        self
     }
 }
 
@@ -166,11 +173,17 @@ impl Tool for FileMoveTool {
 /// Tool for file/directory deletion.
 pub struct FileDeleteTool {
     workspace_dir: PathBuf,
+    scanner: Option<Arc<savant_skills::security::SecurityScanner>>,
 }
 
 impl FileDeleteTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+        Self { workspace_dir, scanner: None }
+    }
+
+    pub fn with_scanner(mut self, scanner: Arc<savant_skills::security::SecurityScanner>) -> Self {
+        self.scanner = Some(scanner);
+        self
     }
 }
 
@@ -244,11 +257,17 @@ impl Tool for FileDeleteTool {
 /// Tool for atomic multi-chunk file editing.
 pub struct FileAtomicEditTool {
     workspace_dir: PathBuf,
+    scanner: Option<Arc<savant_skills::security::SecurityScanner>>,
 }
 
 impl FileAtomicEditTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+        Self { workspace_dir, scanner: None }
+    }
+
+    pub fn with_scanner(mut self, scanner: Arc<savant_skills::security::SecurityScanner>) -> Self {
+        self.scanner = Some(scanner);
+        self
     }
 }
 
@@ -399,11 +418,17 @@ impl Tool for FileAtomicEditTool {
 /// Tool for file and directory creation.
 pub struct FileCreateTool {
     workspace_dir: PathBuf,
+    scanner: Option<Arc<savant_skills::security::SecurityScanner>>,
 }
 
 impl FileCreateTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+        Self { workspace_dir, scanner: None }
+    }
+
+    pub fn with_scanner(mut self, scanner: Arc<savant_skills::security::SecurityScanner>) -> Self {
+        self.scanner = Some(scanner);
+        self
     }
 }
 
@@ -455,6 +480,20 @@ impl Tool for FileCreateTool {
 
         // File creation with optional content
         let content = payload["content"].as_str().unwrap_or("");
+
+        // C4: Security scan content before writing
+        if let Some(ref scanner) = self.scanner {
+            let findings = scanner.scan_command(content);
+            let high_or_critical = findings.iter().any(|f| {
+                matches!(f.severity, savant_skills::security::RiskLevel::High | savant_skills::security::RiskLevel::Critical)
+            });
+            if high_or_critical {
+                return Err(SavantError::Unknown(format!(
+                    "Security scan blocked file content: {} suspicious patterns detected",
+                    findings.len()
+                )));
+            }
+        }
 
         info!("[WAL:ACTUATOR] Action: create_file, Path: {:?}", path);
 

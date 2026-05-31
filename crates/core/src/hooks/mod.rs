@@ -363,6 +363,37 @@ impl VoidHookHandler for SessionEndHook {
     }
 }
 
+/// C5: Default BeforeToolCall hook — logs tool name and args for observability.
+/// This hook is void (fire-and-forget) — it logs but cannot cancel execution.
+pub struct BeforeToolCallLogger;
+
+#[async_trait::async_trait]
+impl VoidHookHandler for BeforeToolCallLogger {
+    fn event(&self) -> HookEvent {
+        HookEvent::BeforeToolCall
+    }
+
+    fn priority(&self) -> HookPriority {
+        0 // lowest priority — runs after any user-registered hooks
+    }
+
+    async fn handle(&self, context: &HookContext) {
+        if let Some(ref tool_name) = context.tool_name {
+            let args_preview = context.content.as_deref().unwrap_or("{}");
+            let truncated = if args_preview.len() > 200 {
+                format!("{}...", &args_preview[..200])
+            } else {
+                args_preview.to_string()
+            };
+            tracing::debug!(
+                "[hook] BeforeToolCall: tool={} args={}",
+                tool_name,
+                truncated
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 mod tests {

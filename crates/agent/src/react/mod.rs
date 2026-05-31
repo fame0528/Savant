@@ -676,10 +676,11 @@ impl<M: MemoryBackend> AgentLoop<M> {
         self
     }
 
-    /// Registers the 6 built-in hooks into the hook registry.
+    /// Registers the 7 built-in hooks into the hook registry.
     /// Called during agent construction in swarm.rs.
     pub async fn register_default_hooks(&self) {
         use savant_core::hooks::*;
+        self.hooks.register_void(BeforeToolCallLogger).await;
         self.hooks.register_void(ToolCallLogger).await;
         self.hooks.register_void(LlmInputLogger).await;
         self.hooks.register_void(LlmOutputLogger).await;

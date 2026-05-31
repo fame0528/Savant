@@ -200,7 +200,7 @@ impl<M: MemoryBackend> AgentLoop<M> {
         session_id: Option<savant_core::types::SessionId>,
         shutdown_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = Result<AgentEvent, SavantError>> + Send + '_>> {
-        let mut history = vec![ChatMessage {
+        let user_msg = ChatMessage {
             is_telemetry: false,
             role: ChatRole::User,
             content: user_input.clone(),
@@ -211,12 +211,21 @@ impl<M: MemoryBackend> AgentLoop<M> {
             channel: savant_core::types::AgentOutputChannel::Chat,
             images: Vec::new(),
             ..Default::default()
-        }];
+        };
+        let mut history = vec![user_msg];
 
         Box::pin({
             use async_stream::stream;
             stream! {
                     let mut depth = 0;
+
+                    // D1: Persist user message immediately (crash recovery)
+                    if let Some(ref sid) = session_id {
+                        let sid_str = sid.0.clone();
+                        if let Err(e) = self.memory.store(&sid_str, &history[0]).await {
+                            tracing::warn!("[{}] Failed to persist user message: {}", self.agent_id, e);
+                        }
+                    }
                     let mut seen_actions: HashSet<String> = HashSet::new();
                     let sid = session_id.as_ref().map(|s| s.0.clone()).unwrap_or_else(|| self.agent_id.clone());
 

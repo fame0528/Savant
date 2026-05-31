@@ -518,6 +518,23 @@ impl SkillRegistry {
             }
 
             let file_name = entry.file_name().to_string_lossy();
+
+            // E1+E3: Security scan before loading skill files
+            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                let findings = self.scanner.scan_command(&content);
+                let blocked = findings.iter().any(|f| {
+                    matches!(f.severity, RiskLevel::High | RiskLevel::Critical)
+                });
+                if blocked {
+                    warn!(
+                        "Security scan blocked skill file: {} ({} findings)",
+                        entry.path().display(),
+                        findings.len()
+                    );
+                    continue;
+                }
+            }
+
             let result = match file_name.as_ref() {
                 "SKILL.md" => self.load_skill_from_file(entry.path()).await,
                 "AGENTS.md" => self.load_agents_md(entry.path()).await,
@@ -722,7 +739,7 @@ impl SkillManager {
         let mut result = DiscoverResult::default();
 
         // 1. Discover swarm-wide skills
-        let swarm_skills = self.swarm_skills_dir.join("skills");
+        let swarm_skills = self.swarm_skills_dir.clone();
         if swarm_skills.exists() {
             info!(
                 "Discovering swarm-wide skills from: {}",

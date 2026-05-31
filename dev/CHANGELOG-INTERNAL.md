@@ -8,6 +8,26 @@
 
 ## [v0.4.0] — 2026-05-30
 
+### 2026-05-30: Dashboard Response Pipeline — 5 Issues Fixed (FID-20260530-DASHBOARD-RESPONSE-PIPELINE)
+
+**FID:** `FID-20260530-DASHBOARD-RESPONSE-PIPELINE.md` (archived)
+
+**Problem:** Dashboard non-functional for chat. Agent processes (LLM streaming visible) but dashboard shows TIMEOUT on every message. User resends repeatedly, creating duplicates. Agent image shows fallback "S". Copy All broken. Governor bounces to CRITICAL on transient CPU spikes.
+
+**Root cause:** No interim telemetry between "message sent" and "response published". The 30s timeout fires before the agent finishes processing.
+
+**Fix (5 issues):**
+
+1. **Agent image** — `AuthImage` component silently failed on auth mismatch. Added fallback to direct `<img>` when auth fetch fails. (`DashboardShell.tsx:14-25`)
+1. **Copy All** — All 3 clipboard fallback paths (Tauri plugin, navigator.clipboard, execCommand) caught errors silently. Added error logging to each path. (`tauri.ts:120-148`)
+1. **Message timeout** — Published interim `chat.chunk` telemetry before LLM call in BOTH code paths (heartbeat `process_user_message` AND orchestrator `execute_turn`). Increased timeout from 30s to 120s. (`heartbeat.rs`, `DashboardContext.tsx`)
+1. **Governor bouncing** — `PressureLevel::from_metrics()` used instantaneous CPU/memory with no smoothing. Added EMA (Exponential Moving Average) with configurable alpha (default 0.7). Transient spikes absorbed within ~3 monitor cycles (15s). (`monitor.rs`, `pressure.rs`, `config.rs`)
+1. **Duplicate messages** — Gateway had no dedup. Added blake3 content-hash dedup with 10s TTL in `handlers/mod.rs`. Batch prune on every insert. (`handlers/mod.rs`, `server.rs`)
+
+**New files:** None (all changes to existing files)
+
+**Tests:** 340/340 pass, 0 clippy, 0 TS errors, 0 markdownlint
+
 ### 2026-05-30: Two-Tier Agent System, DelegationEngine, 10 Bug Fixes (FID-20260530-AGENT-TIER-REDESIGN)
 
 **FID:** `FID-20260530-AGENT-TIER-REDESIGN.md` (archived)

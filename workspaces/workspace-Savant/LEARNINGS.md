@@ -1,5 +1,35 @@
 # Savant Learnings
 
+## Session Knowledge: v0.4.0 Full Session (2026-05-30)
+
+### Key Architecture Decisions
+
+**Two-tier agent system:** Full agents (workspace-based, governor-gated) and Sub-agents (profile-based, ephemeral). Task Worker tier eliminated — it's just `tokio::spawn`, not an agent.
+
+**Governor defaults:** 128/64/32/8 (low/medium/high/critical). Changed from 16/8/4/1 because OpenClaw ran 101 full agents on the same hardware. EMA smoothing (alpha=0.7) prevents transient CPU spikes from triggering CRITICAL.
+
+**WAL format v1:** YAML frontmatter for machine-parseable state, markdown sections for human-readable content. Schema versioning: v0=legacy JSON, v1=frontmatter+markdown. Reader auto-detects format.
+
+**DelegationEngine:** Profile-based sub-agent spawning. 6 profiles: coding, documentation, research, testing, orchestrator, general. Each has SOUL.md, tools.toml, constraints.toml. Keyword-based routing. Result caching (5min TTL).
+
+**Dashboard response pipeline:** Root cause of timeouts was no interim telemetry between "message sent" and "response published". Fix: publish `chat.chunk` before LLM call in BOTH code paths. Timeout increased 30s to 120s.
+
+### Key Code Patterns
+
+**EMA smoothing for governor:**
+```rust
+smoothed = smoothed * alpha + instantaneous * (1.0 - alpha)
+```
+
+**blake3 dedup for gateway:**
+```rust
+hash = blake3::hash(content)
+dedup_map.retain(|_, v| now - *v < 10s)
+```
+
+**Interim telemetry cancels dashboard timeout:**
+Publish `chat.chunk` with `is_telemetry: true` before LLM call. Dashboard cancels 120s timer on any `chat.chunk`.
+
 ## Learning (2026-03-28 01:32:22.541708000 UTC)
 
 The user has provided a comprehensive identity and operational directive for Savant, the AI system. They've given me a very detailed set of instructions, constraints, and context about the system's architecture, laws, protocols, and expected behavior.

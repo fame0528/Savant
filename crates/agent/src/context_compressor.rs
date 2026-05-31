@@ -125,6 +125,48 @@ impl ContextCompressor {
     pub fn max_summary_tokens(&self) -> usize {
         self.max_summary_tokens
     }
+
+    /// D4: Compresses the middle messages by calling the LLM with a structured
+    /// summary prompt. Returns the compressed summary text.
+    /// Uses checkpoint format: Resolved/Pending/Key Decisions/Context.
+    pub async fn compress(
+        &self,
+        middle_messages: &[&ChatMessage],
+        provider: &dyn savant_core::traits::LlmProvider,
+    ) -> Result<String, savant_core::error::SavantError> {
+        if middle_messages.is_empty() {
+            return Ok(String::new());
+        }
+
+        let prompt = Self::build_compression_prompt(middle_messages);
+        let mut summary = String::new();
+        let mut stream = provider
+            .stream_completion(
+                vec![savant_core::types::ChatMessage {
+                    role: savant_core::types::ChatRole::User,
+                    content: prompt,
+                    ..Default::default()
+                }],
+                vec![],
+            )
+            .await?;
+
+        use futures::StreamExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            summary.push_str(&chunk.content);
+            // Truncate to max summary tokens (approximate)
+            if summary.len() > self.max_summary_tokens * 4 {
+                break;
+            }
+        }
+
+        // Update cooldown
+        let mut last = self.last_compression.lock().await;
+        *last = Some(Instant::now());
+
+        Ok(summary)
+    }
 }
 
 #[cfg(test)]

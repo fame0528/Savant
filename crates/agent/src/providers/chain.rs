@@ -261,6 +261,14 @@ struct CircuitBreakerInner {
     last_opened: Option<Instant>,
 }
 
+/// D7: Serializable circuit breaker state for persistence.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CircuitBreakerPersisted {
+    state: String,
+    failure_count: u32,
+    last_opened_epoch: Option<u64>,
+}
+
 impl CircuitBreaker {
     pub fn new(failure_threshold: u32, open_duration: Duration) -> Self {
         Self {
@@ -272,6 +280,44 @@ impl CircuitBreaker {
             failure_threshold,
             open_duration,
         }
+    }
+
+    /// D7: Save circuit breaker state to a JSON file for crash recovery.
+    pub async fn save_to_file(&self, path: &std::path::Path) -> Result<(), String> {
+        let inner = self.inner.read().await;
+        let state = CircuitBreakerPersisted {
+            state: match inner.state {
+                BreakerState::Closed => "closed",
+                BreakerState::Open => "open",
+                BreakerState::HalfOpen => "half_open",
+            }.to_string(),
+            failure_count: inner.failure_count,
+            last_opened_epoch: inner.last_opened
+                .map(|t| t.elapsed().as_secs()),  // seconds since opened
+        };
+        let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
+        std::fs::write(path, json).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// D7: Load circuit breaker state from a JSON file.
+    pub async fn load_from_file(&self, path: &std::path::Path) -> Result<(), String> {
+        if !path.exists() {
+            return Ok(());
+        }
+        let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let persisted: CircuitBreakerPersisted = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        let mut inner = self.inner.write().await;
+        inner.state = match persisted.state.as_str() {
+            "open" => BreakerState::Open,
+            "half_open" => BreakerState::HalfOpen,
+            _ => BreakerState::Closed,
+        };
+        inner.failure_count = persisted.failure_count;
+        if persisted.state == "open" {
+            inner.last_opened = Some(Instant::now()); // approximate
+        }
+        Ok(())
     }
 
     /// Check if a request is allowed through the breaker.

@@ -153,6 +153,15 @@ impl<M: MemoryBackend> AgentLoop<M> {
                     payload = crate::tools::coercion::prepare_tool_params(&payload, &schema);
                 }
 
+                // Approval gate (reactor path): block Always-requiring tools
+                // Full session-aware check is in stream.rs DAG path
+                use savant_core::traits::ApprovalRequirement;
+                if tool.requires_approval() == ApprovalRequirement::Always {
+                    return Err(SavantError::Unknown(
+                        format!("Tool '{}' requires user approval (reactor path). Use DAG execution path for approval support.", tool.name())
+                    ));
+                }
+
                 // Taint tracking: check if tool arguments contain references to untrusted data
                 let payload_str = payload.to_string();
                 let data_refs: Vec<String> = extract_data_refs(&payload_str);

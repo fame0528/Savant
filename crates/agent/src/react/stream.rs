@@ -1170,6 +1170,8 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                         let node_name_inner = node_name.clone();
                                         let node_args_inner = node_args.clone();
                                         let agent_id_inner = self.agent_id.clone();
+                                        let auto_approved = session_state.auto_approved_tools.clone();
+                                        let denied = session_state.denied_tools.clone();
 
                                         queue.push(async move {
                                             // Self-Repair: Skip excluded tools (marked broken by health tracker)
@@ -1177,6 +1179,13 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                 let err_name = node_name_inner.clone();
                                                 return (idx, node_name_inner, String::new(), Err(SavantError::Unknown(
                                                     format!("Tool excluded by self-repair: {}", err_name)
+                                                )));
+                                            }
+
+                                            // Approval gate: check denied list first
+                                            if denied.contains(&node_name_inner) {
+                                                return (idx, node_name_inner.clone(), String::new(), Err(SavantError::Unknown(
+                                                    format!("Tool '{}' denied by session policy", node_name_inner)
                                                 )));
                                             }
 
@@ -1213,6 +1222,31 @@ impl<M: MemoryBackend> AgentLoop<M> {
                                                         let schema = tool.parameters_schema();
                                                         if schema.get("type").is_some() {
                                                             payload = crate::tools::coercion::prepare_tool_params(&payload, &schema);
+                                                        }
+                                                        // Approval gate: check requires_approval() against session state
+                                                        use savant_core::traits::ApprovalRequirement;
+                                                        match tool.requires_approval() {
+                                                            ApprovalRequirement::Always => {
+                                                                if !auto_approved.contains(&tool.name().to_string()) {
+                                                                    warn!("[{}] Tool '{}' requires approval but is not auto-approved — denying", agent_id_inner, tool.name());
+                                                                    result = Err(SavantError::Unknown(
+                                                                        format!("Tool '{}' requires user approval. Add to auto_approved_tools or approve via dashboard.", tool.name())
+                                                                    ));
+                                                                    break;
+                                                                }
+                                                            }
+                                                            ApprovalRequirement::Conditional => {
+                                                                if !auto_approved.contains(&tool.name().to_string()) {
+                                                                    // Check if conditional criteria are met
+                                                                    // For now, treat as needs-approval if not in auto_approved
+                                                                    warn!("[{}] Tool '{}' needs conditional approval — not auto-approved", agent_id_inner, tool.name());
+                                                                    result = Err(SavantError::Unknown(
+                                                                        format!("Tool '{}' needs approval. Add to auto_approved_tools or approve via dashboard.", tool.name())
+                                                                    ));
+                                                                    break;
+                                                                }
+                                                            }
+                                                            ApprovalRequirement::Never => { /* proceed */ }
                                                         }
                                                         debug!("[{}] Tool [{}] matched. Executing...", agent_id_inner, node_name_inner);
                                                         result = hc_inner.execute_speculative(tool.clone(), payload).await;

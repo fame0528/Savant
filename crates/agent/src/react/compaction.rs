@@ -183,6 +183,42 @@ impl Compactor {
             }
         }
     }
+
+    /// D5: Like compact() but also returns the archived text for persistence.
+    /// Callers should save archived_text to LSM or daily log.
+    pub fn compact_with_archive(
+        messages: Vec<ChatMessage>,
+        strategy: CompactionStrategy,
+        keep_recent: usize,
+    ) -> (Vec<ChatMessage>, String) {
+        match strategy {
+            CompactionStrategy::Truncate => (Self::truncate(messages, keep_recent), String::new()),
+            CompactionStrategy::MoveToWorkspace | CompactionStrategy::Summarize => {
+                let (archived, mut recent) = Self::partition(messages, keep_recent);
+
+                if !archived.is_empty() {
+                    let summary_msg = ChatMessage {
+                        is_telemetry: false,
+                        role: ChatRole::System,
+                        content: format!(
+                            "[Context compacted: {} older messages archived. The conversation continues below.]",
+                            archived.lines().count().max(1)
+                        ),
+                        sender: Some("SYSTEM".to_string()),
+                        recipient: None,
+                        agent_id: None,
+                        session_id: None,
+                        channel: savant_core::types::AgentOutputChannel::Chat,
+                        images: Vec::new(),
+                        ..Default::default()
+                    };
+                    recent.insert(0, summary_msg);
+                }
+
+                (recent, archived)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

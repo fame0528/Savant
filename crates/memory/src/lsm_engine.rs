@@ -1101,6 +1101,76 @@ impl LsmStorageEngine {
     }
 
     // ========================================================================
+    // Procedures/Lessons/Insights Persistence (B6)
+    // ========================================================================
+
+    /// Saves procedures to the "procedures" collection.
+    pub fn save_procedures(&self, procedures: &[crate::procedural::ProceduralMemory]) -> Result<(), MemoryError> {
+        let bytes = serde_json::to_vec(procedures)
+            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+        self.db
+            .add_with_content("procedures", bytes, self.zero_embedding(), make_key_meta("procedures_snapshot"))
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Loads procedures from the "procedures" collection.
+    pub fn load_procedures(&self) -> Result<Vec<crate::procedural::ProceduralMemory>, MemoryError> {
+        self.load_json_collection("procedures", "procedures_snapshot")
+    }
+
+    /// Saves lessons to the "lessons" collection.
+    pub fn save_lessons(&self, lessons: &[crate::lessons::Lesson]) -> Result<(), MemoryError> {
+        let bytes = serde_json::to_vec(lessons)
+            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+        self.db
+            .add_with_content("lessons", bytes, self.zero_embedding(), make_key_meta("lessons_snapshot"))
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Loads lessons from the "lessons" collection.
+    pub fn load_lessons(&self) -> Result<Vec<crate::lessons::Lesson>, MemoryError> {
+        self.load_json_collection("lessons", "lessons_snapshot")
+    }
+
+    /// Saves insights to the "insights" collection.
+    pub fn save_insights(&self, insights: &[crate::lessons::Insight]) -> Result<(), MemoryError> {
+        let bytes = serde_json::to_vec(insights)
+            .map_err(|e| MemoryError::SerializationFailed(e.to_string()))?;
+        self.db
+            .add_with_content("insights", bytes, self.zero_embedding(), make_key_meta("insights_snapshot"))
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Loads insights from the "insights" collection.
+    pub fn load_insights(&self) -> Result<Vec<crate::lessons::Insight>, MemoryError> {
+        self.load_json_collection("insights", "insights_snapshot")
+    }
+
+    /// Generic loader for JSON-serialized collections from CortexaDB.
+    fn load_json_collection<T: serde::de::DeserializeOwned>(&self, collection: &str, key: &str) -> Result<T, MemoryError> {
+        let filter = {
+            let mut m = HashMap::new();
+            m.insert("key".to_string(), key.to_string());
+            m
+        };
+        if let Ok(hits) = self.db.search_in_collection(collection, self.zero_embedding(), 1, Some(filter)) {
+            if let Some(hit) = hits.first() {
+                if let Ok(memory) = self.db.get_memory(hit.id) {
+                    if !memory.content.is_empty() {
+                        return serde_json::from_slice(&memory.content)
+                            .map_err(|e| MemoryError::SerializationFailed(e.to_string()));
+                    }
+                }
+            }
+        }
+        // Return empty default if not found
+        serde_json::from_str("[]").map_err(|e| MemoryError::SerializationFailed(e.to_string()))
+    }
+
+    // ========================================================================
     // Session State
     // ========================================================================
 

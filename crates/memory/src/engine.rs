@@ -337,6 +337,20 @@ impl MemoryEnclave {
             }
         };
 
+        // B6: Load procedures/lessons/insights from CortexaDB before moving lsm
+        let procedures = lsm.load_procedures().unwrap_or_else(|e| {
+            warn!("Failed to load procedures, starting fresh: {}", e);
+            Vec::new()
+        });
+        let lessons = lsm.load_lessons().unwrap_or_else(|e| {
+            warn!("Failed to load lessons, starting fresh: {}", e);
+            Vec::new()
+        });
+        let insights = lsm.load_insights().unwrap_or_else(|e| {
+            warn!("Failed to load insights, starting fresh: {}", e);
+            Vec::new()
+        });
+
         Ok(Arc::new(Self {
             lsm,
             vector,
@@ -349,9 +363,9 @@ impl MemoryEnclave {
             notifications: NotificationChannel::default(),
             bm25: tokio::sync::RwLock::new(bm25_index),
             audit: tokio::sync::Mutex::new(crate::audit::AuditTrail::default()),
-            procedures: tokio::sync::Mutex::new(Vec::new()),
-            lessons: tokio::sync::Mutex::new(Vec::new()),
-            insights: tokio::sync::Mutex::new(Vec::new()),
+            procedures: tokio::sync::Mutex::new(procedures),
+            lessons: tokio::sync::Mutex::new(lessons),
+            insights: tokio::sync::Mutex::new(insights),
             multimodal: tokio::sync::Mutex::new(crate::multimodal::MultimodalStore::new_with_path(
                 storage_path.as_ref().to_path_buf(),
             )),
@@ -448,40 +462,55 @@ impl MemoryEnclave {
             // Use the average of OCEAN and Ebbinghaus scores
             let score = (ocean_score + ebbinghaus_score) / 2.0;
 
-            // Archive low-scoring old entries
-            if score < 0.35 && age_hours > 720.0 {
-                low_count += 1;
-                let id: u64 = entry.id.into();
-                // Remove from vector (best effort)
-                if let Err(e) = self.vector.remove(&id.to_string()) {
-                    warn!(
-                        "[memory::enclave] Failed to remove vector for archived entry {}: {}",
-                        id, e
-                    );
+            // B4: Ebbinghaus tier-based lifecycle decisions
+            let tier = ebbinghaus.tier(ebbinghaus_score);
+            match tier {
+                crate::promotion::RetentionTier::Hot => {
+                    // Reinforce: increment hit_count
+                    high_count += 1;
+                    let mut reinforced = entry.clone();
+                    let current_hits: u32 = reinforced.hit_count.into();
+                    reinforced.hit_count = (current_hits + 1).into();
+                    reinforced.updated_at = chrono::Utc::now().timestamp_millis().into();
+                    let id: u64 = entry.id.into();
+                    if let Err(e) = self.lsm.insert_metadata(id, &reinforced) {
+                        warn!("[memory::enclave] Failed to reinforce entry {}: {}", id, e);
+                    } else {
+                        reinforced_count += 1;
+                    }
                 }
-                // Remove from LSM (authoritative)
-                if let Err(e) = self.lsm.delete_metadata(id) {
-                    warn!(
-                        "[memory::enclave] Failed to archive entry {} from LSM: {}",
-                        id, e
-                    );
-                    archive_errors += 1;
-                } else {
-                    archived_count += 1;
+                crate::promotion::RetentionTier::Warm => {
+                    // Keep — no action needed
                 }
-            } else if score > 0.7 {
-                // Reinforce high-scoring entries by incrementing hit_count
-                high_count += 1;
-                let mut reinforced = entry.clone();
-                let current_hits: u32 = reinforced.hit_count.into();
-                reinforced.hit_count = (current_hits + 1).into();
-                reinforced.updated_at = chrono::Utc::now().timestamp_millis().into();
-
-                let id: u64 = entry.id.into();
-                if let Err(e) = self.lsm.insert_metadata(id, &reinforced) {
-                    warn!("[memory::enclave] Failed to reinforce entry {}: {}", id, e);
-                } else {
-                    reinforced_count += 1;
+                crate::promotion::RetentionTier::Cold => {
+                    // Archive: entries in Cold tier with sufficient age
+                    if age_hours > 720.0 {
+                        low_count += 1;
+                        let id: u64 = entry.id.into();
+                        if let Err(e) = self.vector.remove(&id.to_string()) {
+                            warn!("[memory::enclave] Failed to remove vector for cold entry {}: {}", id, e);
+                        }
+                        if let Err(e) = self.lsm.delete_metadata(id) {
+                            warn!("[memory::enclave] Failed to archive cold entry {} from LSM: {}", id, e);
+                            archive_errors += 1;
+                        } else {
+                            archived_count += 1;
+                        }
+                    }
+                }
+                crate::promotion::RetentionTier::Dead => {
+                    // Archive immediately — Dead tier
+                    low_count += 1;
+                    let id: u64 = entry.id.into();
+                    if let Err(e) = self.vector.remove(&id.to_string()) {
+                        warn!("[memory::enclave] Failed to remove vector for dead entry {}: {}", id, e);
+                    }
+                    if let Err(e) = self.lsm.delete_metadata(id) {
+                        warn!("[memory::enclave] Failed to archive dead entry {} from LSM: {}", id, e);
+                        archive_errors += 1;
+                    } else {
+                        archived_count += 1;
+                    }
                 }
             }
 
@@ -765,6 +794,45 @@ impl MemoryEnclave {
         }
     }
 
+    /// B7: Tier migration — promotes memories between lifecycle tiers.
+    /// L0 (Episodic) → L1 (Contextual): entries older than 24h with hit_count > 3
+    /// L1 (Contextual) → L2 (Semantic): entries older than 7d with importance >= 7
+    pub fn migrate_tiers(&self) -> Result<usize, MemoryError> {
+        let entries = self.lsm.iter_metadata()?;
+        let mut migrated = 0usize;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        for entry in &entries {
+            let age_hours = (now - i64::from(entry.created_at)) as f32 / 3_600_000.0;
+            let hit_count: u32 = entry.hit_count.into();
+            let importance = entry.importance;
+
+            let new_layer = if age_hours > 24.0 && hit_count > 3 {
+                // L0 → L1: Episodic → Contextual
+                Some("contextual")
+            } else if age_hours > 168.0 && importance >= 7 {
+                // L1 → L2: Contextual → Semantic
+                Some("semantic")
+            } else {
+                None
+            };
+
+            if let Some(layer) = new_layer {
+                let id: u64 = entry.id.into();
+                if let Ok(Some(mut meta)) = self.lsm.get_metadata(id) {
+                    meta.category = layer.to_string();
+                    let _ = self.lsm.insert_metadata(id, &meta);
+                    migrated += 1;
+                }
+            }
+        }
+
+        if migrated > 0 {
+            info!("Tier migration: {} entries promoted", migrated);
+        }
+        Ok(migrated)
+    }
+
     pub fn semantic_search(
         &self,
         query_embedding: &[f32],
@@ -808,6 +876,24 @@ impl MemoryEnclave {
     pub async fn persist_bm25(&self) -> Result<(), MemoryError> {
         let bm25 = self.bm25.read().await;
         self.lsm.save_bm25_state(&bm25)
+    }
+
+    /// B6: Persists procedures to CortexaDB for crash recovery.
+    pub async fn persist_procedures(&self) -> Result<(), MemoryError> {
+        let procedures = self.procedures.lock().await;
+        self.lsm.save_procedures(&procedures)
+    }
+
+    /// B6: Persists lessons to CortexaDB for crash recovery.
+    pub async fn persist_lessons(&self) -> Result<(), MemoryError> {
+        let lessons = self.lessons.lock().await;
+        self.lsm.save_lessons(&lessons)
+    }
+
+    /// B6: Persists insights to CortexaDB for crash recovery.
+    pub async fn persist_insights(&self) -> Result<(), MemoryError> {
+        let insights = self.insights.lock().await;
+        self.lsm.save_insights(&insights)
     }
 
     /// 2. Search BM25 with expanded terms
@@ -1321,6 +1407,7 @@ impl MemoryEngine {
 
         let enclave = MemoryEnclave::new(base.join("enclave"), config.clone())?;
         let collective = MemoryEnclave::new(base.join("collective"), config.clone())?;
+        let enclave_for_scheduler = enclave.clone();
 
         let engine = Arc::new(Self {
             enclave: enclave.clone(),
@@ -1371,8 +1458,48 @@ impl MemoryEngine {
         info!("Spawning Factual Arbiter...");
         crate::arbiter::spawn_arbiter_task(collective);
 
+        // B5: Spawn consolidation scheduler — periodic promotion + tier migration + entropy culling
+        info!("Spawning Consolidation Scheduler...");
+        Self::spawn_consolidation_scheduler(enclave_for_scheduler);
+
         info!("Memory Engine initialized successfully");
         Ok(engine)
+    }
+
+    /// B5: Background consolidation scheduler.
+    /// Runs promotion cycle (Ebbinghaus lifecycle), tier migration, and entropy culling
+    /// on configurable intervals.
+    fn spawn_consolidation_scheduler(enclave: Arc<MemoryEnclave>) {
+        let promotion_interval = std::time::Duration::from_secs(900); // 15 minutes
+        let migration_interval = std::time::Duration::from_secs(1800); // 30 minutes
+        let culling_interval = std::time::Duration::from_secs(3600); // 1 hour
+
+        tokio::spawn(async move {
+            let mut promotion_timer = tokio::time::interval(promotion_interval);
+            let mut migration_timer = tokio::time::interval(migration_interval);
+            let mut culling_timer = tokio::time::interval(culling_interval);
+
+            loop {
+                tokio::select! {
+                    _ = promotion_timer.tick() => {
+                        // B4: Run promotion cycle with Ebbinghaus tier-based lifecycle
+                        enclave.run_promotion_cycle().await;
+                    }
+                    _ = migration_timer.tick() => {
+                        // B7: Tier migration (L0→L1→L2)
+                        if let Err(e) = enclave.migrate_tiers() {
+                            warn!("Tier migration failed: {}", e);
+                        }
+                    }
+                    _ = culling_timer.tick() => {
+                        // B10: Entropy culling
+                        if let Err(e) = enclave.cull_low_entropy_memories(0.1) {
+                            warn!("Entropy culling failed: {}", e);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     pub fn with_defaults<P: AsRef<Path>>(
@@ -1675,6 +1802,11 @@ impl MemoryEngine {
                 }
             }
         }
+
+        // B6: Persist lessons after synthesis
+        if let Err(e) = self.enclave.persist_lessons().await {
+            warn!("Failed to persist lessons: {}", e);
+        }
     }
 
     /// CP-14: Synthesize insights from concept clusters in the MAGMA graph.
@@ -1726,6 +1858,11 @@ impl MemoryEngine {
                     }
                 }
             }
+        }
+
+        // B6: Persist insights after synthesis
+        if let Err(e) = self.enclave.persist_insights().await {
+            warn!("Failed to persist insights: {}", e);
         }
     }
 

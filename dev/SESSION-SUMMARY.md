@@ -2,23 +2,23 @@
 
 ## Mission
 
-Complete all open FIDs. Full repo audit and push. Dashboard response pipeline fix. Version bump to v0.4.1.
+Deep audit of 4 subsystems against 3 reference repos. Address all 39 findings.
 
-## Status: COMPLETE — 0 active FIDs, 95 closed, version 0.4.1
+## Status: 1 ACTIVE FID — FID-20260531-AUDIT-REMEDIATION (39 issues, Perfection Loop complete)
 
 ## What Was Done
 
 | Item | Status | Details |
 |------|--------|---------|
-| FID-20260530-DASHBOARD-RESPONSE-PIPELINE | CLOSED (5/5) | Agent image, Copy All, message timeout, governor smoothing, gateway dedup |
-| FID-20260530-AGENT-TIER-REDESIGN | CLOSED (37/37) | Two-tier agent system, DelegationEngine, 10 bug fixes, 19 architectural gaps, 6 profiles |
-| FID-20260530-SESSION-STATE-WAL-ENTERPRISE | CLOSED (7/7) | YAML frontmatter WAL, CLI state display, 6 tests |
-| FID-20260529-MARKDOWN-ZERO-DEFECT | CLOSED | 8,501 markdownlint violations eliminated (0 remaining) |
-| FID-20260529-MESSAGING-AND-SCALING | CLOSED | Messaging pipeline hardening |
-| SOUL.md Rewrite | COMPLETE | Enterprise persona specification |
-| Profile SOUL.md Files | COMPLETE | 6 profiles rewritten to enterprise quality |
-| Workspace Docs | COMPLETE | AGENTS.md, IGNITION.md, HEARTBEAT.md, CONTEXT.md updated |
-| Repo Audit | COMPLETE | Bloat removed, version consistent, docs updated |
+| FID-20260531-AUDIT-REMEDIATION | ACTIVE (0/41) | 41 issues across Memory, Tools, Session, Skills — implementation pending |
+| Deep Audit (Memory) | COMPLETE | 10 issues: BM25 not persisted, reranker broken, auto-recall vector-only, tiers unused |
+| Deep Audit (Tools) | COMPLETE | 8 issues: approval gate unwired, ToolFilter unwired, CCT bypass, no file scanning |
+| Deep Audit (Session) | COMPLETE | 10 issues: no per-message persist, no crash recovery, compaction broken, no forking |
+| Deep Audit (Skills) | COMPLETE | 8 issues: security gate bypassed, chaining dead code, hot reload unwired |
+| compact/ audit | COMPLETE | Subsystem is ACTIVE (not dead code). 5 cleanup issues: dead test-only code, duplicate clippy rule, empty dirs |
+| Perfection Loop (FID) | COMPLETE | 2 iterations — 17 issues found and resolved in FID document |
+| Version Bump | COMPLETE | v0.4.0 → v0.4.1 (scripts/bump-version.ps1) |
+| Doc Sync | COMPLETE | 13 files updated to v0.4.1 |
 
 ## Bug Fixes (10 pre-existing bugs)
 

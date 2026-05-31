@@ -29,6 +29,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 futures = "0.3"
 
+# E1: Cross-encoder reranking via ONNX Runtime
+ort = { version = "=2.0.0-rc.12", optional = true }
+
 # Core types and traits
 savant_core = { path = "../core" }
 savant_ipc = { path = "../ipc" }
@@ -48,3 +51,4 @@ default = []
 persist_sync = []
 kani = []
 test-utils = []
+cross-encoder = ["ort"]

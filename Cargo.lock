@@ -10082,6 +10082,7 @@ dependencies = [
  "futures",
  "jsonwebtoken 9.3.1",
  "lru 0.12.5",
+ "ort",
  "regex-lite",
  "rend",
  "rkyv",

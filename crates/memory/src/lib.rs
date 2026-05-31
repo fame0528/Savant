@@ -30,6 +30,7 @@ pub mod promotion;
 pub mod query_expansion;
 pub mod reflective;
 pub mod reranker;
+pub mod cross_encoder;
 pub mod rrf_fusion;
 pub mod safety;
 mod vector_engine;

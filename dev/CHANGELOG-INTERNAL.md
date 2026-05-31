@@ -2,7 +2,16 @@
 
 > **Purpose:** Detailed project changelog for agents. More detailed than root CHANGELOG.md.
 > **Updated:** As work happens, not just at release time.
-> **Last Cleaned:** 2026-05-30 (v0.4.0)
+> **Last Cleaned:** 2026-05-31 (v0.4.1)
+
+---
+
+## [v0.4.1] — 2026-05-30
+
+**Version bump only.** No functional changes from v0.4.0.
+
+- Bumped via `scripts/bump-version.ps1`: VERSION, Cargo.toml `[workspace.package]` (28 crates inherit), dashboard/package.json, dashboard/package-lock.json, crates/desktop/src-tauri/tauri.conf.json, root package.json.
+- All 95 FIDs closed. 0 active.
 
 ---
 

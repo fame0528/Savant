@@ -1,6 +1,6 @@
 {
   "name": "savant",
-  "version": "0.5.0",
+  "version": "0.4.1",
   "description": "Savant - One Mind. A Thousand Faces. Autonomous agent swarm orchestrator",
   "scripts": {
     "dev": "cargo tauri dev",

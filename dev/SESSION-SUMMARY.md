@@ -1,10 +1,10 @@
-# Savant Session Summary — 2026-05-30
+# Savant Session Summary — 2026-05-31
 
 ## Mission
 
-Complete all open FIDs. Full repo audit and push. Dashboard response pipeline fix.
+Complete all open FIDs. Full repo audit and push. Dashboard response pipeline fix. Version bump to v0.4.1.
 
-## Status: COMPLETE — 0 active FIDs, 95 closed
+## Status: COMPLETE — 0 active FIDs, 95 closed, version 0.4.1
 
 ## What Was Done
 
@@ -67,10 +67,11 @@ Complete all open FIDs. Full repo audit and push. Dashboard response pipeline fi
 - `cargo test --test delegation_pipeline` — 5/5 pass
 - `npx tsc --noEmit` — 0 errors
 - `markdownlint` — 0 violations (entire repo)
-- Version: v0.4.0 consistent across all 5 targets
+- Version: v0.4.1 consistent across all 5 targets (VERSION, Cargo.toml, 28 crates, tauri.conf.json, package.json)
 
 ## Git
 
 - Branch: main
-- Last commit: `579d6dd` (dashboard pipeline + governor smoothing + gateway dedup)
-- Ready for rebuild and test
+- Last commit: `22ac64f` (chore: bump version to v0.4.1)
+- Previous: `1f54ac8` (docs: compact-ready tracking update), `a6e99db` (docs: close all FIDs), `579d6dd` (fix: dashboard response pipeline)
+- All FIDs archived. Ready for rebuild and test.

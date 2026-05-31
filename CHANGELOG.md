@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.1] - 2026-05-30
+
+**v0.4.1: Version bump. All v0.4.0 work complete — 95 FIDs closed, 0 active. Two-tier agent system, DelegationEngine, 10 bug fixes, dashboard pipeline fix, 8,501 markdown violations eliminated.**
+
+### Changed
+
+- **Version bump** — 0.4.0 → 0.4.1 via `scripts/bump-version.ps1`. Synced: VERSION, Cargo.toml `[workspace.package]` (28 crates inherit), dashboard/package.json, dashboard/package-lock.json, crates/desktop/src-tauri/tauri.conf.json, root package.json.
+
+### Status
+
+- 95 FIDs closed, 0 active
+- `cargo check --workspace` — 0 errors
+- `cargo clippy --lib` — 0 warnings
+- `cargo test --lib` — 335/335 pass
+- `npx tsc --noEmit` — 0 errors
+- `markdownlint` — 0 violations
+- Version: 0.4.1 across all 5 targets
+
+---
+
 ## [0.4.0] - 2026-05-30
 
 **v0.4.0: Two-tier agent system, DelegationEngine, 10 bug fixes, 8,501 markdown violations eliminated. 37 implementation steps across 3 FIDs.**

@@ -1,6 +1,6 @@
 # Savant Security Model
 
-> **Last Updated:** 2026-05-29 (v0.4.0)
+> **Last Updated:** 2026-05-31 (v0.4.1)
 
 ## Overview
 
@@ -16,7 +16,7 @@ Savant implements security across five layers:
 
 ---
 
-## API Authentication (v0.4.0)
+## API Authentication (v0.4.1)
 
 ### REST API Middleware
 
@@ -207,4 +207,4 @@ OpenRouter master keys are never used directly for completions:
 
 ---
 
-*Documentation updated: 2026-05-29. Reflects v0.4.0 codebase.*
+*Documentation updated: 2026-05-31. Reflects v0.4.1 codebase.*

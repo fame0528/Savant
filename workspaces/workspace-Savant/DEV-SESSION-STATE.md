@@ -34,7 +34,7 @@ This session completed 5 FIDs and performed a full repo audit:
 
 ### Current State
 
-- **Version:** v0.4.0 (consistent across 5 targets)
+- **Version:** v0.4.1 (consistent across 5 targets)
 - **Tests:** 340/340 pass (335 lib + 5 integration)
 - **Clippy:** 0 warnings
 - **Markdownlint:** 0 violations (entire repo)

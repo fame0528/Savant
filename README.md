@@ -1,4 +1,4 @@
-# SAVANT v0.4.0
+# SAVANT v0.4.1
 
 <!-- markdownlint-disable MD033 -->
 <div align="center">
@@ -89,7 +89,7 @@ Savant is an autonomous agent swarm orchestrator with **mandatory security scann
 
 ## Architecture
 
-<img src="img/architecture.png" alt="Savant Architecture v0.4.0" width="850" />
+<img src="img/architecture.png" alt="Savant Architecture v0.4.1" width="850" />
 
 </div>
 

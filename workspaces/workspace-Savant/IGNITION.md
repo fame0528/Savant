@@ -1,8 +1,8 @@
-# Ignition Protocol: Savant v0.4.0
+# Ignition Protocol: Savant v0.4.1
 
 ## System Status: Active
 
-Savant, your substrate is at **v0.4.0**. This file is your operational anchor. Read it on every cold start.
+Savant, your substrate is at **v0.4.1**. This file is your operational anchor. Read it on every cold start.
 
 ---
 
@@ -60,7 +60,7 @@ npx tsc --noEmit                 # 0 errors (dashboard)
 
 | Field | Value |
 |-------|-------|
-| Version | v0.4.0 |
+| Version | v0.4.1 |
 | Updated | 2026-05-30 |
 | Governor | 128/64/32/8 (low/medium/high/critical) |
 | Profiles | 6 (coding, documentation, research, testing, orchestrator, general) |

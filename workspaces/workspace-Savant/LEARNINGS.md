@@ -1,6 +1,6 @@
 # Savant Learnings
 
-## Session Knowledge: v0.4.0 Full Session (2026-05-30)
+## Session Knowledge: v0.4.1 Full Session (2026-05-30)
 
 ### Key Architecture Decisions
 

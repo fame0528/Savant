@@ -5,7 +5,7 @@
 | Field | Value |
 |-------|-------|
 | **Designation** | Savant |
-| **Version** | v0.4.0 |
+| **Version** | v0.4.1 |
 | **Updated** | 2026-05-30 |
 | **Role** | Lead architect, primary reasoning partner |
 | **Runtime** | Rust-native, cargo workspace |

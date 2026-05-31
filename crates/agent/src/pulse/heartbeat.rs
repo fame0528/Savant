@@ -203,6 +203,26 @@ impl HeartbeatPulse {
                             let agent_name = self.agent.agent_name.clone();
                             info!("[{}] Orchestrator processing user message", agent_name);
 
+                            // FID-20260530: Publish interim telemetry from orchestrator path.
+                            // This cancels the dashboard's response timeout.
+                            {
+                                let thinking_chunk = savant_core::types::ChatChunk {
+                                    agent_name: self.agent.agent_name.clone(),
+                                    agent_id: self.agent.agent_id.to_lowercase(),
+                                    content: "Processing your message...".to_string(),
+                                    is_final: false,
+                                    session_id: message.session_id.clone(),
+                                    channel: savant_core::types::AgentOutputChannel::Telemetry,
+                                    logprob: None,
+                                    is_telemetry: true,
+                                    reasoning: None,
+                                    tool_calls: None,
+                                };
+                                if let Ok(payload) = serde_json::to_string(&thinking_chunk) {
+                                    let _ = self.nexus.publish("chat.chunk", &payload).await;
+                                }
+                            }
+
                             match orchestrator.execute_turn(&message.content).await {
                                 Ok(()) => {
                                     info!("[{}] Orchestrator turn completed", agent_name);
@@ -534,6 +554,27 @@ impl HeartbeatPulse {
                 let mut full_trace = String::new();
                 let memory_clone = agent_loop.memory.clone();
                 let user_input = content.clone();
+
+                // FID-20260530: Publish interim telemetry before LLM call.
+                // This cancels the dashboard's response timeout so the user sees
+                // the agent is processing rather than a silent TIMEOUT.
+                {
+                    let thinking_chunk = savant_core::types::ChatChunk {
+                        agent_name: self.agent.agent_name.clone(),
+                        agent_id: self.agent.agent_id.to_lowercase(),
+                        content: "Processing your message...".to_string(),
+                        is_final: false,
+                        session_id: message.session_id.clone(),
+                        channel: savant_core::types::AgentOutputChannel::Telemetry,
+                        logprob: None,
+                        is_telemetry: true,
+                        reasoning: None,
+                        tool_calls: None,
+                    };
+                    if let Ok(payload) = serde_json::to_string(&thinking_chunk) {
+                        let _ = self.nexus.publish("chat.chunk", &payload).await;
+                    }
+                }
 
                 {
                     let shutdown_token = self.shutdown_token.clone();

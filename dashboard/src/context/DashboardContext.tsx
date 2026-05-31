@@ -368,7 +368,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           return next;
         });
         responseTimeoutRef.current.delete('global');
-      }, 30_000);
+      }, 120_000);
       responseTimeoutRef.current.set('global', respTimer);
     } else if (type === "agents.discovered") {
       const rawAgents = evData.agents || [];

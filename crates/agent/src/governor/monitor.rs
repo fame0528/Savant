@@ -9,6 +9,8 @@ use tokio_util::sync::CancellationToken;
 use super::pressure::PressureLevel;
 
 /// Background resource monitor. Polls system metrics and publishes pressure level.
+/// Uses EMA (Exponential Moving Average) smoothing to prevent transient CPU spikes
+/// from triggering pressure changes.
 pub struct ResourceMonitor {
     config: ResourceGovernorConfig,
     /// Current pressure level as u8 (0=Low, 1=Medium, 2=High, 3=Critical)
@@ -47,6 +49,9 @@ impl ResourceMonitor {
     async fn run(&self) {
         let mut sys = sysinfo::System::new();
         let interval = std::time::Duration::from_secs(self.config.monitor_interval_secs.max(1));
+        let alpha = self.config.smoothing_factor.clamp(0.1, 0.99); // EMA weight for history
+        let mut smoothed_cpu: f64 = 0.0;
+        let mut smoothed_mem: f64 = 0.0;
 
         loop {
             tokio::select! {
@@ -64,8 +69,12 @@ impl ResourceMonitor {
                     self.cpu_pct.store(cpu_pct.to_bits(), Ordering::Relaxed);
                     self.mem_pct.store(mem_pct.to_bits(), Ordering::Relaxed);
 
+                    // EMA smoothing — absorbs transient spikes, responds to sustained load
+                    smoothed_cpu = smoothed_cpu * alpha + cpu_pct * (1.0 - alpha);
+                    smoothed_mem = smoothed_mem * alpha + mem_pct * (1.0 - alpha);
+
                     let level = if self.config.enabled {
-                        PressureLevel::from_metrics(cpu_pct, mem_pct, &self.config)
+                        PressureLevel::from_metrics(smoothed_cpu, smoothed_mem, &self.config)
                     } else {
                         PressureLevel::Low
                     };

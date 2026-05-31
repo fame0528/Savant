@@ -123,13 +123,17 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
       const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
       await writeText(text);
       return true;
-    } catch {}
+    } catch (e) {
+      console.warn("[clipboard] Tauri plugin writeText failed:", e);
+    }
   }
   if (typeof navigator !== "undefined" && navigator.clipboard) {
     try {
       await navigator.clipboard.writeText(text);
       return true;
-    } catch {}
+    } catch (e) {
+      console.warn("[clipboard] navigator.clipboard.writeText failed:", e);
+    }
   }
   if (typeof document !== "undefined") {
     try {
@@ -141,9 +145,13 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
       textarea.select();
       const ok = document.execCommand("copy");
       document.body.removeChild(textarea);
+      if (!ok) console.warn("[clipboard] document.execCommand('copy') returned false");
       return ok;
-    } catch {}
+    } catch (e) {
+      console.warn("[clipboard] execCommand fallback failed:", e);
+    }
   }
+  console.error("[clipboard] All copy methods failed for text length:", text.length);
   return false;
 };
 

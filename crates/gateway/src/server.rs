@@ -827,9 +827,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
     // 7. Task 4: WebSocket Receiver
     let storage = state.storage.clone();
     let nexus_inner = state.nexus.clone();
-    // Snapshot config at connection time — the handler needs an owned Config,
-    // not the Arc<RwLock<Config>> wrapper.
+    // Snapshot config at connection time — the handler needs an shared dedup map
+    // to prevent duplicate message processing within a session.
     let config_snapshot = state.config.read().await.clone();
+    let dedup_map: Arc<dashmap::DashMap<[u8; 32], std::time::Instant>> = Arc::new(dashmap::DashMap::new());
     let out_tx_recv = outgoing_tx.clone();
     let mut recv_task = tokio::spawn({
         let session_id = session_id.clone();
@@ -872,6 +873,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<GatewayState>) {
                                             nexus: nexus_inner.clone(),
                                             storage: storage.clone(),
                                             config: config_snapshot.clone(),
+                                            dedup_map: dedup_map.clone(),
                                         }),
                                     )
                                     .await;

@@ -192,6 +192,8 @@ pub struct AppState {
     pub nexus: Arc<NexusBridge>,
     pub storage: Arc<savant_core::db::Storage>,
     pub config: savant_core::config::Config,
+    /// Dedup map: content hash → last seen timestamp. Prevents duplicate message processing.
+    pub dedup_map: Arc<dashmap::DashMap<[u8; 32], std::time::Instant>>,
 }
 
 /// Handles an incoming WebSocket message frame based on session.
@@ -208,6 +210,29 @@ pub async fn handle_message(
     match frame.payload {
         savant_core::types::RequestPayload::ChatMessage(message) => {
             tracing::info!("💬 Chat message: {:?} - {}", message.role, message.content);
+
+            // FID-20260530: Gateway-side dedup — reject duplicate messages within 10s window.
+            // Prevents duplicate agent processing when users resend due to timeouts.
+            if message.role == savant_core::types::ChatRole::User {
+                let content_hash = blake3::hash(message.content.as_bytes());
+                let hash_bytes: [u8; 32] = *content_hash.as_bytes();
+                let now = std::time::Instant::now();
+                let dedup_window = std::time::Duration::from_secs(10);
+
+                // Prune expired entries (batch on every insert)
+                state.dedup_map.retain(|_, v| now.duration_since(*v) < dedup_window);
+
+                if let Some(entry) = state.dedup_map.get(&hash_bytes) {
+                    if now.duration_since(*entry) < dedup_window {
+                        tracing::debug!(
+                            "[gateway] Dedup: dropping duplicate message (hash={:02x}{:02x}..., age={:?})",
+                            hash_bytes[0], hash_bytes[1], now.duration_since(*entry)
+                        );
+                        return;
+                    }
+                }
+                state.dedup_map.insert(hash_bytes, now);
+            }
 
             let partition_raw = if message.role == savant_core::types::ChatRole::User {
                 message.recipient.as_deref().unwrap_or("global")

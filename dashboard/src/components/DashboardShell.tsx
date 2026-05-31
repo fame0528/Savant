@@ -13,16 +13,22 @@ import FormattedContent from "@/components/FormattedContent";
 // Avoids 401 spam from <img src> which can't send custom headers.
 function AuthImage({ src, alt, onError, style }: { src: string; alt: string; onError?: (e: React.SyntheticEvent<HTMLImageElement>) => void; style?: React.CSSProperties }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [directFallback, setDirectFallback] = useState(false);
   const ctx = useDashboard();
   useEffect(() => {
     let revoked = false;
     ctx.fetchAuthImage(src).then(url => {
-      if (!revoked && url) setBlobUrl(url);
+      if (!revoked && url) {
+        setBlobUrl(url);
+      } else if (!revoked) {
+        setDirectFallback(true);
+      }
     });
     return () => { revoked = true; };
   }, [src, ctx.fetchAuthImage]);
-  if (!blobUrl) return null;
-  return <img src={blobUrl} alt={alt} onError={onError} style={style} />;
+  if (blobUrl) return <img src={blobUrl} alt={alt} onError={onError} style={style} />;
+  if (directFallback) return <img src={src} alt={alt} onError={onError} style={style} />;
+  return null;
 }
 import SetupWizard from "@/components/SetupWizard";
 

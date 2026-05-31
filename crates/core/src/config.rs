@@ -759,6 +759,10 @@ pub struct ResourceGovernorConfig {
     /// Max deferral retries before dropping agent (60 × 5s = 5 min)
     #[serde(default = "default_governor_max_deferral")]
     pub max_deferral_retries: u32,
+    /// EMA smoothing factor for pressure calculation (0.0-1.0). Default 0.7.
+    /// Higher = more smoothing (slower response to spikes). Lower = more responsive.
+    #[serde(default = "default_governor_smoothing_factor")]
+    pub smoothing_factor: f64,
 }
 
 fn default_governor_monitor_interval() -> u64 {
@@ -797,6 +801,9 @@ fn default_governor_max_critical() -> usize {
 fn default_governor_max_deferral() -> u32 {
     60
 }
+fn default_governor_smoothing_factor() -> f64 {
+    0.7
+}
 
 impl Default for TrajectoryConfig {
     fn default() -> Self {
@@ -825,6 +832,7 @@ impl Default for ResourceGovernorConfig {
             max_agents_high: default_governor_max_high(),
             max_agents_critical: default_governor_max_critical(),
             max_deferral_retries: default_governor_max_deferral(),
+            smoothing_factor: default_governor_smoothing_factor(),
         }
     }
 }

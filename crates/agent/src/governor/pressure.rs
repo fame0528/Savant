@@ -85,6 +85,7 @@ mod tests {
             max_agents_high: 32,
             max_agents_critical: 8,
             max_deferral_retries: 60,
+            smoothing_factor: 0.7,
         }
     }
 

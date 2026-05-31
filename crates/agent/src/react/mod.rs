@@ -566,6 +566,30 @@ impl<M: MemoryBackend> AgentLoop<M> {
         self
     }
 
+    /// Filters tools based on an allowed tool list (for sub-agent profile restrictions).
+    /// If `allowed` is empty, all tools pass through (no filtering).
+    pub fn with_tool_filter(mut self, allowed: Vec<String>) -> Self {
+        if allowed.is_empty() {
+            return self;
+        }
+        let allowed_set: std::collections::HashSet<String> = allowed.into_iter().collect();
+        let original_count = self.tools.len();
+        self.tools.retain(|t| allowed_set.contains(t.name()));
+        tracing::info!(
+            "[{}] ToolFilter applied: {}/{} tools available",
+            self.agent_id,
+            self.tools.len(),
+            original_count
+        );
+        // Rebuild skills summary with filtered tools
+        let mut skills_summary = String::from("Available Tools:\n");
+        for tool in &self.tools {
+            skills_summary.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
+        }
+        self.context.update_skills_list(Some(skills_summary));
+        self
+    }
+
     /// Rotates the root authority key on the security authority.
     /// Creates a new SecurityAuthority with the rotated key and replaces the existing one.
     pub fn rotate_root_authority(&mut self, next_authority: ed25519_dalek::VerifyingKey) {

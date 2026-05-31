@@ -46,6 +46,11 @@ impl ContextAssembler {
         self.auto_recall_block = Some(block);
     }
 
+    /// Updates the skills list (e.g. after tool filtering).
+    pub fn update_skills_list(&mut self, skills_list: Option<String>) {
+        self.skills_list = skills_list;
+    }
+
     /// Sets the user preferences block for injection into the system prompt.
     /// Rendered from FacetCache::stable_facets() via FacetExtractor::render_preferences().
     pub fn set_user_preferences(&mut self, block: String) {

@@ -1265,6 +1265,13 @@ impl SwarmController {
             .with_rate_limiter(rate_limiter)
             .with_delegate(Box::new(crate::react::HeartbeatDelegate::new()));
 
+            // Apply tool filter if agent has allowed_skills restriction
+            let agent_loop = if !agent_cfg.allowed_skills.is_empty() {
+                agent_loop.with_tool_filter(agent_cfg.allowed_skills.clone())
+            } else {
+                agent_loop
+            };
+
             let agent_loop = if let Some(vision) = vision_service {
                 agent_loop.with_vision(vision)
             } else {

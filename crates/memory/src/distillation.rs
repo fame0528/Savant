@@ -254,7 +254,7 @@ async fn extract_triplets(
     Ok(parsed.triplets)
 }
 
-fn calculate_shannon_entropy(text: &str) -> f32 {
+pub fn calculate_shannon_entropy(text: &str) -> f32 {
     let mut counts = std::collections::HashMap::new();
     let len = text.len() as f32;
     if len == 0.0 {

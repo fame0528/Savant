@@ -259,7 +259,7 @@ impl MemoryBackend for AsyncMemoryBackend {
                             importance,
                             tags: vec![],
                             embedding,
-                            shannon_entropy: 0.0.into(),
+                            shannon_entropy: crate::distillation::calculate_shannon_entropy(&content).into(),
                             last_accessed_at: chrono::Utc::now().timestamp_millis().into(),
                             hit_count: 0.into(),
                             related_to: vec![],

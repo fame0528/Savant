@@ -1042,7 +1042,7 @@ impl MemoryEnclave {
     async fn complementary_search(
         &self,
         original_terms: &str,
-        query_embedding: &[f32],
+        _query_embedding: &[f32],
         top_k: usize,
     ) -> Vec<crate::vector_engine::SearchResult> {
         let mut all_results: Vec<crate::vector_engine::SearchResult> = Vec::new();
@@ -1089,8 +1089,12 @@ impl MemoryEnclave {
                     .collect()
             };
 
-            // Vector complementary search
-            let vector_raw = match self.vector.recall(query_embedding, top_k, None) {
+            // Vector complementary search — re-embed the complementary query
+            let cq_embedding = match self.embedding_service.embed(cq).await {
+                Ok(emb) => emb,
+                Err(_) => continue,
+            };
+            let vector_raw = match self.vector.recall(&cq_embedding, top_k, None) {
                 Ok(r) => r,
                 Err(_) => continue,
             };

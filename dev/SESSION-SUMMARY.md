@@ -4,13 +4,14 @@
 
 Deep audit of 4 subsystems against 3 reference repos (agent-vault, zot, agentmemory). Fix all 41 findings. Version bump.
 
-## Status: COMPLETE — 0 active FIDs, 97 closed, version 0.4.1
+## Status: 1 ACTIVE FID — FID-20260531-ENHANCEMENTS-AND-STUBS (7 items)
 
 ## What Was Done
 
 | Item | Status | Details |
 |------|--------|---------|
 | FID-20260531-AUDIT-REMEDIATION | CLOSED (41/41) | 41 issues across Memory, Tools, Session, Skills — ALL FIXED |
+| FID-20260531-ENHANCEMENTS-AND-STUBS | ACTIVE (0/7) | 3 stubs + 4 enhancements from reference repos — implementation pending |
 | Deep Audit (Memory) | COMPLETE | 10 issues: BM25 not persisted, reranker broken, auto-recall vector-only, tiers unused |
 | Deep Audit (Tools) | COMPLETE | 8 issues: approval gate unwired, ToolFilter unwired, CCT bypass, no file scanning |
 | Deep Audit (Session) | COMPLETE | 10 issues: no per-message persist, no crash recovery, compaction broken, no forking |

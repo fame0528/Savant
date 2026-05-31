@@ -42,7 +42,7 @@ impl Tool for SkillManagerTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "pending", "approve", "reject", "discover"],
+                    "enum": ["list", "pending", "approve", "reject", "discover", "execute_chain"],
                     "description": "Action to perform on the skill manager"
                 },
                 "skill_name": {
@@ -123,8 +123,49 @@ impl Tool for SkillManagerTool {
                     result.swarm_skills, result.agent_skills
                 ))
             }
+            // E4: Execute a skill chain by name
+            "execute_chain" => {
+                let chain_name = skill_name.ok_or_else(|| {
+                    SavantError::Unknown("Missing 'skill_name' for execute_chain action".to_string())
+                })?;
+                let manager = self.skill_manager.lock().await;
+                let registry = manager.registry();
+                // Build tool map from registry
+                let tool_map: std::collections::HashMap<String, Arc<dyn savant_core::traits::Tool>> =
+                    registry.tools.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                // Check if skill has chain definition
+                if let Some(manifest) = registry.manifests.get(chain_name) {
+                    if manifest.depends_on.is_empty() {
+                        return Ok(format!("Skill '{}' has no chain dependencies defined.", chain_name));
+                    }
+                    // Build a simple chain from depends_on
+                    let steps: Vec<savant_core::types::SkillChainStep> = manifest
+                        .depends_on
+                        .iter()
+                        .map(|dep| savant_core::types::SkillChainStep {
+                            skill_name: dep.clone(),
+                            condition: None,
+                            pass_output_as: None,
+                        })
+                        .collect();
+                    let chain = savant_core::types::SkillChain {
+                        name: chain_name.to_string(),
+                        steps,
+                    };
+                    let executor = crate::orchestration::skill_chain::SkillChainExecutor::new();
+                    let result = executor.execute(&chain, &tool_map, "").await;
+                    Ok(format!(
+                        "Chain '{}': {} steps executed, success={}",
+                        result.chain_name,
+                        result.steps_executed.len(),
+                        result.success
+                    ))
+                } else {
+                    Err(SavantError::Unknown(format!("Skill '{}' not found", chain_name)))
+                }
+            }
             _ => Err(SavantError::Unknown(format!(
-                "Unknown action '{}'. Valid actions: list, pending, approve, reject, discover",
+                "Unknown action '{}'. Valid actions: list, pending, approve, reject, discover, execute_chain",
                 action
             ))),
         }

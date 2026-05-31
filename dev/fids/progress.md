@@ -1,8 +1,8 @@
 # FID Progress Tracking
 
-> **Last Updated:** 2026-05-30 19:25 EDT (v0.4.0)
-> **Active FIDs:** 1
-> **Closed FIDs:** 94 in `dev/fids/archived/`
+> **Last Updated:** 2026-05-30 20:41 EDT (v0.4.0)
+> **Active FIDs:** 0
+> **Closed FIDs:** 95 in `dev/fids/archived/`
 
 ---
 
@@ -84,34 +84,17 @@
 
 ## Active FIDs
 
-### FID-20260530-DASHBOARD-RESPONSE-PIPELINE (2026-05-30)
-
-Dashboard non-functional for chat. Agent processes (LLM streaming visible) but dashboard shows TIMEOUT. 5 issues: agent image, Copy All, message timeout (CRITICAL), governor bouncing, duplicate messages. 10 bugs + 19 gaps from code review. Root cause: no interim telemetry between message sent and response published.
-
-| Component | Issue | Fix | Status |
-|-----------|-------|-----|--------|
-| Agent image | AuthImage silently fails | Fallback to direct img src | DONE |
-| Copy All | All 3 clipboard paths silently fail | Error logging + capabilities check | OPEN |
-| Message timeout | 30s timer fires before agent responds | Interim telemetry + 120s timeout | OPEN |
-| Governor | Instantaneous CPU spikes trigger CRITICAL | EMA smoothing | OPEN |
-| Duplicate messages | No gateway-side dedup | Content-hash dedup in handlers | OPEN |
-
-**FID:** `dev/fids/FID-20260530-DASHBOARD-RESPONSE-PIPELINE.md`
+None — all FIDs closed.
 
 ---
 
-None — all other FIDs closed.
+## Completed FIDs (Archived This Session)
 
-Three production-blocking issues identified during codebase analysis:
-
-| # | Sev | Issue | Root Cause | Status |
-|---|-----|-------|-----------|--------|
-| 1 | CRITICAL | Messaging failure — agent fails to respond (9 failure points) | Silent drops at identity pinning, lane backpressure, LLM errors, session mismatch, task cascade | OPEN |
-| 2 | HIGH | Dashboard window not spawning maximized | Missing `maximized: true` in tauri.conf.json main window config | OPEN |
-| 3 | HIGH | Message status UX gap — only 3 of 5 states used, zero error/timeout states | Status dot is binary (sent/processing/complete) with no feedback on failures | OPEN |
-| 4 | LOW | Logs window x: -2560 personal multi-monitor config | Out of scope — noted for public release | DEFERRED |
-
-**FID:** `dev/fids/FID-20260529-MESSAGING-AND-SCALING.md`
+- `FID-20260530-DASHBOARD-RESPONSE-PIPELINE.md` — 5 dashboard issues (image, Copy All, timeout, governor, dedup) + orchestrator telemetry (CLOSED)
+- `FID-20260530-AGENT-TIER-REDESIGN.md` — Two-tier agent system, 10 bug fixes, 37 steps (CLOSED)
+- `FID-20260530-SESSION-STATE-WAL-ENTERPRISE.md` — WAL frontmatter redesign, 6 tests (CLOSED)
+- `FID-20260529-MARKDOWN-ZERO-DEFECT.md` — 8,501 markdown violations eliminated (CLOSED)
+- `FID-20260529-MESSAGING-AND-SCALING.md` — Messaging pipeline hardening, 10-state status UX (CLOSED)
 
 ---
 

@@ -2,6 +2,83 @@ use savant_core::types::ChatMessage;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+/// E2: Structured checkpoint from context compaction (zot format).
+/// Contains 6 sections that preserve critical context during compression.
+#[derive(Debug, Clone, Default)]
+pub struct StructuredCheckpoint {
+    pub goal: String,
+    pub constraints: String,
+    pub progress: String,
+    pub decisions: String,
+    pub next_steps: String,
+    pub critical_context: String,
+}
+
+impl StructuredCheckpoint {
+    /// Parse a raw LLM response into a StructuredCheckpoint by section headers.
+    pub fn parse(raw: &str) -> Self {
+        let mut checkpoint = Self::default();
+        let mut current_section = "";
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if trimmed.to_lowercase().starts_with("[goal") {
+                current_section = "goal";
+            } else if trimmed.to_lowercase().starts_with("[constraint") {
+                current_section = "constraints";
+            } else if trimmed.to_lowercase().starts_with("[progress") {
+                current_section = "progress";
+            } else if trimmed.to_lowercase().starts_with("[decision") {
+                current_section = "decisions";
+            } else if trimmed.to_lowercase().starts_with("[next") {
+                current_section = "next_steps";
+            } else if trimmed.to_lowercase().starts_with("[critical") {
+                current_section = "critical_context";
+            } else if !trimmed.is_empty() && !current_section.is_empty() {
+                match current_section {
+                    "goal" => {
+                        if !checkpoint.goal.is_empty() { checkpoint.goal.push('\n'); }
+                        checkpoint.goal.push_str(trimmed);
+                    }
+                    "constraints" => {
+                        if !checkpoint.constraints.is_empty() { checkpoint.constraints.push('\n'); }
+                        checkpoint.constraints.push_str(trimmed);
+                    }
+                    "progress" => {
+                        if !checkpoint.progress.is_empty() { checkpoint.progress.push('\n'); }
+                        checkpoint.progress.push_str(trimmed);
+                    }
+                    "decisions" => {
+                        if !checkpoint.decisions.is_empty() { checkpoint.decisions.push('\n'); }
+                        checkpoint.decisions.push_str(trimmed);
+                    }
+                    "next_steps" => {
+                        if !checkpoint.next_steps.is_empty() { checkpoint.next_steps.push('\n'); }
+                        checkpoint.next_steps.push_str(trimmed);
+                    }
+                    "critical_context" => {
+                        if !checkpoint.critical_context.is_empty() { checkpoint.critical_context.push('\n'); }
+                        checkpoint.critical_context.push_str(trimmed);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        checkpoint
+    }
+
+    /// Render checkpoint back to text for context injection.
+    pub fn to_text(&self) -> String {
+        let mut out = String::new();
+        if !self.goal.is_empty() { out.push_str(&format!("[Goal:]\n{}\n\n", self.goal)); }
+        if !self.constraints.is_empty() { out.push_str(&format!("[Constraints:]\n{}\n\n", self.constraints)); }
+        if !self.progress.is_empty() { out.push_str(&format!("[Progress:]\n{}\n\n", self.progress)); }
+        if !self.decisions.is_empty() { out.push_str(&format!("[Decisions:]\n{}\n\n", self.decisions)); }
+        if !self.next_steps.is_empty() { out.push_str(&format!("[Next Steps:]\n{}\n\n", self.next_steps)); }
+        if !self.critical_context.is_empty() { out.push_str(&format!("[Critical Context:]\n{}\n\n", self.critical_context)); }
+        out
+    }
+}
+
 pub struct ContextCompressor {
     enabled: bool,
     trigger_threshold: f64,
@@ -105,12 +182,15 @@ impl ContextCompressor {
             .join("\n");
 
         format!(
-            "Summarize this conversation segment concisely. Output ONLY the summary, no preamble.\n\
-            Format:\n\
-            [Resolved:]\n- question answered: resolution\n\
-            [Pending:]\n- open question\n\
-            [Key Decisions:]\n- decision made\n\
-            [Context:]\n- important context for future turns\n\n\
+            "Compress this conversation into a structured checkpoint. Output ONLY the checkpoint, no preamble.\n\
+            Use EXACTLY these section headers:\n\
+            [Goal:]\n\
+            [Constraints:]\n\
+            [Progress:]\n\
+            [Decisions:]\n\
+            [Next Steps:]\n\
+            [Critical Context:]\n\n\
+            Each section should contain concise bullet points.\n\
             Conversation:\n{conversation}"
         )
     }

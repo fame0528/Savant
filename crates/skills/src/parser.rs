@@ -257,8 +257,32 @@ impl Tool for SkillTool {
             }
         }
 
-        self.executor.execute(payload).await
+        let raw_output = self.executor.execute(payload).await?;
+
+        // E8: Sanitize skill output before returning to agent
+        let sanitized = sanitize_skill_output(&raw_output);
+        Ok(sanitized)
     }
+}
+
+/// E8: Sanitize skill output — strip ANSI codes, truncate, scrub secrets.
+fn sanitize_skill_output(output: &str) -> String {
+    // Strip ANSI escape codes
+    let ansi_regex = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap_or_else(|_| regex::Regex::new(".").unwrap());
+    let cleaned = ansi_regex.replace_all(output, "");
+
+    // Truncate to max 50K chars
+    const MAX_OUTPUT: usize = 50_000;
+    let truncated = if cleaned.len() > MAX_OUTPUT {
+        format!("{}...[truncated {} chars]", &cleaned[..MAX_OUTPUT], cleaned.len() - MAX_OUTPUT)
+    } else {
+        cleaned.to_string()
+    };
+
+    // Scrub common secret patterns (API keys, tokens, passwords)
+    let secret_regex = regex::Regex::new(r"(?i)(api[_-]?key|token|password|secret|credential)\s*[:=]\s*\S+")
+        .unwrap_or_else(|_| regex::Regex::new(".").unwrap());
+    secret_regex.replace_all(&truncated, "$1: [REDACTED]").to_string()
 }
 
 /// Maximum number of skills that can be loaded

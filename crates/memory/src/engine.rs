@@ -322,6 +322,21 @@ impl MemoryEnclave {
         let bm25_b = config.memory_config.bm25_b;
         let max_bm25_documents = config.memory_config.max_bm25_documents;
 
+        // Load BM25 state from CortexaDB before moving lsm into struct
+        let bm25_index = match lsm.load_bm25_state() {
+            Ok(Some(bm25)) => {
+                info!("Restored BM25 index from CortexaDB ({} docs)", bm25.doc_count());
+                bm25
+            }
+            Ok(None) => {
+                crate::bm25_index::Bm25Index::with_config(bm25_k1, bm25_b, max_bm25_documents)
+            }
+            Err(e) => {
+                warn!("Failed to load BM25 state, starting fresh: {}", e);
+                crate::bm25_index::Bm25Index::with_config(bm25_k1, bm25_b, max_bm25_documents)
+            }
+        };
+
         Ok(Arc::new(Self {
             lsm,
             vector,
@@ -332,11 +347,7 @@ impl MemoryEnclave {
             )),
             reflective: tokio::sync::RwLock::new(ReflectiveMemory::new()),
             notifications: NotificationChannel::default(),
-            bm25: tokio::sync::RwLock::new(crate::bm25_index::Bm25Index::with_config(
-                bm25_k1,
-                bm25_b,
-                max_bm25_documents,
-            )),
+            bm25: tokio::sync::RwLock::new(bm25_index),
             audit: tokio::sync::Mutex::new(crate::audit::AuditTrail::default()),
             procedures: tokio::sync::Mutex::new(Vec::new()),
             lessons: tokio::sync::Mutex::new(Vec::new()),
@@ -792,6 +803,13 @@ impl MemoryEnclave {
     ///
     /// Pipeline:
     /// 1. Expand query via `query_expansion` (temporal concretization, synonyms)
+    /// Persists the BM25 index to CortexaDB for crash recovery.
+    /// Call after indexing batches or on graceful shutdown.
+    pub async fn persist_bm25(&self) -> Result<(), MemoryError> {
+        let bm25 = self.bm25.read().await;
+        self.lsm.save_bm25_state(&bm25)
+    }
+
     /// 2. Search BM25 with expanded terms
     /// 3. Search vector index with original embedding
     /// 4. Fuse results via RRF (Reciprocal Rank Fusion)
@@ -907,13 +925,21 @@ impl MemoryEnclave {
                 .iter()
                 .take(rerank_n)
                 .filter_map(|r| {
-                    r.document_id.parse::<u64>().ok().map(|doc_id| {
-                        crate::reranker::RerankCandidate {
+                    r.document_id.parse::<u64>().ok().and_then(|doc_id| {
+                        let content = self.lsm.get_metadata(doc_id)
+                            .ok()
+                            .flatten()
+                            .map(|e| e.content)
+                            .unwrap_or_default();
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(crate::reranker::RerankCandidate {
                             doc_id,
                             original_score: r.score,
-                            content: doc_id.to_string(),
+                            content,
                             session_id: String::new(),
-                        }
+                        })
                     })
                 })
                 .collect();

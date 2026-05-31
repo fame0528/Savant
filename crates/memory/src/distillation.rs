@@ -180,6 +180,12 @@ pub fn spawn_distillation_pipeline(
                     error!("Failed to mark message as distilled: {}", e);
                 }
             }
+
+            // Persist BM25 index after each sweep for crash recovery
+            // Note: BM25 is populated on collective (where index_memory is called)
+            if let Err(e) = collective.persist_bm25().await {
+                warn!("Failed to persist BM25 state: {}", e);
+            }
         }
     });
 }

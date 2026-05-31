@@ -1046,6 +1046,63 @@ impl LsmStorageEngine {
     // ========================================================================
     // Session / Turn State Management
     // ========================================================================
+    // BM25 State Persistence (CortexaDB-backed)
+    // ========================================================================
+
+    /// Saves BM25 index state to the "bm25_state" collection.
+    pub fn save_bm25_state(&self, bm25: &crate::bm25_index::Bm25Index) -> Result<(), MemoryError> {
+        let bytes = bm25.save_snapshot()
+            .map_err(|e| MemoryError::SerializationFailed(e))?;
+
+        self.db
+            .add_with_content(
+                "bm25_state",
+                bytes,
+                self.zero_embedding(),
+                make_key_meta("bm25_snapshot"),
+            )
+            .map_err(|e| MemoryError::TransactionFailed(e.to_string()))?;
+
+        debug!("Saved BM25 index state ({} docs)", bm25.doc_count());
+        Ok(())
+    }
+
+    /// Loads BM25 index state from the "bm25_state" collection.
+    /// Returns None if no BM25 state has been persisted.
+    pub fn load_bm25_state(&self) -> Result<Option<crate::bm25_index::Bm25Index>, MemoryError> {
+        let filter = {
+            let mut m = HashMap::new();
+            m.insert("key".to_string(), "bm25_snapshot".to_string());
+            m
+        };
+
+        if let Ok(hits) =
+            self.db
+                .search_in_collection("bm25_state", self.zero_embedding(), 1, Some(filter))
+        {
+            if let Some(hit) = hits.first() {
+                if let Ok(memory) = self.db.get_memory(hit.id) {
+                    if !memory.content.is_empty() {
+                        match crate::bm25_index::Bm25Index::load_snapshot(&memory.content) {
+                            Ok(bm25) => {
+                                info!("Loaded BM25 index ({} docs)", bm25.doc_count());
+                                return Ok(Some(bm25));
+                            }
+                            Err(e) => {
+                                warn!("Failed to deserialize BM25 state: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    // ========================================================================
+    // Session State
+    // ========================================================================
 
     /// Saves or updates a session state in the "sessions" collection.
     pub fn save_session_state(

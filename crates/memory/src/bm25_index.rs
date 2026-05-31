@@ -14,7 +14,7 @@ const DEFAULT_BM25_B: f32 = 0.75;
 const DEFAULT_MAX_BM25_DOCUMENTS: usize = 50_000;
 
 /// A single document in the BM25 index.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Bm25Document {
     /// Tokenized and stemmed terms.
     terms: Vec<String>,
@@ -23,10 +23,23 @@ struct Bm25Document {
 }
 
 /// Posting list entry: document ID + term frequency.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Posting {
     doc_id: u64,
     term_freq: u32,
+}
+
+/// Serializable snapshot of BM25 state for CortexaDB persistence.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct Bm25Snapshot {
+    inverted_index: HashMap<String, Vec<Posting>>,
+    documents: HashMap<u64, Bm25Document>,
+    doc_count: usize,
+    avg_doc_len: f32,
+    total_doc_len: usize,
+    doc_order: Vec<u64>,
+    k1: f32,
+    b: f32,
 }
 
 /// BM25 keyword search index.
@@ -232,6 +245,38 @@ impl Bm25Index {
     /// Returns the number of unique terms in the index.
     pub fn term_count(&self) -> usize {
         self.index.len()
+    }
+
+    /// Serializes the BM25 state to JSON bytes for CortexaDB persistence.
+    pub fn save_snapshot(&self) -> Result<Vec<u8>, String> {
+        let snapshot = Bm25Snapshot {
+            inverted_index: self.index.clone(),
+            documents: self.documents.clone(),
+            doc_count: self.doc_count,
+            avg_doc_len: self.avg_doc_len,
+            total_doc_len: self.total_doc_len,
+            doc_order: self.doc_order.clone(),
+            k1: self.k1,
+            b: self.b,
+        };
+        serde_json::to_vec(&snapshot).map_err(|e| e.to_string())
+    }
+
+    /// Restores BM25 state from JSON bytes (from CortexaDB).
+    pub fn load_snapshot(bytes: &[u8]) -> Result<Self, String> {
+        let snapshot: Bm25Snapshot = serde_json::from_slice(bytes)
+            .map_err(|e| format!("BM25 snapshot deserialization failed: {}", e))?;
+        Ok(Self {
+            index: snapshot.inverted_index,
+            documents: snapshot.documents,
+            doc_count: snapshot.doc_count,
+            avg_doc_len: snapshot.avg_doc_len,
+            total_doc_len: snapshot.total_doc_len,
+            doc_order: snapshot.doc_order,
+            k1: snapshot.k1,
+            b: snapshot.b,
+            max_documents: DEFAULT_MAX_BM25_DOCUMENTS,
+        })
     }
 }
 
